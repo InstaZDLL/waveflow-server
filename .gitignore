@@ -1,0 +1,15 @@
+# Build artifacts
+target/
+
+# Cargo-generated lockfile lives in tree (we ship a binary, not a library).
+# Local environment overrides
+.env
+.env.local
+
+# IDE / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+[package]
+name = "waveflow-server"
+version = "0.0.0"
+description = "Self-hosted backend for WaveFlow: multi-device sync, web playback, public shareable playlists."
+authors = ["InstaZDLL <github.105mh@8shield.net>"]
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/InstaZDLL/waveflow-server"
+homepage = "https://waveflow.app"
+
+# Bootstrap state — the 1.b skeleton (axum + sqlx + utoipa) is not
+# implemented yet. Dependencies are added one at a time as the phases
+# in RFC-001 land, so the workspace stays cheap to compile during the
+# scaffolding window.
+
+[dependencies]
+
+[profile.release]
+# Match the desktop app's release profile so behaviour parity holds at
+# the binary level. Single-codegen-unit + LTO trade compile time for
+# smaller and faster binaries — fine for a server we deploy once per
+# release.
+codegen-units = 1
+lto = "thin"
+strip = "debuginfo"
