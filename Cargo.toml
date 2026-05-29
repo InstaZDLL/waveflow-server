@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Self-hosted backend for WaveFlow: multi-device sync, web playback, public shareable playlists."
 authors = ["InstaZDLL <github.105mh@8shield.net>"]
 edition = "2021"
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 repository = "https://github.com/InstaZDLL/waveflow-server"
 homepage = "https://waveflow.app"
 

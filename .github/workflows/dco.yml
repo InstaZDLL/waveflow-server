@@ -1,0 +1,56 @@
+name: DCO
+
+# Verify that every commit in a PR carries a `Signed-off-by:` trailer
+# (Developer Certificate of Origin — see CONTRIBUTING.md).
+#
+# Runs on pull_request only — direct pushes to `main` are gated by
+# branch protection elsewhere.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dco-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: DCO sign-off check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # Fetch the PR's full commit range so the script can iterate
+          # every commit, not just the merge target.
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r sha; do
+            author_email=$(git log -1 --format='%ae' "$sha")
+            author_name=$(git log -1 --format='%an' "$sha")
+            expected="Signed-off-by: ${author_name} <${author_email}>"
+            if ! git log -1 --format='%B' "$sha" | grep -qFx "$expected"; then
+              echo "::error::Commit $sha is missing the DCO sign-off line."
+              echo "         Expected trailer: $expected"
+              echo "         Fix with: git commit --amend -s --no-edit (or rebase + sign-off the series)"
+              missing=$((missing + 1))
+            fi
+          done < <(git rev-list "$BASE_SHA..$HEAD_SHA")
+
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing commit(s) missing DCO sign-off."
+            exit 1
+          fi
+          echo "All commits carry a valid Signed-off-by trailer."
