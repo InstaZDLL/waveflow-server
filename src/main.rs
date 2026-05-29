@@ -1,13 +1,86 @@
-//! waveflow-server — bootstrap entry point.
+//! waveflow-server binary entrypoint.
 //!
-//! Phase 1.b will replace this with an axum app exposing `/health`,
-//! `/api/v1/*` CRUD over Postgres, and the JWKS-verified auth
-//! middleware described in RFC-001 §6.4. For now the binary just
-//! prints a banner so CI has something to compile, lint and test.
+//! Wires the runtime: load `.env`, install tracing, build the axum
+//! router from [`waveflow_server::app`], bind, and serve until SIGINT.
+//! The router itself lives behind a library entry point so integration
+//! tests can spawn the same app in-process without re-creating the
+//! plumbing.
 
-fn main() {
-    println!("waveflow-server bootstrap — Phase 1.b not implemented yet.");
-    println!(
-        "See https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md"
-    );
+use std::net::SocketAddr;
+
+use tokio::signal;
+use tracing::info;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+use waveflow_server::{app, config::Config};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // `.env` is dev-only and best-effort. In release deploys env vars
+    // come from the systemd unit / container; the dotenv miss is the
+    // expected path and we don't log it.
+    let _ = dotenvy::dotenv();
+
+    init_tracing();
+
+    let config = Config::from_env()?;
+    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    let local = listener.local_addr()?;
+    info!(addr = %local, "waveflow-server listening");
+
+    axum::serve(
+        listener,
+        app(config).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
+
+    info!("waveflow-server shut down cleanly");
+    Ok(())
+}
+
+/// Install a `tracing` subscriber. `RUST_LOG` controls verbosity (we
+/// fall back to `info` for the binary's own crates). `WAVEFLOW_LOG_FORMAT=json`
+/// switches to JSON for log aggregators; anything else stays on the
+/// pretty terminal formatter used in dev.
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,waveflow_server=debug,tower_http=debug"));
+
+    let json_mode = std::env::var("WAVEFLOW_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    let registry = tracing_subscriber::registry().with(filter);
+    if json_mode {
+        registry.with(fmt::layer().json()).init();
+    } else {
+        registry.with(fmt::layer().compact()).init();
+    }
+}
+
+/// Wait for SIGINT (Ctrl+C) or SIGTERM (systemd / container stop).
+/// On Windows we only listen for Ctrl+C — SIGTERM doesn't exist there.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => info!("SIGINT received, shutting down"),
+        _ = terminate => info!("SIGTERM received, shutting down"),
+    }
 }

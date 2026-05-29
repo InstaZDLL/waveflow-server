@@ -14,6 +14,42 @@ homepage = "https://waveflow.app"
 # scaffolding window.
 
 [dependencies]
+# HTTP layer. axum 0.8 is the line current for Tokio 1.45+ — the same
+# generation used by the desktop's reqwest 0.12, so we're not pulling
+# two competing hyper trees once `waveflow-core` lands as a dependency
+# in 1.b.2.
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "request-id", "timeout", "util"] }
+
+# Structured logging. `tracing-subscriber` reads `RUST_LOG`; the binary
+# wires JSON output when `WAVEFLOW_LOG_FORMAT=json` is set (CI / prod),
+# pretty output otherwise (dev).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Loaded at boot from `.env` if present, else env vars only. dotenvy is
+# the maintained successor to `dotenv` (the original crate was archived
+# in 2020); it stays inert in release builds where there's no `.env`.
+dotenvy = "0.15"
+
+# Typed serialization for the JSON responses; same crate / version pair
+# the desktop app uses so a future shared response type stays cheap.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error chaining at boundaries (main, Config::from_env, integration
+# tests). Internal modules should prefer `thiserror`-typed errors
+# once we have a domain richer than "boot failed"; anyhow's flexibility
+# is what we want at the binary edge.
+anyhow = "1"
+
+[dev-dependencies]
+# In-process integration tests: spawn the app on a random port, hit it
+# with reqwest, assert on responses. Same crate the desktop uses for
+# its outbound clients so the version is unified.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 # Match the desktop app's release profile so behaviour parity holds at
