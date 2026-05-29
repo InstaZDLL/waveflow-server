@@ -45,6 +45,12 @@ impl Config {
             .map_err(|e| anyhow::anyhow!("invalid WAVEFLOW_REQUEST_TIMEOUT_SECS: {e}"))?
             .unwrap_or(30);
 
+        // Zero would make every request time out before the handler
+        // runs. Fail fast at boot rather than silently 408 every call.
+        if request_timeout_secs == 0 {
+            anyhow::bail!("invalid WAVEFLOW_REQUEST_TIMEOUT_SECS: must be > 0");
+        }
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,

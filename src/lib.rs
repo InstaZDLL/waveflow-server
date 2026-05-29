@@ -10,13 +10,14 @@
 //!
 //! [rfc]: https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md
 
-use axum::Router;
+use axum::{extract::Request, Router};
 use std::time::Duration;
 use tower::ServiceBuilder;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
+use tracing::field::Empty;
 
 pub mod api;
 pub mod config;
@@ -42,7 +43,27 @@ pub fn app(config: Config) -> Router {
             axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
             MakeRequestUuid,
         ))
-        .layer(TraceLayer::new_for_http())
+        // Custom span builder so every emitted trace carries the
+        // request id as a structured field. The default `MakeSpan`
+        // doesn't include headers at all; `include_headers(true)` would
+        // dump *every* header (incl. Authorization / Cookie) into log
+        // sinks, which is the opposite of what we want. Extract just
+        // the one field we care about.
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
+            let request_id = req
+                .headers()
+                .get(REQUEST_ID_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            tracing::info_span!(
+                "http_request",
+                method = %req.method(),
+                uri = %req.uri(),
+                version = ?req.version(),
+                request_id = %request_id,
+                status = Empty,
+            )
+        }))
         .layer(PropagateRequestIdLayer::new(
             axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
         ))
