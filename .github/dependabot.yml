@@ -1,0 +1,54 @@
+version: 2
+
+updates:
+  # npm/Bun deps for the TanStack Start app. The `npm` ecosystem
+  # covers Bun's `package.json` + `bun.lock` — Dependabot doesn't
+  # have a dedicated Bun parser yet, but the npm resolver reads
+  # the lockfile correctly.
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: 'Europe/Zurich'
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: chore
+    groups:
+      # Roll patch + minor bumps into one PR per week so the review
+      # surface stays bounded. Majors stay individual — they're
+      # likely to need code edits (cf. jsonwebtoken 9→10 on
+      # waveflow-server).
+      npm-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+      # TanStack ecosystem bumps tend to land in lockstep across
+      # @tanstack/react-router, @tanstack/react-start,
+      # @tanstack/router-plugin etc. Group them so a coordinated
+      # version doesn't surface as 5 individual PRs.
+      tanstack:
+        patterns:
+          - '@tanstack/*'
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:10'
+      timezone: 'Europe/Zurich'
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore
+    groups:
+      github-actions-all:
+        patterns:
+          - '*'
