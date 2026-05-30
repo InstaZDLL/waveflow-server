@@ -68,3 +68,21 @@ async fn migration_creates_library_table(pool: PgPool) {
 
     assert!(exists, "library table missing after migrations");
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn migration_creates_track_table(pool: PgPool) {
+    // Same canary as `library`: a renamed / dropped track.sql would
+    // pass `sqlx::test` provisioning but every 1.b.5b CRUD test
+    // would explode on the first INSERT.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'track'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query failed");
+
+    assert!(exists, "track table missing after migrations");
+}
