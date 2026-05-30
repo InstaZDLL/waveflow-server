@@ -106,7 +106,10 @@ pub struct CreateLibraryRequest {
 
 /// Partial update payload. Every field is optional; the repository's
 /// `COALESCE` keeps the existing value when a field is omitted, so
-/// PATCH semantics fall out naturally.
+/// PATCH semantics fall out naturally. `name`, when present, is
+/// trimmed and validated server-side — a `Some("")` / `Some("   ")`
+/// payload is rejected with 400 before the storage round-trip, same
+/// rule as `CreateLibraryRequest`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateLibraryRequest {
     pub name: Option<String>,
@@ -276,6 +279,7 @@ async fn get_library(
     request_body = UpdateLibraryRequest,
     responses(
         (status = 200, description = "Library updated", body = LibraryResponse),
+        (status = 400, description = "`name` was supplied but is empty / whitespace-only after trim"),
         (status = 401, description = "Missing or invalid X-User-Id"),
         (status = 404, description = "No library with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
@@ -287,8 +291,23 @@ async fn update_library(
     Path((profile_id, id)): Path<(i64, i64)>,
     Json(req): Json<UpdateLibraryRequest>,
 ) -> impl IntoResponse {
+    // Same boundary check as create_library: if the client did supply
+    // a name, it must trim to non-empty. An omitted name (None) is
+    // legitimate — the COALESCE in the repo preserves the existing
+    // value — but `Some("")` / `Some("   ")` are almost always a
+    // client bug and would silently blank the sidebar shelf.
+    let name = match req.name {
+        Some(n) => {
+            let trimmed = n.trim();
+            if trimmed.is_empty() {
+                return (StatusCode::BAD_REQUEST, "name must not be empty").into_response();
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
     let patch = LibraryUpdate {
-        name: req.name,
+        name,
         description: req.description,
         color_id: req.color_id,
         icon_id: req.icon_id,
