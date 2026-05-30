@@ -1,0 +1,69 @@
+name: Bug report
+description: Something is broken or behaving wrong in waveflow-web.
+title: '[Bug] '
+labels: ['type:bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please fill in as much as you can — the more
+        precise the repro, the faster the fix.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: One or two sentences describing the bug.
+      placeholder: 'The sign-in form drops the password field on submit, sending an empty payload to the server.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered list. Include the URL / route if relevant.
+      placeholder: |
+        1. Go to /sign-in
+        2. Enter a valid email and any password
+        3. Click "Sign in"
+        4. Observe the network tab: the request body has `password: ""`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: 'The form should send `{ email, password }` and the user should land on /home.'
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser + version
+      placeholder: 'Firefox 144 / Chrome 132 / Safari 18.2'
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: 'macOS 15.2 / Windows 11 / Fedora 41'
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console / network errors
+      description: Paste any relevant errors from the browser DevTools console.
+      render: text
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Screenshots, related issues, anything you tried.

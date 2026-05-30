@@ -1,0 +1,50 @@
+# Path-based auto-labels for pull requests. Consumed by
+# `actions/labeler` in `.github/workflows/label-pr.yml`. Keep the
+# scopes coarse — fine-grained per-file rules become noise on a
+# refactor that touches everything.
+
+scope:routes:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/routes/**'
+
+scope:components:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/components/**'
+
+scope:api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/routes/api/**'
+          - 'src/server/**'
+
+scope:auth:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/auth/**'
+          - 'src/routes/sign-in/**'
+          - 'src/routes/sign-up/**'
+
+scope:tooling:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - '.husky/**'
+          - 'eslint.config.js'
+          - '.prettierrc.json'
+          - '.commitlintrc.cjs'
+          - 'vite.config.ts'
+          - 'tsconfig.json'
+
+scope:deps:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'package.json'
+          - 'bun.lock'
+
+scope:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
