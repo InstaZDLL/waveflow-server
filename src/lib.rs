@@ -11,6 +11,7 @@
 //! [rfc]: https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md
 
 use axum::{extract::Request, Router};
+use sqlx::PgPool;
 use std::time::Duration;
 use tower::ServiceBuilder;
 use tower_http::{
@@ -21,8 +22,17 @@ use tracing::field::Empty;
 
 pub mod api;
 pub mod config;
+pub mod db;
 
 pub use config::Config;
+
+/// State threaded through the axum router. Holds the singletons that
+/// every handler needs — currently just the Postgres pool. Cheap to
+/// clone (the pool is `Arc`-backed).
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub db: PgPool,
+}
 
 /// Header used for inbound + propagated request IDs. UUIDv4 by default
 /// (via `MakeRequestUuid`), but a client / upstream proxy can supply
@@ -33,11 +43,12 @@ const REQUEST_ID_HEADER: &str = "x-request-id";
 /// - per-request UUID via `x-request-id` (generated if absent, echoed back).
 /// - structured access logging keyed on the request id.
 /// - configurable timeout (default 30 s, set via `WAVEFLOW_REQUEST_TIMEOUT_SECS`).
+/// - shared [`AppState`] (Postgres pool) attached via `with_state`.
 ///
-/// The router doesn't carry runtime state in 1.b.1 — `Config` is
-/// consumed at build time. When sqlx pools land in 1.b.2 they'll be
-/// wired here as `Router::with_state`.
-pub fn app(config: Config) -> Router {
+/// `Config` is consumed at build time for the middleware bounds;
+/// runtime singletons live in the [`AppState`] threaded through the
+/// router.
+pub fn app(config: Config, state: AppState) -> Router {
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::new(
             axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
@@ -72,5 +83,5 @@ pub fn app(config: Config) -> Router {
             Duration::from_secs(config.request_timeout_secs),
         ));
 
-    Router::new().merge(api::router()).layer(middleware)
+    Router::new().merge(api::router(state)).layer(middleware)
 }

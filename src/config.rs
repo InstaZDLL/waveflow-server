@@ -28,6 +28,19 @@ pub struct Config {
     /// without this layer so range requests can run for the full
     /// duration of a track.
     pub request_timeout_secs: u64,
+
+    /// `DATABASE_URL` — Postgres connection string consumed by sqlx
+    /// (`postgres://user:pass@host:port/dbname`). Required — there's
+    /// no sensible default for a server's main database, and silently
+    /// falling back would let a misconfigured deploy boot and then
+    /// 5xx every request.
+    pub database_url: String,
+
+    /// `WAVEFLOW_DB_MAX_CONNECTIONS` — upper bound on the sqlx pool.
+    /// Default: 20. Postgres can easily serve that many active
+    /// connections per `pgbouncer`-less deploy; bump if you front the
+    /// server behind a pooler that demands a smaller pool here.
+    pub db_max_connections: u32,
 }
 
 impl Config {
@@ -51,9 +64,25 @@ impl Config {
             anyhow::bail!("invalid WAVEFLOW_REQUEST_TIMEOUT_SECS: must be > 0");
         }
 
+        let database_url = std::env::var("DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+
+        let db_max_connections = std::env::var("WAVEFLOW_DB_MAX_CONNECTIONS")
+            .ok()
+            .map(|s| s.parse::<u32>())
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("invalid WAVEFLOW_DB_MAX_CONNECTIONS: {e}"))?
+            .unwrap_or(20);
+
+        if db_max_connections == 0 {
+            anyhow::bail!("invalid WAVEFLOW_DB_MAX_CONNECTIONS: must be > 0");
+        }
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,
+            database_url,
+            db_max_connections,
         })
     }
 }

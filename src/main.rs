@@ -12,7 +12,7 @@ use tokio::signal;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use waveflow_server::{app, config::Config};
+use waveflow_server::{app, config::Config, db, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,13 +24,23 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let config = Config::from_env()?;
+
+    // Connect to Postgres and apply pending migrations before opening
+    // the listener — surfacing schema mismatches at boot is what makes
+    // the readiness probe trustworthy. A failure here aborts startup
+    // with a non-zero exit code so the orchestrator backs off.
+    let db = db::connect(&config).await?;
+    db::run_migrations(&db).await?;
+    info!("postgres pool ready, migrations applied");
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local = listener.local_addr()?;
     info!(addr = %local, "waveflow-server listening");
 
+    let state = AppState { db };
     axum::serve(
         listener,
-        app(config).into_make_service_with_connect_info::<SocketAddr>(),
+        app(config, state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
