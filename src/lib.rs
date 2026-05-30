@@ -25,6 +25,7 @@ use utoipa_scalar::{Scalar, Servable};
 pub mod api;
 pub mod config;
 pub mod db;
+pub mod middleware;
 
 pub use config::Config;
 
