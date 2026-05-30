@@ -401,6 +401,65 @@ async fn update_renames_in_place(pool: PgPool) {
     assert_eq!(renamed["id"].as_i64().unwrap(), id);
 }
 
+/// PATCH with a blank `name` (Some("") / whitespace-only) must 400.
+/// Mirrors `create_rejects_empty_name` for the update path so a future
+/// client bug can't silently blank an existing shelf label.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn update_rejects_empty_name(pool: PgPool) {
+    let base = spawn_app(pool).await;
+    let user_id = mint_user(&base).await;
+    let profile_id = mint_profile(&base, user_id, "Alice").await;
+
+    let id = reqwest::Client::new()
+        .post(format!("{base}/api/v1/profiles/{profile_id}/libraries"))
+        .header("x-user-id", user_id.to_string())
+        .json(&json!({ "name": "Keep me" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    for blank in ["", "   ", "\t\n "] {
+        let resp = reqwest::Client::new()
+            .patch(format!(
+                "{base}/api/v1/profiles/{profile_id}/libraries/{id}"
+            ))
+            .header("x-user-id", user_id.to_string())
+            .json(&json!({ "name": blank }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "PATCH name = {blank:?} should 400"
+        );
+    }
+
+    // And the existing name stuck — none of the rejected PATCHes
+    // leaked through to the DB.
+    let one: Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_id}/libraries/{id}"
+        ))
+        .header("x-user-id", user_id.to_string())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(one["name"], "Keep me");
+}
+
 /// Partial PATCH leaves omitted fields untouched (the `COALESCE` path
 /// on the storage layer).
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
