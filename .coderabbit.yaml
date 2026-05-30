@@ -1,0 +1,79 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: fr-FR
+tone_instructions: >-
+  Sois direct et concis. Priorise les bugs réels, les régressions
+  utilisateur, les problèmes de sécurité, les erreurs de logique et les
+  oublis de tests/validation. Évite les remarques purement cosmétiques.
+early_access: true
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+    ignore_title_keywords:
+      - "chore: bump"
+      - "chore(main): release"
+      - "release-please"
+      - "dependabot"
+      - "[bot]"
+  path_filters:
+    - "!**/target/**"
+    - "!**/vendor/**"
+    - "!Cargo.lock"
+    - "!*.lock"
+  path_instructions:
+    - path: "src/**"
+      instructions: >-
+        Code du binaire `waveflow-server` (axum + sqlx + tokio). Refuse
+        toute dépendance directe à `tauri`, `cpal`, `souvlaki` ou aux
+        plugins Tauri — ce code doit pouvoir tourner sur un Linux
+        headless. Privilégie les traits de `waveflow-core::repository`
+        plutôt que des requêtes SQL en dur dans les handlers. Toute
+        nouvelle logique métier réutilisable côté desktop doit vivre
+        dans `waveflow-core` (repo `WaveFlow`), pas ici.
+    - path: "src/api/**"
+      instructions: >-
+        Handlers axum exposés au front (Tauri desktop, web TanStack, et
+        futur mobile). Vérifie que les types `serde::Serialize` exposés
+        publiquement sont stables et que les codes HTTP retournés sont
+        adaptés. Le timeout par requête est configuré globalement via
+        `tower-http::TimeoutLayer` — signale tout endpoint qui en a
+        besoin d'un autre (notamment le streaming audio en Phase 1.e).
+    - path: "src/config.rs"
+      instructions: >-
+        Une seule entrée pour lire les variables d'environnement
+        (`Config::from_env`). Refuse toute lecture de `std::env::var`
+        ailleurs dans le code. Toute nouvelle variable doit être
+        documentée dans le doc-comment du champ correspondant.
+    - path: "migrations/**"
+      instructions: >-
+        Migrations PostgreSQL appliquées par sqlx au boot. Les migrations
+        déjà mergées ne doivent JAMAIS être modifiées (sqlx stocke un
+        checksum et plante au démarrage si une migration appliquée a
+        changé). Toute évolution de schéma crée une nouvelle migration
+        timestampée `YYYYMMDDhhmmss_<slug>.sql`. Vérifie la compatibilité
+        avec les schémas servis par `waveflow-core::repository::postgres`.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Workflows GitHub Actions. Vérifie les risques d'injection via
+        branches/PR non fiables, la portée des secrets, les permissions
+        minimales, et toute regression où un PR externe pourrait
+        déclencher un job avec des secrets.
+    - path: ".env.example"
+      instructions: >-
+        Template d'env vars pour le dev local. Aucun secret réel ne doit
+        figurer ici. Toute nouvelle variable ajoutée dans `Config` doit
+        être reflétée dans ce fichier avec une explication courte.
+
+  tools:
+    semgrep:
+      enabled: false
+    opengrep:
+      enabled: true
+
+chat:
+  auto_reply: true
