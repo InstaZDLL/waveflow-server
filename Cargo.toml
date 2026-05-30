@@ -8,12 +8,24 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/InstaZDLL/waveflow-server"
 homepage = "https://waveflow.app"
 
-# Bootstrap state — the 1.b skeleton (axum + sqlx + utoipa) is not
-# implemented yet. Dependencies are added one at a time as the phases
-# in RFC-001 land, so the workspace stays cheap to compile during the
-# scaffolding window.
+# Dependencies are added one at a time as the phases in RFC-001 land,
+# so the workspace stays cheap to compile during the scaffolding
+# window. 1.b.1 added axum; 1.b.2 adds sqlx + waveflow-core; the
+# OpenAPI spec (utoipa) lands in 1.b.3.
 
 [dependencies]
+# waveflow-core ships the repository traits + Postgres implementations
+# (RFC-001 §6.5). Pinned by rev rather than branch so the server's
+# build is reproducible — bump the rev in tree when picking up a new
+# core release. `default-features = false` because core's
+# default-feature set is empty; we only want the `postgres` feature.
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "3ab43f07b925717d6e342046d2b782383e7d1b97", default-features = false, features = ["postgres"] }
+
+# Database. `runtime-tokio` matches our `#[tokio::main]` runtime;
+# `postgres` is the driver; `macros` enables `query_as!`; `migrate`
+# pulls in the migration runner used by `db::run_migrations`.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono"] }
+
 # HTTP layer. axum 0.8 is the line current for Tokio 1.45+ — the same
 # generation used by the desktop's reqwest 0.12, so we're not pulling
 # two competing hyper trees once `waveflow-core` lands as a dependency
