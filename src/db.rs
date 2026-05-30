@@ -100,4 +100,23 @@ pub mod users {
         .fetch_one(pool)
         .await
     }
+
+    /// Resolve a JWT `sub` claim to an internal `users.id`. The
+    /// JWT middleware (Phase 1.d.1-PR3) calls this once per request
+    /// after signature verification succeeds. `Ok(None)` means the
+    /// token signed for a user the server hasn't onboarded — the
+    /// caller turns that into 401 (no leak about which sub values
+    /// exist on the box).
+    ///
+    /// The UNIQUE constraint on `external_id` doubles as the lookup
+    /// index, so this is a single indexed read.
+    pub async fn find_by_external_id(
+        pool: &PgPool,
+        external_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE external_id = $1")
+            .bind(external_id)
+            .fetch_optional(pool)
+            .await
+    }
 }

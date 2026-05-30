@@ -18,9 +18,13 @@
 //! tagged with `#[utoipa::path]` show up in the generated OpenAPI spec
 //! automatically — no parallel `paths(...)` list to keep in sync.
 //!
-//! Auth: profiles ride behind `middleware::require_user_id`, which in
-//! Phase 1.b is a dev-only `X-User-Id` header shim. Phase 1.d replaces
-//! it with JWT verification against Better Auth's JWKS.
+//! Auth: every `/api/v1/profiles/*` (and its nested resources)
+//! rides behind [`crate::middleware::authenticate`], which tries
+//! JWT verification first and falls back to the dev `X-User-Id`
+//! shim. Phase 1.d.2 retires the shim once Better Auth is the only
+//! configured auth path. `/api/v1/users` stays open when the dev
+//! shim is enabled (it's the test/bootstrap user-mint path) and
+//! 503's otherwise.
 
 use axum::{extract::Request, http::StatusCode, middleware, middleware::Next, response::Response};
 use utoipa_axum::router::OpenApiRouter;
@@ -39,16 +43,19 @@ mod users;
 /// [`crate::app`]; sub-routers prefix their own paths and contribute
 /// their `#[utoipa::path]` declarations to the merged OpenAPI spec.
 ///
-/// `/api/v1/users`, `/api/v1/profiles/*`,
-/// `/api/v1/profiles/{profile_id}/libraries/*`,
-/// `/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/*`
-/// and `/api/v1/profiles/{profile_id}/playlists/*` ride behind
-/// [`reject_dev_auth_disabled`] when `config.dev_auth_enabled` is
-/// false (the production default).
-/// Without the gate a forged `X-User-Id` header on a publicly-exposed
-/// instance would walk straight into another tenant's data — Phase
-/// 1.d retires both the flag and the shim together when Better Auth
-/// lands.
+/// `/api/v1/profiles/*`, its nested resources, and
+/// `/api/v1/profiles/{profile_id}/playlists/*` all ride behind the
+/// unified [`crate::middleware::authenticate`] layer. That layer
+/// short-circuits to **503** when neither auth path is configured —
+/// see [`Config::auth_disabled_at_boot`]. Without that gate a forged
+/// `X-User-Id` header on a publicly-exposed instance would walk
+/// straight into another tenant's data.
+///
+/// `/api/v1/users` stays open when [`Config::dev_auth_enabled`] is
+/// true (it's the test/bootstrap user-mint path) and answers **503**
+/// otherwise. The JWT path doesn't gate it because production
+/// onboarding happens at Better Auth, not at this endpoint —
+/// Phase 1.d.2 will retire it alongside the shim.
 pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
     let users_router = if config.dev_auth_enabled {
         users::router(state.clone())
@@ -56,31 +63,17 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         users::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
     };
 
-    let profiles_router = if config.dev_auth_enabled {
-        profiles::router(state.clone()).layer(middleware::from_fn(auth_middleware::require_user_id))
-    } else {
-        profiles::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
-    };
+    // Single auth layer shared across every tenant-scoped resource
+    // — replaces the per-resource fork between `require_user_id`
+    // and `reject_dev_auth_disabled` that pre-PR3 mod.rs carried.
+    // The middleware reads `state.jwt_verifier` + `dev_auth_enabled`
+    // and decides per request.
+    let auth_layer = middleware::from_fn_with_state(state.clone(), auth_middleware::authenticate);
 
-    let libraries_router = if config.dev_auth_enabled {
-        libraries::router(state.clone())
-            .layer(middleware::from_fn(auth_middleware::require_user_id))
-    } else {
-        libraries::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
-    };
-
-    let tracks_router = if config.dev_auth_enabled {
-        tracks::router(state.clone()).layer(middleware::from_fn(auth_middleware::require_user_id))
-    } else {
-        tracks::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
-    };
-
-    let playlists_router = if config.dev_auth_enabled {
-        playlists::router(state.clone())
-            .layer(middleware::from_fn(auth_middleware::require_user_id))
-    } else {
-        playlists::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
-    };
+    let profiles_router = profiles::router(state.clone()).layer(auth_layer.clone());
+    let libraries_router = libraries::router(state.clone()).layer(auth_layer.clone());
+    let tracks_router = tracks::router(state.clone()).layer(auth_layer.clone());
+    let playlists_router = playlists::router(state.clone()).layer(auth_layer);
 
     OpenApiRouter::new()
         // Probes — no auth, no gate.
