@@ -12,6 +12,36 @@ use std::net::SocketAddr;
 use sqlx::PgPool;
 use waveflow_server::{app, AppState, Config};
 
+/// Spawn the app with the production-default config — dev auth
+/// **disabled**. Used by the few tests that verify the 503 gate
+/// kicks in when `WAVEFLOW_DEV_AUTH != "1"`. The rest of the suite
+/// goes through [`spawn_app`].
+#[allow(dead_code)] // some test files don't use this helper
+pub async fn spawn_app_prod_gate(pool: PgPool) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let config = Config {
+        bind_addr: addr,
+        request_timeout_secs: 5,
+        database_url: "<test>".into(),
+        db_max_connections: 1,
+        dev_auth_enabled: false,
+    };
+
+    let state = AppState { db: pool };
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app(config, state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    format!("http://{addr}")
+}
+
 /// Spawn the app in the background and return its base URL.
 pub async fn spawn_app(pool: PgPool) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -26,6 +56,11 @@ pub async fn spawn_app(pool: PgPool) -> String {
         // is fine inside the test.
         database_url: "<test>".into(),
         db_max_connections: 1,
+        // Integration tests exercise the dev `X-User-Id` shim — the
+        // production gate is what we want to verify *separately*
+        // (see `dev_auth_gate_returns_503_when_disabled`), here we
+        // just want the routes reachable.
+        dev_auth_enabled: true,
     };
 
     let state = AppState { db: pool };

@@ -41,6 +41,19 @@ pub struct Config {
     /// connections per `pgbouncer`-less deploy; bump if you front the
     /// server behind a pooler that demands a smaller pool here.
     pub db_max_connections: u32,
+
+    /// `WAVEFLOW_DEV_AUTH=1` — opt in to the Phase 1.b `X-User-Id`
+    /// header auth shim on `/api/v1/profiles/*`. Default: `false`,
+    /// which makes those routes answer **503 Service Unavailable**
+    /// regardless of the header.
+    ///
+    /// The shim is intentionally trivial to forge (any caller can
+    /// send any `i64`), so it must NEVER be on in production — Phase
+    /// 1.d replaces it with JWT verification against Better Auth's
+    /// JWKS endpoint. Keeping it behind an opt-in env var means a
+    /// stray container running on a public LAN can't accidentally
+    /// expose tenant data to anyone who guesses an integer id.
+    pub dev_auth_enabled: bool,
 }
 
 impl Config {
@@ -78,11 +91,18 @@ impl Config {
             anyhow::bail!("invalid WAVEFLOW_DB_MAX_CONNECTIONS: must be > 0");
         }
 
+        // Strict equality on "1" — `true`, `yes`, `on` etc. don't
+        // count. Footgun-resistant: the only way to enable the
+        // forgeable-header shim is to send the exact string the
+        // README documents.
+        let dev_auth_enabled = std::env::var("WAVEFLOW_DEV_AUTH").as_deref() == Ok("1");
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,
             database_url,
             db_max_connections,
+            dev_auth_enabled,
         })
     }
 }

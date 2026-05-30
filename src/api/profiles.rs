@@ -92,6 +92,7 @@ pub fn router(state: AppState) -> OpenApiRouter {
     responses(
         (status = 200, description = "Owned profiles, most-recently-used first", body = Vec<ProfileResponse>),
         (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
 async fn list_profiles(
@@ -124,6 +125,7 @@ async fn list_profiles(
     responses(
         (status = 201, description = "Profile created", body = ProfileResponse),
         (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 409, description = "X-User-Id does not match an existing users row"),
     ),
 )]
@@ -204,6 +206,7 @@ async fn create_profile(
     responses(
         (status = 200, description = "Profile found", body = ProfileResponse),
         (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
     ),
 )]
@@ -237,6 +240,7 @@ async fn get_profile(
     responses(
         (status = 200, description = "Profile renamed", body = ProfileResponse),
         (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
     ),
 )]
@@ -290,6 +294,7 @@ async fn update_profile(
     responses(
         (status = 204, description = "Profile deleted"),
         (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
         (status = 409, description = "Refused — would leave the user with zero profiles"),
     ),
