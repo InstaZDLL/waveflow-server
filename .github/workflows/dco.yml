@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Need the full range of PR commits so we can check each
           # one for the sign-off trailer.
