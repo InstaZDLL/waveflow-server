@@ -2931,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "waveflow-core"
 version = "1.4.0"
-source = "git+https://github.com/InstaZDLL/WaveFlow?rev=24ffa58ac2e2580a02e9018bc743c4fcdfdd892b#24ffa58ac2e2580a02e9018bc743c4fcdfdd892b"
+source = "git+https://github.com/InstaZDLL/WaveFlow?rev=bfb899b161a5a22c8ad4b8c92001b3fbdeb86a1a#bfb899b161a5a22c8ad4b8c92001b3fbdeb86a1a"
 dependencies = [
  "anyhow",
  "async-trait",
