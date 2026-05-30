@@ -45,6 +45,89 @@ async fn create_user_returns_201_with_id(pool: PgPool) {
     assert!(body["id"].as_i64().unwrap() > 0);
 }
 
+/// Phase 1.d.1 seed: `external_id` accepted, persisted, returned via
+/// `id`. The actual round-trip back through a query lives in the
+/// JWT middleware tests (1.d.1-PR2) — here we just exercise the
+/// handler accepting the payload without 500'ing.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn create_user_accepts_external_id(pool: PgPool) {
+    let base = spawn_app(pool).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/users"))
+        .json(&json!({ "external_id": "auth-provider-uuid-abc-123" }))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["id"].as_i64().unwrap() > 0);
+}
+
+/// Blank `external_id` (empty or whitespace-only after trim) must
+/// 400 — otherwise it would slip past the UNIQUE constraint and sit
+/// in the DB as a non-NULL-but-blank row that no JWT could ever
+/// match. Same boundary-validation rule as the rest of 1.b.5.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn create_user_rejects_blank_external_id(pool: PgPool) {
+    let base = spawn_app(pool).await;
+
+    for blank in ["", "   ", "\t\n "] {
+        let resp = reqwest::Client::new()
+            .post(format!("{base}/api/v1/users"))
+            .json(&json!({ "external_id": blank }))
+            .send()
+            .await
+            .expect("request failed");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "external_id = {blank:?} should 400"
+        );
+    }
+}
+
+/// Two POSTs with the same `external_id` must collide on the UNIQUE
+/// constraint — the second one gets 409, not a transient 500.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn create_user_rejects_duplicate_external_id(pool: PgPool) {
+    let base = spawn_app(pool).await;
+
+    let body = json!({ "external_id": "duplicate-sub" });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/users"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/users"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+/// An explicit `null` for `external_id` is equivalent to omitting it
+/// — same behaviour as the no-body case. Locks in the contract so a
+/// future serde change doesn't silently flip "explicit null" into a
+/// validation error.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn create_user_accepts_explicit_null_external_id(pool: PgPool) {
+    let base = spawn_app(pool).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/users"))
+        .json(&json!({ "external_id": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn profiles_require_x_user_id(pool: PgPool) {
     let base = spawn_app(pool).await;

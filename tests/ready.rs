@@ -104,3 +104,25 @@ async fn migration_creates_playlist_table(pool: PgPool) {
 
     assert!(exists, "playlist table missing after migrations");
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn migration_adds_users_external_id_column(pool: PgPool) {
+    // Phase 1.d.1 seed — the JWT middleware (lands in PR2/PR3)
+    // resolves `sub` claims against this column. A renamed / dropped
+    // migration would let the middleware compile but every JWT
+    // lookup would fail with a column-not-found at runtime; cheaper
+    // to fail this canary at boot.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name   = 'users'
+              AND column_name  = 'external_id'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query failed");
+
+    assert!(exists, "users.external_id column missing after migrations");
+}
