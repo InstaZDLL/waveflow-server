@@ -24,7 +24,14 @@ for f in db/migrations/*.sql; do
 done
 ```
 
-A `bun run db:migrate` wrapper script lands in 1.c.2b — it'll source `.env` and apply pending migrations idempotently.
+Or use the bundled wrapper, which reads `DATABASE_URL` from `.env` and applies pending migrations idempotently:
+
+```bash
+bun run db:migrate              # apply all pending
+bun run db:migrate --dry-run    # list pending without applying
+```
+
+Applied filenames are recorded in `_applied_migrations(filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ)`. The runner strips a file's own outer `BEGIN;` / `COMMIT;` so the schema change and the bookkeeping row commit (or roll back) together. Re-running is a no-op; renaming a file that's already applied creates a fresh apply.
 
 ## Schema layout
 

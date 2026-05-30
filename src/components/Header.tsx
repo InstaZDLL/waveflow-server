@@ -1,7 +1,16 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { authClient, useSession } from '@/lib/auth-client'
 import ThemeToggle from './ThemeToggle'
 
 export default function Header() {
+  const navigate = useNavigate()
+  const { data: session, isPending } = useSession()
+
+  async function onSignOut() {
+    await authClient.signOut()
+    await navigate({ to: '/sign-in' })
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 backdrop-blur-lg">
       <nav className="page-wrap flex flex-wrap items-center gap-x-3 gap-y-2 py-3 sm:py-4">
@@ -61,6 +70,40 @@ export default function Header() {
               />
             </svg>
           </a>
+
+          {!isPending && session?.user ? (
+            <>
+              <span
+                className="hidden text-sm text-[var(--sea-ink-soft)] sm:inline"
+                title={session.user.email}
+              >
+                {session.user.name || session.user.email}
+              </span>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/sign-in"
+                className="nav-link"
+                activeProps={{ className: 'nav-link is-active' }}
+              >
+                Sign in
+              </Link>
+              <Link
+                to="/sign-up"
+                className="rounded-xl bg-[var(--sea-ink)] px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Sign up
+              </Link>
+            </>
+          )}
 
           <ThemeToggle />
         </div>
