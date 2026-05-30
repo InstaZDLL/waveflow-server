@@ -15,7 +15,7 @@ Companion to the desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZ
 
 ```bash
 bun install        # one-shot; runs `prepare: husky` to install the commit-msg hook
-cp .env.example .env # then fill in DATABASE_URL + BETTER_AUTH_SECRET (openssl rand -base64 32)
+cp .env.example .env # then fill in DATABASE_URL, BETTER_AUTH_SECRET (openssl rand -base64 32), and BETTER_AUTH_URL
 bun run dev        # Vite dev server on http://localhost:3000
 bun run typecheck  # tsc --noEmit (run after a build so routeTree.gen.ts exists)
 bun run lint       # eslint
