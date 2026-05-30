@@ -17,7 +17,7 @@ TL;DR:
 
 ## Local development
 
-> Pre-requirement: Rust stable (1.94+, the MSRV inherited from sqlx 0.9) and a Postgres ≥ 15 instance reachable on `DATABASE_URL`.
+> Pre-requirement: Rust stable (1.94+, the MSRV inherited from sqlx 0.9) and a Postgres ≥ 15 instance reachable on `DATABASE_URL`. Both plain TCP and TLS (`sslmode=require` / `verify-ca` / `verify-full`) connection strings are supported — managed providers like Neon, Supabase, Prisma Accelerate and RDS work out of the box.
 
 ```bash
 git clone https://github.com/InstaZDLL/waveflow-server
