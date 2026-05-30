@@ -15,19 +15,36 @@ function SignIn() {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!email.includes('@') || !password) {
+    // Trim before both the local check AND the network call so a
+    // user who pasted in their email with a stray leading space
+    // doesn't see "enter your email" client-side and then "no such
+    // user" server-side a moment later.
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail.includes('@') || !password) {
       setError('Enter your email and password.')
       return
     }
     setError(null)
     setLoading(true)
-    const { error: remote } = await authClient.signIn.email({ email, password })
-    setLoading(false)
-    if (remote) {
-      setError(remote.message ?? 'Sign-in failed. Check your credentials.')
-      return
+    try {
+      const { error: remote } = await authClient.signIn.email({
+        email: trimmedEmail,
+        password,
+      })
+      if (remote) {
+        setError(remote.message ?? 'Sign-in failed. Check your credentials.')
+        return
+      }
+      await navigate({ to: '/' })
+    } catch (err) {
+      // Better Auth resolves with `{ error }` on auth failures, so
+      // a thrown exception here is a transport-level problem (DNS,
+      // CORS, network down). Surface a generic message and let the
+      // user retry.
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+    } finally {
+      setLoading(false)
     }
-    await navigate({ to: '/' })
   }
 
   return (
