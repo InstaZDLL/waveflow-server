@@ -54,6 +54,14 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         paths.contains_key("/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"),
         "missing tracks item path in spec"
     );
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/playlists"),
+        "missing playlists collection path in spec"
+    );
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/playlists/{id}"),
+        "missing playlists item path in spec"
+    );
 
     // The /ready operation must declare both the 200 and the 503
     // shape — the readiness contract is a 503-as-data API and the

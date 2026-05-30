@@ -5,9 +5,10 @@
 //! readiness, `users.rs` mints dev-shim users, `profiles.rs` covers
 //! tenant-scoped profile CRUD, `libraries.rs` covers tenant-scoped
 //! library CRUD nested under a profile, `tracks.rs` covers
-//! tenant-scoped track CRUD nested under a library. Future modules
-//! will cover `playlists`, `auth`, `sync`, `stream` (per RFC-001
-//! §6 / §7).
+//! tenant-scoped track CRUD nested under a library, `playlists.rs`
+//! covers tenant-scoped playlist CRUD nested under a profile (same
+//! depth as library). Future modules will cover `auth`, `sync`,
+//! `stream` (per RFC-001 §6 / §7).
 //!
 //! Versioning policy: every resource module mounts under `/api/v1/`
 //! (except `/health` and `/ready`, which are unversioned by convention
@@ -28,6 +29,7 @@ use crate::{middleware as auth_middleware, AppState, Config};
 
 mod health;
 mod libraries;
+mod playlists;
 mod profiles;
 mod ready;
 mod tracks;
@@ -38,10 +40,11 @@ mod users;
 /// their `#[utoipa::path]` declarations to the merged OpenAPI spec.
 ///
 /// `/api/v1/users`, `/api/v1/profiles/*`,
-/// `/api/v1/profiles/{profile_id}/libraries/*` and
+/// `/api/v1/profiles/{profile_id}/libraries/*`,
 /// `/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/*`
-/// ride behind [`reject_dev_auth_disabled`] when
-/// `config.dev_auth_enabled` is false (the production default).
+/// and `/api/v1/profiles/{profile_id}/playlists/*` ride behind
+/// [`reject_dev_auth_disabled`] when `config.dev_auth_enabled` is
+/// false (the production default).
 /// Without the gate a forged `X-User-Id` header on a publicly-exposed
 /// instance would walk straight into another tenant's data — Phase
 /// 1.d retires both the flag and the shim together when Better Auth
@@ -72,6 +75,13 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         tracks::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
     };
 
+    let playlists_router = if config.dev_auth_enabled {
+        playlists::router(state.clone())
+            .layer(middleware::from_fn(auth_middleware::require_user_id))
+    } else {
+        playlists::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
+    };
+
     OpenApiRouter::new()
         // Probes — no auth, no gate.
         .merge(health::router())
@@ -80,6 +90,7 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         .merge(profiles_router)
         .merge(libraries_router)
         .merge(tracks_router)
+        .merge(playlists_router)
 }
 
 /// Reject every request with **503 Service Unavailable**. Mounted on
