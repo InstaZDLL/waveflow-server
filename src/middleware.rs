@@ -45,24 +45,13 @@ pub const X_USER_ID_HEADER: &str = "x-user-id";
 /// the middleware free of a DB round-trip per request; the loud
 /// failure mode (insert) is acceptable in a dev shim.
 pub async fn require_user_id(mut request: Request, next: Next) -> Result<Response, StatusCode> {
-    let value: &HeaderValue = request
-        .headers()
-        .get(X_USER_ID_HEADER)
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let user_id: i64 = value
-        .to_str()
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    // `0` and negative ids are reserved (0 is the desktop sentinel,
-    // negatives are conventionally invalid) — reject so a stray
-    // header from a confused dev client can't sneak through.
-    if user_id <= 0 {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
+    // Delegates to the shared [`parse_x_user_id_header`] helper —
+    // the `i64 > 0` invariant + the missing/malformed → 401 mapping
+    // live there. Phase 1.d.1-PR3's `authenticate` middleware uses
+    // the same helper, so there's exactly one place to audit when
+    // the shim's contract needs revisiting. 1.d.2 will delete both
+    // this function AND the helper.
+    let user_id = parse_x_user_id_header(request.headers())?;
     request.extensions_mut().insert(UserId(user_id));
     Ok(next.run(request).await)
 }
