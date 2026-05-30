@@ -34,6 +34,14 @@ const pool = new Pool({
   max,
 })
 
+// `node-postgres` docs: a client in the pool that gets disconnected
+// while idle bubbles an error event on the pool. If nothing listens,
+// the unhandled error crashes the Nitro process. Log + swallow — the
+// next acquire() will get a fresh client from the pool.
+pool.on('error', (err) => {
+  console.error('[db] idle pg client error (swallowed to keep the process alive):', err)
+})
+
 // Kysely instance is exported untyped (`Kysely<unknown>`) for now —
 // Better Auth manages its own tables and supplies the types internally
 // via its adapter. The day we run direct Kysely queries from our own
