@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 
 type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -32,15 +32,26 @@ function applyThemeMode(mode: ThemeMode) {
 }
 
 export default function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>('auto')
+  // Lazy initial state — reads from localStorage on mount instead of
+  // setState-in-effect (which `react-hooks/set-state-in-effect`
+  // catches as a code smell). SSR-safe because `getInitialMode()`
+  // checks for `window` and falls back to `'auto'`.
+  const [mode, setMode] = useState<ThemeMode>(getInitialMode)
 
-  useEffect(() => {
-    const initialMode = getInitialMode()
-    setMode(initialMode)
-    applyThemeMode(initialMode)
-  }, [])
+  // Apply the theme synchronously before paint whenever `mode`
+  // changes. `useLayoutEffect` avoids the flash a regular
+  // `useEffect` would produce (paint with the old class, then
+  // re-paint with the new one). SSR-safe: React skips
+  // useLayoutEffect on the server, and `applyThemeMode` touches
+  // `document` which doesn't exist there anyway. Depending on
+  // `[mode]` means both the initial mount AND every `toggleMode`
+  // call route through the same code path — no exhaustive-deps
+  // workaround needed.
+  useLayoutEffect(() => {
+    applyThemeMode(mode)
+  }, [mode])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (mode !== 'auto') {
       return
     }
@@ -57,7 +68,9 @@ export default function ThemeToggle() {
   function toggleMode() {
     const nextMode: ThemeMode = mode === 'light' ? 'dark' : mode === 'dark' ? 'auto' : 'light'
     setMode(nextMode)
-    applyThemeMode(nextMode)
+    // No direct `applyThemeMode` call — the useLayoutEffect above
+    // owns theme application and fires synchronously on the state
+    // change before the next paint.
     window.localStorage.setItem('theme', nextMode)
   }
 
