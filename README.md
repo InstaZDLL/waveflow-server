@@ -30,7 +30,7 @@ cargo run
 `cargo run` connects to Postgres, applies pending migrations, opens the listener on `WAVEFLOW_BIND`, and serves two probes today:
 
 - `GET /health` — liveness, always returns `200 {status, version}`. Doesn't touch the DB.
-- `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: <error>}` otherwise.
+- `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: "unavailable"}` otherwise. The sqlx error detail stays in the `tracing::warn!` log so an unauthenticated probe (e.g. a load balancer) doesn't see the connection-URL host or credentials.
 
 CRUD endpoints under `/api/v1/*` (1.b.4) ride on the same pool.
 
