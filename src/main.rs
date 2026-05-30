@@ -12,7 +12,14 @@ use tokio::signal;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use waveflow_server::{app, config::Config, db, AppState};
+use std::sync::Arc;
+
+use waveflow_server::{
+    app,
+    auth::{JwtVerifier, JwtVerifierConfig},
+    config::Config,
+    db, AppState,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,11 +40,53 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(&db).await?;
     info!("postgres pool ready, migrations applied");
 
+    // Build the JWT verifier eagerly so a bad JWKS URL fails boot
+    // (the operator sees the error immediately, not on the first
+    // request). The verifier itself doesn't fetch the JWKS until a
+    // token actually needs verifying.
+    let jwt_verifier = if config.has_jwt_config() {
+        let verifier = JwtVerifier::new(JwtVerifierConfig {
+            jwks_url: config
+                .jwt_jwks_url
+                .clone()
+                .expect("has_jwt_config checked above"),
+            issuer: config
+                .jwt_issuer
+                .clone()
+                .expect("has_jwt_config checked above"),
+            audience: config
+                .jwt_audience
+                .clone()
+                .expect("has_jwt_config checked above"),
+        })
+        .map_err(|err| anyhow::anyhow!("JWT verifier init failed: {err}"))?;
+        info!("JWT auth path enabled");
+        Some(Arc::new(verifier))
+    } else {
+        None
+    };
+
+    if config.auth_disabled_at_boot() {
+        // The server still boots — `/health` and `/ready` stay up
+        // so a deploy in this state can be probed — but every
+        // `/api/v1/*` request will short-circuit to 503. Warn loudly
+        // so an operator who flipped a wrong env var sees it without
+        // having to read the body of a request.
+        tracing::warn!(
+            "no auth configured: every /api/v1/* request will return 503. \
+             Set WAVEFLOW_DEV_AUTH=1 (dev only) or the WAVEFLOW_JWT_* triple."
+        );
+    }
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local = listener.local_addr()?;
     info!(addr = %local, "waveflow-server listening");
 
-    let state = AppState { db };
+    let state = AppState {
+        db,
+        jwt_verifier,
+        dev_auth_enabled: config.dev_auth_enabled,
+    };
     axum::serve(
         listener,
         app(config, state).into_make_service_with_connect_info::<SocketAddr>(),

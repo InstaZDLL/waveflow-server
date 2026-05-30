@@ -53,12 +53,25 @@ pub use config::Config;
 )]
 pub struct ApiDoc;
 
-/// State threaded through the axum router. Holds the singletons that
-/// every handler needs — currently just the Postgres pool. Cheap to
-/// clone (the pool is `Arc`-backed).
-#[derive(Debug, Clone)]
+/// State threaded through the axum router. Holds the singletons
+/// every handler / middleware needs. Cheap to clone — the pool is
+/// `Arc`-backed and the verifier sits behind an `Arc`.
+///
+/// `Debug` is deliberately NOT derived: `JwtVerifier` opts out of
+/// `Debug` to keep raw key bytes off log sinks (see the rationale in
+/// `auth.rs`), so the parent state inherits the same restriction.
+#[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    /// Built when the boot config carries a full JWT triple
+    /// (`WAVEFLOW_JWT_JWKS_URL` + `_ISSUER` + `_AUDIENCE`). `None`
+    /// keeps the JWT path off — the middleware then falls back to
+    /// the `X-User-Id` shim or to 503 depending on the config.
+    pub jwt_verifier: Option<std::sync::Arc<auth::JwtVerifier>>,
+    /// Mirror of `Config::dev_auth_enabled`. The middleware reads
+    /// this via state instead of threading the whole `Config` so
+    /// the per-request hot path stays a single field load.
+    pub dev_auth_enabled: bool,
 }
 
 /// Header used for inbound + propagated request IDs. UUIDv4 by default
