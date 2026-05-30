@@ -4,8 +4,10 @@
 //! file: `health.rs` covers liveness, `ready.rs` covers DB-aware
 //! readiness, `users.rs` mints dev-shim users, `profiles.rs` covers
 //! tenant-scoped profile CRUD, `libraries.rs` covers tenant-scoped
-//! library CRUD nested under a profile. Future modules will cover
-//! `tracks`, `playlists`, `auth`, `sync`, `stream` (per RFC-001 §6 / §7).
+//! library CRUD nested under a profile, `tracks.rs` covers
+//! tenant-scoped track CRUD nested under a library. Future modules
+//! will cover `playlists`, `auth`, `sync`, `stream` (per RFC-001
+//! §6 / §7).
 //!
 //! Versioning policy: every resource module mounts under `/api/v1/`
 //! (except `/health` and `/ready`, which are unversioned by convention
@@ -28,19 +30,22 @@ mod health;
 mod libraries;
 mod profiles;
 mod ready;
+mod tracks;
 mod users;
 
 /// Combined router for every API module. Mounted at the root by
 /// [`crate::app`]; sub-routers prefix their own paths and contribute
 /// their `#[utoipa::path]` declarations to the merged OpenAPI spec.
 ///
-/// `/api/v1/users`, `/api/v1/profiles/*` and
-/// `/api/v1/profiles/{profile_id}/libraries/*` ride behind
-/// [`reject_dev_auth_disabled`] when `config.dev_auth_enabled` is
-/// false (the production default). Without the gate a forged
-/// `X-User-Id` header on a publicly-exposed instance would walk
-/// straight into another tenant's data — Phase 1.d retires both the
-/// flag and the shim together when Better Auth lands.
+/// `/api/v1/users`, `/api/v1/profiles/*`,
+/// `/api/v1/profiles/{profile_id}/libraries/*` and
+/// `/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/*`
+/// ride behind [`reject_dev_auth_disabled`] when
+/// `config.dev_auth_enabled` is false (the production default).
+/// Without the gate a forged `X-User-Id` header on a publicly-exposed
+/// instance would walk straight into another tenant's data — Phase
+/// 1.d retires both the flag and the shim together when Better Auth
+/// lands.
 pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
     let users_router = if config.dev_auth_enabled {
         users::router(state.clone())
@@ -61,6 +66,12 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         libraries::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
     };
 
+    let tracks_router = if config.dev_auth_enabled {
+        tracks::router(state.clone()).layer(middleware::from_fn(auth_middleware::require_user_id))
+    } else {
+        tracks::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
+    };
+
     OpenApiRouter::new()
         // Probes — no auth, no gate.
         .merge(health::router())
@@ -68,6 +79,7 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         .merge(users_router)
         .merge(profiles_router)
         .merge(libraries_router)
+        .merge(tracks_router)
 }
 
 /// Reject every request with **503 Service Unavailable**. Mounted on
