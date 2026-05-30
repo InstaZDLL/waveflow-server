@@ -27,10 +27,10 @@ CREATE TABLE profile (
 
 -- `list_for_user` orders by `last_used_at DESC` filtered by user_id;
 -- the composite index keeps the per-user MRU lookup flat as the
--- table grows across tenants. A separate `user_id`-only index
--- supports the `delete_guarded_for_user` lock query (`SELECT id …
--- WHERE user_id = $1 ORDER BY id FOR UPDATE`) and the FK cascade.
+-- table grows across tenants. It also serves the equality filter on
+-- its leading column for the `delete_guarded_for_user` lock query
+-- (`SELECT id FROM profile WHERE user_id = $1 ORDER BY id FOR
+-- UPDATE`) and the FK ON DELETE CASCADE lookup, so a dedicated
+-- `user_id`-only index would be pure write amplification.
 CREATE INDEX profile_user_last_used_idx
     ON profile (user_id, last_used_at DESC);
-CREATE INDEX profile_user_id_idx
-    ON profile (user_id);

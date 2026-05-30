@@ -3,9 +3,9 @@
 //! Every test boots the real router (no axum-test mocks) against a
 //! per-test Postgres database from `#[sqlx::test]`, mints a user via
 //! `POST /api/v1/users`, then exercises the CRUD surface with that
-//! user id in the `X-User-Id` header. The shared `expect_user_id`
-//! helper does the bootstrap and returns the id so each test focuses
-//! on its scenario.
+//! user id in the `X-User-Id` header. The shared `mint_user` helper
+//! does the bootstrap and returns the id so each test focuses on
+//! its scenario.
 
 mod support;
 
@@ -344,6 +344,43 @@ async fn delete_succeeds_when_more_than_one(pool: PgPool) {
         .unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["id"].as_i64().unwrap(), ids[1]);
+}
+
+/// With `WAVEFLOW_DEV_AUTH` unset (production default), every
+/// `/api/v1/*` request must short-circuit to 503 — even a "valid"
+/// X-User-Id header. The probe routes (`/health`, `/ready`,
+/// `/openapi.json`, `/reference`) stay reachable because they don't
+/// carry tenant data.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn dev_auth_gate_returns_503_when_disabled(pool: PgPool) {
+    let base = support::spawn_app_prod_gate(pool).await;
+
+    // Health stays up.
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // POST /api/v1/users — gated.
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/users"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // GET /api/v1/profiles with a header — still gated; the 503
+    // wins over the auth shim so an attacker can't tell the shim
+    // exists.
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles"))
+        .header("x-user-id", "42")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]

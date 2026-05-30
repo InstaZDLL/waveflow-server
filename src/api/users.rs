@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> OpenApiRouter {
     tag = "users",
     responses(
         (status = 201, description = "User created", body = CreateUserResponse),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
 async fn create_user(State(state): State<AppState>) -> impl IntoResponse {

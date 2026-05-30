@@ -33,8 +33,10 @@ cargo run
 - `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: "unavailable"}` otherwise. The sqlx error detail stays in the `tracing::warn!` log so an unauthenticated probe (e.g. a load balancer) doesn't see the connection-URL host or credentials.
 - `GET /openapi.json` — OpenAPI 3.1 spec built from the handlers that carry both a `#[utoipa::path(...)]` annotation and a `routes!()` registration on the per-module `OpenApiRouter`. A plain `Router::route()` would mount the handler but leave it absent from the spec, so make sure new endpoints follow the same `routes!()` pattern as `/health` and `/ready`.
 - `GET /reference` — [Scalar](https://github.com/scalar/scalar) API reference UI. Modern, dark-mode-native, integrated search. The OpenAPI spec it renders is the same one served at `/openapi.json`.
-- `POST /api/v1/users` — mint a user row, returns `{id}`. **No auth** — bootstrap so a client has *something* to put in the `X-User-Id` header. Retires when Better Auth lands in 1.d.
+- `POST /api/v1/users` — mint a user row, returns `{id}`. Gated by the dev-auth shim (see below).
 - `/api/v1/profiles/*` — full CRUD scoped to the calling user via the `X-User-Id` header. Tenant isolation enforced at the storage layer (`PostgresProfileRepository::*_for_user`), not just at the handler. `DELETE` refuses 409 if it would leave the user with zero profiles — same invariant the desktop's selector enforces client-side.
+
+> ⚠️ **Dev auth shim — production-off by default.** `/api/v1/*` returns `503 Service Unavailable` until `WAVEFLOW_DEV_AUTH=1` is set explicitly. With the gate on, every data route reads its tenant id from a forgeable `X-User-Id` request header — fine for local dev against a private Postgres, **never safe to expose on the public internet**. Phase 1.d retires both the flag and the shim by replacing the middleware with JWT verification against Better Auth's JWKS endpoint.
 
 ### Running the tests
 
