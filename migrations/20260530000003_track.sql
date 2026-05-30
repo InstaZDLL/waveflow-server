@@ -49,12 +49,17 @@ CREATE TABLE track (
     -- this repo.
     added_at        BIGINT      NOT NULL,
 
-    -- Raw POPM byte (0-255). SMALLINT is exactly enough for the
-    -- 8-bit range; the CHECK is defense in depth on top of the
-    -- `TrackUpdate.rating: Option<u8>` type-level guarantee in
-    -- waveflow-core. Out-of-range payloads can't be persisted even
-    -- if a future handler bypassed the type.
-    rating          SMALLINT    CHECK (rating BETWEEN 0 AND 255),
+    -- Raw POPM byte (0-255). BIGINT (not SMALLINT) because the
+    -- waveflow-core `TrackRow.rating: Option<i64>` projection
+    -- decodes the column directly — sqlx 0.9 refuses the SMALLINT
+    -- → i64 narrowing during RETURNING, and an explicit `::bigint`
+    -- cast on every read site would be more friction than the
+    -- 6-byte storage saving is worth. The CHECK constraint is
+    -- defense in depth on top of the `TrackUpdate.rating:
+    -- Option<u8>` type-level guarantee from waveflow-core — even
+    -- a future handler that bypasses the type can't persist a
+    -- value outside the POPM range.
+    rating          BIGINT      CHECK (rating BETWEEN 0 AND 255),
 
     UNIQUE (library_id, file_path)
 );
