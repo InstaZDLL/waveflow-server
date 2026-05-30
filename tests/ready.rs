@@ -126,3 +126,39 @@ async fn migration_adds_users_external_id_column(pool: PgPool) {
 
     assert!(exists, "users.external_id column missing after migrations");
 }
+
+/// Defense-in-depth probe on the `users_external_id_non_blank`
+/// CHECK constraint. Exercises a direct INSERT (bypassing the
+/// handler's trim-and-reject path) so a future regression that
+/// drops the constraint surfaces here rather than silently allowing
+/// blank rows the JWT middleware could never match.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn users_external_id_check_rejects_blank(pool: PgPool) {
+    // NULL is allowed (the dev shim mints users without external_id).
+    sqlx::query("INSERT INTO users (created_at, external_id) VALUES (1, NULL)")
+        .execute(&pool)
+        .await
+        .expect("NULL external_id should be allowed by the CHECK");
+
+    // Empty string and whitespace-only must trip the CHECK with
+    // SQLSTATE 23514 (check_violation), distinct from the
+    // 23505 unique_violation case the handler maps to 409.
+    for blank in ["", "   ", "\t\n "] {
+        let err = sqlx::query("INSERT INTO users (created_at, external_id) VALUES (1, $1)")
+            .bind(blank)
+            .execute(&pool)
+            .await
+            .expect_err(&format!(
+                "external_id = {blank:?} should trip the CHECK constraint"
+            ));
+        let code = match &err {
+            sqlx::Error::Database(db_err) => db_err.code().map(|c| c.into_owned()),
+            other => panic!("expected Database error, got {other:?}"),
+        };
+        assert_eq!(
+            code.as_deref(),
+            Some("23514"),
+            "external_id = {blank:?} should fail with check_violation (23514), got {code:?}"
+        );
+    }
+}

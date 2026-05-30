@@ -54,7 +54,17 @@ pub fn router(state: AppState) -> OpenApiRouter {
     post,
     path = "/api/v1/users",
     tag = "users",
-    request_body = CreateUserRequest,
+    // Handler extractor is `Option<Json<CreateUserRequest>>` so a
+    // POST with no body / missing Content-Type still mints a user.
+    // The `Option<…>` wrapper makes utoipa emit `requestBody.required:
+    // false` in the OpenAPI spec; the bare `request_body =
+    // CreateUserRequest` shorthand would generate `required: true` and
+    // misrepresent the contract. utoipa-axum 0.2 doesn't accept an
+    // explicit `required = false` attribute (only `content`,
+    // `description`, `content_type`, `example`, `examples`,
+    // `extensions`), so the type-level wrap is the only way to express
+    // optionality.
+    request_body = Option<CreateUserRequest>,
     responses(
         (status = 201, description = "User created", body = CreateUserResponse),
         (status = 400, description = "`external_id` supplied but empty / whitespace-only after trim"),

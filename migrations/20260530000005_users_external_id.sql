@@ -18,4 +18,18 @@
 -- without needing a dedicated `CREATE INDEX` line.
 
 ALTER TABLE users
-    ADD COLUMN external_id TEXT UNIQUE;
+    ADD COLUMN external_id TEXT UNIQUE
+        CONSTRAINT users_external_id_non_blank
+            CHECK (external_id IS NULL OR length(trim(external_id)) > 0);
+
+-- The CHECK locks the boundary invariant at the storage layer —
+-- defense in depth on top of the trim+reject path in
+-- `POST /api/v1/users`. A future code path that bypasses the
+-- handler (a manual SQL fix, an internal job, a backfill script)
+-- still can't sit a blank `''` / `'   '` row that no JWT would
+-- ever match. NULL stays allowed because the dev `X-User-Id` shim
+-- mints users without an external_id during the 1.d transition;
+-- Postgres treats `NULL` in the CHECK as "doesn't fail" so the
+-- explicit `IS NULL` short-circuit just makes the intent obvious.
+-- Same lesson as `track.rating BETWEEN 0 AND 255` in
+-- `20260530000003_track.sql`.
