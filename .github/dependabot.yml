@@ -1,0 +1,45 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - cargo
+    commit-message:
+      prefix: chore
+    groups:
+      cargo-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+    # `waveflow-core` is consumed via git dependency (not crates.io)
+    # until its public API stabilises and it moves to crates.io. Git
+    # deps are owned by the producer repo; Dependabot can't bump them
+    # here, so we exclude the name to avoid noisy no-op PRs.
+    ignore:
+      - dependency-name: waveflow-core
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:10"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
