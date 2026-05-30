@@ -4,6 +4,10 @@ version = "0.0.0"
 description = "Self-hosted backend for WaveFlow: multi-device sync, web playback, public shareable playlists."
 authors = ["InstaZDLL <github.105mh@8shield.net>"]
 edition = "2021"
+# Matches sqlx 0.9's documented MSRV — any older toolchain fails to
+# resolve the dependency anyway, declaring it here just turns the
+# error into a single clear message instead of a wall of rustc output.
+rust-version = "1.94"
 license = "AGPL-3.0-only"
 repository = "https://github.com/InstaZDLL/waveflow-server"
 homepage = "https://waveflow.app"

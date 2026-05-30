@@ -17,7 +17,7 @@ TL;DR:
 
 ## Local development
 
-> Pre-requirement: Rust stable (1.84+) and a Postgres ≥ 15 instance reachable on `DATABASE_URL`.
+> Pre-requirement: Rust stable (1.94+, the MSRV inherited from sqlx 0.9) and a Postgres ≥ 15 instance reachable on `DATABASE_URL`.
 
 ```bash
 git clone https://github.com/InstaZDLL/waveflow-server

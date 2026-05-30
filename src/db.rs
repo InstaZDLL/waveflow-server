@@ -1,11 +1,12 @@
 //! Postgres pool wiring + migration runner.
 //!
-//! `connect` opens the sqlx `PgPool` once at boot. Migrations under
-//! [`MIGRATIONS_DIR`] are applied via `sqlx::migrate!()` — the
-//! `_sqlx_migrations` bookkeeping table records the SHA-384 of every
-//! applied migration, so editing a previously-merged file makes the
-//! server refuse to start (the rule already documented in the desktop
-//! `CLAUDE.md`). Schema evolutions create a new dated migration.
+//! [`connect`] opens the sqlx `PgPool` once at boot. The migrations
+//! under `./migrations` are embedded into [`MIGRATOR`] via
+//! `sqlx::migrate!()` — the `_sqlx_migrations` bookkeeping table
+//! records the SHA-384 of every applied migration, so editing a
+//! previously-merged file makes the server refuse to start (the rule
+//! already documented in the desktop `CLAUDE.md`). Schema evolutions
+//! create a new dated migration.
 
 use std::time::Duration;
 
