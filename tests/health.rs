@@ -1,43 +1,23 @@
 //! End-to-end smoke test for the /health endpoint.
 //!
-//! Spawns the actual axum app on a kernel-assigned port, fires a
-//! reqwest call at it, and validates the response shape. This is the
-//! template for every future endpoint test — it confirms that the
-//! router wiring + middleware stack actually reach the handler, not
-//! just that the handler compiles.
+//! Spawns the real axum app against a per-test Postgres database
+//! (provisioned by `#[sqlx::test]`), fires a reqwest call at it, and
+//! validates the response shape. Template for every future endpoint
+//! test — it confirms the router wiring + middleware actually reach
+//! the handler, not just that the handler compiles.
 
-use std::net::SocketAddr;
+mod support;
 
 use serde_json::Value;
-use waveflow_server::{app, Config};
+use sqlx::PgPool;
+use support::spawn_app;
 
-#[tokio::test]
-async fn health_returns_ok_with_version() {
-    // `127.0.0.1:0` lets the kernel hand us a free port — concurrent
-    // test runs (cargo's default behaviour) don't collide.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn health_returns_ok_with_version(pool: PgPool) {
+    let base = spawn_app(pool).await;
 
-    let config = Config {
-        bind_addr: addr,
-        request_timeout_secs: 5,
-    };
-
-    // Serve in the background. The test holds no handle on the task —
-    // it drops at process exit, which is fine for a one-shot test.
-    let app = app(config);
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-
-    let client = reqwest::Client::new();
-    let body: Value = client
-        .get(format!("http://{addr}/health"))
+    let body: Value = reqwest::Client::new()
+        .get(format!("{base}/health"))
         .send()
         .await
         .expect("request failed")
@@ -55,29 +35,13 @@ async fn health_returns_ok_with_version() {
     );
 }
 
-#[tokio::test]
-async fn health_propagates_inbound_request_id() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let config = Config {
-        bind_addr: addr,
-        request_timeout_secs: 5,
-    };
-
-    let app = app(config);
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn health_propagates_inbound_request_id(pool: PgPool) {
+    let base = spawn_app(pool).await;
 
     let provided = "test-request-id-1234";
     let resp = reqwest::Client::new()
-        .get(format!("http://{addr}/health"))
+        .get(format!("{base}/health"))
         .header("x-request-id", provided)
         .send()
         .await

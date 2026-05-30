@@ -14,14 +14,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
-    name: Rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  # Linux runs the full suite with a Postgres service container.
+  # `sqlx::test` creates a per-test database from `DATABASE_URL`,
+  # runs `db::MIGRATOR`, and drops the database at the end of each
+  # test — so the suite stays hermetic without manual fixtures.
+  linux:
+    name: Rust (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: waveflow_server_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/waveflow_server_ci
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -33,9 +49,6 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: cargo fmt
-        # Format check is OS-agnostic and cheap — run it on the Linux
-        # leg only to avoid double-failing the PR on the same lint.
-        if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
       - name: cargo clippy
@@ -46,3 +59,29 @@ jobs:
 
       - name: cargo test
         run: cargo test --all-features
+
+  # Windows runs build + lint only. GitHub Actions service containers
+  # are Linux-only, so we'd need to install Postgres on the runner just
+  # to run the integration tests — and waveflow-server is a Linux/macOS
+  # daemon by design (it's not the desktop binary). Keep the Windows
+  # leg as a compile guard so a Rust-stable change on Windows doesn't
+  # silently break developers building on that platform.
+  windows:
+    name: Rust (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo check
+        run: cargo check --all-targets --all-features

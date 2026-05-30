@@ -2,7 +2,7 @@
 
 Self-hosted backend for [WaveFlow](https://github.com/InstaZDLL/WaveFlow). Powers multi-device library sync, browser playback, public shareable playlists, and (later) the mobile app.
 
-> **Status:** bootstrap. The `1.b` skeleton (axum + Postgres CRUD) is not implemented yet. Track progress against the Phase 1 milestone on the main repo.
+> **Status:** Phase 1.b.2 — axum skeleton + Postgres pool + first migration + `/ready` probe. CRUD endpoints (1.b.4) and OpenAPI spec (1.b.3) land in the following PRs. Track progress against the Phase 1 milestone on the main repo.
 
 ## Architecture
 
@@ -22,10 +22,30 @@ TL;DR:
 ```bash
 git clone https://github.com/InstaZDLL/waveflow-server
 cd waveflow-server
+cp .env.example .env
+# Edit DATABASE_URL if needed, then:
 cargo run
 ```
 
-Once the `1.b` skeleton lands the binary will boot a `/health` endpoint on `:3000`. Until then `cargo run` only prints the placeholder banner.
+`cargo run` connects to Postgres, applies pending migrations, opens the listener on `WAVEFLOW_BIND`, and serves two probes today:
+
+- `GET /health` — liveness, always returns `200 {status, version}`. Doesn't touch the DB.
+- `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: <error>}` otherwise.
+
+CRUD endpoints under `/api/v1/*` (1.b.4) ride on the same pool.
+
+### Running the tests
+
+The integration suite uses `#[sqlx::test]`, which spins up a per-test database from `DATABASE_URL` and drops it on exit. Point it at any reachable Postgres instance:
+
+```bash
+docker run --name waveflow-pg \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=postgres -p 5432:5432 -d postgres:17
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test
+```
+
+CI provisions the same shape via a GitHub Actions service container (see `.github/workflows/ci.yml`).
 
 ## Repository layout
 
@@ -33,15 +53,24 @@ Once the `1.b` skeleton lands the binary will boot a `/health` endpoint on `:300
 .
 ├── Cargo.toml              # single binary crate, name = `waveflow-server`
 ├── src/
-│   └── main.rs             # entry point
+│   ├── main.rs             # entrypoint — connect pool, run migrations, serve
+│   ├── lib.rs              # router + AppState (PgPool)
+│   ├── config.rs           # `Config::from_env` — single env-reading entrypoint
+│   ├── db.rs               # PgPool wiring + embedded migration runner
+│   └── api/                # one file per resource (/health, /ready, …)
+├── migrations/             # sqlx migrations (immutable once merged)
+├── tests/                  # integration tests (real Postgres via sqlx::test)
+├── .env.example            # template — see `Config` for the full env surface
 ├── .github/workflows/
-│   └── ci.yml              # cargo check / test / clippy / fmt on push + PR
+│   ├── ci.yml              # cargo check / test / clippy / fmt (+ pg service)
+│   ├── codeql.yml          # security scanning (rust + actions)
+│   └── dco.yml             # DCO sign-off check on PRs
 ├── CONTRIBUTING.md         # DCO sign-off + commit conventions
 ├── LICENSE                 # AGPL-3.0 (server hosts a network service)
 └── README.md               # this file
 ```
 
-Once Phase 1.b starts, this grows into `src/{api,db,sync}` modules and a `migrations/` directory. The structure mirrors `waveflow`'s `src-tauri/crates/app/src/` so contributors who know one repo can read the other without re-orienting.
+The structure mirrors `waveflow`'s `src-tauri/crates/app/src/` so contributors who know one repo can read the other without re-orienting. Sync (`src/sync/`), streaming (`src/stream/`) and auth middleware land as new modules in later sub-phases.
 
 ## License
 
