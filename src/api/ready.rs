@@ -23,7 +23,7 @@ use crate::AppState;
 #[derive(Debug, Serialize)]
 struct ReadyResponse {
     status: &'static str,
-    db: String,
+    db: &'static str,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -36,20 +36,23 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
             StatusCode::OK,
             Json(ReadyResponse {
                 status: "ready",
-                db: "ok".to_string(),
+                db: "ok",
             }),
         ),
         Err(err) => {
-            // Log at warn so a flapping DB shows up in dashboards
-            // without burying the rest of the access log. Error
-            // detail goes in the response body for the orchestrator's
-            // probe logs; status stays a tight enum.
+            // Keep the sqlx error detail in the warn log only — a
+            // sqlx error string can reveal the connection-URL host /
+            // user and is not the kind of thing /ready should leak to
+            // an unauthenticated caller (the typical /ready consumer
+            // is a load balancer with no auth header). The body keeps
+            // a non-sensitive sentinel so the response shape stays a
+            // tight enum.
             tracing::warn!(error = %err, "readiness probe failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ReadyResponse {
                     status: "not_ready",
-                    db: err.to_string(),
+                    db: "unavailable",
                 }),
             )
         }
