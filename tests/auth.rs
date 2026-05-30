@@ -313,14 +313,11 @@ async fn rejects_missing_sub() {
         .verify_token(&token)
         .await
         .expect_err("missing sub should reject");
-    // jsonwebtoken's required-claims check fires first → InvalidClaims;
-    // the explicit MissingSub branch only triggers when the token
-    // round-trips with `null` or an empty string. Either path is a
-    // correct rejection — assert the disjunction.
-    assert!(
-        matches!(err, AuthError::InvalidClaims(_) | AuthError::MissingSub),
-        "got {err:?}"
-    );
+    // `sub` is intentionally OUT of `set_required_spec_claims` so
+    // jsonwebtoken's structural-claim check can't flatten it into
+    // `InvalidClaims` — the discriminated `MissingSub` branch is
+    // the only legitimate outcome here.
+    assert!(matches!(err, AuthError::MissingSub), "got {err:?}");
 }
 
 #[tokio::test]
