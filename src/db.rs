@@ -59,3 +59,17 @@ pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("migration failed: {e}"))?;
     Ok(())
 }
+
+/// Schema-agnostic connectivity probe. `SELECT 1` round-trips through
+/// the pool; success means the connection is alive, failure means
+/// either the pool is exhausted or Postgres is unreachable. Lives in
+/// this module rather than the handler so the SQL stays inside the DB
+/// layer (per the project's no-SQL-in-handlers rule); a richer
+/// readiness check would land here too once the server grows
+/// dependencies beyond Postgres.
+pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool)
+        .await
+        .map(|_| ())
+}

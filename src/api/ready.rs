@@ -19,9 +19,8 @@
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
-use sqlx::PgPool;
 
-use crate::AppState;
+use crate::{db, AppState};
 
 #[derive(Debug, Serialize)]
 struct ReadyResponse {
@@ -34,7 +33,10 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
-    match probe_db(&state.db).await {
+    // The actual `SELECT 1` lives in `db::ping` so this handler stays
+    // pure HTTP orchestration — same boundary the project enforces
+    // between Tauri commands and `waveflow-core` on the desktop side.
+    match db::ping(&state.db).await {
         Ok(()) => (
             StatusCode::OK,
             Json(ReadyResponse {
@@ -60,16 +62,4 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
             )
         }
     }
-}
-
-async fn probe_db(pool: &PgPool) -> Result<(), sqlx::Error> {
-    // `SELECT 1` is the canonical cheap connectivity check. We could
-    // call into `waveflow-core`'s repository traits for a richer probe
-    // (e.g. count profiles), but that would couple readiness to a
-    // table that doesn't exist on the very first boot before migrations
-    // run — `SELECT 1` is schema-agnostic and stays correct.
-    sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(pool)
-        .await
-        .map(|_| ())
 }
