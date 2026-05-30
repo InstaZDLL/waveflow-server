@@ -178,6 +178,43 @@ async fn create_with_explicit_color_and_icon(pool: PgPool) {
     assert_eq!(created["description"], "Live recordings 2024-2026");
 }
 
+/// Empty or whitespace-only `name` must 400 — the boundary validation
+/// rejects the request before the storage round-trip, so a future
+/// client bug can't ship blank-shelf rows into the DB.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn create_rejects_empty_name(pool: PgPool) {
+    let base = spawn_app(pool).await;
+    let user_id = mint_user(&base).await;
+    let profile_id = mint_profile(&base, user_id, "Alice").await;
+
+    for blank in ["", "   ", "\t\n "] {
+        let resp = reqwest::Client::new()
+            .post(format!("{base}/api/v1/profiles/{profile_id}/libraries"))
+            .header("x-user-id", user_id.to_string())
+            .json(&json!({ "name": blank }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "name = {blank:?} should 400"
+        );
+    }
+
+    // And nothing got persisted.
+    let list: Vec<Value> = reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles/{profile_id}/libraries"))
+        .header("x-user-id", user_id.to_string())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(list.is_empty(), "blank-name request leaked a row");
+}
+
 /// Foreign profile id under the calling user must 404 — no leak that
 /// the profile exists at all on the box.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
@@ -463,8 +500,12 @@ async fn profile_delete_cascades_to_libraries(pool: PgPool) {
     let user_id = mint_user(&base).await;
 
     // Two profiles so the delete-last-profile guard doesn't block us.
+    // p2 stays alive so we can use it as a proxy GET path after p1
+    // is deleted — a route through a *still-owned* profile is the
+    // only way to prove the library row itself is gone (rather than
+    // the request failing because the path's profile no longer exists).
     let p1 = mint_profile(&base, user_id, "one").await;
-    let _p2 = mint_profile(&base, user_id, "two").await;
+    let p2 = mint_profile(&base, user_id, "two").await;
 
     let lib_id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{p1}/libraries"))
@@ -492,8 +533,23 @@ async fn profile_delete_cascades_to_libraries(pool: PgPool) {
 
     // The library must be gone too — any further GET surfaces a 404,
     // regardless of which (still-owned) profile id we proxy through.
+    // Via p1 (the deleted profile): trivially 404 because the path's
+    // profile is gone.
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{p1}/libraries/{lib_id}"))
+        .header("x-user-id", user_id.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Via p2 (still owned): this is the cascade canary — if CASCADE
+    // didn't fire the row would still exist (with `profile_id = p1`),
+    // and while the `id = $1 AND profile_id = $2` clause would also
+    // reject the lookup, a future change that loosens the scoping
+    // would surface here as a leaked 200. Worth the extra request.
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles/{p2}/libraries/{lib_id}"))
         .header("x-user-id", user_id.to_string())
         .send()
         .await
