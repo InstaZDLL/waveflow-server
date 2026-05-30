@@ -32,12 +32,18 @@ function applyThemeMode(mode: ThemeMode) {
 }
 
 export default function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>('auto')
+  // Lazy initial state — reads from localStorage on mount instead of
+  // setState-in-effect (which `react-hooks/set-state-in-effect`
+  // catches as a code smell). SSR-safe because `getInitialMode()`
+  // checks for `window` and falls back to `'auto'`.
+  const [mode, setMode] = useState<ThemeMode>(getInitialMode)
 
   useEffect(() => {
-    const initialMode = getInitialMode()
-    setMode(initialMode)
-    applyThemeMode(initialMode)
+    // The mount-time apply still has to live in an effect — it
+    // touches `document` which isn't available during SSR.
+    applyThemeMode(mode)
+    // Only on mount; subsequent changes go through `toggleMode`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
