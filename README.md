@@ -2,7 +2,7 @@
 
 Self-hosted backend for [WaveFlow](https://github.com/InstaZDLL/WaveFlow). Powers multi-device library sync, browser playback, public shareable playlists, and (later) the mobile app.
 
-> **Status:** Phase 1.b.3 — axum skeleton + Postgres pool + first migration + `/ready` probe + OpenAPI 3.1 spec at `/openapi.json` + Scalar UI at `/reference`. CRUD endpoints (1.b.4) land in the following PR. Track progress against the Phase 1 milestone on the main repo.
+> **Status:** Phase 1.b.4 — tenant-scoped profile CRUD landed (`POST /api/v1/users`, full `/api/v1/profiles/*` with the dev `X-User-Id` header shim). Phase 1.d will swap the shim for JWT verification against Better Auth's JWKS. Track progress against the Phase 1 milestone on the main repo.
 
 ## Architecture
 
@@ -33,8 +33,10 @@ cargo run
 - `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: "unavailable"}` otherwise. The sqlx error detail stays in the `tracing::warn!` log so an unauthenticated probe (e.g. a load balancer) doesn't see the connection-URL host or credentials.
 - `GET /openapi.json` — OpenAPI 3.1 spec built from the handlers that carry both a `#[utoipa::path(...)]` annotation and a `routes!()` registration on the per-module `OpenApiRouter`. A plain `Router::route()` would mount the handler but leave it absent from the spec, so make sure new endpoints follow the same `routes!()` pattern as `/health` and `/ready`.
 - `GET /reference` — [Scalar](https://github.com/scalar/scalar) API reference UI. Modern, dark-mode-native, integrated search. The OpenAPI spec it renders is the same one served at `/openapi.json`.
+- `POST /api/v1/users` — mint a user row, returns `{id}`. Gated by the dev-auth shim (see below).
+- `/api/v1/profiles/*` — full CRUD scoped to the calling user via the `X-User-Id` header. Tenant isolation enforced at the storage layer (`PostgresProfileRepository::*_for_user`), not just at the handler. `DELETE` refuses 409 if it would leave the user with zero profiles — same invariant the desktop's selector enforces client-side.
 
-CRUD endpoints under `/api/v1/*` (1.b.4) ride on the same pool.
+> ⚠️ **Dev auth shim — production-off by default.** `/api/v1/*` returns `503 Service Unavailable` until `WAVEFLOW_DEV_AUTH=1` is set explicitly. With the gate on, every data route reads its tenant id from a forgeable `X-User-Id` request header — fine for local dev against a private Postgres, **never safe to expose on the public internet**. Phase 1.d retires both the flag and the shim by replacing the middleware with JWT verification against Better Auth's JWKS endpoint.
 
 ### Running the tests
 

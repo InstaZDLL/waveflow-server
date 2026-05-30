@@ -25,6 +25,7 @@ use utoipa_scalar::{Scalar, Servable};
 pub mod api;
 pub mod config;
 pub mod db;
+pub mod middleware;
 
 pub use config::Config;
 
@@ -122,7 +123,7 @@ pub fn app(config: Config, state: AppState) -> Router {
     // `/reference`; both stay outside the `/api/v1/*` namespace so a
     // future Better-Auth middleware (1.d) gates only the data routes.
     let (api_router, openapi) = utoipa_axum::router::OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .merge(api::router(state))
+        .merge(api::router(state, &config))
         .split_for_parts();
 
     Router::new()
