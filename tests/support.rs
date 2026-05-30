@@ -12,8 +12,11 @@ use std::net::SocketAddr;
 use sqlx::PgPool;
 use waveflow_server::{app, AppState, Config};
 
-/// Spawn the app in the background and return its base URL.
-pub async fn spawn_app(pool: PgPool) -> String {
+/// Boot the app with an arbitrary `dev_auth_enabled` value. The two
+/// convenience wrappers below are the only spellings tests should
+/// use; the boolean stays here so a future "exhaustively test both
+/// branches" style ever gets a single point to extend.
+async fn spawn_app_with_dev_auth(pool: PgPool, dev_auth_enabled: bool) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -26,6 +29,7 @@ pub async fn spawn_app(pool: PgPool) -> String {
         // is fine inside the test.
         database_url: "<test>".into(),
         db_max_connections: 1,
+        dev_auth_enabled,
     };
 
     let state = AppState { db: pool };
@@ -39,4 +43,19 @@ pub async fn spawn_app(pool: PgPool) -> String {
     });
 
     format!("http://{addr}")
+}
+
+/// Spawn the app with the dev `X-User-Id` shim **enabled** — what
+/// most integration tests want. Use [`spawn_app_prod_gate`] for the
+/// few that exercise the 503 path.
+pub async fn spawn_app(pool: PgPool) -> String {
+    spawn_app_with_dev_auth(pool, true).await
+}
+
+/// Spawn the app with the production-default config — dev auth
+/// **disabled** so every `/api/v1/*` request short-circuits to 503.
+/// Used by `dev_auth_gate_returns_503_when_disabled`.
+#[allow(dead_code)] // some test files don't use this helper
+pub async fn spawn_app_prod_gate(pool: PgPool) -> String {
+    spawn_app_with_dev_auth(pool, false).await
 }

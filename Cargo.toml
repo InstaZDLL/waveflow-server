@@ -23,7 +23,7 @@ homepage = "https://waveflow.app"
 # build is reproducible — bump the rev in tree when picking up a new
 # core release. `default-features = false` because core's
 # default-feature set is empty; we only want the `postgres` feature.
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "3ab43f07b925717d6e342046d2b782383e7d1b97", default-features = false, features = ["postgres"] }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "24ffa58ac2e2580a02e9018bc743c4fcdfdd892b", default-features = false, features = ["postgres"] }
 
 # Database. `runtime-tokio` matches our `#[tokio::main]` runtime;
 # `postgres` is the driver; `macros` enables `query_as!`; `migrate`
@@ -33,6 +33,10 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "3ab43f07
 # Pure-Rust rustls matches the convention reqwest uses elsewhere in
 # the project — no OpenSSL system dep to ship in the container image.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "tls-rustls"] }
+
+# Wall-clock timestamps for `created_at` / `last_used_at`. Same
+# crate the desktop uses so a shared timestamp helper stays cheap.
+chrono = "0.4"
 
 # OpenAPI 3.1 spec generation. `utoipa-axum` exposes an
 # `OpenApiRouter` that picks up every handler tagged with

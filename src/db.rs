@@ -73,3 +73,22 @@ pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
         .await
         .map(|_| ())
 }
+
+/// User-table helpers. Keeps the raw SQL out of handlers — same
+/// boundary the project's no-SQL-in-handlers rule enforces for the
+/// `/ready` probe. Returns the new user id so the dev caller can
+/// stash it for the subsequent `X-User-Id` header.
+pub mod users {
+    use sqlx::PgPool;
+
+    /// Insert a new user row with the supplied `created_at` (epoch ms)
+    /// and return the assigned id. `BIGSERIAL` means we never have to
+    /// pass the id in — Postgres allocates from its sequence and
+    /// `RETURNING id` ships it back in the same round-trip.
+    pub async fn create(pool: &PgPool, created_at: i64) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>("INSERT INTO users (created_at) VALUES ($1) RETURNING id")
+            .bind(created_at)
+            .fetch_one(pool)
+            .await
+    }
+}
