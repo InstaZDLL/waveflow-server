@@ -74,12 +74,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # JWT verification against Better Auth's JWKS endpoint (RFC-001 §6.6).
-# `jsonwebtoken` 9 covers RS256 / ES256 signature verification, exp /
+# `jsonwebtoken` 10 covers RS256 / ES256 signature verification, exp /
 # nbf clock checks and the `jwk` / `jwk-set` types for parsing a JWKS
 # document. The middleware that consumes this (1.d.1-PR3) caches the
 # decoded keys keyed by `kid` so the per-request path stays a single
 # RSA verify, no HTTP round-trip in the hot loop.
-jsonwebtoken = "9"
+#
+# v10 introduced a `CryptoProvider` indirection: exactly one of
+# `rust_crypto` / `aws_lc_rs` must be enabled or every signature
+# verify panics. `rust_crypto` is the pure-Rust path that matches the
+# `rustls-tls` feature we use on `reqwest` — no OpenSSL / aws-lc
+# native deps to ship in the container image.
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 
 # HTTP client for the JWKS fetcher. Already a dev-dep for the
 # integration tests — promoted to runtime so the auth module can
@@ -100,6 +106,15 @@ anyhow = "1"
 thiserror = "2"
 
 [dev-dependencies]
+# Activate `use_pem` for the JWT tests only. The harness in
+# `tests/jwks_harness.rs` calls `EncodingKey::from_rsa_pem(…)` to
+# sign tokens from a freshly generated keypair. Production code
+# (`src/auth.rs`) reads keys via `DecodingKey::from_rsa_components(n, e)`
+# off the JWKS, so it doesn't need the PEM parser — and Cargo's
+# feature unification per build target keeps the release binary
+# free of the extra ~20 KB pem/asn.1 deps.
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+
 # JWT auth tests sign a token with an RSA-2048 keypair generated at
 # test time, expose the public half on a local mock JWKS endpoint
 # (via axum), and assert the verifier's accept / reject paths. The
@@ -110,6 +125,13 @@ thiserror = "2"
 rsa = "0.9"
 rand = "0.8"
 base64 = "0.22"
+
+# ES256 / P-256 keypair generation for the ECDSA mirror of the RSA
+# harness — same role as `rsa` above, just for the elliptic-curve
+# branch of `build_cached_key`. Per-test keygen is ~1 ms (vs ~50 ms
+# for RSA-2048), so adding an ES256 sweep across the test suite is
+# essentially free.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 
 [profile.release]
 # Match the desktop app's release profile so behaviour parity holds at

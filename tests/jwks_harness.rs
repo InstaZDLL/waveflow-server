@@ -1,13 +1,14 @@
 //! Shared JWKS test harness — spawns a mock JWKS endpoint backed by
-//! an RSA-2048 keypair generated at construction time, and exposes
-//! both a `JwtVerifier` pointed at it and a `mint(claims)` helper
-//! that signs tokens with the matching private key.
+//! a keypair generated at construction time (RSA-2048 / RS256 by
+//! default; ES256 / P-256 via [`JwksHarness::spawn_es256`]) and
+//! exposes both a `JwtVerifier` pointed at it and a `mint(claims)`
+//! helper that signs tokens with the matching private key.
 //!
 //! Cargo's integration tests each compile as their own crate, so
-//! this file is included via `#[path]` from the consumers
-//! (`tests/auth.rs`, `tests/jwt_middleware.rs`) rather than mounted
-//! as a sub-module. The `#[allow(dead_code)]` on the items here
-//! covers symbols a given consumer doesn't end up calling.
+//! this file is included via `mod jwks_harness;` from the consumers
+//! (`tests/auth.rs`, `tests/jwt_middleware.rs`) — Cargo also
+//! compiles it as a standalone "empty" test binary, hence the
+//! `#![allow(dead_code)]` blanket.
 
 #![allow(dead_code)]
 
@@ -24,10 +25,14 @@ use axum::{routing::get, Json, Router};
 use jsonwebtoken::{
     encode,
     jwk::{
-        AlgorithmParameters, CommonParameters, Jwk, JwkSet, KeyAlgorithm, PublicKeyUse,
-        RSAKeyParameters, RSAKeyType,
+        AlgorithmParameters, CommonParameters, EllipticCurve, EllipticCurveKeyParameters,
+        EllipticCurveKeyType, Jwk, JwkSet, KeyAlgorithm, PublicKeyUse, RSAKeyParameters,
+        RSAKeyType,
     },
     Algorithm, EncodingKey, Header,
+};
+use p256::{
+    elliptic_curve::sec1::ToEncodedPoint, pkcs8::EncodePrivateKey, SecretKey as P256Secret,
 };
 use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts, RsaPrivateKey, RsaPublicKey};
 use serde::Serialize;
@@ -38,22 +43,95 @@ pub const TEST_ISSUER: &str = "https://auth.test.example.com";
 pub const TEST_AUDIENCE: &str = "waveflow-server-test";
 pub const TEST_KID: &str = "test-key-1";
 
+/// JWS algorithm the harness uses to sign tokens AND advertise in
+/// the JWK. Picks the right `Algorithm` for both the test's
+/// `Header::new(...)` and the verifier's algorithm cross-check.
+#[derive(Debug, Clone, Copy)]
+pub enum HarnessAlg {
+    Rs256,
+    Es256,
+}
+
+impl HarnessAlg {
+    pub fn algorithm(self) -> Algorithm {
+        match self {
+            HarnessAlg::Rs256 => Algorithm::RS256,
+            HarnessAlg::Es256 => Algorithm::ES256,
+        }
+    }
+
+    fn key_algorithm(self) -> KeyAlgorithm {
+        match self {
+            HarnessAlg::Rs256 => KeyAlgorithm::RS256,
+            HarnessAlg::Es256 => KeyAlgorithm::ES256,
+        }
+    }
+}
+
 pub struct JwksHarness {
     pub jwks_url: String,
     pub encoding_key: EncodingKey,
+    pub alg: HarnessAlg,
     pub jwks_request_count: Arc<AtomicUsize>,
 }
 
 impl JwksHarness {
+    /// RSA-2048 / RS256 — Better Auth's default. Most tests use this.
     pub async fn spawn() -> Self {
-        Self::spawn_with(true).await
+        Self::spawn_rs256(true).await
     }
 
+    /// RSA-2048 with the JWK's `alg` field OMITTED. Covers RFC 7517
+    /// §4.4 — `build_cached_key` defaults RSA → RS256 when alg is
+    /// absent, EC needs explicit alg.
     pub async fn spawn_without_alg() -> Self {
-        Self::spawn_with(false).await
+        Self::spawn_rs256(false).await
     }
 
-    pub async fn spawn_with(advertise_alg: bool) -> Self {
+    /// P-256 / ES256. Exercises the elliptic-curve branch of
+    /// `build_cached_key`. Per-test keygen is ~1 ms (vs ~50 ms for
+    /// the RSA path), so an ES256 mirror across the suite is cheap.
+    pub async fn spawn_es256() -> Self {
+        let secret = P256Secret::random(&mut rand::thread_rng());
+        let public = secret.public_key();
+
+        let encoding_key = {
+            // jsonwebtoken's `from_ec_pem` accepts PKCS#8 EC keys; the
+            // p256 crate's PKCS#8 serializer is the path of least
+            // friction (vs SEC1, which requires a feature flag).
+            let pem = secret
+                .to_pkcs8_pem(Default::default())
+                .expect("pkcs8 pem encode");
+            EncodingKey::from_ec_pem(pem.as_bytes()).expect("encoding key from EC pem")
+        };
+
+        // Encode the public key as the SEC1 uncompressed form (0x04 ||
+        // X || Y), then split X / Y into base64url for the JWK.
+        let encoded_point = public.to_encoded_point(false);
+        let x = encoded_point.x().expect("EC public key missing x").to_vec();
+        let y = encoded_point.y().expect("EC public key missing y").to_vec();
+
+        let jwks = JwkSet {
+            keys: vec![Jwk {
+                common: CommonParameters {
+                    public_key_use: Some(PublicKeyUse::Signature),
+                    key_algorithm: Some(KeyAlgorithm::ES256),
+                    key_id: Some(TEST_KID.to_string()),
+                    ..Default::default()
+                },
+                algorithm: AlgorithmParameters::EllipticCurve(EllipticCurveKeyParameters {
+                    key_type: EllipticCurveKeyType::EC,
+                    curve: EllipticCurve::P256,
+                    x: base64_url(&x),
+                    y: base64_url(&y),
+                }),
+            }],
+        };
+
+        Self::serve(jwks, encoding_key, HarnessAlg::Es256).await
+    }
+
+    pub async fn spawn_rs256(advertise_alg: bool) -> Self {
         let mut rng = rand::thread_rng();
         let private = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen failed");
         let public = RsaPublicKey::from(&private);
@@ -65,7 +143,13 @@ impl JwksHarness {
             EncodingKey::from_rsa_pem(pem.as_bytes()).expect("encoding key from pem")
         };
 
-        let jwks = build_jwks(&public, advertise_alg);
+        let jwks = build_rsa_jwks(&public, advertise_alg);
+        Self::serve(jwks, encoding_key, HarnessAlg::Rs256).await
+    }
+
+    /// Shared listener + axum sub-app setup, factored out so the
+    /// per-alg constructors only have to compose the JWK Set.
+    async fn serve(jwks: JwkSet, encoding_key: EncodingKey, alg: HarnessAlg) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -96,12 +180,21 @@ impl JwksHarness {
         Self {
             jwks_url: format!("http://{addr}/.well-known/jwks.json"),
             encoding_key,
+            alg,
             jwks_request_count,
         }
     }
 
     pub fn jwks_request_count(&self) -> usize {
         self.jwks_request_count.load(Ordering::SeqCst)
+    }
+
+    /// Header with this harness's algorithm + the supplied `kid`. The
+    /// default for most tests is `header_with_kid(TEST_KID)`.
+    pub fn header_with_kid(&self, kid: &str) -> Header {
+        let mut h = Header::new(self.alg.algorithm());
+        h.kid = Some(kid.to_string());
+        h
     }
 
     /// Build a `JwtVerifier` pointing at this harness's mock JWKS.
@@ -128,11 +221,15 @@ impl JwksHarness {
     }
 
     pub fn mint(&self, claims: &impl Serialize, header: &Header) -> String {
+        // ES256 in jsonwebtoken 10 derives signatures deterministically
+        // from the supplied secret key — the same `(claims, key)` pair
+        // produces the same JWT across calls. RSA's PKCS#1 v1.5 sig is
+        // already deterministic. So no extra rng plumbing is needed here.
         encode(header, claims, &self.encoding_key).expect("token encode failed")
     }
 }
 
-pub fn build_jwks(public: &RsaPublicKey, advertise_alg: bool) -> JwkSet {
+pub fn build_rsa_jwks(public: &RsaPublicKey, advertise_alg: bool) -> JwkSet {
     let n_b64 = base64_url(&public.n().to_bytes_be());
     let e_b64 = base64_url(&public.e().to_bytes_be());
 
@@ -158,6 +255,9 @@ fn base64_url(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+/// Standalone helper — defaults to RS256. The per-harness
+/// `[`JwksHarness::header_with_kid`]` is preferred when the test
+/// might switch algorithms, but RSA-only tests can keep using this.
 pub fn header_with_kid(kid: &str) -> Header {
     let mut h = Header::new(Algorithm::RS256);
     h.kid = Some(kid.to_string());
