@@ -52,7 +52,7 @@ use jsonwebtoken::{
 };
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// How long a freshly-fetched JWKS document stays trusted before the
 /// next miss forces a refetch. One hour matches Better Auth's
@@ -180,6 +180,14 @@ impl JwksCache {
 pub struct JwtVerifier {
     config: JwtVerifierConfig,
     cache: RwLock<JwksCache>,
+    /// Single-flight gate on JWKS refresh. Without it, a thundering
+    /// herd of cache misses (e.g. a fleet restart hitting a fresh
+    /// verifier with no entries) would each trigger `refresh_cache`
+    /// and hammer the upstream JWKS endpoint. The mutex serialises
+    /// the refresh; the double-checked read after acquiring it lets
+    /// every waiter except the first one see the freshly-populated
+    /// cache and skip the HTTP round-trip entirely.
+    refresh_lock: Mutex<()>,
     client: reqwest::Client,
 }
 
@@ -195,6 +203,7 @@ impl JwtVerifier {
         Ok(Self {
             config,
             cache: RwLock::new(JwksCache::default()),
+            refresh_lock: Mutex::new(()),
             client,
         })
     }
@@ -212,6 +221,7 @@ impl JwtVerifier {
         Self {
             config,
             cache: RwLock::new(JwksCache::default()),
+            refresh_lock: Mutex::new(()),
             client,
         }
     }
@@ -255,8 +265,9 @@ impl JwtVerifier {
         let token_data = decode::<RawClaims>(token, &cached.decoding_key, &validation)
             .map_err(|err| AuthError::InvalidClaims(err.to_string()))?;
 
-        let sub = token_data.claims.sub.ok_or(AuthError::MissingSub)?;
-        if sub.trim().is_empty() {
+        let raw_sub = token_data.claims.sub.ok_or(AuthError::MissingSub)?;
+        let sub = raw_sub.trim();
+        if sub.is_empty() {
             // Belt-and-braces — the `required_spec_claims` check
             // above catches a missing field but not an explicitly
             // empty string. Mirrors the boundary trim+reject the
@@ -264,26 +275,63 @@ impl JwtVerifier {
             return Err(AuthError::MissingSub);
         }
 
-        Ok(VerifiedClaims { sub })
+        // Return the *trimmed* form so the middleware's
+        // `users.external_id = $sub` lookup in PR3 matches a row
+        // whose `external_id` went through `POST /api/v1/users`'s
+        // trim+reject path. A misbehaving upstream that emitted
+        // `" user-42 "` would otherwise cause every lookup to miss,
+        // surfacing as a confusing 401 rather than the expected
+        // happy path.
+        Ok(VerifiedClaims {
+            sub: sub.to_string(),
+        })
     }
 
     /// Look up a `kid` in the cache, fetching the JWKS on a miss or
-    /// expiry. The function holds the cache's read lock during the
-    /// hot path; only the refetch path takes the write lock.
+    /// expiry. Three-phase access pattern:
+    ///
+    /// 1. **Fast path** — single read-lock acquire. Cache fresh and
+    ///    `kid` present → return.
+    /// 2. **Single-flight gate** — slow path serialises on
+    ///    `refresh_lock`. Without this, N concurrent verifies on a
+    ///    cold or expired cache would each fire a JWKS fetch;
+    ///    holding the gate lets the first task refetch while the
+    ///    others wait.
+    /// 3. **Double-checked read** — after acquiring the gate, every
+    ///    waiter re-reads the cache. A previous waiter may have
+    ///    already refetched, in which case we return without firing
+    ///    the HTTP request again.
+    ///
+    /// Only the first contender for a refresh actually hits the
+    /// upstream; the rest amortise to a single fast-path read each.
     async fn resolve_kid(&self, kid: &str) -> Result<Arc<CachedKey>, AuthError> {
-        let now = Instant::now();
-
         // Fast path — cached, not stale, kid present.
         {
             let cache = self.cache.read().await;
-            if !cache.is_expired(now) {
+            if !cache.is_expired(Instant::now()) {
                 if let Some(key) = cache.keys.get(kid) {
                     return Ok(Arc::clone(key));
                 }
             }
         }
 
-        // Slow path — refetch the JWKS, then look the kid up again.
+        // Slow path — acquire the single-flight gate before fetching.
+        let _refresh_guard = self.refresh_lock.lock().await;
+
+        // Double-checked read: another task may have refreshed the
+        // cache while we were waiting for the gate. Re-read with a
+        // current `now()` so the freshness check uses post-wait time.
+        {
+            let cache = self.cache.read().await;
+            if !cache.is_expired(Instant::now()) {
+                if let Some(key) = cache.keys.get(kid) {
+                    return Ok(Arc::clone(key));
+                }
+            }
+        }
+
+        // Genuine refresh — every other waiter on the gate will see
+        // the populated cache when they reach the re-check above.
         self.refresh_cache().await?;
 
         let cache = self.cache.read().await;
@@ -338,16 +386,41 @@ struct RawClaims {
 /// day Better Auth makes it the default) so the caller can skip
 /// them silently. The `kid` is required because the cache is keyed
 /// on it; a key without a `kid` is unaddressable from a token.
+///
+/// RFC 7517 §4.4 marks the JWK `alg` parameter as OPTIONAL. When
+/// the upstream omits it, we fall back to a conservative per-key-type
+/// default:
+/// - **RSA** → `RS256`. The widely-deployed default for RSA-based
+///   JWS, and the only RSA variant we'd accept anyway without an
+///   explicit allowlist (RS512 / PS256 are valid but rare; an
+///   operator who needs them sets `alg` explicitly on the JWK).
+/// - **EllipticCurve** → no default. P-256 / P-384 / P-521 each map
+///   to a distinct `Algorithm` (ES256 / ES384 / ES512), and silently
+///   picking one would either reject legitimate tokens or accept
+///   the wrong curve. Operators publishing alg-less EC JWKs need
+///   to set `alg` explicitly.
+///
+/// The token's own `alg` is still cross-validated against the cached
+/// alg in `verify_token` — an algorithm-confusion downgrade (e.g.
+/// RS256 → HS256) still fails closed.
 fn build_cached_key(jwk: Jwk) -> Option<(String, CachedKey)> {
     let kid = jwk.common.key_id.clone()?;
-    let algorithm = jwk.common.key_algorithm?;
 
-    // jsonwebtoken's `Algorithm` enum and `KeyAlgorithm` enum are
-    // separate types — convert via the textual representation. The
-    // `parse` round-trip rejects algorithms our verifier doesn't
-    // understand without needing a `match` over every variant.
-    let alg_name = algorithm.to_string();
-    let algorithm: Algorithm = alg_name.parse().ok()?;
+    let algorithm = match jwk.common.key_algorithm {
+        Some(advertised) => {
+            // jsonwebtoken's `Algorithm` and `KeyAlgorithm` enums
+            // are separate types — convert via the textual
+            // representation. The `parse` round-trip rejects
+            // algorithms our verifier doesn't understand without
+            // needing a `match` over every variant.
+            advertised.to_string().parse::<Algorithm>().ok()?
+        }
+        None => match &jwk.algorithm {
+            AlgorithmParameters::RSA(_) => Algorithm::RS256,
+            // EC needs an explicit `alg` — see the doc-comment above.
+            _ => return None,
+        },
+    };
 
     let decoding_key = match &jwk.algorithm {
         AlgorithmParameters::RSA(rsa) => DecodingKey::from_rsa_components(&rsa.n, &rsa.e).ok()?,
