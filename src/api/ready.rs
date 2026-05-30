@@ -17,21 +17,48 @@
 //!   to keep waiting / stop routing traffic; the process keeps
 //!   running so a transient Postgres blip self-heals.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{db, AppState};
 
-#[derive(Debug, Serialize)]
-struct ReadyResponse {
-    status: &'static str,
-    db: &'static str,
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReadyResponse {
+    /// `"ready"` when every probed dependency is reachable, `"not_ready"`
+    /// otherwise.
+    #[schema(example = "ready")]
+    pub status: &'static str,
+    /// `"ok"` when the Postgres pool responded to the connectivity
+    /// probe, `"unavailable"` otherwise. The sqlx error detail is
+    /// emitted to `tracing::warn!` only — never returned in the body,
+    /// since unauthenticated probes (load balancers, healthcheckers)
+    /// shouldn't see the connection URL host / credentials.
+    #[schema(example = "ok")]
+    pub db: &'static str,
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new().route("/ready", get(ready)).with_state(state)
+pub fn router(state: AppState) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(ready))
+        .with_state(state)
 }
 
+/// Readiness probe — confirms every downstream dependency (Postgres
+/// today, plugin host + background-job runner later) is reachable.
+/// Returns 503 when degraded so a Kubernetes / systemd-style probe
+/// stops routing traffic without crashing the process — a transient
+/// Postgres blip self-heals.
+#[utoipa::path(
+    get,
+    path = "/ready",
+    tag = "probes",
+    responses(
+        (status = 200, description = "Every probed dependency is healthy", body = ReadyResponse),
+        (status = 503, description = "At least one dependency is degraded", body = ReadyResponse),
+    ),
+)]
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     // The actual `SELECT 1` lives in `db::ping` so this handler stays
     // pure HTTP orchestration — same boundary the project enforces
