@@ -73,17 +73,43 @@ dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# JWT verification against Better Auth's JWKS endpoint (RFC-001 §6.6).
+# `jsonwebtoken` 9 covers RS256 / ES256 signature verification, exp /
+# nbf clock checks and the `jwk` / `jwk-set` types for parsing a JWKS
+# document. The middleware that consumes this (1.d.1-PR3) caches the
+# decoded keys keyed by `kid` so the per-request path stays a single
+# RSA verify, no HTTP round-trip in the hot loop.
+jsonwebtoken = "9"
+
+# HTTP client for the JWKS fetcher. Already a dev-dep for the
+# integration tests — promoted to runtime so the auth module can
+# hit Better Auth's well-known endpoint. `rustls-tls` matches the
+# convention used elsewhere in the project (no OpenSSL system dep).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Error chaining at boundaries (main, Config::from_env, integration
 # tests). Internal modules should prefer `thiserror`-typed errors
 # once we have a domain richer than "boot failed"; anyhow's flexibility
 # is what we want at the binary edge.
 anyhow = "1"
 
+# Typed errors for internal modules. The first consumer is
+# `auth::AuthError` — the middleware needs to discriminate "bad
+# header" from "unreachable JWKS" to pick the right HTTP status,
+# which a stringly-typed `anyhow::Error` would muddle.
+thiserror = "2"
+
 [dev-dependencies]
-# In-process integration tests: spawn the app on a random port, hit it
-# with reqwest, assert on responses. Same crate the desktop uses for
-# its outbound clients so the version is unified.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# JWT auth tests sign a token with an RSA-2048 keypair generated at
+# test time, expose the public half on a local mock JWKS endpoint
+# (via axum), and assert the verifier's accept / reject paths. The
+# RSA crate generates the keypair; `rand` seeds the OsRng wrapper
+# the keygen needs; `base64` URL-encodes the `n` / `e` components
+# the JWK Set advertises. All dev-only — production never generates
+# keys, it only consumes the JWKS document.
+rsa = "0.9"
+rand = "0.8"
+base64 = "0.22"
 
 [profile.release]
 # Match the desktop app's release profile so behaviour parity holds at
