@@ -79,7 +79,7 @@ serde_json = "1"
 # document. The middleware that consumes this (1.d.1-PR3) caches the
 # decoded keys keyed by `kid` so the per-request path stays a single
 # RSA verify, no HTTP round-trip in the hot loop.
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 
 # HTTP client for the JWKS fetcher. Already a dev-dep for the
 # integration tests — promoted to runtime so the auth module can
