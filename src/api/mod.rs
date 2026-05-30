@@ -3,7 +3,8 @@
 //! The router is split per-resource so new endpoints land in their own
 //! file: `health.rs` covers liveness, `ready.rs` covers DB-aware
 //! readiness, `users.rs` mints dev-shim users, `profiles.rs` covers
-//! tenant-scoped profile CRUD. Future modules will cover `libraries`,
+//! tenant-scoped profile CRUD, `libraries.rs` covers tenant-scoped
+//! library CRUD nested under a profile. Future modules will cover
 //! `tracks`, `playlists`, `auth`, `sync`, `stream` (per RFC-001 §6 / §7).
 //!
 //! Versioning policy: every resource module mounts under `/api/v1/`
@@ -24,6 +25,7 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::{middleware as auth_middleware, AppState, Config};
 
 mod health;
+mod libraries;
 mod profiles;
 mod ready;
 mod users;
@@ -32,7 +34,8 @@ mod users;
 /// [`crate::app`]; sub-routers prefix their own paths and contribute
 /// their `#[utoipa::path]` declarations to the merged OpenAPI spec.
 ///
-/// `/api/v1/users` and `/api/v1/profiles/*` ride behind
+/// `/api/v1/users`, `/api/v1/profiles/*` and
+/// `/api/v1/profiles/{profile_id}/libraries/*` ride behind
 /// [`reject_dev_auth_disabled`] when `config.dev_auth_enabled` is
 /// false (the production default). Without the gate a forged
 /// `X-User-Id` header on a publicly-exposed instance would walk
@@ -51,12 +54,20 @@ pub fn router(state: AppState, config: &Config) -> OpenApiRouter {
         profiles::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
     };
 
+    let libraries_router = if config.dev_auth_enabled {
+        libraries::router(state.clone())
+            .layer(middleware::from_fn(auth_middleware::require_user_id))
+    } else {
+        libraries::router(state.clone()).layer(middleware::from_fn(reject_dev_auth_disabled))
+    };
+
     OpenApiRouter::new()
         // Probes — no auth, no gate.
         .merge(health::router())
         .merge(ready::router(state))
         .merge(users_router)
         .merge(profiles_router)
+        .merge(libraries_router)
 }
 
 /// Reject every request with **503 Service Unavailable**. Mounted on
