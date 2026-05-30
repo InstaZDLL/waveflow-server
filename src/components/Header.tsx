@@ -71,7 +71,14 @@ export default function Header() {
             </svg>
           </a>
 
-          {!isPending && session?.user ? (
+          {/*
+            While `useSession()` is still resolving on the first
+            render, render nothing in this slot — otherwise the
+            sign-in / sign-up links flash for a beat before swapping
+            to the authed chip, which reads as "you're signed out"
+            to a signed-in user.
+          */}
+          {isPending ? null : session?.user ? (
             <>
               <span
                 className="hidden text-sm text-[var(--sea-ink-soft)] sm:inline"

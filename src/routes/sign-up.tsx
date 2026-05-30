@@ -20,9 +20,9 @@ export function SignUp() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  function validate(): string | null {
+  function validate(trimmedEmail: string): string | null {
     if (!name.trim()) return 'Display name is required.'
-    if (!email.includes('@')) return 'Enter a valid email address.'
+    if (!trimmedEmail.includes('@')) return 'Enter a valid email address.'
     if (password.length < MIN_PASSWORD) {
       return `Password must be at least ${MIN_PASSWORD} characters.`
     }
@@ -34,24 +34,37 @@ export function SignUp() {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const local = validate()
+    // Trim before validating AND before sending — otherwise a stray
+    // leading space sneaks past the includes('@') check and Better
+    // Auth bounces it back as "invalid email" a moment later.
+    const trimmedEmail = email.trim()
+    const local = validate(trimmedEmail)
     if (local) {
       setError(local)
       return
     }
     setError(null)
     setLoading(true)
-    const { error: remote } = await authClient.signUp.email({
-      email,
-      password,
-      name: name.trim(),
-    })
-    setLoading(false)
-    if (remote) {
-      setError(remote.message ?? 'Sign-up failed. Please try again.')
-      return
+    try {
+      const { error: remote } = await authClient.signUp.email({
+        email: trimmedEmail,
+        password,
+        name: name.trim(),
+      })
+      if (remote) {
+        setError(remote.message ?? 'Sign-up failed. Please try again.')
+        return
+      }
+      await navigate({ to: '/' })
+    } catch (err) {
+      // Better Auth resolves with `{ error }` for handled failures,
+      // so a thrown exception here is a transport-level problem
+      // (DNS, CORS, network down). Surface a generic retry hint
+      // rather than leaving the button stuck on "Creating account…".
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+    } finally {
+      setLoading(false)
     }
-    await navigate({ to: '/' })
   }
 
   return (
