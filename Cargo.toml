@@ -30,6 +30,16 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "3ab43f07
 # pulls in the migration runner used by `db::run_migrations`.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono"] }
 
+# OpenAPI 3.1 spec generation. `utoipa-axum` exposes an
+# `OpenApiRouter` that picks up every handler tagged with
+# `#[utoipa::path]` so the spec stays in lockstep with the routes
+# without a parallel paths(...) list to maintain. `utoipa-scalar`
+# serves the Scalar API reference (Stripe-style — modern, ~500 KB
+# bundle, dark mode, integrated search) from `/reference`.
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+
 # HTTP layer. axum 0.8 is the line current for Tokio 1.45+ — the same
 # generation used by the desktop's reqwest 0.12, so we're not pulling
 # two competing hyper trees once `waveflow-core` lands as a dependency
