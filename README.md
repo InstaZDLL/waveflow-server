@@ -31,7 +31,7 @@ cargo run
 
 - `GET /health` — liveness, always returns `200 {status, version}`. Doesn't touch the DB.
 - `GET /ready` — readiness, `200 {status: "ready", db: "ok"}` when `SELECT 1` round-trips, `503 {status: "not_ready", db: "unavailable"}` otherwise. The sqlx error detail stays in the `tracing::warn!` log so an unauthenticated probe (e.g. a load balancer) doesn't see the connection-URL host or credentials.
-- `GET /openapi.json` — OpenAPI 3.1 spec generated from `#[utoipa::path]` annotations on every handler. Stays in lockstep with the routes — adding an endpoint adds it to the spec automatically.
+- `GET /openapi.json` — OpenAPI 3.1 spec built from the handlers that carry both a `#[utoipa::path(...)]` annotation and a `routes!()` registration on the per-module `OpenApiRouter`. A plain `Router::route()` would mount the handler but leave it absent from the spec, so make sure new endpoints follow the same `routes!()` pattern as `/health` and `/ready`.
 - `GET /reference` — [Scalar](https://github.com/scalar/scalar) API reference UI. Modern, dark-mode-native, integrated search. The OpenAPI spec it renders is the same one served at `/openapi.json`.
 
 CRUD endpoints under `/api/v1/*` (1.b.4) ride on the same pool.
