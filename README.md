@@ -15,13 +15,18 @@ Companion to the desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZ
 
 ```bash
 bun install        # one-shot; runs `prepare: husky` to install the commit-msg hook
+cp .env.example .env # then fill in DATABASE_URL, BETTER_AUTH_SECRET (openssl rand -base64 32), and BETTER_AUTH_URL
 bun run dev        # Vite dev server on http://localhost:3000
-bun run typecheck  # tsc --noEmit
+bun run typecheck  # tsc --noEmit (run after a build so routeTree.gen.ts exists)
 bun run lint       # eslint
 bun run format     # prettier --write
 bun run build      # production build (Vite + Nitro bundling)
 bun run test       # vitest run
 ```
+
+### Database
+
+Better Auth's tables live in Postgres. See [`db/README.md`](db/README.md) for the schema + bootstrap steps. A local dev DB via Docker takes ~10 seconds to stand up.
 
 ## Deploying
 
