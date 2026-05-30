@@ -26,6 +26,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@better-auth/core": "1.6.12",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
@@ -33,13 +34,17 @@
     "@tanstack/react-router-ssr-query": "latest",
     "@tanstack/react-start": "latest",
     "@tanstack/router-plugin": "^1.132.0",
+    "better-auth": "^1.6.12",
+    "kysely": "^0.28",
     "lucide-react": "^0.545.0",
     "nitro": "npm:nitro-nightly@latest",
+    "pg": "^8.21.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
+    "@better-auth/cli": "^1.4.21",
     "@commitlint/cli": "^19.6.1",
     "@commitlint/config-conventional": "^19.6.0",
     "@eslint/js": "^9.18.0",
@@ -48,6 +53,7 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",
