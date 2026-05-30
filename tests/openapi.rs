@@ -31,9 +31,7 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
     assert_eq!(spec["info"]["title"], "waveflow-server");
     assert_eq!(spec["openapi"].as_str().unwrap().chars().next(), Some('3'));
 
-    let paths = spec["paths"]
-        .as_object()
-        .expect("paths must be a map");
+    let paths = spec["paths"].as_object().expect("paths must be a map");
 
     // Every handler shipped in 1.b.* must be advertised. If a future
     // refactor drops the `#[utoipa::path]` macro from one of these,
