@@ -69,6 +69,10 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
     // `required: true` and silently misdocument the contract — lock
     // in the actual shape so a future refactor that drops the
     // `Option<…>` wrapper trips here instead of in production.
+    assert!(
+        paths.contains_key("/api/v1/users"),
+        "missing /api/v1/users in spec"
+    );
     let users_post = &paths["/api/v1/users"]["post"];
     let request_body = users_post
         .get("requestBody")
