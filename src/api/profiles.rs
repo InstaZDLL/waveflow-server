@@ -250,28 +250,14 @@ async fn update_profile(
     Path(id): Path<i64>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> impl IntoResponse {
+    // `rename_for_user` now hands back the updated row via
+    // `UPDATE … RETURNING …` in one round-trip — no separate
+    // read-back, so a concurrent DELETE can no longer flip a
+    // successful rename into a misleading 404.
     let repo = PostgresProfileRepository::new(state.db.clone());
     match repo.rename_for_user(id, &req.name, user_id).await {
-        Ok(true) => match repo.get_for_user(id, user_id).await {
-            Ok(Some(profile)) => {
-                (StatusCode::OK, Json(ProfileResponse::from(profile))).into_response()
-            }
-            Ok(None) => {
-                // Race: profile deleted between rename and read.
-                // Surface 404 — the rename committed but the row is
-                // gone, so reporting success would lie.
-                (StatusCode::NOT_FOUND, "profile not found").into_response()
-            }
-            Err(err) => {
-                tracing::error!(error = %err, id, user_id, "read-after-rename failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "read-after-rename failed",
-                )
-                    .into_response()
-            }
-        },
-        Ok(false) => (StatusCode::NOT_FOUND, "profile not found").into_response(),
+        Ok(Some(profile)) => (StatusCode::OK, Json(ProfileResponse::from(profile))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "profile not found").into_response(),
         Err(err) => {
             tracing::error!(error = %err, id, user_id, "rename profile failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response()
