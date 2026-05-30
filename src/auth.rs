@@ -257,10 +257,17 @@ impl JwtVerifier {
         let mut validation = Validation::new(cached.algorithm);
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
-        // `exp` is required by default; explicitly require `sub` too
-        // so a malformed token without one fails at validation time
-        // rather than after we already trusted the signature.
-        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+        // `exp` / `iss` / `aud` are required at the jsonwebtoken
+        // layer so the signature trust check rejects tokens that
+        // skip them. `sub` is deliberately NOT in this list — if
+        // jsonwebtoken flagged it, decode() would return
+        // `MissingRequiredClaim("sub")` which our outer map_err
+        // would flatten into `AuthError::InvalidClaims`, drowning
+        // the discriminated `MissingSub` branch below. Keeping
+        // `sub` as an `Option<String>` on `RawClaims` lets us
+        // surface the structural-vs-blank distinction the middleware
+        // (PR3) and structured logs will care about.
+        validation.set_required_spec_claims(&["exp", "iss", "aud"]);
 
         let token_data = decode::<RawClaims>(token, &cached.decoding_key, &validation)
             .map_err(|err| AuthError::InvalidClaims(err.to_string()))?;
