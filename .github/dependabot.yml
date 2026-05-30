@@ -15,7 +15,7 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
-      - npm
+      - 'scope: deps'
     commit-message:
       prefix: chore
     groups:
@@ -45,7 +45,7 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
-      - github-actions
+      - 'scope: tooling'
     commit-message:
       prefix: chore
     groups:

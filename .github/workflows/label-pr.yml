@@ -15,7 +15,11 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Apply scope:* labels
-        uses: actions/labeler@v6
+        # Pinned to the v6.1.0 commit SHA. `pull_request_target` runs
+        # in the base-repo context with write tokens, so a mutable
+        # `@v6` tag would let a compromised upstream rewrite the tag
+        # and exfiltrate that token. Same rule for every action below.
+        uses: actions/labeler@f27b608878404679385c85cfa523b85ccb86e213 # v6.1.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           configuration-path: .github/labeler.yml
@@ -27,21 +31,25 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Parse Conventional Commits prefix
-        uses: bcoe/conventional-release-labels@v1
+        uses: bcoe/conventional-release-labels@886f696738527c7be444262c327c89436dfb95a8 # v1.3.1
         with:
+          # Names mirror the desktop's `type: feat` convention
+          # (space after `:`, short `feat` not `feature`). Aligns
+          # the palette across the WaveFlow repos so a contributor
+          # browsing both sees consistent chips in the GitHub UI.
           type_labels: |
             {
-              "feat": "type:feature",
-              "fix": "type:fix",
-              "chore": "type:chore",
-              "docs": "type:docs",
-              "refactor": "type:refactor",
-              "test": "type:test",
-              "style": "type:style",
-              "perf": "type:perf",
-              "ci": "type:ci",
-              "build": "type:build",
-              "revert": "type:revert"
+              "feat": "type: feat",
+              "fix": "type: fix",
+              "chore": "type: chore",
+              "docs": "type: docs",
+              "refactor": "type: refactor",
+              "test": "type: test",
+              "style": "type: style",
+              "perf": "type: perf",
+              "ci": "type: ci",
+              "build": "type: build",
+              "revert": "type: revert"
             }
 
   size:
@@ -50,17 +58,19 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Apply size:xs/s/m/l/xl
-        uses: codelytv/pr-size-labeler@v1
+        uses: codelytv/pr-size-labeler@095a41fca88b8764fd9e008ad269bcdb82bb38b9 # v1.10.4
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          xs_label: 'size:xs'
+          # Same naming convention as `type: *` and `scope: *` —
+          # space after the colon, short tokens.
+          xs_label: 'size: xs'
           xs_max_size: 10
-          s_label: 'size:s'
+          s_label: 'size: s'
           s_max_size: 100
-          m_label: 'size:m'
+          m_label: 'size: m'
           m_max_size: 500
-          l_label: 'size:l'
+          l_label: 'size: l'
           l_max_size: 1000
-          xl_label: 'size:xl'
+          xl_label: 'size: xl'
           message_if_xl: ''
           fail_if_xl: false
