@@ -9,10 +9,13 @@
 //! Returns:
 //! - `200 {status: "ready", db: "ok"}` when the pool can acquire a
 //!   connection and `SELECT 1` round-trips.
-//! - `503 {status: "not_ready", db: <error>}` otherwise. A 503 here
-//!   tells a Kubernetes / systemd-style probe to keep waiting / stop
-//!   routing traffic; it doesn't crash the process so a transient
-//!   Postgres blip self-heals.
+//! - `503 {status: "not_ready", db: "unavailable"}` otherwise. The
+//!   sqlx error detail is emitted to `tracing::warn!` only — the body
+//!   keeps a fixed sentinel so an unauthenticated probe (load
+//!   balancer, healthchecker) doesn't see the connection-URL host or
+//!   credentials. A 503 here tells a Kubernetes / systemd-style probe
+//!   to keep waiting / stop routing traffic; the process keeps
+//!   running so a transient Postgres blip self-heals.
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
