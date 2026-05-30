@@ -49,3 +49,22 @@ async fn migration_creates_profile_table(pool: PgPool) {
 
     assert!(exists, "profile table missing after migrations");
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn migration_creates_library_table(pool: PgPool) {
+    // Same canary as `profile`: a renamed / dropped library.sql would
+    // pass `sqlx::test` provisioning but every 1.b.5 CRUD test would
+    // explode on the first INSERT. Lean on information_schema so the
+    // check stays cheap and doesn't depend on the column shape.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'library'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query failed");
+
+    assert!(exists, "library table missing after migrations");
+}
