@@ -89,8 +89,10 @@ impl From<Library> for LibraryResponse {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateLibraryRequest {
-    /// Display name shown in the sidebar shelf. Trimmed client-side;
-    /// the server stores the string as-is.
+    /// Display name shown in the sidebar shelf. Trimmed and validated
+    /// server-side — a payload whose `name` is empty or whitespace-only
+    /// after trim is rejected with 400 before the storage round-trip.
+    /// The trimmed form is what gets persisted.
     pub name: String,
     /// Optional free-form description ("Live recordings 2024-2026", …).
     pub description: Option<String>,
@@ -173,6 +175,7 @@ async fn list_libraries(
     request_body = CreateLibraryRequest,
     responses(
         (status = 201, description = "Library created", body = LibraryResponse),
+        (status = 400, description = "Empty or whitespace-only `name` after trim"),
         (status = 401, description = "Missing or invalid X-User-Id"),
         (status = 404, description = "Profile not owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
@@ -184,9 +187,17 @@ async fn create_library(
     Path(profile_id): Path<i64>,
     Json(req): Json<CreateLibraryRequest>,
 ) -> impl IntoResponse {
+    // Validate at the boundary — don't trust client-side trimming. An
+    // empty-name row would render as a blank shelf in the sidebar and
+    // is almost certainly the result of a client bug rather than user
+    // intent, so reject before the DB round-trip.
+    let name = req.name.trim();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "name is required").into_response();
+    }
     let now = Utc::now().timestamp_millis();
     let draft = LibraryDraft {
-        name: req.name,
+        name: name.to_string(),
         description: req.description,
         color_id: req.color_id.unwrap_or_else(|| DEFAULT_COLOR_ID.to_string()),
         icon_id: req.icon_id.unwrap_or_else(|| DEFAULT_ICON_ID.to_string()),
