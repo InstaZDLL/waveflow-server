@@ -11,7 +11,14 @@
 //! would buy us nothing because each `#[tokio::test]` runs in its
 //! own process state.
 
-use std::{net::SocketAddr, time::SystemTime};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::SystemTime,
+};
 
 use axum::{routing::get, Json, Router};
 use jsonwebtoken::{
@@ -36,16 +43,34 @@ const TEST_KID: &str = "test-key-1";
 struct AuthHarness {
     jwks_url: String,
     encoding_key: EncodingKey,
+    /// Bumped by the mock JWKS handler on each inbound request. The
+    /// `cache_hit_skips_second_fetch` test asserts this stays at `1`
+    /// after two verifies for the same `kid` — proves the cache hit
+    /// path skips the HTTP round-trip, not just that it succeeds.
+    jwks_request_count: Arc<AtomicUsize>,
 }
 
 impl AuthHarness {
+    /// Bootstrap with a JWK Set whose `alg` field is populated
+    /// (`RS256`). The standard happy-path harness.
+    async fn spawn() -> Self {
+        Self::spawn_with(true).await
+    }
+
+    /// Bootstrap with a JWK Set whose `alg` field is OMITTED (RFC
+    /// 7517 §4.4 marks `alg` as optional). Used to verify the
+    /// RSA-no-alg fallback in `build_cached_key`.
+    async fn spawn_without_alg() -> Self {
+        Self::spawn_with(false).await
+    }
+
     /// Bootstrap: generate a keypair, publish the public half on a
     /// background axum server, return the URL + the private key.
     /// Drop semantics: the server keeps running for the test's life
     /// (no explicit shutdown — the OS reaps the socket when the
     /// process exits, which is fine for in-process integration
     /// tests).
-    async fn spawn() -> Self {
+    async fn spawn_with(advertise_alg: bool) -> Self {
         // 2048-bit is the Better Auth default. Smaller (1024) is
         // faster to generate but would teach the test suite a habit
         // we don't want to carry into prod.
@@ -60,15 +85,22 @@ impl AuthHarness {
             EncodingKey::from_rsa_pem(pem.as_bytes()).expect("encoding key from pem")
         };
 
-        let jwks = build_jwks(&public);
+        let jwks = build_jwks(&public, advertise_alg);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+
+        let jwks_request_count = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&jwks_request_count);
 
         let app = Router::new().route(
             "/.well-known/jwks.json",
             get(move || {
                 let jwks = jwks.clone();
-                async move { Json(jwks) }
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(jwks)
+                }
             }),
         );
 
@@ -84,7 +116,15 @@ impl AuthHarness {
         Self {
             jwks_url: format!("http://{addr}/.well-known/jwks.json"),
             encoding_key,
+            jwks_request_count,
         }
+    }
+
+    /// How many times the mock JWKS endpoint has been hit since the
+    /// harness was spawned. The cache test uses this to prove that
+    /// the second verify on a cached kid doesn't refetch.
+    fn jwks_request_count(&self) -> usize {
+        self.jwks_request_count.load(Ordering::SeqCst)
     }
 
     /// Mint a signed token from explicit claims. Returns the
@@ -111,7 +151,7 @@ impl AuthHarness {
     }
 }
 
-fn build_jwks(public: &RsaPublicKey) -> JwkSet {
+fn build_jwks(public: &RsaPublicKey, advertise_alg: bool) -> JwkSet {
     let n_b64 = base64_url(&public.n().to_bytes_be());
     let e_b64 = base64_url(&public.e().to_bytes_be());
 
@@ -119,7 +159,7 @@ fn build_jwks(public: &RsaPublicKey) -> JwkSet {
         keys: vec![Jwk {
             common: CommonParameters {
                 public_key_use: Some(PublicKeyUse::Signature),
-                key_algorithm: Some(KeyAlgorithm::RS256),
+                key_algorithm: advertise_alg.then_some(KeyAlgorithm::RS256),
                 key_id: Some(TEST_KID.to_string()),
                 ..Default::default()
             },
@@ -363,8 +403,9 @@ async fn rejects_when_jwks_unreachable() {
     assert!(matches!(err, AuthError::JwksFetchFailed(_)), "got {err:?}");
 }
 
-/// Reading the same kid twice exercises the cache hit path —
-/// no second JWKS fetch, success without dialing the network.
+/// Reading the same kid twice exercises the cache hit path. The
+/// `jwks_request_count` AtomicUsize on the harness proves the second
+/// verify didn't refetch (just `1` request after 2 verifies).
 #[tokio::test]
 async fn cache_hit_skips_second_fetch() {
     let harness = AuthHarness::spawn().await;
@@ -372,21 +413,34 @@ async fn cache_hit_skips_second_fetch() {
 
     let token = harness.mint(&good_claims(), &header_with_kid(TEST_KID));
     verifier.verify_token(&token).await.expect("first verify");
-
-    // Drop the mock server's listener: a fresh fetch would now
-    // fail. The cache is non-expired, so the second verify still
-    // wins.
-    //
-    // (We can't actually shut the spawned server down cleanly here,
-    // but we can swap the verifier's JWKS URL for a guaranteed-dead
-    // one. Both paths exercise the same cache hit; the URL swap is
-    // simpler than orchestrating a server shutdown.)
-    //
-    // Instead the simpler proof is: the second `verify_token` for
-    // the same kid succeeds without raising any `JwksFetchFailed`
-    // — that's what the assertion below confirms.
     verifier
         .verify_token(&token)
         .await
         .expect("second verify (cache hit) should succeed");
+
+    assert_eq!(
+        harness.jwks_request_count(),
+        1,
+        "second verify must hit the cache, not the upstream"
+    );
+}
+
+/// RFC 7517 §4.4 marks the JWK `alg` parameter as OPTIONAL. The
+/// fallback in `build_cached_key` should accept an alg-less RSA key
+/// and default to RS256 — without it, an upstream that follows the
+/// spec but doesn't bother advertising alg would surface as
+/// EmptyJwks → 503. Verifying an RS256 token against such a key
+/// proves the fallback wires the right `Algorithm` for the
+/// signature check.
+#[tokio::test]
+async fn rsa_jwk_without_alg_defaults_to_rs256() {
+    let harness = AuthHarness::spawn_without_alg().await;
+    let token = harness.mint(&good_claims(), &header_with_kid(TEST_KID));
+
+    let verified = harness
+        .verifier()
+        .verify_token(&token)
+        .await
+        .expect("RSA alg-less JWK must default to RS256");
+    assert_eq!(verified.sub, "auth-provider-user-42");
 }
