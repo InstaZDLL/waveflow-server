@@ -27,8 +27,12 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "3ab43f07
 
 # Database. `runtime-tokio` matches our `#[tokio::main]` runtime;
 # `postgres` is the driver; `macros` enables `query_as!`; `migrate`
-# pulls in the migration runner used by `db::run_migrations`.
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono"] }
+# pulls in the migration runner used by `db::run_migrations`; and
+# `tls-rustls` lets us connect to managed Postgres providers that
+# mandate `sslmode=require` (Neon, Supabase, Prisma Accelerate, RDS).
+# Pure-Rust rustls matches the convention reqwest uses elsewhere in
+# the project — no OpenSSL system dep to ship in the container image.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "tls-rustls"] }
 
 # OpenAPI 3.1 spec generation. `utoipa-axum` exposes an
 # `OpenApiRouter` that picks up every handler tagged with
