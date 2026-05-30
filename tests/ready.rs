@@ -86,3 +86,21 @@ async fn migration_creates_track_table(pool: PgPool) {
 
     assert!(exists, "track table missing after migrations");
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn migration_creates_playlist_table(pool: PgPool) {
+    // Same canary as the other tables: a renamed / dropped
+    // playlist.sql would pass `sqlx::test` provisioning but every
+    // 1.b.5c CRUD test would explode on the first INSERT.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'playlist'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query failed");
+
+    assert!(exists, "playlist table missing after migrations");
+}
