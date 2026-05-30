@@ -38,6 +38,14 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
     // this test catches it before the docs go stale.
     assert!(paths.contains_key("/health"), "missing /health in spec");
     assert!(paths.contains_key("/ready"), "missing /ready in spec");
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/libraries"),
+        "missing /api/v1/profiles/{{profile_id}}/libraries in spec"
+    );
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/libraries/{id}"),
+        "missing /api/v1/profiles/{{profile_id}}/libraries/{{id}} in spec"
+    );
 
     // The /ready operation must declare both the 200 and the 503
     // shape — the readiness contract is a 503-as-data API and the
