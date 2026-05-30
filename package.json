@@ -23,6 +23,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "db:migrate": "bun run scripts/db-migrate.ts",
     "prepare": "husky"
   },
   "dependencies": {
