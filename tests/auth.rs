@@ -324,13 +324,17 @@ async fn es256_rejects_unknown_kid() {
 }
 
 /// An RS256-signed token presented against an ES256 JWKS must be
-/// rejected. The two JWK Sets have no overlapping kids OR algorithms,
-/// so the verifier's resolve_kid path returns `KeyNotFound` — same
-/// outcome as a confused-deputy attempt to bypass the EC branch with
-/// an RSA token. (`AlgorithmMismatch` would require minting a token
-/// whose header *lies* about its alg, which jsonwebtoken's `encode`
-/// refuses to do — that defense gets exercised in a future PR that
-/// builds tokens by hand.)
+/// rejected via [`AuthError::AlgorithmMismatch`] — the explicit
+/// `header.alg vs cached.algorithm` cross-check that guards against
+/// algorithm-confusion downgrades (e.g. an RSA token forged to pose
+/// as ES256 against an EC key).
+///
+/// Both harnesses publish their JWK under the same `TEST_KID`, so
+/// `resolve_kid` on the ES256 verifier finds the cached EC key
+/// without falling through to `KeyNotFound`. The very next check
+/// — `if header.alg != cached.algorithm` — fires on `RS256 != ES256`
+/// and surfaces the discriminated variant the middleware (PR3) maps
+/// to 401.
 #[tokio::test]
 async fn es256_jwk_rejects_rs256_token() {
     let rsa_harness = JwksHarness::spawn().await;
@@ -346,13 +350,8 @@ async fn es256_jwk_rejects_rs256_token() {
         .verify_token(&token)
         .await
         .expect_err("RS256 token against ES256 JWKS must reject");
-    // The kid + alg cross-rejections both produce KeyNotFound — the
-    // ES256 JWK Set carries the same TEST_KID but for an EC key, and
-    // the alg-mismatch path the verifier *would* normally take on a
-    // cached-key mismatch can't fire because the kid match wins on
-    // jsonwebtoken's strict per-alg key lookup.
     assert!(
-        matches!(err, AuthError::KeyNotFound | AuthError::AlgorithmMismatch),
-        "got {err:?}"
+        matches!(err, AuthError::AlgorithmMismatch),
+        "expected AlgorithmMismatch (shared kid, mismatched alg), got {err:?}"
     );
 }
