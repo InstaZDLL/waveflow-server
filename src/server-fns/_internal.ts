@@ -90,3 +90,21 @@ function safeMessageForStatus(status: number): string {
   if (status >= 500) return 'waveflow-server is unavailable. Please try again.'
   return 'Request failed. Please try again.'
 }
+
+/**
+ * Coerce + validate a path-parameter integer. The id segments end
+ * up interpolated into URLs hitting waveflow-server, so anything
+ * the validator lets through could (in the worst case) twist the
+ * request path. TanStack Start deserialises server-fn payloads as
+ * JSON, but a malicious caller can still hand-craft a string
+ * payload — keeping the parse + range check on the server side
+ * makes the guarantee explicit instead of relying on the type
+ * system at a process boundary.
+ */
+export function asPathId(value: unknown, label: string): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) {
+    throw new Error(`${label} must be a positive integer`)
+  }
+  return n
+}

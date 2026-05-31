@@ -1,17 +1,11 @@
-import { useState } from 'react'
-import { Link, createFileRoute, redirect } from '@tanstack/react-router'
+import { useRef, useState } from 'react'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { Player, type PlayingTrack } from '@/components/Player'
 import { getStreamUrl } from '@/server-fns/stream'
 import { listTracks, type Track } from '@/server-fns/tracks'
-import { getCurrentSession } from '@/server-fns/session'
 
-export const Route = createFileRoute('/profiles/$profileId/libraries/$libraryId')({
-  beforeLoad: async () => {
-    const session = await getCurrentSession()
-    if (!session) {
-      throw redirect({ to: '/sign-in' })
-    }
-  },
+// Auth gating inherited from the `_authed` parent layout.
+export const Route = createFileRoute('/_authed/profiles/$profileId/libraries/$libraryId')({
   loader: async ({ params }): Promise<LoaderData> => {
     const profileId = Number(params.profileId)
     const libraryId = Number(params.libraryId)
@@ -40,9 +34,14 @@ function TracksView() {
   const [current, setCurrent] = useState<PlayingTrack | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingTrackId, setPendingTrackId] = useState<number | null>(null)
+  // Monotonic counter that disambiguates concurrent `play()` calls.
+  // Without it, fast double-clicks (or a deliberate spam) can race:
+  // the older fetch resolves last and overwrites the newer track.
+  const requestSeq = useRef(0)
 
   async function play(track: Track) {
     if (data.kind !== 'ready') return
+    const seq = ++requestSeq.current
     setError(null)
     setPendingTrackId(track.id)
     try {
@@ -53,6 +52,9 @@ function TracksView() {
           trackId: track.id,
         },
       })
+      // Drop the response on the floor if a newer play() started
+      // while we awaited. The latest click wins.
+      if (seq !== requestSeq.current) return
       setCurrent({
         id: track.id,
         title: track.title,
@@ -60,9 +62,12 @@ function TracksView() {
         durationMs: track.duration_ms,
       })
     } catch (err) {
+      if (seq !== requestSeq.current) return
       setError(err instanceof Error ? err.message : 'Could not start playback.')
     } finally {
-      setPendingTrackId(null)
+      if (seq === requestSeq.current) {
+        setPendingTrackId(null)
+      }
     }
   }
 

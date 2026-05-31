@@ -4,7 +4,7 @@
 
 import { createServerFn } from '@tanstack/react-start'
 import { waveflowFetch } from '@/lib/server/waveflow-server'
-import { mintToken, withSafeErrors } from './_internal'
+import { asPathId, mintToken, withSafeErrors } from './_internal'
 
 export interface Library {
   id: number
@@ -24,7 +24,7 @@ export interface Library {
  * call — a non-owner gets 404, surfaced as "Not found." in the UI.
  */
 export const listLibraries = createServerFn({ method: 'GET' })
-  .inputValidator((profileId: number) => profileId)
+  .inputValidator((value: unknown) => asPathId(value, 'profileId'))
   .handler(async ({ data: profileId }) =>
     withSafeErrors('listLibraries', async () => {
       const token = await mintToken()

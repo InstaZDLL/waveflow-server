@@ -10,7 +10,7 @@
 
 import { createServerFn } from '@tanstack/react-start'
 import { waveflowFetch } from '@/lib/server/waveflow-server'
-import { mintToken, withSafeErrors } from './_internal'
+import { asPathId, mintToken, withSafeErrors } from './_internal'
 
 interface RawMintResponse {
   url: string
@@ -46,7 +46,14 @@ const SERVER_URL_ENV = 'WAVEFLOW_SERVER_URL'
  *   (`WAVEFLOW_MUSIC_ROOT` / `WAVEFLOW_STREAM_SECRET` unset).
  */
 export const getStreamUrl = createServerFn({ method: 'GET' })
-  .inputValidator((params: GetStreamUrlParams) => params)
+  .inputValidator((value: unknown): GetStreamUrlParams => {
+    const raw = value as Partial<GetStreamUrlParams> | undefined
+    return {
+      profileId: asPathId(raw?.profileId, 'profileId'),
+      libraryId: asPathId(raw?.libraryId, 'libraryId'),
+      trackId: asPathId(raw?.trackId, 'trackId'),
+    }
+  })
   .handler(
     async ({ data }): Promise<StreamUrl> =>
       withSafeErrors('getStreamUrl', async () => {
@@ -60,6 +67,15 @@ export const getStreamUrl = createServerFn({ method: 'GET' })
           `/api/v1/profiles/${data.profileId}/libraries/${data.libraryId}/tracks/${data.trackId}/stream-url`,
           { token, method: 'POST' },
         )
+
+        // Defensive: waveflow-server always returns a server-relative
+        // path (`format!("/api/v1/stream/{token}")` — guaranteed to
+        // start with `/`), but assert it explicitly so a future
+        // server-side regression that returns an absolute URL surfaces
+        // here as a clear error rather than silently double-prefixing.
+        if (!minted.url.startsWith('/')) {
+          throw new Error(`waveflow-server returned non-relative stream URL: ${minted.url}`)
+        }
 
         return {
           url: `${base.replace(/\/+$/, '')}${minted.url}`,
