@@ -156,19 +156,41 @@ impl Config {
         // Streaming knobs — both required together, both optional
         // (unset disables `/api/v1/stream/*` cleanly with 503). A
         // half-set config (one without the other) is a footgun, so
-        // we bail at boot instead.
+        // we bail at boot instead. `std::env::var` returns `Ok("")`
+        // when a variable is exported but empty, which would slip
+        // a zero-byte HMAC key past the structural check — treat
+        // empties as if the var were unset (and then enforce the
+        // mutual-presence + minimum-length rules).
         let music_root = std::env::var("WAVEFLOW_MUSIC_ROOT")
             .ok()
+            .filter(|s| !s.is_empty())
             .map(std::path::PathBuf::from);
         let stream_secret = std::env::var("WAVEFLOW_STREAM_SECRET")
             .ok()
+            .filter(|s| !s.is_empty())
             .map(|s| s.into_bytes());
         if music_root.is_some() != stream_secret.is_some() {
             anyhow::bail!(
                 "streaming requires both WAVEFLOW_MUSIC_ROOT and \
-                 WAVEFLOW_STREAM_SECRET to be set together (or both \
-                 unset to disable)"
+                 WAVEFLOW_STREAM_SECRET to be set together (non-empty) \
+                 or both unset to disable"
             );
+        }
+        // Sanity-check the HMAC key length. `openssl rand -base64 32`
+        // (the doc-recommended generator) emits 44 bytes, so 32 is a
+        // comfortably-low floor; rejecting anything shorter keeps a
+        // trivially-guessable secret (think "x" exported on a quick
+        // local boot) from masquerading as a real key.
+        const MIN_STREAM_SECRET_BYTES: usize = 32;
+        if let Some(secret) = stream_secret.as_ref() {
+            if secret.len() < MIN_STREAM_SECRET_BYTES {
+                anyhow::bail!(
+                    "WAVEFLOW_STREAM_SECRET is too short ({} bytes); minimum is {} bytes. \
+                     Generate with `openssl rand -base64 32`.",
+                    secret.len(),
+                    MIN_STREAM_SECRET_BYTES,
+                );
+            }
         }
 
         Ok(Self {
