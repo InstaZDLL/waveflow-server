@@ -81,10 +81,12 @@ async fn main() -> anyhow::Result<()> {
     info!(addr = %local, "waveflow-server listening");
 
     // Sync hub — broadcast channel + ACK debouncer + nightly
-    // compaction. The two `JoinHandle`s stay live for the process
-    // lifetime; a task that exits would be a silent regression, so
-    // we don't store the handles but keep ownership in scope for
-    // `tokio::spawn` to keep them alive against the runtime.
+    // compaction. The two `JoinHandle`s are intentionally retained as
+    // `_flush_task` / `_compaction_task` so the underscored bindings
+    // keep ownership through `main`'s scope — dropping a handle
+    // doesn't cancel the task itself, but rebinding-by-shadowing or
+    // explicit `drop` would, and a future refactor that loses the
+    // bindings should hear from the borrow checker on the next read.
     let (sync_hub, _flush_task, _compaction_task) = SyncHub::spawn(
         db.clone(),
         DEFAULT_FLUSH_INTERVAL,

@@ -193,11 +193,28 @@ async fn lamport_regression_returns_409_with_stored_max(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn pull_does_not_advance_cursor(pool: PgPool) {
-    let auth = spawn_authenticated(pool, "pull-readonly").await;
+    // Deterministic harness — `SyncHub::for_tests` skips the 5 s
+    // flusher, so the assertion below isn't racing a background task.
+    let harness = std::sync::Arc::new(JwksHarness::spawn().await);
+    let sync = SyncHub::for_tests(pool.clone());
+    let base = spawn_app_with_sync(pool.clone(), harness.verifier_arc(), sync.clone()).await;
+    let token = harness.mint(
+        &support::good_claims("pull-readonly"),
+        &support::header_with_kid(support::TEST_KID),
+    );
+    // Warm-up request lazy-provisions the user row.
+    reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
 
     let _: Value = reqwest::Client::new()
-        .post(format!("{}/api/v1/sync/ops", auth.base))
-        .bearer_auth(&auth.token)
+        .post(format!("{base}/api/v1/sync/ops"))
+        .bearer_auth(&token)
         .json(&json!({
             "device_id": "device-a",
             "ops": [op_payload(Uuid::new_v4(), 1, "pl-1", "x")],
@@ -213,8 +230,8 @@ async fn pull_does_not_advance_cursor(pool: PgPool) {
 
     // A pull. Read-only by contract — must not touch the cursor.
     let _: Value = reqwest::Client::new()
-        .get(format!("{}/api/v1/sync/ops?since=0", auth.base))
-        .bearer_auth(&auth.token)
+        .get(format!("{base}/api/v1/sync/ops?since=0"))
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap()
@@ -224,12 +241,12 @@ async fn pull_does_not_advance_cursor(pool: PgPool) {
         .await
         .unwrap();
 
-    // Even after a generous wait for the live flusher, no cursor row
-    // exists for any device — the only path that writes it is the
-    // explicit ACK route.
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    // Force-drain any pending ACK buffer so a stray write would show
+    // up here. The pull above never recorded one, so the flush is a
+    // no-op; the assertion is the real signal.
+    sync.flush_acks().await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_sync_cursor")
-        .fetch_one(&auth.pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 0, "GET /sync/ops must never advance the cursor");
@@ -237,12 +254,32 @@ async fn pull_does_not_advance_cursor(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn ack_writes_cursor_after_flush(pool: PgPool) {
-    let auth = spawn_authenticated(pool, "ack-flush").await;
+    // Deterministic harness — drive `flush_acks` by hand so the
+    // assertion isn't racing the 5 s loop.
+    let harness = std::sync::Arc::new(JwksHarness::spawn().await);
+    let sync = SyncHub::for_tests(pool.clone());
+    let base = spawn_app_with_sync(pool.clone(), harness.verifier_arc(), sync.clone()).await;
+    let token = harness.mint(
+        &support::good_claims("ack-flush"),
+        &support::header_with_kid(support::TEST_KID),
+    );
+    reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE external_id = 'ack-flush'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     // Land an op so there's an `id` to ACK at.
     let push: Value = reqwest::Client::new()
-        .post(format!("{}/api/v1/sync/ops", auth.base))
-        .bearer_auth(&auth.token)
+        .post(format!("{base}/api/v1/sync/ops"))
+        .bearer_auth(&token)
         .json(&json!({
             "device_id": "device-a",
             "ops": [op_payload(Uuid::new_v4(), 1, "pl-1", "x")],
@@ -258,54 +295,51 @@ async fn ack_writes_cursor_after_flush(pool: PgPool) {
     let head_id = push["accepted"][0]["id"].as_i64().unwrap();
 
     let ack = reqwest::Client::new()
-        .post(format!("{}/api/v1/sync/ack", auth.base))
-        .bearer_auth(&auth.token)
+        .post(format!("{base}/api/v1/sync/ack"))
+        .bearer_auth(&token)
         .json(&json!({ "device_id": "device-a", "last_seen_id": head_id }))
         .send()
         .await
         .unwrap();
     assert_eq!(ack.status(), StatusCode::NO_CONTENT);
 
-    // The live flusher in `spawn_app_with_jwt` ticks every 50 ms — a
-    // few hundred ms of slack covers loaded CI without making the
-    // test flaky.
-    let mut row: Option<(i64, i64)> = None;
-    for _ in 0..40 {
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        row = sqlx::query_as(
-            "SELECT last_seen_id, last_seen_at FROM device_sync_cursor \
-             WHERE user_id = $1 AND device_id = 'device-a'",
-        )
-        .bind(auth.user_id)
-        .fetch_optional(&auth.pool)
-        .await
-        .unwrap();
-        if row.is_some() {
-            break;
-        }
-    }
-    let (last_seen, _last_seen_at) = row.expect("ack should land within 1 s");
+    // Force the flush — no sleeps, no polling.
+    let flushed = sync.flush_acks().await.unwrap();
+    assert_eq!(flushed, 1, "first flush must UPSERT the new cursor row");
+    let last_seen: i64 = sqlx::query_scalar(
+        "SELECT last_seen_id FROM device_sync_cursor \
+         WHERE user_id = $1 AND device_id = 'device-a'",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(last_seen, head_id);
 
     // Re-ACK at a lower id must NOT regress — the in-memory CAS
-    // refuses, and even if it didn't, the UPSERT's `WHERE
-    // cursor.last_seen_id < EXCLUDED.last_seen_id` would block it.
-    let _ = reqwest::Client::new()
-        .post(format!("{}/api/v1/sync/ack", auth.base))
-        .bearer_auth(&auth.token)
+    // short-circuits without even marking the entry dirty, so the
+    // second flush has nothing to write AND the cursor row is
+    // unchanged.
+    reqwest::Client::new()
+        .post(format!("{base}/api/v1/sync/ack"))
+        .bearer_auth(&token)
         .json(&json!({ "device_id": "device-a", "last_seen_id": 0 }))
         .send()
         .await
         .unwrap()
         .error_for_status()
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    let flushed_after_regress = sync.flush_acks().await.unwrap();
+    assert_eq!(
+        flushed_after_regress, 0,
+        "regressing ACK must not produce a flush write",
+    );
     let still: i64 = sqlx::query_scalar(
         "SELECT last_seen_id FROM device_sync_cursor \
          WHERE user_id = $1 AND device_id = 'device-a'",
     )
-    .bind(auth.user_id)
-    .fetch_one(&auth.pool)
+    .bind(user_id)
+    .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(still, head_id, "ACK must be monotonic");
