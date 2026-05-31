@@ -10,7 +10,12 @@ use std::net::SocketAddr;
 
 /// Process-wide configuration. Construct once at boot via [`Config::from_env`]
 /// and pass into [`crate::app`].
-#[derive(Debug, Clone)]
+///
+/// `Debug` is hand-written so the HMAC `stream_secret` is rendered as
+/// `<redacted>` — a derived `Debug` would print the raw bytes any
+/// time the config landed in a `tracing` field or a `Config::from_env`
+/// failure message.
+#[derive(Clone)]
 pub struct Config {
     /// `WAVEFLOW_BIND` — `host:port` the server binds to.
     /// Default: `127.0.0.1:3000`.
@@ -73,6 +78,25 @@ pub struct Config {
     /// endpoint returns 503). 32 random bytes (`openssl rand -base64
     /// 32`) is the recommended size.
     pub stream_secret: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("bind_addr", &self.bind_addr)
+            .field("request_timeout_secs", &self.request_timeout_secs)
+            .field("database_url", &self.database_url)
+            .field("db_max_connections", &self.db_max_connections)
+            .field("jwt_jwks_url", &self.jwt_jwks_url)
+            .field("jwt_issuer", &self.jwt_issuer)
+            .field("jwt_audience", &self.jwt_audience)
+            .field("music_root", &self.music_root)
+            .field(
+                "stream_secret",
+                &self.stream_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl Config {

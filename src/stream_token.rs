@@ -30,9 +30,10 @@ pub const MAX_LIFETIME_SECS: u64 = 60;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StreamClaim {
-    /// File path relative to `WAVEFLOW_MUSIC_ROOT`. Canonicalisation
-    /// + traversal check happens in the stream handler — this struct
-    /// just carries the string the mint endpoint signed.
+    /// File path relative to `WAVEFLOW_MUSIC_ROOT`. The stream
+    /// handler canonicalises this and verifies it still lives under
+    /// the music root; this struct only carries the string the mint
+    /// endpoint signed.
     pub p: String,
     /// Expiry as a unix epoch second.
     pub exp: u64,

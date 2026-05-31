@@ -19,7 +19,7 @@
 //! so we can stream a single canonical file resolved per-token rather
 //! than expose an entire directory.
 
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
@@ -29,7 +29,7 @@ use axum::{
     Extension, Json,
 };
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::io::{AsyncSeekExt, SeekFrom};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use waveflow_core::repository::postgres::PostgresTrackRepository;
@@ -48,6 +48,15 @@ const DEFAULT_LIFETIME_SECS: u64 = 60;
 /// `tokio::io::BufReader` defaults to and what most HTTP/2 frames
 /// expect.
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Hard cap on the bytes returned per partial response. Browsers
+/// rarely request more than a few MB at a time for audio scrubbing;
+/// a hostile client could otherwise force the server to stream
+/// arbitrary slices of the file in one shot. Honouring the lower of
+/// the requested end and `start + MAX_RANGE_BYTES - 1` keeps memory
+/// bounded AND signals an honest `Content-Range` reflecting what
+/// actually got served.
+const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MintResponse {
@@ -165,7 +174,7 @@ async fn stream_audio(
         StatusCode::UNAUTHORIZED
     })?;
 
-    let resolved = resolve_path(&ctx.music_root, &claim.p)?;
+    let resolved = resolve_path(&ctx.music_root, &claim.p).await?;
 
     // `.metadata` to learn the total length up-front — needed for
     // both the `Content-Length` header on a full response and the
@@ -193,7 +202,7 @@ async fn stream_audio(
 }
 
 async fn serve_full(
-    path: &PathBuf,
+    path: &FsPath,
     total: u64,
     content_type: &'static str,
 ) -> Result<Response, StatusCode> {
@@ -213,12 +222,23 @@ async fn serve_full(
 }
 
 async fn serve_partial(
-    path: &PathBuf,
+    path: &FsPath,
     start: u64,
-    end: u64,
+    requested_end: u64,
     total: u64,
     content_type: &'static str,
 ) -> Result<Response, StatusCode> {
+    // Clamp the requested window to `MAX_RANGE_BYTES`. A hostile
+    // `Range: bytes=0-99999999999` would otherwise force us to
+    // stream (and buffer in tokio_util internals) hundreds of MB
+    // in one shot; honouring the clamp keeps memory bounded while
+    // still returning a syntactically valid 206 — the browser sees
+    // `Content-Range: bytes 0-X/total` and just re-asks for the
+    // next chunk.
+    let max_end = start.saturating_add(MAX_RANGE_BYTES - 1);
+    let end = requested_end.min(max_end);
+    let len = end - start + 1;
+
     let mut file = tokio::fs::File::open(path).await.map_err(|err| {
         tracing::warn!(error = %err, "stream file open failed");
         StatusCode::NOT_FOUND
@@ -228,17 +248,13 @@ async fn serve_partial(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Read the requested slice into memory. A streaming variant
-    // would clamp `ReaderStream` to `end - start + 1` bytes, but
-    // the chunk size for audio scrubbing is typically <= a few MB
-    // — well within what we can buffer cheaply. Revisit if range
-    // sizes grow.
-    let len = end - start + 1;
-    let mut buf = vec![0u8; len as usize];
-    file.read_exact(&mut buf).await.map_err(|err| {
-        tracing::warn!(error = %err, "stream file read failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    // Stream the clamped window instead of buffering the whole
+    // slice. `AsyncReadExt::take` wraps the file so reads beyond
+    // `len` return EOF; `ReaderStream` then drives 64 KiB chunks
+    // straight onto the wire.
+    let bounded = tokio::io::AsyncReadExt::take(file, len);
+    let stream = tokio_util::io::ReaderStream::with_capacity(bounded, STREAM_CHUNK_SIZE);
+    let body = axum::body::Body::from_stream(stream);
 
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -248,7 +264,7 @@ async fn serve_partial(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     headers.insert(header::CONTENT_RANGE, content_range);
 
-    Ok((StatusCode::PARTIAL_CONTENT, headers, buf).into_response())
+    Ok((StatusCode::PARTIAL_CONTENT, headers, body).into_response())
 }
 
 /// Parse a `Range` header of the form `bytes=N-M`, `bytes=N-` or
@@ -303,17 +319,15 @@ fn parse_range(raw: &str, total: u64) -> Option<(u64, u64)> {
 /// Join `music_root + claim.p`, then canonicalise and verify the
 /// result still lives under `music_root`. Defends against `..`
 /// traversal AND symlinks pointing outside the root.
-fn resolve_path(music_root: &PathBuf, rel: &str) -> Result<PathBuf, StatusCode> {
+async fn resolve_path(music_root: &FsPath, rel: &str) -> Result<PathBuf, StatusCode> {
     // Strip an accidental leading separator so `music_root.join` doesn't
     // treat the relative path as absolute and discard the root.
     let trimmed = rel.trim_start_matches(['/', '\\']);
     let candidate = music_root.join(trimmed);
 
-    // std::fs::canonicalize is sync, but the per-stream call is
-    // amortised against the streaming itself — running it on the
-    // tokio runtime is fine in practice. A blocking-task hop would
-    // be an optimisation, not a correctness requirement.
-    let canonical = match std::fs::canonicalize(&candidate) {
+    // `tokio::fs::canonicalize` hops to the blocking-IO pool so we
+    // don't stall the runtime worker on a filesystem read.
+    let canonical = match tokio::fs::canonicalize(&candidate).await {
         Ok(p) => p,
         Err(err) => {
             tracing::warn!(error = %err, path = %candidate.display(), "stream path canonicalize failed");
@@ -332,7 +346,7 @@ fn resolve_path(music_root: &PathBuf, rel: &str) -> Result<PathBuf, StatusCode> 
     Ok(canonical)
 }
 
-fn guess_mime(path: &PathBuf) -> &'static str {
+fn guess_mime(path: &FsPath) -> &'static str {
     match path
         .extension()
         .and_then(|s| s.to_str())
