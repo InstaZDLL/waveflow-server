@@ -312,7 +312,17 @@ impl SyncHub {
             .execute(&mut *tx)
             .await;
             match res {
-                Ok(_) => applied += 1,
+                Ok(result) => {
+                    // The UPSERT's `WHERE last_seen_id <
+                    // EXCLUDED.last_seen_id` guard can match zero
+                    // rows when the persisted cursor is already at
+                    // or beyond the staged value (e.g. a previous
+                    // flush + a re-ACK of the same id). Count rows
+                    // actually written rather than statements run so
+                    // the returned tally matches the observable DB
+                    // change.
+                    applied += result.rows_affected() as usize;
+                }
                 Err(err) => {
                     // Re-mark the staged entries dirty so the next
                     // flush retries them — losing an ACK to a

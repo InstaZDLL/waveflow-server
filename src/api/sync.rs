@@ -38,6 +38,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use crate::{
+    db,
     middleware::UserId,
     sync::{build_broadcast, SyncOp, SyncOpIn},
     AppState,
@@ -192,24 +193,19 @@ async fn push_ops(
                 .into_response();
         }
 
-        let insert_res = sqlx::query(
-            "INSERT INTO sync_op \
-                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
-             ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
-             RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at",
+        let insert_res = db::sync::insert_op_returning(
+            &mut tx,
+            user_id,
+            device_id,
+            op_in.operation_id,
+            op_in.lamport_ts,
+            entity,
+            entity_id,
+            op_in.field.as_deref(),
+            op_kind,
+            op_in.payload.as_ref(),
+            now,
         )
-        .bind(user_id)
-        .bind(device_id)
-        .bind(op_in.operation_id)
-        .bind(op_in.lamport_ts)
-        .bind(entity)
-        .bind(entity_id)
-        .bind(op_in.field.as_deref())
-        .bind(op_kind)
-        .bind(op_in.payload.as_ref())
-        .bind(now)
-        .fetch_optional(&mut *tx)
         .await;
 
         match insert_res {
@@ -221,17 +217,14 @@ async fn push_ops(
             Ok(None) => {
                 // Duplicate `operation_id` — fold in the previously-
                 // stored row so the client's `accepted` list is whole.
-                let existing_res = sqlx::query(
-                    "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
-                     FROM sync_op \
-                     WHERE user_id = $1 AND device_id = $2 AND operation_id = $3",
+                match db::sync::fetch_op_by_operation_id(
+                    &mut tx,
+                    user_id,
+                    device_id,
+                    op_in.operation_id,
                 )
-                .bind(user_id)
-                .bind(device_id)
-                .bind(op_in.operation_id)
-                .fetch_one(&mut *tx)
-                .await;
-                match existing_res {
+                .await
+                {
                     Ok(row) => accepted.push(row_to_op(&row)),
                     Err(err) => {
                         tracing::error!(error = %err, user_id, device_id, "sync dup lookup failed");
@@ -248,15 +241,17 @@ async fn push_ops(
                 // constraint, i.e. a regression. Read the current max
                 // and return it so the client can resync its clock.
                 tx.rollback().await.ok();
-                let stored_max: i64 = sqlx::query_scalar(
-                    "SELECT COALESCE(MAX(lamport_ts), 0) FROM sync_op \
-                     WHERE user_id = $1 AND device_id = $2",
-                )
-                .bind(user_id)
-                .bind(device_id)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
+                let stored_max = match db::sync::lamport_max(pool, user_id, device_id).await {
+                    Ok(n) => n,
+                    Err(err) => {
+                        // Surface the read failure rather than masking
+                        // it behind a `0` that would tell the client
+                        // "your clock is fine, retry" when it isn't.
+                        tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "lamport_max read failed")
+                            .into_response();
+                    }
+                };
                 return (
                     StatusCode::CONFLICT,
                     Json(LamportRegression {
@@ -326,13 +321,19 @@ async fn pull_ops(
     // guard, so the condition is symmetric: `since > 0 AND since <
     // compacted_up_to`.
     if query.since > 0 {
-        let compacted: Option<i64> = sqlx::query_scalar(
-            "SELECT compacted_up_to FROM sync_compaction_watermark WHERE user_id = $1",
-        )
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .unwrap_or(None);
+        // Propagate a watermark read failure as 500 instead of
+        // silently dropping it into `None` — masking a transient
+        // pool / Postgres hiccup as "no compaction floor" could let a
+        // resurrected device skip the 410 path and replay a partial
+        // log into a state inconsistent with its peers.
+        let compacted = match db::sync::fetch_compacted_up_to(pool, user_id).await {
+            Ok(c) => c,
+            Err(err) => {
+                tracing::error!(error = %err, user_id, "watermark read failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "watermark read failed")
+                    .into_response();
+            }
+        };
         if let Some(watermark) = compacted {
             if query.since < watermark {
                 return (
@@ -347,18 +348,7 @@ async fn pull_ops(
         }
     }
 
-    let rows = sqlx::query(
-        "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
-         FROM sync_op \
-         WHERE user_id = $1 AND id > $2 \
-         ORDER BY id ASC \
-         LIMIT $3",
-    )
-    .bind(user_id)
-    .bind(query.since)
-    .bind(PULL_PAGE_SIZE)
-    .fetch_all(pool)
-    .await;
+    let rows = db::sync::pull_ops_since(pool, user_id, query.since, PULL_PAGE_SIZE).await;
 
     match rows {
         Ok(rows) => {
