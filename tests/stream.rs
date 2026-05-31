@@ -334,12 +334,15 @@ async fn path_traversal_attempts_404(pool: PgPool) {
     // INSERT directly into the DB. The track resolves under the same
     // user as `setup`'s auth, just via a different file_path.
     let evil_rel = "../../../etc/passwd"; // canonicalize must reject.
-    sqlx::query("INSERT INTO track (library_id, title, file_path, file_size, duration_ms, codec, created_at) VALUES ($1, 'evil', $2, 1, 1, 'FLAC', 1)")
-        .bind(setup.library_id)
-        .bind(evil_rel)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO track (library_id, title, file_path, file_size, duration_ms, codec, added_at) \
+         VALUES ($1, 'evil', $2, 1, 1, 'FLAC', 1)",
+    )
+    .bind(setup.library_id)
+    .bind(evil_rel)
+    .execute(&pool)
+    .await
+    .unwrap();
     let evil_id: i64 =
         sqlx::query_scalar("SELECT id FROM track WHERE file_path = $1 AND library_id = $2")
             .bind(evil_rel)
