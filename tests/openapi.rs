@@ -73,6 +73,17 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         "missing stream path in spec"
     );
 
+    // Phase 1.f sync surface — drop the `#[utoipa::path]` macro from
+    // any of these and the desktop / web stop seeing it in the docs.
+    assert!(
+        paths.contains_key("/api/v1/sync/ops"),
+        "missing /api/v1/sync/ops in spec"
+    );
+    assert!(
+        paths.contains_key("/api/v1/sync/ack"),
+        "missing /api/v1/sync/ack in spec"
+    );
+
     // `POST /api/v1/users` retired in Phase 1.d.2 — the JWT path's
     // lazy auto-provisioning is the only way to land a `users` row,
     // so the spec must NOT advertise the legacy bootstrap endpoint.

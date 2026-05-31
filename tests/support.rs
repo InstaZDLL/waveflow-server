@@ -25,8 +25,10 @@ mod jwks_harness;
 
 use std::{net::SocketAddr, sync::Arc};
 
+use std::time::Duration;
+
 use sqlx::PgPool;
-use waveflow_server::{app, auth::JwtVerifier, AppState, Config, StreamCtx};
+use waveflow_server::{app, auth::JwtVerifier, sync::SyncHub, AppState, Config, StreamCtx};
 
 pub use jwks_harness::{good_claims, header_with_kid, JwksHarness, TEST_KID};
 
@@ -69,12 +71,61 @@ pub async fn spawn_app_with_jwt(pool: PgPool, verifier: Arc<JwtVerifier>) -> Str
     };
 
     let state = AppState {
-        db: pool,
+        db: pool.clone(),
         jwt_verifier: verifier,
         // Streaming is off by default in the shared helper. Tests
         // that exercise the stream endpoints use
         // `spawn_app_with_jwt_and_stream` instead.
         stream_ctx: None,
+        // Sync hub — the standard helper spawns the live flush +
+        // compaction tasks against a quick cadence so any test that
+        // exercises the REST surface gets the real wiring. Sync
+        // tests that want deterministic control use the variant
+        // below.
+        sync: SyncHub::spawn(pool, Duration::from_millis(50), Duration::from_secs(3600)).0,
+    };
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app(config, state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    format!("http://{addr}")
+}
+
+/// Spawn the app with a caller-controlled `SyncHub`. Sync tests pass
+/// [`SyncHub::for_tests`] so the flush + compaction loops stay off and
+/// the test drives them step-by-step via [`SyncHub::flush_acks`] /
+/// [`SyncHub::compact_once`]. Returns the base URL alongside the hub
+/// so the test can read its state directly.
+pub async fn spawn_app_with_sync(
+    pool: PgPool,
+    verifier: Arc<JwtVerifier>,
+    sync: SyncHub,
+) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let config = Config {
+        bind_addr: addr,
+        request_timeout_secs: 5,
+        database_url: "<test>".into(),
+        db_max_connections: 1,
+        jwt_jwks_url: String::new(),
+        jwt_issuer: String::new(),
+        jwt_audience: String::new(),
+        music_root: None,
+        stream_secret: None,
+    };
+
+    let state = AppState {
+        db: pool,
+        jwt_verifier: verifier,
+        stream_ctx: None,
+        sync,
     };
     tokio::spawn(async move {
         axum::serve(
@@ -204,9 +255,10 @@ pub async fn spawn_app_with_jwt_and_stream(
     };
 
     let state = AppState {
-        db: pool,
+        db: pool.clone(),
         jwt_verifier: verifier,
         stream_ctx: Some(Arc::new(StreamCtx { music_root, secret })),
+        sync: SyncHub::spawn(pool, Duration::from_millis(50), Duration::from_secs(3600)).0,
     };
     tokio::spawn(async move {
         axum::serve(

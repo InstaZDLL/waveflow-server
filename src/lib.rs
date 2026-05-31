@@ -28,6 +28,7 @@ pub mod config;
 pub mod db;
 pub mod middleware;
 pub mod stream_token;
+pub mod sync;
 
 pub use config::Config;
 
@@ -75,6 +76,11 @@ pub struct AppState {
     /// boot; `None` disables both the mint and the stream endpoints
     /// (they answer 503).
     pub stream_ctx: Option<std::sync::Arc<StreamCtx>>,
+    /// Multi-device sync hub (Phase 1.f). Owns the broadcast channel
+    /// every WebSocket subscribes to, the in-memory ACK buffer the
+    /// 5 s flusher drains, and the daily compaction task. Cheap to
+    /// clone — every inner field is `Arc`-backed.
+    pub sync: sync::SyncHub,
 }
 
 /// Per-process streaming context built once at boot. Wraps the HMAC
