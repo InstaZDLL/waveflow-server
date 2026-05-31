@@ -33,6 +33,22 @@ bun run db:migrate              # apply pending migrations
 bun run db:migrate --dry-run    # show what would be applied
 ```
 
+### Wired to `waveflow-server`
+
+The `/profiles` route ([`src/routes/profiles.tsx`](src/routes/profiles.tsx)) calls `waveflow-server`'s `/api/v1/profiles` through a TanStack server function ([`src/server-fns/profiles.ts`](src/server-fns/profiles.ts)) that mints a fresh JWT off the active Better Auth session and forwards the request server-side. The browser never sees `WAVEFLOW_SERVER_URL` and never crosses an origin — sidesteps CORS plumbing on `waveflow-server`.
+
+Run both servers locally:
+
+```bash
+# terminal 1 — waveflow-server on :4000
+WAVEFLOW_BIND=127.0.0.1:4000 cargo run --manifest-path ../waveflow-server/Cargo.toml
+
+# terminal 2 — waveflow-web on :3000
+bun run dev
+```
+
+The first authenticated request lazy-provisions the user in `waveflow-server`'s `users` table (no separate onboarding round-trip needed — `waveflow-server` PR #16).
+
 ### JWT endpoint (for `waveflow-server`)
 
 The [`jwt()` plugin](src/lib/auth.ts) exposes two endpoints once a session is active:

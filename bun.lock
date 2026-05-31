@@ -14,7 +14,7 @@
         "@tanstack/react-start": "latest",
         "@tanstack/router-plugin": "^1.132.0",
         "better-auth": "1.6.12",
-        "kysely": "^0.28",
+        "kysely": "~0.28.17",
         "lucide-react": "^1.17.0",
         "nitro": "npm:nitro-nightly@latest",
         "pg": "^8.21.0",
