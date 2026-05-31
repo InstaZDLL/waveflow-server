@@ -39,14 +39,23 @@ export const listProfiles = createServerFn({ method: 'GET' }).handler(async () =
   try {
     return await waveflowFetch<Profile[]>('/api/v1/profiles', { token })
   } catch (err) {
+    // Map the raw backend error to a client-safe message so
+    // diagnostic details (SQL text, internal trace fragments) never
+    // reach the browser. Full error stays logged server-side so an
+    // operator can correlate.
     if (err instanceof WaveflowServerError) {
-      // 401 from waveflow-server means our minted token wasn't
-      // accepted (issuer / audience / kid mismatch, or signature
-      // failure on a key rotation gap). Surface a clear message so
-      // the UI can hint the user to refresh — a transparent retry
-      // would mask a misconfiguration loop.
-      throw new Error(`waveflow-server: ${err.status} ${err.message}`)
+      console.error(`[server-fn] listProfiles → waveflow-server ${err.status}:`, err.message)
+      throw new Error(safeMessageForStatus(err.status))
     }
-    throw err
+    console.error('[server-fn] listProfiles failed:', err)
+    throw new Error('Could not reach waveflow-server. Please try again.')
   }
 })
+
+/** Map a waveflow-server status to a message safe to render in the UI. */
+function safeMessageForStatus(status: number): string {
+  if (status === 401) return 'Session expired. Please sign in again.'
+  if (status === 403) return 'Access denied.'
+  if (status >= 500) return 'waveflow-server is unavailable. Please try again.'
+  return 'Request failed. Please try again.'
+}

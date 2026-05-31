@@ -1,51 +1,42 @@
-import { useEffect, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { listProfiles, type Profile } from '@/server-fns/profiles'
-import { useSession } from '@/lib/auth-client'
+import { getCurrentSession } from '@/server-fns/session'
 
+// `beforeLoad` runs server-side on SSR and client-side on
+// navigation — both paths reach the same auth gate. Throwing
+// `redirect()` aborts the load and pushes the user at /sign-in
+// before the component mounts, so there's no flash of empty
+// content for an unauthenticated visitor.
+//
+// `loader` then fetches the profile list. Any error becomes a
+// loader rejection that the component sees via `useLoaderData` —
+// we wrap to keep the message client-safe (the server fn already
+// maps statuses, this is the catch-all envelope).
 export const Route = createFileRoute('/profiles')({
+  beforeLoad: async () => {
+    const session = await getCurrentSession()
+    if (!session) {
+      throw redirect({ to: '/sign-in' })
+    }
+  },
+  loader: async (): Promise<LoaderData> => {
+    try {
+      const profiles = await listProfiles()
+      return { kind: 'ready', profiles }
+    } catch (err) {
+      return {
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load profiles.',
+      }
+    }
+  },
   component: ProfilesView,
 })
 
-type State =
-  | { kind: 'loading' }
-  | { kind: 'ready'; profiles: Profile[] }
-  | { kind: 'error'; message: string }
+type LoaderData = { kind: 'ready'; profiles: Profile[] } | { kind: 'error'; message: string }
 
 function ProfilesView() {
-  const navigate = useNavigate()
-  const { data: session, isPending } = useSession()
-  const [state, setState] = useState<State>({ kind: 'loading' })
-
-  // Redirect to sign-in once the session has resolved and there's no
-  // user — Better Auth's session-cookie lookup runs on mount, so
-  // gating before that resolves would force an unnecessary trip
-  // through /sign-in even for an already-signed-in user.
-  useEffect(() => {
-    if (!isPending && !session?.user) {
-      void navigate({ to: '/sign-in' })
-    }
-  }, [isPending, navigate, session])
-
-  useEffect(() => {
-    if (isPending || !session?.user) return
-    let cancelled = false
-    listProfiles()
-      .then((profiles) => {
-        if (cancelled) return
-        setState({ kind: 'ready', profiles })
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setState({
-          kind: 'error',
-          message: err instanceof Error ? err.message : 'Failed to load profiles.',
-        })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [isPending, session])
+  const data = Route.useLoaderData()
 
   return (
     <main className="page-wrap px-4 py-12">
@@ -55,25 +46,21 @@ function ProfilesView() {
           Your profiles
         </h1>
 
-        {state.kind === 'loading' && (
-          <p className="text-base text-[var(--sea-ink-soft)]">Loading…</p>
-        )}
-
-        {state.kind === 'error' && (
+        {data.kind === 'error' && (
           <p role="alert" className="text-base text-red-600 dark:text-red-400">
-            {state.message}
+            {data.message}
           </p>
         )}
 
-        {state.kind === 'ready' && state.profiles.length === 0 && (
+        {data.kind === 'ready' && data.profiles.length === 0 && (
           <p className="text-base text-[var(--sea-ink-soft)]">
             No profiles yet. The desktop app or the API will create the first one for you.
           </p>
         )}
 
-        {state.kind === 'ready' && state.profiles.length > 0 && (
+        {data.kind === 'ready' && data.profiles.length > 0 && (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {state.profiles.map((p) => (
+            {data.profiles.map((p) => (
               <li
                 key={p.id}
                 className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4"
