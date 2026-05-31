@@ -27,6 +27,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod middleware;
+pub mod stream_token;
 
 pub use config::Config;
 
@@ -69,6 +70,20 @@ pub struct AppState {
     /// channel and a missing verifier means the server shouldn't
     /// have booted in the first place.
     pub jwt_verifier: std::sync::Arc<auth::JwtVerifier>,
+    /// Streaming configuration. `Some` when both
+    /// `WAVEFLOW_MUSIC_ROOT` and `WAVEFLOW_STREAM_SECRET` are set at
+    /// boot; `None` disables both the mint and the stream endpoints
+    /// (they answer 503).
+    pub stream_ctx: Option<std::sync::Arc<StreamCtx>>,
+}
+
+/// Per-process streaming context built once at boot. The HMAC key
+/// + canonicalised music root live behind an `Arc` so the per-request
+/// hot path stays a pointer copy.
+#[derive(Debug)]
+pub struct StreamCtx {
+    pub music_root: std::path::PathBuf,
+    pub secret: Vec<u8>,
 }
 
 /// Header used for inbound + propagated request IDs. UUIDv4 by default
