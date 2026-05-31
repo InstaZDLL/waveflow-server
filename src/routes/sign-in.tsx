@@ -14,13 +14,37 @@ interface SignInSearch {
 
 /**
  * Restrict the post-sign-in redirect to internal routes we
- * intentionally hand off to. Today only `/desktop-login` qualifies —
- * anything else falls back to the default `/` landing.
+ * intentionally hand off to. Today only `/desktop-login` qualifies.
+ *
+ * A naive `raw.startsWith('/desktop-login')` would accept
+ * `/desktop-login/../admin` — the browser normalises that to
+ * `/admin` after navigation, sidestepping the prefix gate. Parse +
+ * normalise the candidate against a dummy base first so the
+ * resulting pathname is canonical (no `..`, no protocol pivot, no
+ * host injection).
+ *
+ * The constructor also reveals open-redirect attempts: a
+ * `https://attacker.com/desktop-login` raw value would parse to
+ * `origin === 'https://attacker.com'` (the absolute URL wins over
+ * the base), and a protocol-relative `//attacker.com/desktop-login`
+ * pivots in the same way. Both fail the `origin` equality check.
  */
-function safeContinueTarget(raw: string | undefined): string {
+export function safeContinueTarget(raw: string | undefined): string {
   if (!raw) return '/'
-  if (!raw.startsWith('/desktop-login')) return '/'
-  return raw
+  let parsed: URL
+  try {
+    parsed = new URL(raw, 'http://localhost')
+  } catch {
+    return '/'
+  }
+  // If the raw value was a fully-qualified or protocol-relative URL,
+  // the base is overridden — block that to keep this from becoming
+  // an open redirect.
+  if (parsed.origin !== 'http://localhost') return '/'
+  if (!parsed.pathname.startsWith('/desktop-login')) return '/'
+  // Preserve search params (the `/desktop-login` route needs `cb` +
+  // `state`) but drop any hash to keep the URL surface tight.
+  return parsed.pathname + parsed.search
 }
 
 export const Route = createFileRoute('/sign-in')({
