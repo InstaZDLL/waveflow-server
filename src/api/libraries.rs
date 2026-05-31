@@ -3,7 +3,7 @@
 //!
 //! Same design as [`super::profiles`]: every handler reads
 //! [`UserId`] from the request extension that
-//! `middleware::require_user_id` attached, threads the path's
+//! `middleware::authenticate` attached, threads the path's
 //! `profile_id` straight through, and calls a `*_for_profile` method on
 //! [`PostgresLibraryRepository`]. The repository SQL validates the
 //! `library → profile → user` chain inline, so a request that targets
@@ -134,12 +134,12 @@ pub fn router(state: AppState) -> OpenApiRouter {
     path = "/api/v1/profiles/{profile_id}/libraries",
     tag = "libraries",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
     ),
     responses(
         (status = 200, description = "Libraries under the profile, most-recently-updated first", body = Vec<LibraryResponse>),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
@@ -172,14 +172,14 @@ async fn list_libraries(
     path = "/api/v1/profiles/{profile_id}/libraries",
     tag = "libraries",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
     ),
     request_body = CreateLibraryRequest,
     responses(
         (status = 201, description = "Library created", body = LibraryResponse),
         (status = 400, description = "Empty or whitespace-only `name` after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "Profile not owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -234,13 +234,13 @@ async fn create_library(
     path = "/api/v1/profiles/{profile_id}/libraries/{id}",
     tag = "libraries",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Library id"),
     ),
     responses(
         (status = 200, description = "Library found", body = LibraryResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No library with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -272,7 +272,7 @@ async fn get_library(
     path = "/api/v1/profiles/{profile_id}/libraries/{id}",
     tag = "libraries",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Library id"),
     ),
@@ -280,7 +280,7 @@ async fn get_library(
     responses(
         (status = 200, description = "Library updated", body = LibraryResponse),
         (status = 400, description = "`name` was supplied but is empty / whitespace-only after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No library with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -337,13 +337,13 @@ async fn update_library(
     path = "/api/v1/profiles/{profile_id}/libraries/{id}",
     tag = "libraries",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Library id"),
     ),
     responses(
         (status = 204, description = "Library deleted"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No library with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),

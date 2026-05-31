@@ -1,7 +1,7 @@
 //! `/api/v1/profiles/*` — tenant-scoped CRUD over the `profile` table.
 //!
 //! Every handler reads the owning user id from the [`UserId`]
-//! extension that `middleware::require_user_id` attached to the
+//! extension that `middleware::authenticate` attached to the
 //! request, and dispatches to a `*_for_user` method on
 //! [`PostgresProfileRepository`]. The trait surface from
 //! `waveflow-core` is *not* used here — it has no notion of tenancy
@@ -87,11 +87,11 @@ pub fn router(state: AppState) -> OpenApiRouter {
     path = "/api/v1/profiles",
     tag = "profiles",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
     ),
     responses(
         (status = 200, description = "Owned profiles, most-recently-used first", body = Vec<ProfileResponse>),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
@@ -119,12 +119,12 @@ async fn list_profiles(
     path = "/api/v1/profiles",
     tag = "profiles",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
     ),
     request_body = CreateProfileRequest,
     responses(
         (status = 201, description = "Profile created", body = ProfileResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 409, description = "X-User-Id does not match an existing users row"),
     ),
@@ -200,12 +200,12 @@ async fn create_profile(
     path = "/api/v1/profiles/{id}",
     tag = "profiles",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("id" = i64, Path, description = "Profile id"),
     ),
     responses(
         (status = 200, description = "Profile found", body = ProfileResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
     ),
@@ -233,13 +233,13 @@ async fn get_profile(
     path = "/api/v1/profiles/{id}",
     tag = "profiles",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("id" = i64, Path, description = "Profile id"),
     ),
     request_body = UpdateProfileRequest,
     responses(
         (status = 200, description = "Profile renamed", body = ProfileResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
     ),
@@ -274,12 +274,12 @@ async fn update_profile(
     path = "/api/v1/profiles/{id}",
     tag = "profiles",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("id" = i64, Path, description = "Profile id"),
     ),
     responses(
         (status = 204, description = "Profile deleted"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
         (status = 404, description = "No profile with that id owned by the calling user"),
         (status = 409, description = "Refused — would leave the user with zero profiles"),

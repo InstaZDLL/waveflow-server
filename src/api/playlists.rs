@@ -148,12 +148,12 @@ pub fn router(state: AppState) -> OpenApiRouter {
     path = "/api/v1/profiles/{profile_id}/playlists",
     tag = "playlists",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
     ),
     responses(
         (status = 200, description = "Playlists under the profile, in sidebar order", body = Vec<PlaylistResponse>),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
@@ -187,14 +187,14 @@ async fn list_playlists(
     path = "/api/v1/profiles/{profile_id}/playlists",
     tag = "playlists",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
     ),
     request_body = CreatePlaylistRequest,
     responses(
         (status = 201, description = "Playlist created", body = PlaylistResponse),
         (status = 400, description = "Empty / whitespace-only `name` after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "Profile not owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -243,13 +243,13 @@ async fn create_playlist(
     path = "/api/v1/profiles/{profile_id}/playlists/{id}",
     tag = "playlists",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Playlist id"),
     ),
     responses(
         (status = 200, description = "Playlist found", body = PlaylistResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No playlist with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -279,7 +279,7 @@ async fn get_playlist(
     path = "/api/v1/profiles/{profile_id}/playlists/{id}",
     tag = "playlists",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Playlist id"),
     ),
@@ -287,7 +287,7 @@ async fn get_playlist(
     responses(
         (status = 200, description = "Playlist updated", body = PlaylistResponse),
         (status = 400, description = "`name` was supplied but is empty / whitespace-only after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No playlist with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -340,13 +340,13 @@ async fn update_playlist(
     path = "/api/v1/profiles/{profile_id}/playlists/{id}",
     tag = "playlists",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("id" = i64, Path, description = "Playlist id"),
     ),
     responses(
         (status = 204, description = "Playlist deleted"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No playlist with that id under the profile owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),

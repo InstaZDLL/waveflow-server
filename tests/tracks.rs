@@ -14,29 +14,12 @@ mod support;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use support::spawn_app;
+use support::{spawn_authenticated, spawn_two_authenticated};
 
-/// Mint a user via `POST /api/v1/users`. Duplicated across test
-/// files on purpose — each `tests/*.rs` is a separate Cargo crate,
-/// so a `support`-side helper would force every file to import it.
-async fn mint_user(base: &str) -> i64 {
-    let body: Value = reqwest::Client::new()
-        .post(format!("{base}/api/v1/users"))
-        .send()
-        .await
-        .expect("user create failed")
-        .error_for_status()
-        .expect("non-2xx on user create")
-        .json()
-        .await
-        .expect("user create body");
-    body["id"].as_i64().expect("user id missing from response")
-}
-
-async fn mint_profile(base: &str, user_id: i64, name: &str) -> i64 {
+async fn mint_profile(base: &str, token: &str, name: &str) -> i64 {
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(token)
         .json(&json!({ "name": name, "color_id": "emerald" }))
         .send()
         .await
@@ -49,10 +32,10 @@ async fn mint_profile(base: &str, user_id: i64, name: &str) -> i64 {
     created["id"].as_i64().expect("profile id missing")
 }
 
-async fn mint_library(base: &str, user_id: i64, profile_id: i64, name: &str) -> i64 {
+async fn mint_library(base: &str, token: &str, profile_id: i64, name: &str) -> i64 {
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/libraries"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(token)
         .json(&json!({ "name": name }))
         .send()
         .await
@@ -88,45 +71,19 @@ fn track_body(title: &str, file_path: &str) -> Value {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn tracks_require_x_user_id(pool: PgPool) {
-    let base = spawn_app(pool).await;
-
-    for (method, path) in [
-        ("GET", "/api/v1/profiles/1/libraries/1/tracks"),
-        ("POST", "/api/v1/profiles/1/libraries/1/tracks"),
-        ("GET", "/api/v1/profiles/1/libraries/1/tracks/1"),
-        ("PATCH", "/api/v1/profiles/1/libraries/1/tracks/1"),
-        ("DELETE", "/api/v1/profiles/1/libraries/1/tracks/1"),
-    ] {
-        let req = match method {
-            "GET" => reqwest::Client::new().get(format!("{base}{path}")),
-            "POST" => reqwest::Client::new()
-                .post(format!("{base}{path}"))
-                .json(&track_body("x", "/x.flac")),
-            "PATCH" => reqwest::Client::new()
-                .patch(format!("{base}{path}"))
-                .json(&json!({ "title": "x" })),
-            "DELETE" => reqwest::Client::new().delete(format!("{base}{path}")),
-            _ => unreachable!(),
-        };
-        let resp = req.send().await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
-    }
-}
-
-#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_then_list_then_get_under_library(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Bandes-son").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Bandes-son").await;
 
     // Empty list initially.
     let list: Vec<Value> = reqwest::Client::new()
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -140,7 +97,7 @@ async fn create_then_list_then_get_under_library(pool: PgPool) {
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("Cosmic Dust", "/music/cosmic_dust.flac"))
         .send()
         .await
@@ -164,7 +121,7 @@ async fn create_then_list_then_get_under_library(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -179,7 +136,7 @@ async fn create_then_list_then_get_under_library(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -192,10 +149,11 @@ async fn create_then_list_then_get_under_library(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_rejects_empty_title(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     for blank in ["", "   ", "\t\n "] {
         let mut body = track_body(blank, "/x.flac");
@@ -204,7 +162,7 @@ async fn create_rejects_empty_title(pool: PgPool) {
             .post(format!(
                 "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
             ))
-            .header("x-user-id", user_id.to_string())
+            .bearer_auth(&auth.token)
             .json(&body)
             .send()
             .await
@@ -220,7 +178,7 @@ async fn create_rejects_empty_title(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -236,16 +194,17 @@ async fn create_rejects_empty_title(pool: PgPool) {
 /// before storage.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_rejects_empty_file_path(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let resp = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("Title", "   "))
         .send()
         .await
@@ -259,16 +218,17 @@ async fn create_rejects_empty_file_path(pool: PgPool) {
 /// parsing) — we accept either as long as it's a client error.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_rejects_out_of_range_rating(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let id = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("Track", "/track.flac"))
         .send()
         .await
@@ -285,7 +245,7 @@ async fn update_rejects_out_of_range_rating(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "rating": 256 }))
         .send()
         .await
@@ -300,12 +260,15 @@ async fn update_rejects_out_of_range_rating(pool: PgPool) {
 /// Foreign library id under the calling user must 404.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_under_foreign_library_returns_404(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_a = mint_user(&base).await;
-    let user_b = mint_user(&base).await;
-    let profile_a = mint_profile(&base, user_a, "A").await;
-    let library_a = mint_library(&base, user_a, profile_a, "A's lib").await;
-    let profile_b = mint_profile(&base, user_b, "B").await;
+    let two = spawn_two_authenticated(pool, "test-user-a", "test-user-b").await;
+    let base = two.base.clone();
+    let a = &two.a;
+    let b = &two.b;
+    let _user_a = a.user_id;
+    let _user_b = b.user_id;
+    let profile_a = mint_profile(&base, &a.token, "A").await;
+    let library_a = mint_library(&base, &a.token, profile_a, "A's lib").await;
+    let profile_b = mint_profile(&base, &b.token, "B").await;
 
     // User B tries to drop a track into user A's library, proxying
     // through their own profile.
@@ -313,7 +276,7 @@ async fn create_under_foreign_library_returns_404(pool: PgPool) {
         .post(format!(
             "{base}/api/v1/profiles/{profile_b}/libraries/{library_a}/tracks"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .json(&track_body("stolen", "/stolen.flac"))
         .send()
         .await
@@ -326,7 +289,7 @@ async fn create_under_foreign_library_returns_404(pool: PgPool) {
         .post(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .json(&track_body("stolen", "/stolen2.flac"))
         .send()
         .await
@@ -338,7 +301,7 @@ async fn create_under_foreign_library_returns_404(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks"
         ))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .send()
         .await
         .unwrap()
@@ -353,20 +316,23 @@ async fn create_under_foreign_library_returns_404(pool: PgPool) {
 /// (profile, library) they try.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn tenants_are_isolated(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_a = mint_user(&base).await;
-    let user_b = mint_user(&base).await;
-    let profile_a = mint_profile(&base, user_a, "A").await;
-    let library_a = mint_library(&base, user_a, profile_a, "A's lib").await;
-    let profile_b = mint_profile(&base, user_b, "B").await;
-    let library_b = mint_library(&base, user_b, profile_b, "B's lib").await;
+    let two = spawn_two_authenticated(pool, "test-user-a", "test-user-b").await;
+    let base = two.base.clone();
+    let a = &two.a;
+    let b = &two.b;
+    let _user_a = a.user_id;
+    let _user_b = b.user_id;
+    let profile_a = mint_profile(&base, &a.token, "A").await;
+    let library_a = mint_library(&base, &a.token, profile_a, "A's lib").await;
+    let profile_b = mint_profile(&base, &b.token, "B").await;
+    let library_b = mint_library(&base, &b.token, profile_b, "B's lib").await;
 
     // User A creates a track.
     let created: Value = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks"
         ))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .json(&track_body("A's track", "/a.flac"))
         .send()
         .await
@@ -383,7 +349,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_b}/libraries/{library_b}/tracks"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .send()
         .await
         .unwrap()
@@ -403,7 +369,7 @@ async fn tenants_are_isolated(pool: PgPool) {
             .get(format!(
                 "{base}/api/v1/profiles/{proxy_profile}/libraries/{proxy_library}/tracks"
             ))
-            .header("x-user-id", user_b.to_string())
+            .bearer_auth(&b.token)
             .send()
             .await
             .unwrap()
@@ -419,7 +385,7 @@ async fn tenants_are_isolated(pool: PgPool) {
             .get(format!(
                 "{base}/api/v1/profiles/{proxy_profile}/libraries/{proxy_library}/tracks/{track_id}"
             ))
-            .header("x-user-id", user_b.to_string())
+            .bearer_auth(&b.token)
             .send()
             .await
             .unwrap();
@@ -436,7 +402,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .json(&json!({ "title": "hijacked" }))
         .send()
         .await
@@ -447,7 +413,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .delete(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .send()
         .await
         .unwrap();
@@ -458,7 +424,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_a}/libraries/{library_a}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .send()
         .await
         .unwrap()
@@ -474,16 +440,17 @@ async fn tenants_are_isolated(pool: PgPool) {
 /// `UPDATE … RETURNING …` path, not a stale read-back).
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_round_trips(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let id = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("Original", "/original.flac"))
         .send()
         .await
@@ -500,7 +467,7 @@ async fn update_round_trips(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "title": "Renamed", "rating": 200 }))
         .send()
         .await
@@ -521,16 +488,17 @@ async fn update_round_trips(pool: PgPool) {
 /// `None` stays legitimate.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_rejects_empty_title(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let id = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("Keep me", "/keep.flac"))
         .send()
         .await
@@ -548,7 +516,7 @@ async fn update_rejects_empty_title(pool: PgPool) {
             .patch(format!(
                 "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
             ))
-            .header("x-user-id", user_id.to_string())
+            .bearer_auth(&auth.token)
             .json(&json!({ "title": blank }))
             .send()
             .await
@@ -565,7 +533,7 @@ async fn update_rejects_empty_title(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -579,16 +547,17 @@ async fn update_rejects_empty_title(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn delete_returns_204_then_404(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let id = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("doomed", "/doomed.flac"))
         .send()
         .await
@@ -605,7 +574,7 @@ async fn delete_returns_204_then_404(pool: PgPool) {
         .delete(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -615,7 +584,7 @@ async fn delete_returns_204_then_404(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -628,20 +597,21 @@ async fn delete_returns_204_then_404(pool: PgPool) {
 /// CASCADE keyword" regression.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn library_delete_cascades_to_tracks(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     // Two libraries — one to delete with its tracks, one to keep
     // as a still-owned proxy for the post-delete probe.
-    let l1 = mint_library(&base, user_id, profile_id, "to delete").await;
-    let l2 = mint_library(&base, user_id, profile_id, "to keep").await;
+    let l1 = mint_library(&auth.base, &auth.token, profile_id, "to delete").await;
+    let l2 = mint_library(&auth.base, &auth.token, profile_id, "to keep").await;
 
     let track_id = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{l1}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("doomed track", "/doomed.flac"))
         .send()
         .await
@@ -659,7 +629,7 @@ async fn library_delete_cascades_to_tracks(pool: PgPool) {
         .delete(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{l1}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -670,7 +640,7 @@ async fn library_delete_cascades_to_tracks(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{l1}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -685,7 +655,7 @@ async fn library_delete_cascades_to_tracks(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{l2}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -697,19 +667,20 @@ async fn library_delete_cascades_to_tracks(pool: PgPool) {
 /// surfaces here.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn profile_delete_cascades_to_tracks(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
 
     // Two profiles so the delete-last-profile guard doesn't block
     // us; one to delete, one to keep as the post-delete probe path.
-    let p1 = mint_profile(&base, user_id, "to delete").await;
-    let p2 = mint_profile(&base, user_id, "to keep").await;
-    let l1 = mint_library(&base, user_id, p1, "lib").await;
-    let l2 = mint_library(&base, user_id, p2, "kept lib").await;
+    let p1 = mint_profile(&auth.base, &auth.token, "to delete").await;
+    let p2 = mint_profile(&auth.base, &auth.token, "to keep").await;
+    let l1 = mint_library(&auth.base, &auth.token, p1, "lib").await;
+    let l2 = mint_library(&auth.base, &auth.token, p2, "kept lib").await;
 
     let track_id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{p1}/libraries/{l1}/tracks"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&track_body("doomed track", "/doomed.flac"))
         .send()
         .await
@@ -725,7 +696,7 @@ async fn profile_delete_cascades_to_tracks(pool: PgPool) {
     // Delete the profile — should cascade through library to track.
     let resp = reqwest::Client::new()
         .delete(format!("{base}/api/v1/profiles/{p1}"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -738,7 +709,7 @@ async fn profile_delete_cascades_to_tracks(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{p2}/libraries/{l2}/tracks/{track_id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -752,17 +723,18 @@ async fn profile_delete_cascades_to_tracks(pool: PgPool) {
 /// rather than an accidental drift.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn duplicate_file_path_under_same_library_fails(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
-    let library_id = mint_library(&base, user_id, profile_id, "Lib").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let library_id = mint_library(&auth.base, &auth.token, profile_id, "Lib").await;
 
     let body = track_body("first", "/dup.flac");
     let resp = reqwest::Client::new()
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&body)
         .send()
         .await
@@ -773,7 +745,7 @@ async fn duplicate_file_path_under_same_library_fails(pool: PgPool) {
         .post(format!(
             "{base}/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&body)
         .send()
         .await
@@ -783,20 +755,4 @@ async fn duplicate_file_path_under_same_library_fails(pool: PgPool) {
         StatusCode::INTERNAL_SERVER_ERROR,
         "duplicate file_path under the same library should currently 5xx"
     );
-}
-
-/// Production-gate sanity: when `WAVEFLOW_DEV_AUTH` is off, the
-/// nested route is gated by 503 just like every other `/api/v1/*`
-/// endpoint.
-#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn dev_auth_gate_returns_503_for_tracks_when_disabled(pool: PgPool) {
-    let base = support::spawn_app_prod_gate(pool).await;
-
-    let resp = reqwest::Client::new()
-        .get(format!("{base}/api/v1/profiles/1/libraries/1/tracks"))
-        .header("x-user-id", "42")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
