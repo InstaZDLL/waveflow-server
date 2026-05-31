@@ -35,6 +35,7 @@ mod playlists;
 mod profiles;
 mod ready;
 mod stream;
+mod sync;
 mod tracks;
 
 /// Combined router for every API module. Mounted at the root by
@@ -53,6 +54,7 @@ pub fn router(state: AppState) -> OpenApiRouter {
     let libraries_router = libraries::router(state.clone()).layer(auth_layer.clone());
     let tracks_router = tracks::router(state.clone()).layer(auth_layer.clone());
     let playlists_router = playlists::router(state.clone()).layer(auth_layer.clone());
+    let sync_router = sync::router(state.clone()).layer(auth_layer.clone());
     // Mint stays JWT-authed (verifies tenant ownership before signing).
     let stream_mint_router = stream::auth_router(state.clone()).layer(auth_layer);
     // The stream endpoint itself is HMAC-authed by the token in the
@@ -68,6 +70,7 @@ pub fn router(state: AppState) -> OpenApiRouter {
         .merge(libraries_router)
         .merge(tracks_router)
         .merge(playlists_router)
+        .merge(sync_router)
         .merge(stream_mint_router)
         .merge(stream_public_router)
 }

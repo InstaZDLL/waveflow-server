@@ -1,0 +1,528 @@
+//! `/api/v1/sync/*` — multi-device sync surface per RFC-001 §6.6.
+//!
+//! Three REST routes + one WebSocket:
+//!
+//! - `POST /api/v1/sync/ops` — push a batch. Per-op idempotency on
+//!   `operation_id`; per-device monotonicity on `lamport_ts`. New rows
+//!   broadcast to every WebSocket subscriber owned by the same user.
+//! - `GET  /api/v1/sync/ops?since=N` — pull rows with `id > N`.
+//!   Resurrected-device guard: a `since` below the compaction
+//!   watermark returns `410 Gone` so the client knows to resync from
+//!   scratch instead of converging on a half-collapsed view.
+//! - `POST /api/v1/sync/ack` — the **only** path that advances the
+//!   per-device cursor. Body is buffered in memory and UPSERTed every
+//!   five seconds (or synchronously by the compaction job before the
+//!   MIN read).
+//! - `GET  /api/v1/sync/ws?device_id=…` — WebSocket. Server pushes
+//!   `{"type":"op","op":{…}}` envelopes for the authenticated user;
+//!   client sends `{"ack": N}` frames to advance its cursor. Disconnect
+//!   triggers a synchronous flush of that device's buffered ACK so a
+//!   browser tab close doesn't lose the position.
+
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Extension, Query, State,
+    },
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
+use chrono::Utc;
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use sqlx::{postgres::PgRow, Row};
+use tokio::sync::broadcast::error::RecvError;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
+use uuid::Uuid;
+
+use crate::{
+    middleware::UserId,
+    sync::{build_broadcast, SyncOp, SyncOpIn},
+    AppState,
+};
+
+/// Max ops per batch. A hard cap on the request body keeps a buggy or
+/// hostile client from holding a transaction open across a million-row
+/// insert. The desktop's scanner pipeline commits every 200 rows; 1024
+/// is comfortable headroom for a coalesced flush.
+const MAX_BATCH_SIZE: usize = 1024;
+
+/// Max rows per pull response. 1024 matches the push cap; clients
+/// loop on `since = last_id` until they receive a short page.
+const PULL_PAGE_SIZE: i64 = 1024;
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PushBatchRequest {
+    /// Originating device. Same value the WS handshake uses on
+    /// `?device_id=…`.
+    pub device_id: String,
+    pub ops: Vec<SyncOpIn>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PushBatchResponse {
+    /// Every op the server now considers durably stored — both fresh
+    /// inserts AND duplicate replays of previously-accepted rows. The
+    /// client uses this to confirm what landed; a missing op means
+    /// the batch was aborted (409 / 500).
+    pub accepted: Vec<SyncOp>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LamportRegression {
+    pub error: &'static str,
+    pub device_id: String,
+    pub stored_max: i64,
+    pub offending_lamport_ts: i64,
+}
+
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub struct PullQuery {
+    /// Last `sync_op.id` the client has confirmed seeing. `0` (or
+    /// omitted) means "send me everything from the start".
+    #[serde(default)]
+    pub since: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PullResponse {
+    pub ops: Vec<SyncOp>,
+    /// Highest `id` in this batch — convenience so the client doesn't
+    /// have to scan `ops` to compute the next `since`. Equals `since`
+    /// when the page is empty.
+    pub last_id: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ResurrectedDeviceGone {
+    pub error: &'static str,
+    pub compacted_up_to: i64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AckRequest {
+    pub device_id: String,
+    pub last_seen_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct WsQuery {
+    device_id: String,
+}
+
+pub fn router(state: AppState) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(push_ops, pull_ops))
+        .routes(routes!(ack_ops))
+        .route("/api/v1/sync/ws", axum::routing::get(ws_upgrade))
+        .with_state(state)
+}
+
+/// Push a batch of ops. Per-op semantics:
+///
+/// - `ON CONFLICT (user_id, device_id, operation_id) DO NOTHING`
+///   absorbs idempotent replays.
+/// - The `(user_id, device_id, lamport_ts)` UNIQUE bubbles up as
+///   sqlx `23505` on a regression — caught + reported as 409.
+///
+/// All ops land in a single transaction; broadcast fires after the
+/// commit so a subscriber never sees an op that gets rolled back.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sync/ops",
+    tag = "sync",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+    ),
+    request_body = PushBatchRequest,
+    responses(
+        (status = 200, description = "Batch accepted (one entry per op, fresh or dup)", body = PushBatchResponse),
+        (status = 400, description = "Empty `device_id`, oversized batch, or malformed op"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 409, description = "Lamport regression — stored max returned in body", body = LamportRegression),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn push_ops(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Json(req): Json<PushBatchRequest>,
+) -> impl IntoResponse {
+    let device_id = req.device_id.trim();
+    if device_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "device_id is required").into_response();
+    }
+    if req.ops.is_empty() {
+        return (StatusCode::OK, Json(PushBatchResponse { accepted: vec![] })).into_response();
+    }
+    if req.ops.len() > MAX_BATCH_SIZE {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("batch exceeds {MAX_BATCH_SIZE} ops"),
+        )
+            .into_response();
+    }
+
+    let now = Utc::now().timestamp_millis();
+    let pool = state.sync.pool();
+
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(err) => {
+            tracing::error!(error = %err, user_id, "sync push begin tx failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "tx begin failed").into_response();
+        }
+    };
+
+    let mut accepted: Vec<SyncOp> = Vec::with_capacity(req.ops.len());
+    let mut freshly_inserted: Vec<SyncOp> = Vec::new();
+
+    for op_in in &req.ops {
+        let entity = op_in.entity.trim();
+        let entity_id = op_in.entity_id.trim();
+        let op_kind = op_in.op.trim();
+        if entity.is_empty() || entity_id.is_empty() || op_kind.is_empty() {
+            tx.rollback().await.ok();
+            return (
+                StatusCode::BAD_REQUEST,
+                "entity / entity_id / op are required",
+            )
+                .into_response();
+        }
+
+        let insert_res = sqlx::query(
+            "INSERT INTO sync_op \
+                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
+             RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .bind(op_in.operation_id)
+        .bind(op_in.lamport_ts)
+        .bind(entity)
+        .bind(entity_id)
+        .bind(op_in.field.as_deref())
+        .bind(op_kind)
+        .bind(op_in.payload.as_ref())
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await;
+
+        match insert_res {
+            Ok(Some(row)) => {
+                let op = row_to_op(&row);
+                accepted.push(op.clone());
+                freshly_inserted.push(op);
+            }
+            Ok(None) => {
+                // Duplicate `operation_id` — fold in the previously-
+                // stored row so the client's `accepted` list is whole.
+                let existing_res = sqlx::query(
+                    "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+                     FROM sync_op \
+                     WHERE user_id = $1 AND device_id = $2 AND operation_id = $3",
+                )
+                .bind(user_id)
+                .bind(device_id)
+                .bind(op_in.operation_id)
+                .fetch_one(&mut *tx)
+                .await;
+                match existing_res {
+                    Ok(row) => accepted.push(row_to_op(&row)),
+                    Err(err) => {
+                        tracing::error!(error = %err, user_id, device_id, "sync dup lookup failed");
+                        tx.rollback().await.ok();
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "dup lookup failed")
+                            .into_response();
+                    }
+                }
+            }
+            Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+                // Unique violation that wasn't on `operation_id`
+                // (that branch is absorbed by the ON CONFLICT) — so it
+                // can only be the `(user_id, device_id, lamport_ts)`
+                // constraint, i.e. a regression. Read the current max
+                // and return it so the client can resync its clock.
+                tx.rollback().await.ok();
+                let stored_max: i64 = sqlx::query_scalar(
+                    "SELECT COALESCE(MAX(lamport_ts), 0) FROM sync_op \
+                     WHERE user_id = $1 AND device_id = $2",
+                )
+                .bind(user_id)
+                .bind(device_id)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+                return (
+                    StatusCode::CONFLICT,
+                    Json(LamportRegression {
+                        error: "lamport_regression",
+                        device_id: device_id.to_string(),
+                        stored_max,
+                        offending_lamport_ts: op_in.lamport_ts,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(err) => {
+                tracing::error!(error = %err, user_id, device_id, "sync insert failed");
+                tx.rollback().await.ok();
+                return (StatusCode::INTERNAL_SERVER_ERROR, "insert failed").into_response();
+            }
+        }
+    }
+
+    if let Err(err) = tx.commit().await {
+        tracing::error!(error = %err, user_id, "sync push commit failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, "commit failed").into_response();
+    }
+
+    // Broadcast outside the transaction — subscribers must never
+    // observe an op that rolls back. The pre-serialised `Arc<String>`
+    // means each subscriber gets a cheap clone.
+    for op in &freshly_inserted {
+        state.sync.broadcast(build_broadcast(user_id, op));
+    }
+
+    (StatusCode::OK, Json(PushBatchResponse { accepted })).into_response()
+}
+
+/// Pull ops with `id > since`. Read-only — never advances the device
+/// cursor (that's `POST /sync/ack`'s sole job). Resurrected-device
+/// guard: any `since` below the compaction watermark returns 410.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sync/ops",
+    tag = "sync",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        PullQuery,
+    ),
+    responses(
+        (status = 200, description = "Page of ops, capped at 1024", body = PullResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 410, description = "since < compacted_up_to — client must full-resync", body = ResurrectedDeviceGone),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn pull_ops(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Query(query): Query<PullQuery>,
+) -> impl IntoResponse {
+    if query.since < 0 {
+        return (StatusCode::BAD_REQUEST, "since must be >= 0").into_response();
+    }
+    let pool = state.sync.pool();
+
+    // Resurrected-device guard. `since == 0` ("send me everything")
+    // is always allowed — the compaction watermark only matters when
+    // the client is claiming a position partway up the log. The
+    // `compacted_up_to == 0` row (never compacted) is also a no-op
+    // guard, so the condition is symmetric: `since > 0 AND since <
+    // compacted_up_to`.
+    if query.since > 0 {
+        let compacted: Option<i64> = sqlx::query_scalar(
+            "SELECT compacted_up_to FROM sync_compaction_watermark WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+        if let Some(watermark) = compacted {
+            if query.since < watermark {
+                return (
+                    StatusCode::GONE,
+                    Json(ResurrectedDeviceGone {
+                        error: "resync_required",
+                        compacted_up_to: watermark,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    let rows = sqlx::query(
+        "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+         FROM sync_op \
+         WHERE user_id = $1 AND id > $2 \
+         ORDER BY id ASC \
+         LIMIT $3",
+    )
+    .bind(user_id)
+    .bind(query.since)
+    .bind(PULL_PAGE_SIZE)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => {
+            let ops: Vec<SyncOp> = rows.iter().map(row_to_op).collect();
+            let last_id = ops.last().map(|o| o.id).unwrap_or(query.since);
+            (StatusCode::OK, Json(PullResponse { ops, last_id })).into_response()
+        }
+        Err(err) => {
+            tracing::error!(error = %err, user_id, "sync pull failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "pull failed").into_response()
+        }
+    }
+}
+
+/// Record an ACK. Goes into the in-memory buffer; the flush task
+/// UPSERTs the row within `flush_interval` (default 5 s). The
+/// compaction job synchronously flushes the buffer before reading the
+/// MIN, so a fresh ACK never gets stranded in memory at compaction
+/// time.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sync/ack",
+    tag = "sync",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+    ),
+    request_body = AckRequest,
+    responses(
+        (status = 204, description = "ACK buffered"),
+        (status = 400, description = "Empty `device_id` or negative `last_seen_id`"),
+        (status = 401, description = "Missing or invalid bearer token"),
+    ),
+)]
+async fn ack_ops(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Json(req): Json<AckRequest>,
+) -> impl IntoResponse {
+    let device_id = req.device_id.trim();
+    if device_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "device_id is required").into_response();
+    }
+    if req.last_seen_id < 0 {
+        return (StatusCode::BAD_REQUEST, "last_seen_id must be >= 0").into_response();
+    }
+    state.sync.record_ack(
+        user_id,
+        device_id,
+        req.last_seen_id,
+        Utc::now().timestamp_millis(),
+    );
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// WebSocket upgrade. The `device_id` rides in the query string so the
+/// socket task knows who's talking from the first byte — an in-band
+/// "hello" frame would race with the first broadcast.
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Query(params): Query<WsQuery>,
+) -> impl IntoResponse {
+    let device_id = params.device_id.trim().to_string();
+    if device_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "device_id is required").into_response();
+    }
+    ws.on_upgrade(move |socket| handle_socket(socket, state, user_id, device_id))
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct InboundAck {
+    ack: i64,
+}
+
+async fn handle_socket(socket: WebSocket, state: AppState, user_id: i64, device_id: String) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut broadcast_rx = state.sync.subscribe();
+
+    loop {
+        tokio::select! {
+            // Inbound frame from the client. We only understand
+            // `{"ack": N}` today; anything else is logged and dropped
+            // so a future protocol extension doesn't break old
+            // clients.
+            inbound = receiver.next() => {
+                match inbound {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(ack) = serde_json::from_str::<InboundAck>(&text) {
+                            if ack.ack >= 0 {
+                                state.sync.record_ack(
+                                    user_id,
+                                    &device_id,
+                                    ack.ack,
+                                    Utc::now().timestamp_millis(),
+                                );
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(_)) => { /* ignore non-text frames */ }
+                    Some(Err(err)) => {
+                        tracing::debug!(error = %err, user_id, device_id, "ws inbound error");
+                        break;
+                    }
+                }
+            }
+            // Outbound broadcast. Filter to this user before sending —
+            // a cross-tenant frame must never leave the socket.
+            recv = broadcast_rx.recv() => {
+                match recv {
+                    Ok(payload) => {
+                        if payload.user_id == user_id {
+                            // Send the pre-serialised frame. A failure
+                            // here means the socket died; bail and let
+                            // the on-disconnect flush run.
+                            if sender
+                                .send(Message::Text((*payload.frame).clone().into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    Err(RecvError::Closed) => break,
+                    Err(RecvError::Lagged(skipped)) => {
+                        // The subscriber fell behind the broadcast
+                        // buffer. The cleanest recovery is to drop the
+                        // socket and let the client pull via REST +
+                        // reconnect — they have `since = last_seen_id`
+                        // to resume from.
+                        tracing::warn!(
+                            user_id,
+                            device_id,
+                            skipped,
+                            "ws broadcast lagged, closing socket",
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // On disconnect, flush this device's ACK synchronously so a
+    // crash on the next compaction tick doesn't over-retain.
+    if let Err(err) = state.sync.flush_acks().await {
+        tracing::warn!(error = %err, user_id, device_id, "ws teardown flush failed");
+    }
+}
+
+fn row_to_op(row: &PgRow) -> SyncOp {
+    SyncOp {
+        id: row.get("id"),
+        operation_id: row.get::<Uuid, _>("operation_id"),
+        device_id: row.get("device_id"),
+        lamport_ts: row.get("lamport_ts"),
+        entity: row.get("entity"),
+        entity_id: row.get("entity_id"),
+        field: row.get("field"),
+        op: row.get("op"),
+        payload: row.get::<Option<serde_json::Value>, _>("payload"),
+        created_at: row.get("created_at"),
+    }
+}
