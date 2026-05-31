@@ -2,12 +2,38 @@ import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
 
+interface SignInSearch {
+  /**
+   * Optional return path the desktop OAuth handshake (Phase
+   * 1.f.desktop.1b) sets when redirecting an unsigned user through
+   * here. Validated as same-origin + restricted to a known prefix to
+   * keep this from becoming an open-redirect vector.
+   */
+  continue?: string
+}
+
+/**
+ * Restrict the post-sign-in redirect to internal routes we
+ * intentionally hand off to. Today only `/desktop-login` qualifies —
+ * anything else falls back to the default `/` landing.
+ */
+function safeContinueTarget(raw: string | undefined): string {
+  if (!raw) return '/'
+  if (!raw.startsWith('/desktop-login')) return '/'
+  return raw
+}
+
 export const Route = createFileRoute('/sign-in')({
+  validateSearch: (raw: Record<string, unknown>): SignInSearch => ({
+    continue: typeof raw.continue === 'string' ? raw.continue : undefined,
+  }),
   component: SignIn,
 })
 
 function SignIn() {
   const navigate = useNavigate()
+  const search = Route.useSearch()
+  const continueTo = safeContinueTarget(search.continue)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +61,10 @@ function SignIn() {
         setError(remote.message ?? 'Sign-in failed. Check your credentials.')
         return
       }
-      await navigate({ to: '/' })
+      // Same-origin only — `safeContinueTarget` restricts to a
+      // known prefix so a crafted link can't pivot the post-login
+      // navigate at an external host.
+      await navigate({ href: continueTo })
     } catch (err) {
       // Better Auth resolves with `{ error }` on auth failures, so
       // a thrown exception here is a transport-level problem (DNS,
