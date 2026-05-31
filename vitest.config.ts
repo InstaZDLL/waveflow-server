@@ -9,11 +9,21 @@
 // where we haven't authored any tests yet — once `src/**/*.test.tsx`
 // files start landing this flag becomes a no-op.
 
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import viteReact from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [viteReact()],
+  // Mirror the `@/*` -> `src/*` mapping declared in `tsconfig.json`.
+  // The runtime build picks this up via `resolve: { tsconfigPaths: true }`
+  // in `vite.config.ts`; Vitest doesn't load that config, so we wire
+  // the alias here too.
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,
