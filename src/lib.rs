@@ -77,13 +77,26 @@ pub struct AppState {
     pub stream_ctx: Option<std::sync::Arc<StreamCtx>>,
 }
 
-/// Per-process streaming context built once at boot. The HMAC key
-/// + canonicalised music root live behind an `Arc` so the per-request
-/// hot path stays a pointer copy.
-#[derive(Debug)]
+/// Per-process streaming context built once at boot. Wraps the HMAC
+/// key and canonicalised music root behind an `Arc` so the
+/// per-request hot path stays a pointer copy.
+///
+/// `Debug` is deliberately NOT derived: a derived impl would dump the
+/// `secret` bytes into any `tracing` field or panic message that
+/// happens to print the state, and that's exactly the leak this
+/// type is supposed to prevent.
 pub struct StreamCtx {
     pub music_root: std::path::PathBuf,
     pub secret: Vec<u8>,
+}
+
+impl std::fmt::Debug for StreamCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamCtx")
+            .field("music_root", &self.music_root)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Header used for inbound + propagated request IDs. UUIDv4 by default

@@ -3,7 +3,10 @@
 //! Strategy: spin up a temp music-root directory with a known
 //! payload, mint a signed URL via the JWT path, then exercise the
 //! stream side both with and without `Range`. Also covers the
-//! security cases: tampered token, expired token, traversal attempt.
+//! security cases: tampered token, foreign-user mint, traversal
+//! attempt, streaming-disabled. Expiry is covered by the
+//! `stream_token::tests::rejects_an_expired_token` unit test, so
+//! we don't redo it through the HTTP stack.
 
 mod support;
 
@@ -31,6 +34,7 @@ struct StreamingSetup {
     library_id: i64,
     payload: Vec<u8>,
     music_root: tempfile::TempDir,
+    harness: std::sync::Arc<support::JwksHarness>,
 }
 
 /// Bootstrap: spin up an auth'd user + a JWT-only app, swap the app
@@ -74,6 +78,7 @@ async fn bootstrap(pool: PgPool, file_path: &str) -> StreamingSetup {
         library_id,
         payload,
         music_root,
+        harness: auth.harness,
     }
 }
 
@@ -261,10 +266,16 @@ async fn tampered_token_is_rejected(pool: PgPool) {
     let setup = bootstrap(pool, "Music/song.flac").await;
     let url = mint_stream_url(&setup).await;
 
-    // Flip the last character of the signature segment.
+    // Flip a character deep inside the signature segment so the
+    // change is guaranteed to alter the underlying HMAC bytes. The
+    // base64url-no-pad encoding has no insignificant positions, but
+    // padding-like trailing characters can still flip to a synonym
+    // within the same byte; picking the penultimate char dodges
+    // that edge case.
+    assert!(url.len() >= 2, "minted URL too short to tamper");
     let mut chars: Vec<char> = url.chars().collect();
-    let last = chars.len() - 1;
-    chars[last] = if chars[last] == 'a' { 'b' } else { 'a' };
+    let target = chars.len() - 2;
+    chars[target] = if chars[target] == 'a' { 'b' } else { 'a' };
     let tampered: String = chars.into_iter().collect();
 
     let resp = reqwest::Client::new()
@@ -278,27 +289,29 @@ async fn tampered_token_is_rejected(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn foreign_user_cannot_mint(pool: PgPool) {
+async fn foreign_user_minting_a_foreign_track_404s(pool: PgPool) {
+    // Both users hit the SAME streaming app + same JWKS harness, so
+    // both tokens authenticate cryptographically. The test exercises
+    // the tenant-authorization layer instead — user B hits user A's
+    // (profile, library, track) triple and the repository's
+    // `*_for_user` query refuses to return a row, surfacing as 404
+    // (same no-leak rule the rest of the resource endpoints use).
     let setup = bootstrap(pool.clone(), "Music/song.flac").await;
-    // Second auth'd user on the SAME pool. The streaming app the
-    // setup spawned doesn't know about this token's verifier, so
-    // we'll mint against the JWT path of `auth` itself by hitting
-    // the streaming app's mint endpoint with someone else's bearer.
-    let other = spawn_authenticated(pool, "stream-test-foreign").await;
+    let foreign_token = setup.harness.mint(
+        &support::good_claims("stream-test-foreign"),
+        &support::header_with_kid(support::TEST_KID),
+    );
 
     let resp = reqwest::Client::new()
         .post(format!(
             "{}/api/v1/profiles/{}/libraries/{}/tracks/{}/stream-url",
             setup.base, setup.profile_id, setup.library_id, setup.track_id,
         ))
-        .bearer_auth(&other.token)
+        .bearer_auth(&foreign_token)
         .send()
         .await
         .unwrap();
-    // The streaming app verifies its OWN harness's JWKS; the second
-    // user's token was minted by a different harness, so verification
-    // fails and the middleware returns 401.
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     drop(setup.music_root);
 }
