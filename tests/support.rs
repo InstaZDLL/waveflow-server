@@ -182,6 +182,15 @@ pub async fn spawn_app_with_jwt_and_stream(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
+    // Mirror the canonicalisation `main.rs` does at boot. The stream
+    // handler compares `canonicalize(<root>/<file>).starts_with(music_root)` —
+    // if `music_root` itself isn't already canonical, the comparison
+    // fails for every file on platforms where the tempdir lives
+    // behind a symlink (macOS resolves `/tmp` → `/private/tmp`).
+    let music_root = tokio::fs::canonicalize(&music_root)
+        .await
+        .expect("test music_root must be canonicalisable");
+
     let config = Config {
         bind_addr: addr,
         request_timeout_secs: 5,

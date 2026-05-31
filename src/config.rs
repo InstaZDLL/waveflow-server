@@ -85,7 +85,13 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("bind_addr", &self.bind_addr)
             .field("request_timeout_secs", &self.request_timeout_secs)
-            .field("database_url", &self.database_url)
+            // `DATABASE_URL` typically embeds the Postgres credentials
+            // (`postgres://user:password@host/db`), so a derived
+            // `Debug` would land them in any `tracing` field or
+            // anyhow context that prints the config. Redact the
+            // whole value rather than try to parse-and-mask the
+            // password segment — opaque is the safer default.
+            .field("database_url", &"<redacted>")
             .field("db_max_connections", &self.db_max_connections)
             .field("jwt_jwks_url", &self.jwt_jwks_url)
             .field("jwt_issuer", &self.jwt_issuer)
