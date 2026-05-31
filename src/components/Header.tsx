@@ -7,7 +7,16 @@ export default function Header() {
   const { data: session, isPending } = useSession()
 
   async function onSignOut() {
-    await authClient.signOut()
+    try {
+      await authClient.signOut()
+    } catch (err) {
+      // Network failure leaves the local cookie behind, but the
+      // server has almost certainly cleared its side of the session
+      // already. Logging keeps the trace for diagnostics; we still
+      // redirect so the next page load re-evaluates auth state from
+      // scratch instead of stranding the user on the current view.
+      console.error('[auth] sign-out failed:', err)
+    }
     await navigate({ to: '/sign-in' })
   }
 
