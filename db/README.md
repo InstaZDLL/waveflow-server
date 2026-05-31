@@ -39,5 +39,4 @@ Applied filenames are recorded in `_applied_migrations(filename TEXT PRIMARY KEY
 - `session` — server-side session rows; the browser cookie carries only the session id, lookups hit this table.
 - `account` — per-credential-source link. Email/password auth stores the hashed password here; OAuth providers store their `providerId`/`accountId` pair.
 - `verification` — short-lived tokens for email-verification + password-reset flows.
-
-The JWT plugin's `jwks` table lands in 1.c.2c when we add the JWKS endpoint.
+- `jwks` — active + grace-period signing keys for the JWT plugin (1.c.2c). The plugin generates a fresh ES256 key pair on first sign attempt, exposes every non-expired row's public key at `/api/auth/jwks`, and signs new tokens with the latest row.
