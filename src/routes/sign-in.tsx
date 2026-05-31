@@ -41,7 +41,13 @@ export function safeContinueTarget(raw: string | undefined): string {
   // the base is overridden — block that to keep this from becoming
   // an open redirect.
   if (parsed.origin !== 'http://localhost') return '/'
-  if (!parsed.pathname.startsWith('/desktop-login')) return '/'
+  // Anchor on a segment boundary so `/desktop-login-evil` and
+  // friends don't slip through the `startsWith` gate. Origin is
+  // already pinned to localhost so this isn't an open-redirect
+  // either way, but the intent of the prefix gate is "the route or
+  // its subtree", not "anything that happens to share a prefix".
+  if (parsed.pathname !== '/desktop-login' && !parsed.pathname.startsWith('/desktop-login/'))
+    return '/'
   // Preserve search params (the `/desktop-login` route needs `cb` +
   // `state`) but drop any hash to keep the URL surface tight.
   return parsed.pathname + parsed.search

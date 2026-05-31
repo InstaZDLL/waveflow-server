@@ -27,6 +27,8 @@ describe('safeContinueTarget', () => {
     '/desktop-login/..',
     '/desktop-login/../../etc/passwd',
     '/desktoplogin-trick',
+    '/desktop-login-evil',
+    '/desktop-loginXYZ',
     'http://attacker.com/desktop-login',
     'https://attacker.com/desktop-login',
     '//attacker.com/desktop-login',
