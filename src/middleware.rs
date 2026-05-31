@@ -176,16 +176,13 @@ async fn resolve_bearer(
     // a concurrent first request from the same user collapses
     // cleanly to one row.
     let created_at_ms = chrono::Utc::now().timestamp_millis();
-    let user_id = db::users::find_or_provision_by_external_id(
-        &state.db,
-        &claims.sub,
-        created_at_ms,
-    )
-    .await
-    .map_err(|err| {
-        tracing::error!(error = %err, "users provision failed during JWT auth");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let user_id =
+        db::users::find_or_provision_by_external_id(&state.db, &claims.sub, created_at_ms)
+            .await
+            .map_err(|err| {
+                tracing::error!(error = %err, "users provision failed during JWT auth");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
 
     Ok(user_id)
 }
