@@ -148,13 +148,13 @@ pub fn router(state: AppState) -> OpenApiRouter {
     path = "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks",
     tag = "tracks",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("library_id" = i64, Path, description = "Owning library id"),
     ),
     responses(
         (status = 200, description = "Tracks under the library, most-recently-added first", body = Vec<TrackResponse>),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
 )]
@@ -191,7 +191,7 @@ async fn list_tracks(
     path = "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks",
     tag = "tracks",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("library_id" = i64, Path, description = "Owning library id"),
     ),
@@ -199,7 +199,7 @@ async fn list_tracks(
     responses(
         (status = 201, description = "Track created", body = TrackResponse),
         (status = 400, description = "Empty / whitespace-only `title` or `file_path` after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "Library / profile not owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -273,14 +273,14 @@ async fn create_track(
     path = "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}",
     tag = "tracks",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("library_id" = i64, Path, description = "Owning library id"),
         ("id" = i64, Path, description = "Track id"),
     ),
     responses(
         (status = 200, description = "Track found", body = TrackResponse),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No track with that id under the (library, profile) owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -320,7 +320,7 @@ async fn get_track(
     path = "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}",
     tag = "tracks",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("library_id" = i64, Path, description = "Owning library id"),
         ("id" = i64, Path, description = "Track id"),
@@ -329,7 +329,7 @@ async fn get_track(
     responses(
         (status = 200, description = "Track updated", body = TrackResponse),
         (status = 400, description = "`title` was supplied but is empty / whitespace-only after trim"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No track with that id under the (library, profile) owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),
@@ -392,14 +392,14 @@ async fn update_track(
     path = "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}",
     tag = "tracks",
     params(
-        ("x-user-id" = i64, Header, description = "Dev shim — owning user id (replaced by JWT in 1.d)"),
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
         ("profile_id" = i64, Path, description = "Owning profile id"),
         ("library_id" = i64, Path, description = "Owning library id"),
         ("id" = i64, Path, description = "Track id"),
     ),
     responses(
         (status = 204, description = "Track deleted"),
-        (status = 401, description = "Missing or invalid X-User-Id"),
+        (status = 401, description = "Missing or invalid bearer token"),
         (status = 404, description = "No track with that id under the (library, profile) owned by the calling user"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
     ),

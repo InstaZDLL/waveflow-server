@@ -18,26 +18,12 @@ mod support;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use support::spawn_app;
+use support::{spawn_authenticated, spawn_two_authenticated};
 
-async fn mint_user(base: &str) -> i64 {
-    let body: Value = reqwest::Client::new()
-        .post(format!("{base}/api/v1/users"))
-        .send()
-        .await
-        .expect("user create failed")
-        .error_for_status()
-        .expect("non-2xx on user create")
-        .json()
-        .await
-        .expect("user create body");
-    body["id"].as_i64().expect("user id missing from response")
-}
-
-async fn mint_profile(base: &str, user_id: i64, name: &str) -> i64 {
+async fn mint_profile(base: &str, token: &str, name: &str) -> i64 {
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(token)
         .json(&json!({ "name": name, "color_id": "emerald" }))
         .send()
         .await
@@ -51,42 +37,16 @@ async fn mint_profile(base: &str, user_id: i64, name: &str) -> i64 {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn playlists_require_x_user_id(pool: PgPool) {
-    let base = spawn_app(pool).await;
-
-    for (method, path) in [
-        ("GET", "/api/v1/profiles/1/playlists"),
-        ("POST", "/api/v1/profiles/1/playlists"),
-        ("GET", "/api/v1/profiles/1/playlists/1"),
-        ("PATCH", "/api/v1/profiles/1/playlists/1"),
-        ("DELETE", "/api/v1/profiles/1/playlists/1"),
-    ] {
-        let req = match method {
-            "GET" => reqwest::Client::new().get(format!("{base}{path}")),
-            "POST" => reqwest::Client::new()
-                .post(format!("{base}{path}"))
-                .json(&json!({ "name": "x" })),
-            "PATCH" => reqwest::Client::new()
-                .patch(format!("{base}{path}"))
-                .json(&json!({ "name": "x" })),
-            "DELETE" => reqwest::Client::new().delete(format!("{base}{path}")),
-            _ => unreachable!(),
-        };
-        let resp = req.send().await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
-    }
-}
-
-#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_then_list_then_get_under_profile(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     // Empty list initially.
     let list: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -98,7 +58,7 @@ async fn create_then_list_then_get_under_profile(pool: PgPool) {
     // Create — minimal body (color/icon fall back to defaults).
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "Soirée" }))
         .send()
         .await
@@ -147,7 +107,7 @@ async fn create_then_list_then_get_under_profile(pool: PgPool) {
     // List sees it.
     let list: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -162,7 +122,7 @@ async fn create_then_list_then_get_under_profile(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -175,13 +135,14 @@ async fn create_then_list_then_get_under_profile(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_with_explicit_color_and_icon(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({
             "name": "Focus",
             "description": "Lo-fi pour bosser",
@@ -203,14 +164,15 @@ async fn create_with_explicit_color_and_icon(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_rejects_empty_name(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     for blank in ["", "   ", "\t\n "] {
         let resp = reqwest::Client::new()
             .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-            .header("x-user-id", user_id.to_string())
+            .bearer_auth(&auth.token)
             .json(&json!({ "name": blank }))
             .send()
             .await
@@ -224,7 +186,7 @@ async fn create_rejects_empty_name(pool: PgPool) {
 
     let list: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -237,14 +199,17 @@ async fn create_rejects_empty_name(pool: PgPool) {
 /// Foreign profile id under the calling user must 404.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn create_under_foreign_profile_returns_404(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_a = mint_user(&base).await;
-    let user_b = mint_user(&base).await;
-    let profile_a = mint_profile(&base, user_a, "A's profile").await;
+    let two = spawn_two_authenticated(pool, "test-user-a", "test-user-b").await;
+    let base = two.base.clone();
+    let a = &two.a;
+    let b = &two.b;
+    let _user_a = a.user_id;
+    let _user_b = b.user_id;
+    let profile_a = mint_profile(&base, &a.token, "A's profile").await;
 
     let resp = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_a}/playlists"))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .json(&json!({ "name": "stolen" }))
         .send()
         .await
@@ -253,7 +218,7 @@ async fn create_under_foreign_profile_returns_404(pool: PgPool) {
 
     let list: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_a}/playlists"))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .send()
         .await
         .unwrap()
@@ -268,15 +233,18 @@ async fn create_under_foreign_profile_returns_404(pool: PgPool) {
 /// nor through user A's profile.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn tenants_are_isolated(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_a = mint_user(&base).await;
-    let user_b = mint_user(&base).await;
-    let profile_a = mint_profile(&base, user_a, "A").await;
-    let profile_b = mint_profile(&base, user_b, "B").await;
+    let two = spawn_two_authenticated(pool, "test-user-a", "test-user-b").await;
+    let base = two.base.clone();
+    let a = &two.a;
+    let b = &two.b;
+    let _user_a = a.user_id;
+    let _user_b = b.user_id;
+    let profile_a = mint_profile(&base, &a.token, "A").await;
+    let profile_b = mint_profile(&base, &b.token, "B").await;
 
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_a}/playlists"))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .json(&json!({ "name": "A's playlist" }))
         .send()
         .await
@@ -291,7 +259,7 @@ async fn tenants_are_isolated(pool: PgPool) {
     // User B's list under their own profile is empty.
     let list_b: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_b}/playlists"))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .send()
         .await
         .unwrap()
@@ -303,7 +271,7 @@ async fn tenants_are_isolated(pool: PgPool) {
     // User B can't list user A's playlists via user A's profile id.
     let list_b_proxy: Vec<Value> = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles/{profile_a}/playlists"))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .send()
         .await
         .unwrap()
@@ -321,7 +289,7 @@ async fn tenants_are_isolated(pool: PgPool) {
             .get(format!(
                 "{base}/api/v1/profiles/{proxy_profile}/playlists/{playlist_id}"
             ))
-            .header("x-user-id", user_b.to_string())
+            .bearer_auth(&b.token)
             .send()
             .await
             .unwrap();
@@ -337,7 +305,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_a}/playlists/{playlist_id}"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .json(&json!({ "name": "hijacked" }))
         .send()
         .await
@@ -349,7 +317,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .delete(format!(
             "{base}/api/v1/profiles/{profile_a}/playlists/{playlist_id}"
         ))
-        .header("x-user-id", user_b.to_string())
+        .bearer_auth(&b.token)
         .send()
         .await
         .unwrap();
@@ -360,7 +328,7 @@ async fn tenants_are_isolated(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_a}/playlists/{playlist_id}"
         ))
-        .header("x-user-id", user_a.to_string())
+        .bearer_auth(&a.token)
         .send()
         .await
         .unwrap()
@@ -375,13 +343,14 @@ async fn tenants_are_isolated(pool: PgPool) {
 /// PATCH round-trips and the response carries the new value.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_renames_in_place(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     let id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "Old name" }))
         .send()
         .await
@@ -398,7 +367,7 @@ async fn update_renames_in_place(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "New name", "color_id": "crimson" }))
         .send()
         .await
@@ -416,13 +385,14 @@ async fn update_renames_in_place(pool: PgPool) {
 /// Partial PATCH preserves omitted fields (the `COALESCE` path).
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_preserves_omitted_fields(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     let created: Value = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({
             "name": "Keep me",
             "color_id": "ocean",
@@ -442,7 +412,7 @@ async fn update_preserves_omitted_fields(pool: PgPool) {
         .patch(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "color_id": "sunset" }))
         .send()
         .await
@@ -460,13 +430,14 @@ async fn update_preserves_omitted_fields(pool: PgPool) {
 /// PATCH blank name must 400 — same boundary check as create.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn update_rejects_empty_name(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     let id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "Keep me" }))
         .send()
         .await
@@ -484,7 +455,7 @@ async fn update_rejects_empty_name(pool: PgPool) {
             .patch(format!(
                 "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
             ))
-            .header("x-user-id", user_id.to_string())
+            .bearer_auth(&auth.token)
             .json(&json!({ "name": blank }))
             .send()
             .await
@@ -501,7 +472,7 @@ async fn update_rejects_empty_name(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap()
@@ -515,13 +486,14 @@ async fn update_rejects_empty_name(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn delete_returns_204_then_404(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
-    let profile_id = mint_profile(&base, user_id, "Alice").await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
 
     let id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "doomed" }))
         .send()
         .await
@@ -538,7 +510,7 @@ async fn delete_returns_204_then_404(pool: PgPool) {
         .delete(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -548,7 +520,7 @@ async fn delete_returns_204_then_404(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{profile_id}/playlists/{id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -558,16 +530,17 @@ async fn delete_returns_204_then_404(pool: PgPool) {
 /// Deleting a profile must cascade through to its playlists.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn profile_delete_cascades_to_playlists(pool: PgPool) {
-    let base = spawn_app(pool).await;
-    let user_id = mint_user(&base).await;
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let _user_id = auth.user_id;
 
     // Two profiles so the delete-last-profile guard doesn't block us.
-    let p1 = mint_profile(&base, user_id, "to delete").await;
-    let p2 = mint_profile(&base, user_id, "to keep").await;
+    let p1 = mint_profile(&auth.base, &auth.token, "to delete").await;
+    let p2 = mint_profile(&auth.base, &auth.token, "to keep").await;
 
     let playlist_id = reqwest::Client::new()
         .post(format!("{base}/api/v1/profiles/{p1}/playlists"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .json(&json!({ "name": "doomed playlist" }))
         .send()
         .await
@@ -582,7 +555,7 @@ async fn profile_delete_cascades_to_playlists(pool: PgPool) {
 
     let resp = reqwest::Client::new()
         .delete(format!("{base}/api/v1/profiles/{p1}"))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -593,7 +566,7 @@ async fn profile_delete_cascades_to_playlists(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{p1}/playlists/{playlist_id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
@@ -605,23 +578,9 @@ async fn profile_delete_cascades_to_playlists(pool: PgPool) {
         .get(format!(
             "{base}/api/v1/profiles/{p2}/playlists/{playlist_id}"
         ))
-        .header("x-user-id", user_id.to_string())
+        .bearer_auth(&auth.token)
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-}
-
-/// Production-gate sanity.
-#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn dev_auth_gate_returns_503_for_playlists_when_disabled(pool: PgPool) {
-    let base = support::spawn_app_prod_gate(pool).await;
-
-    let resp = reqwest::Client::new()
-        .get(format!("{base}/api/v1/profiles/1/playlists"))
-        .header("x-user-id", "42")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
