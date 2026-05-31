@@ -101,22 +101,53 @@ pub mod users {
         .await
     }
 
-    /// Resolve a JWT `sub` claim to an internal `users.id`. The
-    /// JWT middleware (Phase 1.d.1-PR3) calls this once per request
-    /// after signature verification succeeds. `Ok(None)` means the
-    /// token signed for a user the server hasn't onboarded — the
-    /// caller turns that into 401 (no leak about which sub values
-    /// exist on the box).
+    /// Resolve a JWT `sub` to an internal `users.id`, inserting a
+    /// row if the sub is unknown. Used by the JWT middleware
+    /// (Phase 1.c.3a) so a fresh Better Auth signup doesn't require
+    /// a separate "onboard the user on waveflow-server" round-trip —
+    /// the first authenticated request lazy-provisions the row.
     ///
-    /// The UNIQUE constraint on `external_id` doubles as the lookup
-    /// index, so this is a single indexed read.
-    pub async fn find_by_external_id(
+    /// Read-first, write-on-miss. The common path — every JWT
+    /// request after the first for a given user — hits the SELECT
+    /// only and produces zero writes, avoiding the heap-tuple churn
+    /// (and autovacuum cost) a pure `DO UPDATE … RETURNING` UPSERT
+    /// would generate per-request. The miss path falls through to
+    /// an `ON CONFLICT DO UPDATE` UPSERT so two concurrent first
+    /// requests for the same fresh sub collapse atomically to one
+    /// row — the loser's UPDATE is a no-op assignment that still
+    /// fires `RETURNING id` so both callers get the winner's id.
+    ///
+    /// Trust source: a valid JWT verified against the Better Auth
+    /// JWKS is the authoritative statement that this `sub` is a
+    /// real user. The middleware never reaches this helper without
+    /// signature + claims + `kid` validation passing first.
+    pub async fn find_or_provision_by_external_id(
         pool: &PgPool,
         external_id: &str,
-    ) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE external_id = $1")
-            .bind(external_id)
-            .fetch_optional(pool)
-            .await
+        created_at_ms: i64,
+    ) -> Result<i64, sqlx::Error> {
+        if let Some(id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE external_id = $1")
+                .bind(external_id)
+                .fetch_optional(pool)
+                .await?
+        {
+            return Ok(id);
+        }
+
+        // Miss path — INSERT, with an UPSERT fallback for the case
+        // where a concurrent request lazy-provisioned the same sub
+        // between our SELECT and INSERT. The no-op `DO UPDATE` keeps
+        // `RETURNING id` firing so the loser of the race still gets
+        // the winner's id rather than a NULL.
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO users (created_at, external_id) VALUES ($1, $2) \
+             ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id \
+             RETURNING id",
+        )
+        .bind(created_at_ms)
+        .bind(external_id)
+        .fetch_one(pool)
+        .await
     }
 }
