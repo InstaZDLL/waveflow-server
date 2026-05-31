@@ -33,6 +33,22 @@ bun run db:migrate              # apply pending migrations
 bun run db:migrate --dry-run    # show what would be applied
 ```
 
+### JWT endpoint (for `waveflow-server`)
+
+The [`jwt()` plugin](src/lib/auth.ts) exposes two endpoints once a session is active:
+
+- `GET /api/auth/jwks` — public key set (ES256). Point `waveflow-server`'s `WAVEFLOW_JWT_JWKS_URL` at this URL.
+- `GET /api/auth/token` — mints a fresh bearer token for the current session (15-minute TTL). The web app's fetch wrapper (1.c.3) will call this on demand.
+
+Smoke-test the JWKS endpoint after `bun run dev`:
+
+```bash
+curl http://localhost:3000/api/auth/jwks | jq
+# => { "keys": [ { "kty": "EC", "crv": "P-256", "alg": "ES256", "kid": "...", "x": "...", "y": "..." } ] }
+```
+
+The first request lazy-generates the key pair into the `jwks` table — subsequent requests reuse it. Issuer = `BETTER_AUTH_URL`; audience defaults to `waveflow-server` (override with `WAVEFLOW_JWT_AUDIENCE`).
+
 ### Sign up / sign in
 
 Routes:
