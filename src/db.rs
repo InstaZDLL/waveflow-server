@@ -74,6 +74,142 @@ pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
         .map(|_| ())
 }
 
+/// Sync log helpers. Lives here for the same reason as [`users`]: the
+/// handlers in `api/sync.rs` should stay pure HTTP orchestration, so
+/// every `INSERT` / `SELECT` against `sync_op` /
+/// `sync_compaction_watermark` lands on a function in this module.
+///
+/// Tx-aware functions accept `&mut sqlx::PgConnection` (= `&mut *tx`
+/// for an open transaction) so the batch handler can keep its
+/// transaction across N inserts. Single-statement helpers take
+/// `&PgPool` since they don't compose with a transaction.
+pub mod sync {
+    use sqlx::{postgres::PgRow, PgConnection, PgPool};
+    use uuid::Uuid;
+
+    /// Append one op. Returns the inserted row, or `None` when the
+    /// `(user_id, device_id, operation_id)` UNIQUE absorbed an
+    /// idempotent replay. The `(user_id, device_id, lamport_ts)`
+    /// UNIQUE is *not* covered by `ON CONFLICT` — a violation there
+    /// bubbles up as a `sqlx::Error::Database` with SQLSTATE 23505
+    /// for the caller to map to its 409 path.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_op_returning(
+        conn: &mut PgConnection,
+        user_id: i64,
+        device_id: &str,
+        operation_id: Uuid,
+        lamport_ts: i64,
+        entity: &str,
+        entity_id: &str,
+        field: Option<&str>,
+        op: &str,
+        payload: Option<&serde_json::Value>,
+        created_at: i64,
+    ) -> Result<Option<PgRow>, sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO sync_op \
+                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
+             RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .bind(operation_id)
+        .bind(lamport_ts)
+        .bind(entity)
+        .bind(entity_id)
+        .bind(field)
+        .bind(op)
+        .bind(payload)
+        .bind(created_at)
+        .fetch_optional(conn)
+        .await
+    }
+
+    /// Fetch the row matching a previously-accepted `operation_id`.
+    /// Caller has already confirmed the row exists via the
+    /// `ON CONFLICT DO NOTHING` returning `None`, so this is a plain
+    /// `fetch_one`.
+    pub async fn fetch_op_by_operation_id(
+        conn: &mut PgConnection,
+        user_id: i64,
+        device_id: &str,
+        operation_id: Uuid,
+    ) -> Result<PgRow, sqlx::Error> {
+        sqlx::query(
+            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+             FROM sync_op \
+             WHERE user_id = $1 AND device_id = $2 AND operation_id = $3",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .bind(operation_id)
+        .fetch_one(conn)
+        .await
+    }
+
+    /// Current `MAX(lamport_ts)` for a device. Returns `0` when the
+    /// device has no rows yet. Used after a lamport-regression 23505
+    /// to tell the client how far ahead the server is.
+    pub async fn lamport_max(
+        pool: &PgPool,
+        user_id: i64,
+        device_id: &str,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT COALESCE(MAX(lamport_ts), 0) FROM sync_op \
+             WHERE user_id = $1 AND device_id = $2",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .fetch_one(pool)
+        .await
+    }
+
+    /// Read the compaction watermark for a user. `None` means the
+    /// compaction job hasn't touched this tenant yet (no row), which
+    /// the pull guard treats as "no floor". A transport / pool error
+    /// is propagated — silently treating it as `None` would let a
+    /// resurrected-device case slip through during a DB hiccup.
+    pub async fn fetch_compacted_up_to(
+        pool: &PgPool,
+        user_id: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT compacted_up_to FROM sync_compaction_watermark \
+             WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Fetch the next page of ops with `id > since`, capped at
+    /// `limit`, ordered ascending so the client can stream straight
+    /// into its local replay.
+    pub async fn pull_ops_since(
+        pool: &PgPool,
+        user_id: i64,
+        since: i64,
+        limit: i64,
+    ) -> Result<Vec<PgRow>, sqlx::Error> {
+        sqlx::query(
+            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+             FROM sync_op \
+             WHERE user_id = $1 AND id > $2 \
+             ORDER BY id ASC \
+             LIMIT $3",
+        )
+        .bind(user_id)
+        .bind(since)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+}
+
 /// User-table helpers. Keeps the raw SQL out of handlers — same
 /// boundary the project's no-SQL-in-handlers rule enforces for the
 /// `/ready` probe.

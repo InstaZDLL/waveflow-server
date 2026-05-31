@@ -32,7 +32,7 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "25b9ada6
 # mandate `sslmode=require` (Neon, Supabase, Prisma Accelerate, RDS).
 # Pure-Rust rustls matches the convention reqwest uses elsewhere in
 # the project — no OpenSSL system dep to ship in the container image.
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "tls-rustls"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid", "tls-rustls"] }
 
 # Wall-clock timestamps for `created_at` / `last_used_at`. Same
 # crate the desktop uses so a shared timestamp helper stays cheap.
@@ -44,16 +44,29 @@ chrono = "0.4"
 # without a parallel paths(...) list to maintain. `utoipa-scalar`
 # serves the Scalar API reference (Stripe-style — modern, ~500 KB
 # bundle, dark mode, integrated search) from `/reference`.
-utoipa = { version = "5", features = ["axum_extras"] }
+utoipa = { version = "5", features = ["axum_extras", "uuid"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 # HTTP layer. axum 0.8 is the line current for Tokio 1.45+ — the same
 # generation used by the desktop's reqwest 0.12, so we're not pulling
 # two competing hyper trees once `waveflow-core` lands as a dependency
-# in 1.b.2.
-axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+# in 1.b.2. The `ws` feature gates the WebSocket extractor the
+# sync-broadcast endpoint (Phase 1.f) needs.
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+# Stream combinators for the WebSocket handler — `SinkExt::send` +
+# `StreamExt::next` on the split halves of an `axum::extract::ws::WebSocket`.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# UUIDv4 for `sync_op.operation_id` — the idempotency key the client
+# generates and the server enforces uniqueness on per `(user_id,
+# device_id, operation_id)`. `v4` for the random generator, `serde`
+# for axum's `Json<…>` round-trip.
+uuid = { version = "1", features = ["v4", "serde"] }
+# Lock-free concurrent map for the in-memory ACK buffer in
+# `sync::SyncHub`. Per-key shard locks mean handler-side `record_ack`
+# never blocks behind the 5 s flusher.
+dashmap = "6"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "request-id", "timeout", "util"] }
 
@@ -154,6 +167,21 @@ p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 # on drop, so each `#[sqlx::test]` gets an isolated music root with
 # no cleanup boilerplate.
 tempfile = "3"
+
+# WebSocket client for the sync fan-out integration tests. The
+# tokio-tungstenite version that pairs with tokio 1.x ships only
+# rustls feature flags — `rustls-tls-webpki-roots` matches the
+# pure-Rust convention used elsewhere in the project.
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+
+# `record_ack` takes a `uuid::Uuid`; the sync tests construct one per
+# op. Use the `serde` feature so the same value round-trips through
+# the JSON request body.
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Streaming tests already pulled `futures-util` transitively; the
+# sync WS test needs `StreamExt::next` + `SinkExt::send` directly.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [profile.release]
 # Match the desktop app's release profile so behaviour parity holds at
