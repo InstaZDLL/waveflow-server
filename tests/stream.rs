@@ -318,34 +318,52 @@ async fn foreign_user_minting_a_foreign_track_404s(pool: PgPool) {
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn path_traversal_attempts_404(pool: PgPool) {
-    // Drop a file OUTSIDE the music root (simulating a path-traversal
-    // target) and then attempt to reference it via `../` in the
-    // `track.file_path`. Because the mint endpoint signs whatever
-    // file_path the row carries, this is the worst-case scenario for
-    // the stream side's canonicalize-then-prefix-check guard.
+    // Plant a REAL file outside the music root and reference it
+    // through a `..`-laced relative path that, after
+    // `music_root.join(rel)` + canonicalize, resolves onto the
+    // existing-but-out-of-root file. This exercises the
+    // **prefix-check** guard specifically — not the canonicalize-
+    // failure fallback (which is what `"../../../etc/passwd"` would
+    // hit on a stripped CI image where /etc/passwd is absent).
+    //
+    // Both the music root and the secret root come from
+    // `tempfile::tempdir()`, which puts them as siblings under
+    // `std::env::temp_dir()`. So
+    // `../<outside_basename>/secret.txt` resolves to the planted
+    // file deterministically across hosts.
     let setup = bootstrap(pool.clone(), "Music/legit.flac").await;
     let outside_root = tempfile::tempdir().expect("outside tmpdir");
-    let secret_path = outside_root.path().join("secret.txt");
+    // Canonicalise so the relative-path computation below survives
+    // macOS's `/tmp -> /private/tmp` symlink. The music root is
+    // already canonical (the test harness canonicalises it).
+    let outside_canon = tokio::fs::canonicalize(outside_root.path())
+        .await
+        .expect("outside_root canonicalise");
+    let secret_path = outside_canon.join("secret.txt");
     std::fs::write(&secret_path, b"do not exfiltrate").unwrap();
 
-    // Insert a track row with a `../`-laced path. Going through the
-    // CREATE handler would require us to circumvent its own validation
-    // (the codec / numbers etc. — already validated by serde), so we
-    // INSERT directly into the DB. The track resolves under the same
-    // user as `setup`'s auth, just via a different file_path.
-    let evil_rel = "../../../etc/passwd"; // canonicalize must reject.
+    let outside_name = outside_canon
+        .file_name()
+        .expect("outside_root has a basename")
+        .to_string_lossy()
+        .into_owned();
+    let evil_rel = format!("../{outside_name}/secret.txt");
+
+    // Insert a track row pointing at the laced relative path.
+    // Going through the CREATE handler would require circumventing
+    // its serde-side validation, so we INSERT directly.
     sqlx::query(
         "INSERT INTO track (library_id, title, file_path, file_size, duration_ms, codec, added_at) \
          VALUES ($1, 'evil', $2, 1, 1, 'FLAC', 1)",
     )
     .bind(setup.library_id)
-    .bind(evil_rel)
+    .bind(&evil_rel)
     .execute(&pool)
     .await
     .unwrap();
     let evil_id: i64 =
         sqlx::query_scalar("SELECT id FROM track WHERE file_path = $1 AND library_id = $2")
-            .bind(evil_rel)
+            .bind(&evil_rel)
             .bind(setup.library_id)
             .fetch_one(&pool)
             .await
