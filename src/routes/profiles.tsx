@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 import { listProfiles, type Profile } from '@/server-fns/profiles'
 import { getCurrentSession } from '@/server-fns/session'
 
@@ -61,14 +61,17 @@ function ProfilesView() {
         {data.kind === 'ready' && data.profiles.length > 0 && (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.profiles.map((p) => (
-              <li
-                key={p.id}
-                className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4"
-              >
-                <p className="text-base font-semibold text-[var(--sea-ink)]">{p.name}</p>
-                <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
-                  Last used {new Date(p.last_used_at).toLocaleDateString()}
-                </p>
+              <li key={p.id}>
+                <Link
+                  to="/profiles/$profileId"
+                  params={{ profileId: String(p.id) }}
+                  className="block rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4 no-underline transition hover:opacity-90"
+                >
+                  <p className="text-base font-semibold text-[var(--sea-ink)]">{p.name}</p>
+                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                    Last used {new Date(p.last_used_at).toLocaleDateString()}
+                  </p>
+                </Link>
               </li>
             ))}
           </ul>
