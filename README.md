@@ -33,6 +33,14 @@ bun run db:migrate              # apply pending migrations
 bun run db:migrate --dry-run    # show what would be applied
 ```
 
+### Playing music (Phase 1.e)
+
+Once `waveflow-server`'s streaming config is on (`WAVEFLOW_MUSIC_ROOT` + `WAVEFLOW_STREAM_SECRET`), the web app exposes a basic player:
+
+- `/profiles` → click a profile → `/profiles/$profileId` (libraries) → click a library → `/profiles/$profileId/libraries/$libraryId` (tracks)
+- Click any track's ▶ button — a sticky player bar pinned to the bottom plays the audio. Range-aware seek bar included.
+- Auth flow: the browser hits the Nitro [`getStreamUrl`](src/server-fns/stream.ts) server fn, which mints a signed URL on the server (Bearer JWT) and returns an absolute URL. The browser then hits `waveflow-server` directly via `<audio src>` — no CORS preflight (media elements skip it without `crossorigin`), so this works across hosts in dev.
+
 ### Wired to `waveflow-server`
 
 The `/profiles` route ([`src/routes/profiles.tsx`](src/routes/profiles.tsx)) calls `waveflow-server`'s `/api/v1/profiles` through a TanStack server function ([`src/server-fns/profiles.ts`](src/server-fns/profiles.ts)) that mints a fresh JWT off the active Better Auth session and forwards the request server-side. The browser never sees `WAVEFLOW_SERVER_URL` and never crosses an origin — sidesteps CORS plumbing on `waveflow-server`.
