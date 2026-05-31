@@ -2,12 +2,68 @@ import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
 
+interface SignInSearch {
+  /**
+   * Optional return path the desktop OAuth handshake (Phase
+   * 1.f.desktop.1b) sets when redirecting an unsigned user through
+   * here. Validated as same-origin + restricted to a known prefix to
+   * keep this from becoming an open-redirect vector.
+   */
+  continue?: string
+}
+
+/**
+ * Restrict the post-sign-in redirect to internal routes we
+ * intentionally hand off to. Today only `/desktop-login` qualifies.
+ *
+ * A naive `raw.startsWith('/desktop-login')` would accept
+ * `/desktop-login/../admin` — the browser normalises that to
+ * `/admin` after navigation, sidestepping the prefix gate. Parse +
+ * normalise the candidate against a dummy base first so the
+ * resulting pathname is canonical (no `..`, no protocol pivot, no
+ * host injection).
+ *
+ * The constructor also reveals open-redirect attempts: a
+ * `https://attacker.com/desktop-login` raw value would parse to
+ * `origin === 'https://attacker.com'` (the absolute URL wins over
+ * the base), and a protocol-relative `//attacker.com/desktop-login`
+ * pivots in the same way. Both fail the `origin` equality check.
+ */
+export function safeContinueTarget(raw: string | undefined): string {
+  if (!raw) return '/'
+  let parsed: URL
+  try {
+    parsed = new URL(raw, 'http://localhost')
+  } catch {
+    return '/'
+  }
+  // If the raw value was a fully-qualified or protocol-relative URL,
+  // the base is overridden — block that to keep this from becoming
+  // an open redirect.
+  if (parsed.origin !== 'http://localhost') return '/'
+  // Anchor on a segment boundary so `/desktop-login-evil` and
+  // friends don't slip through the `startsWith` gate. Origin is
+  // already pinned to localhost so this isn't an open-redirect
+  // either way, but the intent of the prefix gate is "the route or
+  // its subtree", not "anything that happens to share a prefix".
+  if (parsed.pathname !== '/desktop-login' && !parsed.pathname.startsWith('/desktop-login/'))
+    return '/'
+  // Preserve search params (the `/desktop-login` route needs `cb` +
+  // `state`) but drop any hash to keep the URL surface tight.
+  return parsed.pathname + parsed.search
+}
+
 export const Route = createFileRoute('/sign-in')({
+  validateSearch: (raw: Record<string, unknown>): SignInSearch => ({
+    continue: typeof raw.continue === 'string' ? raw.continue : undefined,
+  }),
   component: SignIn,
 })
 
 function SignIn() {
   const navigate = useNavigate()
+  const search = Route.useSearch()
+  const continueTo = safeContinueTarget(search.continue)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +91,10 @@ function SignIn() {
         setError(remote.message ?? 'Sign-in failed. Check your credentials.')
         return
       }
-      await navigate({ to: '/' })
+      // Same-origin only — `safeContinueTarget` restricts to a
+      // known prefix so a crafted link can't pivot the post-login
+      // navigate at an external host.
+      await navigate({ href: continueTo })
     } catch (err) {
       // Better Auth resolves with `{ error }` on auth failures, so
       // a thrown exception here is a transport-level problem (DNS,
