@@ -1,7 +1,25 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { authClient, useSession } from '@/lib/auth-client'
 import ThemeToggle from './ThemeToggle'
 
 export default function Header() {
+  const navigate = useNavigate()
+  const { data: session, isPending } = useSession()
+
+  async function onSignOut() {
+    try {
+      await authClient.signOut()
+    } catch (err) {
+      // Network failure leaves the local cookie behind, but the
+      // server has almost certainly cleared its side of the session
+      // already. Logging keeps the trace for diagnostics; we still
+      // redirect so the next page load re-evaluates auth state from
+      // scratch instead of stranding the user on the current view.
+      console.error('[auth] sign-out failed:', err)
+    }
+    await navigate({ to: '/sign-in' })
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 backdrop-blur-lg">
       <nav className="page-wrap flex flex-wrap items-center gap-x-3 gap-y-2 py-3 sm:py-4">
@@ -61,6 +79,47 @@ export default function Header() {
               />
             </svg>
           </a>
+
+          {/*
+            While `useSession()` is still resolving on the first
+            render, render nothing in this slot — otherwise the
+            sign-in / sign-up links flash for a beat before swapping
+            to the authed chip, which reads as "you're signed out"
+            to a signed-in user.
+          */}
+          {isPending ? null : session?.user ? (
+            <>
+              <span
+                className="hidden text-sm text-[var(--sea-ink-soft)] sm:inline"
+                title={session.user.email}
+              >
+                {session.user.name || session.user.email}
+              </span>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/sign-in"
+                className="nav-link"
+                activeProps={{ className: 'nav-link is-active' }}
+              >
+                Sign in
+              </Link>
+              <Link
+                to="/sign-up"
+                className="rounded-xl bg-[var(--sea-ink)] px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Sign up
+              </Link>
+            </>
+          )}
 
           <ThemeToggle />
         </div>

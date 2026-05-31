@@ -28,6 +28,31 @@ bun run test       # vitest run
 
 Better Auth's tables live in Postgres. See [`db/README.md`](db/README.md) for the schema + bootstrap steps. A local dev DB via Docker takes ~10 seconds to stand up.
 
+```bash
+bun run db:migrate              # apply pending migrations
+bun run db:migrate --dry-run    # show what would be applied
+```
+
+### Sign up / sign in
+
+Routes:
+
+- [`/sign-up`](src/routes/sign-up.tsx) — create a new account (email + password, 12–128 chars)
+- [`/sign-in`](src/routes/sign-in.tsx) — sign back in
+- The header auto-swaps to a user chip + sign-out button once a session is active
+
+Smoke-test from the CLI once the dev server is up:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/sign-up/email \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"daisy@example.com","password":"correct-horse-battery","name":"Daisy"}'
+
+curl -X POST http://localhost:3000/api/auth/sign-in/email \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"daisy@example.com","password":"correct-horse-battery"}'
+```
+
 ## Deploying
 
 The Nitro build produces a self-contained Node server in `.output/`:
