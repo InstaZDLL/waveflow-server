@@ -11,6 +11,7 @@
 // Auth `user.id` lands as `users.external_id` on the Rust side.
 
 import { betterAuth } from 'better-auth'
+import { jwt } from 'better-auth/plugins'
 import { db } from './db'
 
 if (!process.env.BETTER_AUTH_SECRET) {
@@ -60,4 +61,31 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 24,
   },
+  plugins: [
+    // JWT plugin — mints short-lived bearer tokens that waveflow-server
+    // verifies against the JWKS endpoint this plugin also exposes at
+    // `/api/auth/jwks`. The browser keeps using cookie-backed sessions
+    // for the web app; the JWT is the API-call vehicle for talking to
+    // the Rust backend (and, later, the desktop app once it points at
+    // this server instead of its embedded SQLite).
+    //
+    // Algorithm: ES256 (P-256 ECDSA) — small, widely interoperable,
+    // and what the `jsonwebtoken` crate on waveflow-server speaks
+    // natively. EdDSA / Ed25519 (Better Auth's default) is also
+    // supported by jsonwebtoken 10 but is a niche pick that some JWKS
+    // tooling still mishandles, so we stick with the boring choice.
+    //
+    // Audience: defaults to `waveflow-server` so the verifier on the
+    // Rust side has a stable string to check the `aud` claim against.
+    // Override with `WAVEFLOW_JWT_AUDIENCE` when running multiple
+    // backend instances that share this auth server.
+    jwt({
+      jwks: { keyPairConfig: { alg: 'ES256' } },
+      jwt: {
+        issuer: process.env.BETTER_AUTH_URL,
+        audience: process.env.WAVEFLOW_JWT_AUDIENCE ?? 'waveflow-server',
+        expirationTime: '15m',
+      },
+    }),
+  ],
 })
