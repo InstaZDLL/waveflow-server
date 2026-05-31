@@ -62,6 +62,16 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         paths.contains_key("/api/v1/profiles/{profile_id}/playlists/{id}"),
         "missing playlists item path in spec"
     );
+    assert!(
+        paths.contains_key(
+            "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{track_id}/stream-url"
+        ),
+        "missing stream-url mint path in spec"
+    );
+    assert!(
+        paths.contains_key("/api/v1/stream/{token}"),
+        "missing stream path in spec"
+    );
 
     // `POST /api/v1/users` retired in Phase 1.d.2 — the JWT path's
     // lazy auto-provisioning is the only way to land a `users` row,
