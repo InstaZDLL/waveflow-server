@@ -112,8 +112,11 @@ async fn list_profiles(
     }
 }
 
-/// Create a profile owned by the calling user. Returns 409 when the
-/// FK rejects — the request carried a user id that no longer exists.
+/// Create a profile owned by the calling user. Returns 409 if the
+/// `profile.user_id` FK rejects — race between the middleware's
+/// lazy-provision and a concurrent users-row delete. Vanishingly
+/// unlikely with the current schema (users rows are never deleted),
+/// but kept defensive in case the lifecycle gains a delete path.
 #[utoipa::path(
     post,
     path = "/api/v1/profiles",
@@ -126,7 +129,7 @@ async fn list_profiles(
         (status = 201, description = "Profile created", body = ProfileResponse),
         (status = 401, description = "Missing or invalid bearer token"),
         (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
-        (status = 409, description = "X-User-Id does not match an existing users row"),
+        (status = 409, description = "Authenticated user id no longer matches an existing users row (race)"),
     ),
 )]
 async fn create_profile(
@@ -146,16 +149,19 @@ async fn create_profile(
         Ok(id) => id,
         Err(err) => {
             // sqlx::Error::Database with code 23503 is the FK
-            // violation — the X-User-Id header carried a user that
-            // doesn't exist (or was deleted between the middleware
-            // check and the insert). Surface that distinctly so the
-            // client can re-bootstrap a user.
+            // violation — the authenticated user id resolved by the
+            // middleware no longer matches an existing users row (a
+            // concurrent delete raced us). Surface it distinctly so
+            // the client can re-auth from scratch.
             if matches!(
                 &err,
                 waveflow_core::error::CoreError::Database(sqlx::Error::Database(db_err))
                     if db_err.code().as_deref() == Some("23503"),
             ) {
-                return (StatusCode::CONFLICT, "X-User-Id has no matching user row")
+                return (
+                    StatusCode::CONFLICT,
+                    "authenticated user id has no matching users row",
+                )
                     .into_response();
             }
             tracing::error!(error = %err, user_id, "create profile failed");

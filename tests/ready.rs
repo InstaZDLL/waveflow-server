@@ -127,22 +127,35 @@ async fn migration_adds_users_external_id_column(pool: PgPool) {
     assert!(exists, "users.external_id column missing after migrations");
 }
 
-/// Defense-in-depth probe on the `users_external_id_non_blank`
-/// CHECK constraint. Exercises a direct INSERT (bypassing the
-/// handler's trim-and-reject path) so a future regression that
-/// drops the constraint surfaces here rather than silently allowing
-/// blank rows the JWT middleware could never match.
+/// Defense-in-depth probe on the `users.external_id` column shape.
+/// Direct INSERT (bypassing the lazy-provision middleware) so a
+/// future regression that loosens the constraints surfaces here.
+///
+/// Phase 1.d.2 made the column NOT NULL — JWT auth is the only path
+/// and every row must carry the `sub` claim it was provisioned from.
+/// Blank values still trip the `users_external_id_non_blank` CHECK
+/// (`23514`), distinct from the unique-violation case (`23505`) the
+/// upsert in `find_or_provision_by_external_id` handles.
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn users_external_id_check_rejects_blank(pool: PgPool) {
-    // NULL is allowed (the dev shim mints users without external_id).
-    sqlx::query("INSERT INTO users (created_at, external_id) VALUES (1, NULL)")
+async fn users_external_id_rejects_null_and_blank(pool: PgPool) {
+    // NULL is now forbidden — the 1.d.2 migration set the column
+    // NOT NULL. SQLSTATE 23502 = not_null_violation.
+    let err = sqlx::query("INSERT INTO users (created_at, external_id) VALUES (1, NULL)")
         .execute(&pool)
         .await
-        .expect("NULL external_id should be allowed by the CHECK");
+        .expect_err("NULL external_id should violate NOT NULL");
+    let code = match &err {
+        sqlx::Error::Database(db_err) => db_err.code().map(|c| c.into_owned()),
+        other => panic!("expected Database error, got {other:?}"),
+    };
+    assert_eq!(
+        code.as_deref(),
+        Some("23502"),
+        "NULL external_id should fail with not_null_violation (23502), got {code:?}"
+    );
 
     // Empty string and whitespace-only must trip the CHECK with
-    // SQLSTATE 23514 (check_violation), distinct from the
-    // 23505 unique_violation case the handler maps to 409.
+    // SQLSTATE 23514 (check_violation).
     for blank in ["", "   ", "\t\n "] {
         let err = sqlx::query("INSERT INTO users (created_at, external_id) VALUES (1, $1)")
             .bind(blank)
