@@ -75,9 +75,13 @@ pub async fn require_user_id(mut request: Request, next: Next) -> Result<Respons
 ///    - JWKS fetch failure → 503. Routes around the instance while
 ///      the upstream is unreachable, lets the load balancer pick a
 ///      healthy peer.
-///    - `sub` doesn't resolve to a `users` row → 401. Hides the
-///      existence of foreign sub values (same no-leak rationale as
-///      the resource-level 404s).
+///    - `sub` has no `users` row yet → lazy-provision it via
+///      [`db::users::find_or_provision_by_external_id`] and attach
+///      the freshly-minted [`UserId`]. The verified JWT is the
+///      authoritative onboarding signal; no separate `POST /users`
+///      is needed after a Better Auth signup (Phase 1.c.3a).
+///    - DB error while provisioning → 500. The signature was
+///      valid, so this is server-side fault, not a client problem.
 /// 3. **JWT configured, NO `Authorization`** → fall through to the
 ///    shim path if it's enabled; otherwise 401.
 /// 4. **Shim path** — same parse as the legacy `require_user_id`:
