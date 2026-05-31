@@ -8,6 +8,7 @@
 
 import { createServerFn } from '@tanstack/react-start'
 import { getRequestHeaders } from '@tanstack/react-start/server'
+import { APIError } from 'better-auth/api'
 import { auth } from '@/lib/auth'
 import { waveflowFetch, WaveflowServerError } from '@/lib/server/waveflow-server'
 
@@ -35,19 +36,33 @@ class NotSignedInError extends Error {
 
 /**
  * Mint a fresh JWT for the current Better Auth session. Throws
- * [`NotSignedInError`] if there is no active session, anything else
- * if Better Auth itself blows up (DB unreachable, JWKS broken). The
- * caller MUST wrap this in a try/catch — a thrown raw `getToken`
- * error would otherwise reach the browser via TanStack Start's
- * serialization with backend diagnostics attached.
+ * [`NotSignedInError`] if there is no active session — Better Auth
+ * surfaces that as an `APIError` with `status: 'UNAUTHORIZED'`, NOT
+ * as a `{ token: undefined }` payload, so we have to intercept the
+ * throw rather than null-check the return.
+ *
+ * Anything else (DB unreachable, JWKS broken) bubbles up unchanged
+ * — the caller's catch envelope sanitizes it.
  */
 async function mintToken(): Promise<string> {
   const headers = getRequestHeaders()
-  const result = await auth.api.getToken({ headers: new Headers(headers as HeadersInit) })
-  if (!result?.token) {
-    throw new NotSignedInError()
+  try {
+    const result = await auth.api.getToken({
+      headers: new Headers(headers as HeadersInit),
+    })
+    // Defensive null-check: kept in case a future Better Auth release
+    // changes the contract to "return null on no-session" instead of
+    // throwing — the marker error stays the right outcome either way.
+    if (!result?.token) {
+      throw new NotSignedInError()
+    }
+    return result.token
+  } catch (err) {
+    if (err instanceof APIError && err.status === 'UNAUTHORIZED') {
+      throw new NotSignedInError()
+    }
+    throw err
   }
-  return result.token
 }
 
 export const listProfiles = createServerFn({ method: 'GET' }).handler(async () => {
