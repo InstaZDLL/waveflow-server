@@ -75,9 +75,13 @@ pub async fn require_user_id(mut request: Request, next: Next) -> Result<Respons
 ///    - JWKS fetch failure → 503. Routes around the instance while
 ///      the upstream is unreachable, lets the load balancer pick a
 ///      healthy peer.
-///    - `sub` doesn't resolve to a `users` row → 401. Hides the
-///      existence of foreign sub values (same no-leak rationale as
-///      the resource-level 404s).
+///    - `sub` has no `users` row yet → lazy-provision it via
+///      [`db::users::find_or_provision_by_external_id`] and attach
+///      the freshly-minted [`UserId`]. The verified JWT is the
+///      authoritative onboarding signal; no separate `POST /users`
+///      is needed after a Better Auth signup (Phase 1.c.3a).
+///    - DB error while provisioning → 500. The signature was
+///      valid, so this is server-side fault, not a client problem.
 /// 3. **JWT configured, NO `Authorization`** → fall through to the
 ///    shim path if it's enabled; otherwise 401.
 /// 4. **Shim path** — same parse as the legacy `require_user_id`:
@@ -165,21 +169,24 @@ async fn resolve_bearer(
         }
     })?;
 
-    // Resolve sub → users.id. A token that signs for a user we've
-    // never minted gets a 401 — not a 404 — because the request was
-    // *authenticated* against the upstream but isn't *authorised*
-    // for this server. Hiding the row miss behind 401 keeps the
-    // server from confirming which `sub` values exist on the box.
-    let user_id = db::users::find_by_external_id(&state.db, &claims.sub)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = %err, "users lookup failed during JWT auth");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            tracing::warn!(sub = %claims.sub, "JWT sub has no matching users row");
-            StatusCode::UNAUTHORIZED
-        })?;
+    // Resolve sub → users.id, lazy-provisioning on cache miss. The
+    // verified JWT is the authoritative statement that the sub is a
+    // real user (Better Auth signed it), so a missing row means
+    // "first request from a fresh signup", not "intruder". Inserting
+    // here keeps the auth flow single-round-trip: no separate
+    // /users POST is needed after Better Auth's signUp.email.
+    //
+    // The UPSERT is idempotent on the UNIQUE(external_id) index —
+    // a concurrent first request from the same user collapses
+    // cleanly to one row.
+    let created_at_ms = chrono::Utc::now().timestamp_millis();
+    let user_id =
+        db::users::find_or_provision_by_external_id(&state.db, &claims.sub, created_at_ms)
+            .await
+            .map_err(|err| {
+                tracing::error!(error = %err, "users provision failed during JWT auth");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
 
     Ok(user_id)
 }
