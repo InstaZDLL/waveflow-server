@@ -83,14 +83,11 @@ function DesktopLoginPage() {
             Invalid sign-in link
           </h1>
           <p className="text-sm text-[var(--sea-ink-soft)]">
-            The desktop sent us a callback URL we can&apos;t use. The
-            link must point at the local handshake listener on
-            <code className="mx-1 rounded bg-black/5 px-1 py-0.5 text-xs">
-              http://127.0.0.1
-            </code>
-            and include a non-empty <code>state</code> parameter.
-            Re-launch the sign-in from the desktop&apos;s Settings
-            page.
+            The desktop sent us a callback URL we can&apos;t use. The link must point at the local
+            handshake listener on
+            <code className="mx-1 rounded bg-black/5 px-1 py-0.5 text-xs">http://127.0.0.1</code>
+            and include a non-empty <code>state</code> parameter. Re-launch the sign-in from the
+            desktop&apos;s Settings page.
           </p>
         </section>
       </main>
@@ -105,9 +102,8 @@ function DesktopLoginPage() {
           Couldn&apos;t issue a desktop token
         </h1>
         <p className="text-sm text-[var(--sea-ink-soft)]">
-          Better Auth wouldn&apos;t mint a JWT for this session. Try
-          signing out and back in, or contact your administrator if
-          the problem persists.
+          Better Auth wouldn&apos;t mint a JWT for this session. Try signing out and back in, or
+          contact your administrator if the problem persists.
         </p>
       </section>
     </main>
