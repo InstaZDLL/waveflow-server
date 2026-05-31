@@ -1,14 +1,8 @@
-import { Link, createFileRoute, redirect } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { listLibraries, type Library } from '@/server-fns/libraries'
-import { getCurrentSession } from '@/server-fns/session'
 
-export const Route = createFileRoute('/profiles/$profileId')({
-  beforeLoad: async () => {
-    const session = await getCurrentSession()
-    if (!session) {
-      throw redirect({ to: '/sign-in' })
-    }
-  },
+// Auth gating inherited from the `_authed` parent layout.
+export const Route = createFileRoute('/_authed/profiles/$profileId')({
   loader: async ({ params }): Promise<LoaderData> => {
     const profileId = Number(params.profileId)
     if (!Number.isInteger(profileId) || profileId <= 0) {

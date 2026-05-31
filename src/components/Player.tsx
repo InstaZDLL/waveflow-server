@@ -34,10 +34,16 @@ export function Player({ current, onEnded }: PlayerProps) {
   // Autoplay the new track once the metadata is ready. `<audio>`
   // emits `canplay` when enough data has buffered to start playback;
   // calling `.play()` earlier rejects the promise in Chrome.
+  //
+  // `readyState >= HAVE_FUTURE_DATA` (= 3) means `canplay` already
+  // fired before we attached — happens when the browser cache
+  // serves the response synchronously, or after a fast remount.
+  // Call the handler immediately in that case so we don't sit on
+  // an event that will never fire again.
   useEffect(() => {
     const el = audioRef.current
     if (!el || !current) return
-    const onCanPlay = () => {
+    const tryPlay = () => {
       el.play()
         .then(() => setPlaying(true))
         .catch((err) => {
@@ -47,8 +53,12 @@ export function Player({ current, onEnded }: PlayerProps) {
           console.warn('[player] autoplay rejected:', err)
         })
     }
-    el.addEventListener('canplay', onCanPlay)
-    return () => el.removeEventListener('canplay', onCanPlay)
+    if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      tryPlay()
+      return
+    }
+    el.addEventListener('canplay', tryPlay)
+    return () => el.removeEventListener('canplay', tryPlay)
   }, [current])
 
   if (!current) return null

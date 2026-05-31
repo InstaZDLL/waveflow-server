@@ -1,24 +1,10 @@
-import { Link, createFileRoute, redirect } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { listProfiles, type Profile } from '@/server-fns/profiles'
-import { getCurrentSession } from '@/server-fns/session'
 
-// `beforeLoad` runs server-side on SSR and client-side on
-// navigation — both paths reach the same auth gate. Throwing
-// `redirect()` aborts the load and pushes the user at /sign-in
-// before the component mounts, so there's no flash of empty
-// content for an unauthenticated visitor.
-//
-// `loader` then fetches the profile list. Any error becomes a
-// loader rejection that the component sees via `useLoaderData` —
-// we wrap to keep the message client-safe (the server fn already
-// maps statuses, this is the catch-all envelope).
-export const Route = createFileRoute('/profiles')({
-  beforeLoad: async () => {
-    const session = await getCurrentSession()
-    if (!session) {
-      throw redirect({ to: '/sign-in' })
-    }
-  },
+// Auth gating lives in the `_authed` parent layout — every route
+// in this folder inherits the session check, no per-route
+// `beforeLoad` to duplicate. The loader only handles data.
+export const Route = createFileRoute('/_authed/profiles')({
   loader: async (): Promise<LoaderData> => {
     try {
       const profiles = await listProfiles()

@@ -5,7 +5,7 @@
 
 import { createServerFn } from '@tanstack/react-start'
 import { waveflowFetch } from '@/lib/server/waveflow-server'
-import { mintToken, withSafeErrors } from './_internal'
+import { asPathId, mintToken, withSafeErrors } from './_internal'
 
 export interface Track {
   id: number
@@ -35,7 +35,13 @@ export interface ListTracksParams {
  * as [`listLibraries`] — a foreign id surfaces as "Not found."
  */
 export const listTracks = createServerFn({ method: 'GET' })
-  .inputValidator((params: ListTracksParams) => params)
+  .inputValidator((value: unknown): ListTracksParams => {
+    const raw = value as Partial<ListTracksParams> | undefined
+    return {
+      profileId: asPathId(raw?.profileId, 'profileId'),
+      libraryId: asPathId(raw?.libraryId, 'libraryId'),
+    }
+  })
   .handler(async ({ data }) =>
     withSafeErrors('listTracks', async () => {
       const token = await mintToken()
