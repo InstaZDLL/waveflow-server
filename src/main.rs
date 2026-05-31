@@ -18,7 +18,9 @@ use waveflow_server::{
     app,
     auth::{JwtVerifier, JwtVerifierConfig},
     config::Config,
-    db, AppState, StreamCtx,
+    db,
+    sync::{SyncHub, DEFAULT_COMPACTION_INTERVAL, DEFAULT_FLUSH_INTERVAL},
+    AppState, StreamCtx,
 };
 
 #[tokio::main]
@@ -78,10 +80,29 @@ async fn main() -> anyhow::Result<()> {
     let local = listener.local_addr()?;
     info!(addr = %local, "waveflow-server listening");
 
+    // Sync hub — broadcast channel + ACK debouncer + nightly
+    // compaction. The two `JoinHandle`s are intentionally retained as
+    // `_flush_task` / `_compaction_task` so the underscored bindings
+    // keep ownership through `main`'s scope — dropping a handle
+    // doesn't cancel the task itself, but rebinding-by-shadowing or
+    // explicit `drop` would, and a future refactor that loses the
+    // bindings should hear from the borrow checker on the next read.
+    let (sync_hub, _flush_task, _compaction_task) = SyncHub::spawn(
+        db.clone(),
+        DEFAULT_FLUSH_INTERVAL,
+        DEFAULT_COMPACTION_INTERVAL,
+    );
+    info!(
+        flush_interval = ?DEFAULT_FLUSH_INTERVAL,
+        compaction_interval = ?DEFAULT_COMPACTION_INTERVAL,
+        "sync hub started",
+    );
+
     let state = AppState {
         db,
         jwt_verifier,
         stream_ctx,
+        sync: sync_hub,
     };
     axum::serve(
         listener,
