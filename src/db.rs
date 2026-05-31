@@ -76,30 +76,9 @@ pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
 
 /// User-table helpers. Keeps the raw SQL out of handlers — same
 /// boundary the project's no-SQL-in-handlers rule enforces for the
-/// `/ready` probe. Returns the new user id so the dev caller can
-/// stash it for the subsequent `X-User-Id` header.
+/// `/ready` probe.
 pub mod users {
     use sqlx::PgPool;
-
-    /// Insert a new user row and return its id. `BIGSERIAL` means
-    /// we never pass the id in — Postgres allocates from its
-    /// sequence. `external_id` is the seed for Phase 1.d's JWT
-    /// auth: it gets matched against the verified `sub` claim of
-    /// inbound Bearer tokens. Pass `None` from the dev `X-User-Id`
-    /// shim path; pass `Some(sub)` once Better Auth lands.
-    pub async fn create(
-        pool: &PgPool,
-        created_at: i64,
-        external_id: Option<&str>,
-    ) -> Result<i64, sqlx::Error> {
-        sqlx::query_scalar::<_, i64>(
-            "INSERT INTO users (created_at, external_id) VALUES ($1, $2) RETURNING id",
-        )
-        .bind(created_at)
-        .bind(external_id)
-        .fetch_one(pool)
-        .await
-    }
 
     /// Resolve a JWT `sub` to an internal `users.id`, inserting a
     /// row if the sub is unknown. Used by the JWT middleware

@@ -63,15 +63,12 @@ pub struct ApiDoc;
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    /// Built when the boot config carries a full JWT triple
-    /// (`WAVEFLOW_JWT_JWKS_URL` + `_ISSUER` + `_AUDIENCE`). `None`
-    /// keeps the JWT path off — the middleware then falls back to
-    /// the `X-User-Id` shim or to 503 depending on the config.
-    pub jwt_verifier: Option<std::sync::Arc<auth::JwtVerifier>>,
-    /// Mirror of `Config::dev_auth_enabled`. The middleware reads
-    /// this via state instead of threading the whole `Config` so
-    /// the per-request hot path stays a single field load.
-    pub dev_auth_enabled: bool,
+    /// Verifier built at boot from the required `WAVEFLOW_JWT_*`
+    /// triple. Phase 1.d.2 made this non-optional — the dev
+    /// `X-User-Id` shim retired, so the JWT path is the only auth
+    /// channel and a missing verifier means the server shouldn't
+    /// have booted in the first place.
+    pub jwt_verifier: std::sync::Arc<auth::JwtVerifier>,
 }
 
 /// Header used for inbound + propagated request IDs. UUIDv4 by default
@@ -137,7 +134,7 @@ pub fn app(config: Config, state: AppState) -> Router {
     // `/reference`; both stay outside the `/api/v1/*` namespace so a
     // future Better-Auth middleware (1.d) gates only the data routes.
     let (api_router, openapi) = utoipa_axum::router::OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .merge(api::router(state, &config))
+        .merge(api::router(state))
         .split_for_parts();
 
     Router::new()
