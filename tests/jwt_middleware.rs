@@ -125,18 +125,16 @@ async fn missing_bearer_with_jwt_only_returns_401(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
-async fn bearer_with_unknown_sub_returns_401(pool: PgPool) {
+async fn bearer_with_unknown_sub_lazy_provisions_user(pool: PgPool) {
     let harness = JwksHarness::spawn().await;
-    let base = spawn_app_with_jwt_and_shim(pool, harness.verifier_arc()).await;
+    let base = spawn_app_with_jwt_and_shim(pool.clone(), harness.verifier_arc()).await;
 
     // No `mint_user_with_external_id` call — the sub in the token
-    // has no matching row in `users`. The verifier accepts the
-    // token (signature + claims valid) but the lookup misses, so
-    // the middleware returns 401.
-    let token = harness.mint(
-        &good_claims("never-onboarded-sub"),
-        &header_with_kid(TEST_KID),
-    );
+    // has no matching row in `users` at request time. Phase 1.c.3a
+    // says: a valid JWT IS the authoritative onboarding signal, so
+    // the middleware inserts the row and lets the request through.
+    let external_id = "fresh-better-auth-sub";
+    let token = harness.mint(&good_claims(external_id), &header_with_kid(TEST_KID));
 
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/v1/profiles"))
@@ -144,7 +142,38 @@ async fn bearer_with_unknown_sub_returns_401(pool: PgPool) {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    // First request gets 200 with an empty profile list — proves the
+    // request was authenticated AND scoped to the new user (an
+    // unscoped query would have returned someone else's profiles).
+    assert_eq!(resp.status(), StatusCode::OK);
+    let profiles: Value = resp.json().await.unwrap();
+    assert_eq!(profiles, json!([]));
+
+    // The row landed in `users` with the verified sub.
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE external_id = $1")
+            .bind(external_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row_count, 1);
+
+    // Second request reuses the same row — idempotent UPSERT, no
+    // duplicate insert attempt.
+    let resp2 = reqwest::Client::new()
+        .get(format!("{base}/api/v1/profiles"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let row_count_after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE external_id = $1")
+            .bind(external_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row_count_after, 1);
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
