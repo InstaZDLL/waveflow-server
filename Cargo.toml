@@ -105,6 +105,24 @@ anyhow = "1"
 # which a stringly-typed `anyhow::Error` would muddle.
 thiserror = "2"
 
+# HMAC-SHA256 for signed streaming URLs (Phase 1.e). The browser
+# can't attach a Bearer header to `<audio src>`, so the mint endpoint
+# vends a short-lived URL signed with `WAVEFLOW_STREAM_SECRET` and
+# the stream endpoint verifies the signature instead of going through
+# the JWT middleware.
+hmac = "0.12"
+sha2 = "0.10"
+
+# Promote `base64` from dev-deps to runtime — the signed-URL token
+# encodes the payload + signature as base64url. Already pinned to
+# 0.22 for the JWKS test harness.
+base64 = "0.22"
+
+# Stream files through axum without buffering the whole body. The
+# range handler in `src/api/stream.rs` wraps a `tokio::fs::File` in
+# `ReaderStream` and returns it as an axum response body.
+tokio-util = { version = "0.7", features = ["io"] }
+
 [dev-dependencies]
 # Activate `use_pem` for the JWT tests only. The harness in
 # `tests/jwks_harness.rs` calls `EncodingKey::from_rsa_pem(…)` to
@@ -124,7 +142,6 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 # keys, it only consumes the JWKS document.
 rsa = "0.9"
 rand = "0.8"
-base64 = "0.22"
 
 # ES256 / P-256 keypair generation for the ECDSA mirror of the RSA
 # harness — same role as `rsa` above, just for the elliptic-curve
@@ -132,6 +149,11 @@ base64 = "0.22"
 # for RSA-2048), so adding an ES256 sweep across the test suite is
 # essentially free.
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+
+# Per-test scratch directory for the streaming tests — auto-removed
+# on drop, so each `#[sqlx::test]` gets an isolated music root with
+# no cleanup boilerplate.
+tempfile = "3"
 
 [profile.release]
 # Match the desktop app's release profile so behaviour parity holds at

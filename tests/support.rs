@@ -26,7 +26,7 @@ mod jwks_harness;
 use std::{net::SocketAddr, sync::Arc};
 
 use sqlx::PgPool;
-use waveflow_server::{app, auth::JwtVerifier, AppState, Config};
+use waveflow_server::{app, auth::JwtVerifier, AppState, Config, StreamCtx};
 
 pub use jwks_harness::{good_claims, header_with_kid, JwksHarness, TEST_KID};
 
@@ -64,11 +64,17 @@ pub async fn spawn_app_with_jwt(pool: PgPool, verifier: Arc<JwtVerifier>) -> Str
         jwt_jwks_url: String::new(),
         jwt_issuer: String::new(),
         jwt_audience: String::new(),
+        music_root: None,
+        stream_secret: None,
     };
 
     let state = AppState {
         db: pool,
         jwt_verifier: verifier,
+        // Streaming is off by default in the shared helper. Tests
+        // that exercise the stream endpoints use
+        // `spawn_app_with_jwt_and_stream` instead.
+        stream_ctx: None,
     };
     tokio::spawn(async move {
         axum::serve(
@@ -161,6 +167,57 @@ pub struct AuthenticatedCaller {
     pub token: String,
     pub user_id: i64,
     pub external_id: String,
+}
+
+/// Variant that wires a working `StreamCtx` against the supplied
+/// `music_root` + HMAC secret. The stream + mint endpoints become
+/// reachable; everything else still rides the JWT layer the same
+/// way `spawn_app_with_jwt` does.
+pub async fn spawn_app_with_jwt_and_stream(
+    pool: PgPool,
+    verifier: Arc<JwtVerifier>,
+    music_root: std::path::PathBuf,
+    secret: Vec<u8>,
+) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // Mirror the canonicalisation `main.rs` does at boot. The stream
+    // handler compares `canonicalize(<root>/<file>).starts_with(music_root)` —
+    // if `music_root` itself isn't already canonical, the comparison
+    // fails for every file on platforms where the tempdir lives
+    // behind a symlink (macOS resolves `/tmp` → `/private/tmp`).
+    let music_root = tokio::fs::canonicalize(&music_root)
+        .await
+        .expect("test music_root must be canonicalisable");
+
+    let config = Config {
+        bind_addr: addr,
+        request_timeout_secs: 5,
+        database_url: "<test>".into(),
+        db_max_connections: 1,
+        jwt_jwks_url: String::new(),
+        jwt_issuer: String::new(),
+        jwt_audience: String::new(),
+        music_root: Some(music_root.clone()),
+        stream_secret: Some(secret.clone()),
+    };
+
+    let state = AppState {
+        db: pool,
+        jwt_verifier: verifier,
+        stream_ctx: Some(Arc::new(StreamCtx { music_root, secret })),
+    };
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app(config, state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    format!("http://{addr}")
 }
 
 pub async fn spawn_two_authenticated(
