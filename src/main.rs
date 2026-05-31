@@ -18,7 +18,7 @@ use waveflow_server::{
     app,
     auth::{JwtVerifier, JwtVerifierConfig},
     config::Config,
-    db, AppState,
+    db, AppState, StreamCtx,
 };
 
 #[tokio::main]
@@ -53,11 +53,36 @@ async fn main() -> anyhow::Result<()> {
     let jwt_verifier = Arc::new(verifier);
     info!(jwks_url = %config.jwt_jwks_url, "JWT auth path enabled");
 
+    // Streaming context — Some when both knobs are set, None disables
+    // both `/api/v1/stream/*` routes. Canonicalise the music root at
+    // boot so the per-request handler doesn't redo it; a missing
+    // directory aborts startup loudly.
+    let stream_ctx = match (config.music_root.clone(), config.stream_secret.clone()) {
+        (Some(root), Some(secret)) => {
+            let canonical = tokio::fs::canonicalize(&root).await.map_err(|err| {
+                anyhow::anyhow!("WAVEFLOW_MUSIC_ROOT {root:?} is not accessible: {err}")
+            })?;
+            info!(music_root = %canonical.display(), "streaming enabled");
+            Some(Arc::new(StreamCtx {
+                music_root: canonical,
+                secret,
+            }))
+        }
+        _ => {
+            info!("streaming disabled (WAVEFLOW_MUSIC_ROOT + WAVEFLOW_STREAM_SECRET unset)");
+            None
+        }
+    };
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local = listener.local_addr()?;
     info!(addr = %local, "waveflow-server listening");
 
-    let state = AppState { db, jwt_verifier };
+    let state = AppState {
+        db,
+        jwt_verifier,
+        stream_ctx,
+    };
     axum::serve(
         listener,
         app(config, state).into_make_service_with_connect_info::<SocketAddr>(),

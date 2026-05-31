@@ -56,6 +56,23 @@ pub struct Config {
     /// tokens. Must match `WAVEFLOW_JWT_AUDIENCE` on the auth server
     /// side (defaults there to `"waveflow-server"`). Required.
     pub jwt_audience: String,
+
+    /// `WAVEFLOW_MUSIC_ROOT` — filesystem root the streaming endpoint
+    /// resolves `track.file_path` against. Every file the server can
+    /// stream lives under this directory; the handler canonicalises
+    /// the joined path and refuses anything outside it (path-traversal
+    /// guard). `None` disables the streaming endpoints — the mint
+    /// route returns 503 instead of issuing tokens that would just
+    /// 404 on the stream side.
+    pub music_root: Option<std::path::PathBuf>,
+
+    /// `WAVEFLOW_STREAM_SECRET` — HMAC key the mint endpoint signs
+    /// stream URLs with. Browsers can't attach a Bearer to
+    /// `<audio src>`, so the short-lived signed URL replaces the JWT
+    /// for that one route. `None` disables streaming (the mint
+    /// endpoint returns 503). 32 random bytes (`openssl rand -base64
+    /// 32`) is the recommended size.
+    pub stream_secret: Option<Vec<u8>>,
 }
 
 impl Config {
@@ -106,6 +123,24 @@ impl Config {
         let jwt_audience = std::env::var("WAVEFLOW_JWT_AUDIENCE")
             .map_err(|_| anyhow::anyhow!("WAVEFLOW_JWT_AUDIENCE is required"))?;
 
+        // Streaming knobs — both required together, both optional
+        // (unset disables `/api/v1/stream/*` cleanly with 503). A
+        // half-set config (one without the other) is a footgun, so
+        // we bail at boot instead.
+        let music_root = std::env::var("WAVEFLOW_MUSIC_ROOT")
+            .ok()
+            .map(std::path::PathBuf::from);
+        let stream_secret = std::env::var("WAVEFLOW_STREAM_SECRET")
+            .ok()
+            .map(|s| s.into_bytes());
+        if music_root.is_some() != stream_secret.is_some() {
+            anyhow::bail!(
+                "streaming requires both WAVEFLOW_MUSIC_ROOT and \
+                 WAVEFLOW_STREAM_SECRET to be set together (or both \
+                 unset to disable)"
+            );
+        }
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,
@@ -114,6 +149,8 @@ impl Config {
             jwt_jwks_url,
             jwt_issuer,
             jwt_audience,
+            music_root,
+            stream_secret,
         })
     }
 }
