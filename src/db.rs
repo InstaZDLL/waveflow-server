@@ -107,12 +107,15 @@ pub mod users {
     /// a separate "onboard the user on waveflow-server" round-trip —
     /// the first authenticated request lazy-provisions the row.
     ///
-    /// Implementation: an UPSERT with a no-op `DO UPDATE` so the
-    /// `RETURNING id` clause fires whether the row was inserted now
-    /// or already existed. The `external_id = EXCLUDED.external_id`
-    /// no-op is the idiomatic Postgres trick for "give me the id
-    /// regardless" — `DO NOTHING` would skip RETURNING on conflict
-    /// and force a separate SELECT.
+    /// Read-first, write-on-miss. The common path — every JWT
+    /// request after the first for a given user — hits the SELECT
+    /// only and produces zero writes, avoiding the heap-tuple churn
+    /// (and autovacuum cost) a pure `DO UPDATE … RETURNING` UPSERT
+    /// would generate per-request. The miss path falls through to
+    /// an `ON CONFLICT DO UPDATE` UPSERT so two concurrent first
+    /// requests for the same fresh sub collapse atomically to one
+    /// row — the loser's UPDATE is a no-op assignment that still
+    /// fires `RETURNING id` so both callers get the winner's id.
     ///
     /// Trust source: a valid JWT verified against the Better Auth
     /// JWKS is the authoritative statement that this `sub` is a
@@ -123,6 +126,20 @@ pub mod users {
         external_id: &str,
         created_at_ms: i64,
     ) -> Result<i64, sqlx::Error> {
+        if let Some(id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE external_id = $1")
+                .bind(external_id)
+                .fetch_optional(pool)
+                .await?
+        {
+            return Ok(id);
+        }
+
+        // Miss path — INSERT, with an UPSERT fallback for the case
+        // where a concurrent request lazy-provisioned the same sub
+        // between our SELECT and INSERT. The no-op `DO UPDATE` keeps
+        // `RETURNING id` firing so the loser of the race still gets
+        // the winner's id rather than a NULL.
         sqlx::query_scalar::<_, i64>(
             "INSERT INTO users (created_at, external_id) VALUES ($1, $2) \
              ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id \

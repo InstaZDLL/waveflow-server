@@ -133,47 +133,45 @@ async fn bearer_with_unknown_sub_lazy_provisions_user(pool: PgPool) {
     // has no matching row in `users` at request time. Phase 1.c.3a
     // says: a valid JWT IS the authoritative onboarding signal, so
     // the middleware inserts the row and lets the request through.
+    //
+    // Fire two requests concurrently with the same fresh token so
+    // both racing tasks hit the SELECT-miss → UPSERT path together.
+    // Idempotence is the property we're proving: both must succeed
+    // and exactly one row must land — proves the UPSERT fallback
+    // catches the race we'd otherwise hit between the SELECT and
+    // the INSERT.
     let external_id = "fresh-better-auth-sub";
     let token = harness.mint(&good_claims(external_id), &header_with_kid(TEST_KID));
 
-    let resp = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let req_a = client
         .get(format!("{base}/api/v1/profiles"))
         .bearer_auth(&token)
-        .send()
+        .send();
+    let req_b = client
+        .get(format!("{base}/api/v1/profiles"))
+        .bearer_auth(&token)
+        .send();
+    let (resp_a, resp_b) = tokio::join!(req_a, req_b);
+    let resp_a = resp_a.unwrap();
+    let resp_b = resp_b.unwrap();
+
+    // Both requests authenticated AND tenant-scoped to the new user
+    // (an unscoped query would have leaked another tenant's rows).
+    assert_eq!(resp_a.status(), StatusCode::OK);
+    assert_eq!(resp_b.status(), StatusCode::OK);
+    let profiles_a: Value = resp_a.json().await.unwrap();
+    let profiles_b: Value = resp_b.json().await.unwrap();
+    assert_eq!(profiles_a, json!([]));
+    assert_eq!(profiles_b, json!([]));
+
+    // Exactly one row landed despite two parallel UPSERTs.
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE external_id = $1")
+        .bind(external_id)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    // First request gets 200 with an empty profile list — proves the
-    // request was authenticated AND scoped to the new user (an
-    // unscoped query would have returned someone else's profiles).
-    assert_eq!(resp.status(), StatusCode::OK);
-    let profiles: Value = resp.json().await.unwrap();
-    assert_eq!(profiles, json!([]));
-
-    // The row landed in `users` with the verified sub.
-    let row_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE external_id = $1")
-            .bind(external_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
     assert_eq!(row_count, 1);
-
-    // Second request reuses the same row — idempotent UPSERT, no
-    // duplicate insert attempt.
-    let resp2 = reqwest::Client::new()
-        .get(format!("{base}/api/v1/profiles"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp2.status(), StatusCode::OK);
-    let row_count_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE external_id = $1")
-            .bind(external_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(row_count_after, 1);
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
