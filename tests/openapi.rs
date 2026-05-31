@@ -63,28 +63,12 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         "missing playlists item path in spec"
     );
 
-    // `POST /api/v1/users` accepts `Option<Json<CreateUserRequest>>`
-    // so the OpenAPI requestBody must signal `required: false`. The
-    // bare `request_body = CreateUserRequest` shorthand would emit
-    // `required: true` and silently misdocument the contract — lock
-    // in the actual shape so a future refactor that drops the
-    // `Option<…>` wrapper trips here instead of in production.
+    // `POST /api/v1/users` retired in Phase 1.d.2 — the JWT path's
+    // lazy auto-provisioning is the only way to land a `users` row,
+    // so the spec must NOT advertise the legacy bootstrap endpoint.
     assert!(
-        paths.contains_key("/api/v1/users"),
-        "missing /api/v1/users in spec"
-    );
-    let users_post = &paths["/api/v1/users"]["post"];
-    let request_body = users_post
-        .get("requestBody")
-        .expect("POST /api/v1/users must declare a requestBody");
-    // OpenAPI 3.x defaults `required` to false when absent, so either
-    // explicitly `false` or missing is fine — what we must NOT see is
-    // `true`.
-    let required = request_body.get("required").and_then(Value::as_bool);
-    assert_ne!(
-        required,
-        Some(true),
-        "POST /api/v1/users requestBody must not be `required: true` — handler is Option<Json<…>>"
+        !paths.contains_key("/api/v1/users"),
+        "spec still advertises /api/v1/users — endpoint retired in 1.d.2"
     );
 
     // The /ready operation must declare both the 200 and the 503
