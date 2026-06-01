@@ -172,7 +172,7 @@ tempfile = "3"
 # tokio-tungstenite version that pairs with tokio 1.x ships only
 # rustls feature flags — `rustls-tls-webpki-roots` matches the
 # pure-Rust convention used elsewhere in the project.
-tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 # `record_ack` takes a `uuid::Uuid`; the sync tests construct one per
 # op. Use the `serde` feature so the same value round-trips through
