@@ -124,7 +124,7 @@ thiserror = "2"
 # the stream endpoint verifies the signature instead of going through
 # the JWT middleware.
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Promote `base64` from dev-deps to runtime — the signed-URL token
 # encodes the payload + signature as base64url. Already pinned to
