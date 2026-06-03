@@ -13,8 +13,11 @@ import {
  * opaque token in the path is the only credential needed. The
  * server-fn `getPublicPlaylist` calls
  * `/api/v1/share/playlists/{token}` (unauthenticated) and returns a
- * discriminated union so the route can render distinct ok / 404 /
- * transient-error states.
+ * discriminated union (`ok` / `error`) for the "reached upstream"
+ * path; the 404 case bubbles out-of-band as a thrown `notFound()`
+ * so the router emits a real HTTP 404 + renders
+ * `notFoundComponent` instead of forcing the TanStack RPC client
+ * to swallow a non-OK HTTP response.
  *
  * SSR + `head()` together produce real Open Graph + Twitter Card
  * meta tags for social previews — bots that don't run JavaScript
@@ -25,22 +28,26 @@ import {
  */
 export const Route = createFileRoute('/p/$token')({
   loader: async ({ params }): Promise<PublicPlaylistResult> => {
-    // The server-fn handler is server-only, so the actual HTTP
-    // 404 emission lives there — see getPublicPlaylist. We just
-    // surface the result for rendering.
+    // The server-fn throws `notFound()` for 404 cases — that
+    // propagates through the router and gets handled by
+    // `notFoundComponent` below. Here we just surface the
+    // ok / error union for the component to render.
     return getPublicPlaylist({ data: params.token })
   },
+  notFoundComponent: NotFoundPanel,
   head: ({ loaderData }) => {
-    if (!loaderData || loaderData.kind === 'not_found') {
+    if (!loaderData) {
+      // Loader threw `notFound()` — `loaderData` is absent and
+      // the router will render `notFoundComponent`. Mirror that
+      // in the SSR title so crawlers / browser tab match.
       return {
         meta: [{ title: 'Playlist not found · WaveFlow' }],
       }
     }
     if (loaderData.kind === 'error') {
-      // Transient upstream failure — distinct from 404 so the
+      // Transient upstream failure — distinct title so the
       // social preview / browser tab matches what `ErrorPanel`
-      // actually renders instead of falsely claiming the playlist
-      // is gone.
+      // actually renders.
       return {
         meta: [{ title: 'Server error · WaveFlow' }],
       }
@@ -76,10 +83,6 @@ export const Route = createFileRoute('/p/$token')({
 
 function PublicPlaylistView() {
   const data = Route.useLoaderData()
-
-  if (data.kind === 'not_found') {
-    return <NotFoundPanel />
-  }
   if (data.kind === 'error') {
     return <ErrorPanel message={data.message} />
   }

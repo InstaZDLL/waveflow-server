@@ -3,8 +3,8 @@
 // the desktop / authed callers; the web only consumes the read
 // endpoint that powers the `/p/$token` route.
 
+import { notFound } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { setResponseStatus } from '@tanstack/react-start/server'
 import { waveflowFetchPublic, WaveflowServerError } from '@/lib/server/waveflow-server'
 
 /**
@@ -41,15 +41,16 @@ export interface PublicPlaylist {
 }
 
 /**
- * The server-fn returns a discriminated union rather than throwing
- * on 404. The route loader needs to distinguish "playlist not
- * found" (we want a friendly empty state + status code) from "we
- * couldn't reach the server" (transient, retry-friendly), and a
- * single `Promise<PublicPlaylist | null>` would conflate the two.
+ * The server-fn returns a discriminated union for the "reached
+ * waveflow-server" path. "Playlist not found" is signalled out-
+ * of-band via `throw notFound()` — the router catches it,
+ * renders the route's `notFoundComponent` and emits a real HTTP
+ * 404. Going through the union for the 404 case would force the
+ * TanStack RPC client to swallow a non-OK HTTP response, which
+ * it treats as a thrown error (see `serverFnFetcher.ts:188`).
  */
 export type PublicPlaylistResult =
   | { kind: 'ok'; playlist: PublicPlaylist }
-  | { kind: 'not_found' }
   | { kind: 'error'; message: string }
 
 /**
@@ -80,15 +81,13 @@ export const getPublicPlaylist = createServerFn({ method: 'GET' })
     return typeof value === 'string' ? value : ''
   })
   .handler(async ({ data: token }): Promise<PublicPlaylistResult> => {
-    // Server-fn handlers always run server-side, so it's safe to
-    // call `setResponseStatus` here — the h3 event lives in
-    // AsyncLocalStorage on the server only. Emitting a real HTTP
-    // 404 (instead of a soft-404 200) lets crawlers and link
-    // unfurlers see the right status when the route renders
-    // NotFoundPanel.
+    // Throw `notFound()` for the 404 cases — TanStack serialises
+    // it through the RPC layer as a recognised payload (vs.
+    // throwing every non-OK HTTP as an Error), so the client
+    // loader sees a real `NotFoundError` and the router routes
+    // to `notFoundComponent` with a proper SSR 404 status.
     if (!isWellShapedToken(token)) {
-      setResponseStatus(404)
-      return { kind: 'not_found' }
+      throw notFound()
     }
     try {
       const playlist = await waveflowFetchPublic<PublicPlaylist>(
@@ -97,8 +96,7 @@ export const getPublicPlaylist = createServerFn({ method: 'GET' })
       return { kind: 'ok', playlist }
     } catch (err) {
       if (err instanceof WaveflowServerError && err.status === 404) {
-        setResponseStatus(404)
-        return { kind: 'not_found' }
+        throw notFound()
       }
       console.error('[server-fn] getPublicPlaylist failed:', err)
       return {
