@@ -57,23 +57,31 @@ export type PublicPlaylistResult =
  * like `/api/v1/share/playlists/../whatever` to waveflow-server.
  *
  * The server mints exactly 32 alphanumeric characters
- * (`rand::distributions::Alphanumeric`); we mirror that on the
- * client. Permissive enough that a future bump to a different
- * length / alphabet still parses — but tight enough to block any
- * URL-meaningful character (slash, dot, query, hash, percent).
+ * (`rand::distributions::Alphanumeric`); we mirror that exactly
+ * on the client. Tight enough to block any URL-meaningful
+ * character (slash, dot, query, hash, percent) and any deviation
+ * from the server's mint format.
+ *
+ * The check is consulted by the handler — not the input validator
+ * — so a malformed token resolves to `{ kind: 'not_found' }` and
+ * the route renders the friendly empty state instead of crashing
+ * into the framework's error boundary.
  */
 export function isWellShapedToken(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9]{8,128}$/.test(value)
+  return typeof value === 'string' && /^[A-Za-z0-9]{32}$/.test(value)
 }
 
 export const getPublicPlaylist = createServerFn({ method: 'GET' })
-  .inputValidator((token: unknown) => {
-    if (!isWellShapedToken(token)) {
-      throw new Error('Invalid share token.')
-    }
-    return token
+  .inputValidator((value: unknown): string => {
+    // Pass through as a string — shape validation happens in the
+    // handler so a bad token can surface as a 'not_found' result
+    // rather than a thrown error the route can't render.
+    return typeof value === 'string' ? value : ''
   })
   .handler(async ({ data: token }): Promise<PublicPlaylistResult> => {
+    if (!isWellShapedToken(token)) {
+      return { kind: 'not_found' }
+    }
     try {
       const playlist = await waveflowFetchPublic<PublicPlaylist>(
         `/api/v1/share/playlists/${encodeURIComponent(token)}`,

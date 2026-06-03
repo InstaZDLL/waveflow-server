@@ -28,9 +28,18 @@ export const Route = createFileRoute('/p/$token')({
     return getPublicPlaylist({ data: params.token })
   },
   head: ({ loaderData }) => {
-    if (!loaderData || loaderData.kind !== 'ok') {
+    if (!loaderData || loaderData.kind === 'not_found') {
       return {
         meta: [{ title: 'Playlist not found · WaveFlow' }],
+      }
+    }
+    if (loaderData.kind === 'error') {
+      // Transient upstream failure — distinct from 404 so the
+      // social preview / browser tab matches what `ErrorPanel`
+      // actually renders instead of falsely claiming the playlist
+      // is gone.
+      return {
+        meta: [{ title: 'Server error · WaveFlow' }],
       }
     }
     const { playlist } = loaderData
@@ -74,11 +83,60 @@ function PublicPlaylistView() {
   return <PlaylistPanel playlist={data.playlist} />
 }
 
+/**
+ * Map a stored `color_id` to the tile background + foreground
+ * classes. The desktop palette is the source of truth
+ * ([`PLAYLIST_COLORS`](https://github.com/InstaZDLL/WaveFlow/blob/main/src/lib/playlistVisuals.ts));
+ * mirrored here as a switch so Tailwind's static scanner sees
+ * every concrete class name. Unknown ids fall back to violet —
+ * same default the desktop applies when reading a `color_id` it
+ * doesn't recognise.
+ */
+function colorTileClass(colorId: string): string {
+  switch (colorId) {
+    case 'emerald':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+    case 'sky':
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+    case 'amber':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+    case 'rose':
+      return 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+    case 'purple':
+      return 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300'
+    case 'pink':
+      return 'bg-pink-100 text-pink-700 dark:bg-pink-950/60 dark:text-pink-300'
+    case 'teal':
+      return 'bg-teal-100 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300'
+    case 'orange':
+      return 'bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300'
+    case 'lime':
+      return 'bg-lime-100 text-lime-700 dark:bg-lime-950/60 dark:text-lime-300'
+    case 'violet':
+    default:
+      return 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
+  }
+}
+
 function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
+  // First grapheme of the playlist name — used as the cover
+  // overlay until `cover_hash` is exposed as a public artwork URL
+  // by the server-side artwork pipeline (a separate Phase 1.g.x).
+  // The brand color comes from `color_id` so the tile still
+  // matches the playlist's identity even without the bitmap.
+  const initial = playlist.name.trim().charAt(0).toUpperCase() || '♪'
+  const tileClass = colorTileClass(playlist.color_id)
   return (
     <main className="page-wrap px-4 py-12">
       <section className="island-shell rounded-2xl p-6 sm:p-8">
         <p className="island-kicker mb-2">Shared playlist</p>
+        <div
+          role="img"
+          aria-label={`Cover for ${playlist.name}`}
+          className={`mb-5 flex h-32 w-32 items-center justify-center rounded-2xl sm:h-40 sm:w-40 ${tileClass}`}
+        >
+          <span className="text-5xl font-bold leading-none sm:text-6xl">{initial}</span>
+        </div>
         <h1 className="display-title mb-3 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
           {playlist.name}
         </h1>
