@@ -119,12 +119,13 @@ function colorTileClass(colorId: string): string {
 }
 
 function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
-  // First grapheme of the playlist name — used as the cover
+  // First code point of the playlist name — used as the cover
   // overlay until `cover_hash` is exposed as a public artwork URL
   // by the server-side artwork pipeline (a separate Phase 1.g.x).
-  // The brand color comes from `color_id` so the tile still
-  // matches the playlist's identity even without the bitmap.
-  const initial = playlist.name.trim().charAt(0).toUpperCase() || '♪'
+  // `Array.from` iterates by code point (not UTF-16 code unit), so
+  // a name like "🎵 Mix" still gives "🎵" instead of a lone
+  // surrogate / replacement character.
+  const initial = Array.from(playlist.name.trim())[0]?.toUpperCase() ?? '♪'
   const tileClass = colorTileClass(playlist.color_id)
   return (
     <main className="page-wrap px-4 py-12">
