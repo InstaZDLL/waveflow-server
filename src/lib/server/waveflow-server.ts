@@ -87,3 +87,45 @@ export async function waveflowFetch<T = unknown>(
   }
   return JSON.parse(text) as T
 }
+
+/**
+ * Anonymous variant of [`waveflowFetch`] for the public surface
+ * (today: the `/api/v1/share/playlists/{token}` lookup powering the
+ * `/p/$token` route). No `Authorization` header is attached — the
+ * token rides in the URL path and IS the auth.
+ *
+ * Same `WaveflowServerError` shape on non-2xx so callers reuse the
+ * `_internal::withSafeErrors` envelope unchanged. Same `204 →
+ * undefined` + empty-body fall-through as the authed variant.
+ */
+export async function waveflowFetchPublic<T = unknown>(
+  path: string,
+  init: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown } = {},
+): Promise<T> {
+  const base = process.env[SERVER_URL_ENV]
+  if (!base) {
+    throw new Error(`${SERVER_URL_ENV} is not set. Add it to .env.`)
+  }
+  const url = `${base.replace(/\/+$/, '')}${path}`
+  const hasBody = init.body !== undefined
+  const response = await fetch(url, {
+    method: init.method ?? 'GET',
+    headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+    body: hasBody ? JSON.stringify(init.body) : undefined,
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new WaveflowServerError(
+      response.status,
+      text || `waveflow-server returned ${response.status}`,
+    )
+  }
+  if (response.status === 204) {
+    return undefined as T
+  }
+  const text = await response.text()
+  if (!text) {
+    return undefined as T
+  }
+  return JSON.parse(text) as T
+}
