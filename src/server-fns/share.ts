@@ -4,6 +4,7 @@
 // endpoint that powers the `/p/$token` route.
 
 import { createServerFn } from '@tanstack/react-start'
+import { setResponseStatus } from '@tanstack/react-start/server'
 import { waveflowFetchPublic, WaveflowServerError } from '@/lib/server/waveflow-server'
 
 /**
@@ -79,7 +80,14 @@ export const getPublicPlaylist = createServerFn({ method: 'GET' })
     return typeof value === 'string' ? value : ''
   })
   .handler(async ({ data: token }): Promise<PublicPlaylistResult> => {
+    // Server-fn handlers always run server-side, so it's safe to
+    // call `setResponseStatus` here — the h3 event lives in
+    // AsyncLocalStorage on the server only. Emitting a real HTTP
+    // 404 (instead of a soft-404 200) lets crawlers and link
+    // unfurlers see the right status when the route renders
+    // NotFoundPanel.
     if (!isWellShapedToken(token)) {
+      setResponseStatus(404)
       return { kind: 'not_found' }
     }
     try {
@@ -89,6 +97,7 @@ export const getPublicPlaylist = createServerFn({ method: 'GET' })
       return { kind: 'ok', playlist }
     } catch (err) {
       if (err instanceof WaveflowServerError && err.status === 404) {
+        setResponseStatus(404)
         return { kind: 'not_found' }
       }
       console.error('[server-fn] getPublicPlaylist failed:', err)
