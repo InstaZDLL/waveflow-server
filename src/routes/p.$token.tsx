@@ -1,4 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { setResponseStatus } from '@tanstack/react-start/server'
 import {
   getPublicPlaylist,
   type PublicPlaylist,
@@ -25,7 +26,15 @@ import {
  */
 export const Route = createFileRoute('/p/$token')({
   loader: async ({ params }): Promise<PublicPlaylistResult> => {
-    return getPublicPlaylist({ data: params.token })
+    const result = await getPublicPlaylist({ data: params.token })
+    // Emit a real HTTP 404 during SSR so crawlers and link
+    // unfurlers see the right status, not a soft-404 200. The
+    // h3 event lives in AsyncLocalStorage on the server only —
+    // on client navigation there's no event to set, so guard.
+    if (result.kind === 'not_found' && typeof window === 'undefined') {
+      setResponseStatus(404)
+    }
+    return result
   },
   head: ({ loaderData }) => {
     if (!loaderData || loaderData.kind === 'not_found') {
