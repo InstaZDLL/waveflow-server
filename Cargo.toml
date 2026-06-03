@@ -131,6 +131,12 @@ sha2 = "0.10"
 # 0.22 for the JWKS test harness.
 base64 = "0.22"
 
+# Opaque public-share token generation (Phase 1.g.1). Same crate
+# the JWT test harness uses under dev-deps; one runtime entry
+# suffices. `Alphanumeric.sample_string` is the URL-safe random
+# generator the share helper calls.
+rand = "0.8"
+
 # Stream files through axum without buffering the whole body. The
 # range handler in `src/api/stream.rs` wraps a `tokio::fs::File` in
 # `ReaderStream` and returns it as an axum response body.
