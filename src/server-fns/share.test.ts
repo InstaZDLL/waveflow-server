@@ -12,14 +12,15 @@ describe('isWellShapedToken', () => {
   it.each([
     ['typical 32-char token', 'abcdefghijklmnopqrstuvwxyz012345'],
     ['mixed case + digits', 'ABCdef123ABCdef123ABCdef123ABCde'],
-    ['minimum length 8', 'ABCdef12'],
   ])('accepts %s', (_label, value) => {
     expect(isWellShapedToken(value)).toBe(true)
   })
 
   it.each([
     ['empty string', ''],
-    ['too short', 'abc'],
+    ['too short (8 chars)', 'ABCdef12'],
+    ['31 chars (one short of mint length)', 'a'.repeat(31)],
+    ['33 chars (one over mint length)', 'a'.repeat(33)],
     ['slash (path traversal)', '../../etc/passwd'],
     ['dot (relative path)', 'ab.cd'],
     ['percent-encoded', 'abc%2Fdef'],
