@@ -34,6 +34,7 @@ mod libraries;
 mod playlists;
 mod profiles;
 mod ready;
+mod share;
 mod stream;
 mod sync;
 mod tracks;
@@ -55,6 +56,13 @@ pub fn router(state: AppState) -> OpenApiRouter {
     let tracks_router = tracks::router(state.clone()).layer(auth_layer.clone());
     let playlists_router = playlists::router(state.clone()).layer(auth_layer.clone());
     let sync_router = sync::router(state.clone()).layer(auth_layer.clone());
+    // Mint + revoke stay JWT-authed (verify tenant ownership before
+    // mutating the share_token column). Same auth-vs-public split as
+    // the streaming surface.
+    let share_mint_router = share::auth_router(state.clone()).layer(auth_layer.clone());
+    // Public read of a shared playlist by opaque token — no JWT
+    // gate, the token IS the auth.
+    let share_public_router = share::public_router(state.clone());
     // Mint stays JWT-authed (verifies tenant ownership before signing).
     let stream_mint_router = stream::auth_router(state.clone()).layer(auth_layer);
     // The stream endpoint itself is HMAC-authed by the token in the
@@ -71,6 +79,8 @@ pub fn router(state: AppState) -> OpenApiRouter {
         .merge(tracks_router)
         .merge(playlists_router)
         .merge(sync_router)
+        .merge(share_mint_router)
+        .merge(share_public_router)
         .merge(stream_mint_router)
         .merge(stream_public_router)
 }

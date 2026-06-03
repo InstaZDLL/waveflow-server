@@ -266,3 +266,120 @@ pub mod users {
         .await
     }
 }
+
+/// SQL helpers for the public-share surface (Phase 1.g.1). All four
+/// helpers key on `(user_id, profile_id, playlist_id)` so a request
+/// targeting a playlist the caller doesn't own short-circuits at the
+/// storage layer rather than the handler — same defence pattern as
+/// the rest of the API.
+pub mod share {
+    use sqlx::PgPool;
+
+    use rand::distributions::{Alphanumeric, DistString};
+
+    /// URL-safe character length of the opaque share token. 32
+    /// alphanumerics ≈ 190 bits of entropy, well above the 128-bit
+    /// threshold the OWASP cheat sheet recommends for "opaque
+    /// session-equivalent" tokens. Short enough to fit in a Bitly-
+    /// style social card without wrapping.
+    pub const TOKEN_LEN: usize = 32;
+
+    /// Mint a fresh share token (or return the existing one if the
+    /// playlist already has one) for a playlist the caller owns. The
+    /// tenant chain (`user_id → profile_id → playlist`) is verified
+    /// inline; a foreign-owned playlist surfaces as `Ok(None)`.
+    ///
+    /// Idempotent: a second call for the same playlist returns the
+    /// existing token rather than rotating it. Rotation requires an
+    /// explicit revoke + re-mint.
+    pub async fn mint_or_get_token(
+        pool: &PgPool,
+        user_id: i64,
+        profile_id: i64,
+        playlist_id: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let candidate = Alphanumeric.sample_string(&mut rand::thread_rng(), TOKEN_LEN);
+        // `COALESCE(share_token, $candidate)` — atomic and race-free.
+        // If the row already had a token (mint called twice, or two
+        // concurrent mints racing past our generation), the COALESCE
+        // keeps the existing value and `RETURNING` echoes it back.
+        // If `share_token IS NULL`, the candidate is planted. Either
+        // way we never write twice and never need a re-SELECT.
+        //
+        // Ownership chain (`user_id → profile_id → playlist`) checked
+        // inline. A foreign-owned playlist makes the WHERE match no
+        // rows, `fetch_optional` returns `None`, and the handler maps
+        // it to 404 — same no-existence-leak shape as the other
+        // modules.
+        sqlx::query_scalar::<_, String>(
+            "UPDATE playlist
+                SET share_token = COALESCE(share_token, $1)
+              WHERE id = $2 AND profile_id = $3
+                AND profile_id IN (SELECT id FROM profile WHERE user_id = $4)
+              RETURNING share_token",
+        )
+        .bind(&candidate)
+        .bind(playlist_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Drop the share token for a playlist the caller owns. Returns
+    /// the rows-affected boolean so the handler can distinguish "no
+    /// playlist" (404) from "already private" (204 no-op).
+    pub async fn revoke_token(
+        pool: &PgPool,
+        user_id: i64,
+        profile_id: i64,
+        playlist_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE playlist
+                SET share_token = NULL
+              WHERE id = $1 AND profile_id = $2
+                AND profile_id IN (SELECT id FROM profile WHERE user_id = $3)",
+        )
+        .bind(playlist_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Public lookup — fetch the playlist row by token without any
+    /// auth check. Returns the column tuple the public handler
+    /// projects into its response DTO. A token that was minted then
+    /// revoked surfaces as `None` (no row matches) — same shape as a
+    /// token that never existed, so an attacker can't distinguish
+    /// "revoked" from "never minted".
+    #[allow(clippy::type_complexity)]
+    pub async fn fetch_public_by_token(
+        pool: &PgPool,
+        token: &str,
+    ) -> Result<
+        Option<(
+            i64,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            i64,
+            i64,
+        )>,
+        sqlx::Error,
+    > {
+        sqlx::query_as(
+            "SELECT p.id, p.name, p.description, p.color_id, p.icon_id,
+                    p.cover_hash, p.created_at, p.updated_at
+               FROM playlist p
+              WHERE p.share_token = $1",
+        )
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+    }
+}
