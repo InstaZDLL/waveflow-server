@@ -19,6 +19,11 @@ use uuid::Uuid;
 const PROFILE_CID: &str = "prof-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PROFILE_CID_B: &str = "prof-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
+// Test helper — 8 args is one over the clippy bound. Folding two
+// into a struct would obscure the call sites, all of which read
+// like a wire-format dump. Allow locally rather than build a
+// builder for a fixture function.
+#[allow(clippy::too_many_arguments)]
 fn op(
     operation_id: Uuid,
     lamport_ts: i64,
@@ -119,13 +124,15 @@ async fn playlist_insert_replay_is_idempotent(pool: PgPool) {
         Some(PROFILE_CID),
     );
 
-    assert!(push(&auth.base, &auth.token, &[body.clone()])
+    assert!(push(&auth.base, &auth.token, std::slice::from_ref(&body))
         .await
         .is_success());
     // Replay: same operation_id → durable log absorbs via ON CONFLICT,
     // apply path runs only on freshly-inserted rows, so the playlist
     // stays at exactly one row.
-    assert!(push(&auth.base, &auth.token, &[body]).await.is_success());
+    assert!(push(&auth.base, &auth.token, std::slice::from_ref(&body))
+        .await
+        .is_success());
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
         .bind(playlist_cid)
@@ -325,6 +332,37 @@ async fn rating_out_of_range_is_400(pool: PgPool) {
         .map(|c: i64| (c,))
         .unwrap();
     assert_eq!(count.0, 0);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_insert_with_wrong_type_for_optional_string_is_rejected(pool: PgPool) {
+    // A desktop bug that pushes a number where a string is expected
+    // for `description` must error explicitly, not silently coerce
+    // to NULL — otherwise a syntax glitch on the client side reads
+    // as "clear this field" on the server.
+    let auth = spawn_authenticated(pool.clone(), "apply-wrong-type").await;
+
+    let bad = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        "pl-wrong-type",
+        None,
+        "insert",
+        json!({ "name": "ok", "description": 42 }),
+        Some(PROFILE_CID),
+    );
+
+    let status = push(&auth.base, &auth.token, &[bad]).await;
+    assert!(status.is_server_error());
+
+    // Durable log rolled back too — no half-applied state.
+    let log_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sync_op WHERE user_id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(log_count.0, 0);
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
