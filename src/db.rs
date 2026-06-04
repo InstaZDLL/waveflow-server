@@ -106,13 +106,14 @@ pub mod sync {
         op: &str,
         payload: Option<&serde_json::Value>,
         created_at: i64,
+        profile_canonical_id: Option<&str>,
     ) -> Result<Option<PgRow>, sqlx::Error> {
         sqlx::query(
             "INSERT INTO sync_op \
-                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
-             RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at",
+             RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id",
         )
         .bind(user_id)
         .bind(device_id)
@@ -124,6 +125,7 @@ pub mod sync {
         .bind(op)
         .bind(payload)
         .bind(created_at)
+        .bind(profile_canonical_id)
         .fetch_optional(conn)
         .await
     }
@@ -139,7 +141,7 @@ pub mod sync {
         operation_id: Uuid,
     ) -> Result<PgRow, sqlx::Error> {
         sqlx::query(
-            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id \
              FROM sync_op \
              WHERE user_id = $1 AND device_id = $2 AND operation_id = $3",
         )
@@ -196,7 +198,7 @@ pub mod sync {
         limit: i64,
     ) -> Result<Vec<PgRow>, sqlx::Error> {
         sqlx::query(
-            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at \
+            "SELECT id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id \
              FROM sync_op \
              WHERE user_id = $1 AND id > $2 \
              ORDER BY id ASC \
