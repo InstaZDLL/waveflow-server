@@ -57,6 +57,14 @@ async fn mint_playlist(base: &str, token: &str, profile_id: i64, name: &str) -> 
 /// wait for the apply pipeline to materialise the row in the same
 /// transaction. Mirrors what the desktop drain task will do once
 /// Phase 1.g.0-desktop ships.
+///
+/// Each call uses a fresh UUID for `device_id` so repeated
+/// invocations within the same test never hit the
+/// `(user_id, device_id, lamport_ts)` UNIQUE — the constraint is
+/// scoped per device, so two "different devices" can both use
+/// lamport_ts = 1 without colliding. Simpler than threading a
+/// counter through callers, and accurate to real desktop life
+/// where every test scenario plays the role of a fresh device.
 async fn materialise_playlist_via_sync(
     base: &str,
     token: &str,
@@ -68,7 +76,7 @@ async fn materialise_playlist_via_sync(
         .post(format!("{base}/api/v1/sync/ops"))
         .bearer_auth(token)
         .json(&json!({
-            "device_id": "share-by-canonical-test",
+            "device_id": Uuid::new_v4().to_string(),
             "ops": [{
                 "operation_id": Uuid::new_v4(),
                 "lamport_ts": 1,
@@ -421,6 +429,63 @@ async fn by_canonical_revoke_closes_the_link(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn by_canonical_revoke_then_remint_returns_fresh_token(pool: PgPool) {
+    // Mirrors `revoke_then_remint_returns_a_fresh_token` for the
+    // by-canonical surface: pins the COALESCE-on-NULL path. After a
+    // revoke sets share_token to NULL, the next mint must generate a
+    // brand-new candidate rather than re-using the prior value.
+    let h = spawn_authenticated(pool, "user-share-canon-remint").await;
+    let pl_canon = "pl-1g1b-remint";
+
+    materialise_playlist_via_sync(&h.base, &h.token, PROF_CANON, pl_canon, "Remint").await;
+
+    let mint_url = format!(
+        "{}/api/v1/share/playlists/by-canonical/{PROF_CANON}/{pl_canon}",
+        h.base
+    );
+
+    let first: Value = reqwest::Client::new()
+        .post(&mint_url)
+        .bearer_auth(&h.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let t1 = first["token"].as_str().unwrap().to_string();
+
+    let revoke = reqwest::Client::new()
+        .delete(&mint_url)
+        .bearer_auth(&h.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+
+    let second: Value = reqwest::Client::new()
+        .post(&mint_url)
+        .bearer_auth(&h.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let t2 = second["token"].as_str().unwrap().to_string();
+
+    assert_eq!(t2.len(), 32);
+    assert_ne!(
+        t1, t2,
+        "revoke + re-mint must produce a new token (NULL → fresh COALESCE candidate)"
+    );
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
