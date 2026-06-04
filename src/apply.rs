@@ -105,13 +105,9 @@ pub async fn apply_op(
                 );
                 return Ok(ApplyOutcome::Skipped);
             };
-            let profile_id = profile_resolve::find_or_provision(
-                conn,
-                user_id,
-                profile_canonical,
-                created_at,
-            )
-            .await?;
+            let profile_id =
+                profile_resolve::find_or_provision(conn, user_id, profile_canonical, created_at)
+                    .await?;
             match entity {
                 "playlist" => playlist::apply(conn, profile_id, op, created_at).await,
                 "library" => library::apply(conn, profile_id, op, created_at).await,
@@ -245,9 +241,7 @@ mod playlist {
 
     use crate::sync::SyncOpIn;
 
-    use super::{
-        payload_optional_string, payload_string, ApplyError, ApplyOutcome,
-    };
+    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
 
     const ENTITY: &str = "playlist";
 
@@ -526,13 +520,11 @@ mod liked {
                 Ok(ApplyOutcome::Applied)
             }
             ("delete", None) => {
-                sqlx::query(
-                    "DELETE FROM user_liked_track WHERE user_id = $1 AND file_hash = $2",
-                )
-                .bind(user_id)
-                .bind(file_hash)
-                .execute(&mut *conn)
-                .await?;
+                sqlx::query("DELETE FROM user_liked_track WHERE user_id = $1 AND file_hash = $2")
+                    .bind(user_id)
+                    .bind(file_hash)
+                    .execute(&mut *conn)
+                    .await?;
                 Ok(ApplyOutcome::Applied)
             }
             _ => Ok(ApplyOutcome::Unknown),
@@ -588,13 +580,11 @@ mod rating {
                 Ok(ApplyOutcome::Applied)
             }
             ("delete", None) => {
-                sqlx::query(
-                    "DELETE FROM user_track_rating WHERE user_id = $1 AND file_hash = $2",
-                )
-                .bind(user_id)
-                .bind(file_hash)
-                .execute(&mut *conn)
-                .await?;
+                sqlx::query("DELETE FROM user_track_rating WHERE user_id = $1 AND file_hash = $2")
+                    .bind(user_id)
+                    .bind(file_hash)
+                    .execute(&mut *conn)
+                    .await?;
                 Ok(ApplyOutcome::Applied)
             }
             _ => Ok(ApplyOutcome::Unknown),

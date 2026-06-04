@@ -225,8 +225,7 @@ async fn push_ops(
                     Err(err) => {
                         tracing::error!(error = %err, user_id, entity = %op.entity, op = %op.op, "apply failed");
                         tx.rollback().await.ok();
-                        return (StatusCode::INTERNAL_SERVER_ERROR, "apply failed")
-                            .into_response();
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "apply failed").into_response();
                     }
                 }
 

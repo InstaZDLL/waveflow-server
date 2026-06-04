@@ -94,13 +94,11 @@ async fn playlist_insert_materialises_row(pool: PgPool) {
 
     // Profile auto-provisioned under the expected canonical id +
     // user_id.
-    let profile_user: (i64,) = sqlx::query_as(
-        "SELECT user_id FROM profile WHERE id = $1",
-    )
-    .bind(row.4)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let profile_user: (i64,) = sqlx::query_as("SELECT user_id FROM profile WHERE id = $1")
+        .bind(row.4)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(profile_user.0, auth.user_id);
 }
 
@@ -127,16 +125,13 @@ async fn playlist_insert_replay_is_idempotent(pool: PgPool) {
     // Replay: same operation_id → durable log absorbs via ON CONFLICT,
     // apply path runs only on freshly-inserted rows, so the playlist
     // stays at exactly one row.
-    assert!(push(&auth.base, &auth.token, &[body])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[body]).await.is_success());
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
-            .bind(playlist_cid)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
+        .bind(playlist_cid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count.0, 1);
 }
 
@@ -170,12 +165,11 @@ async fn playlist_set_name_updates_field(pool: PgPool) {
         .await
         .is_success());
 
-    let name: (String,) =
-        sqlx::query_as("SELECT name FROM playlist WHERE canonical_id = $1")
-            .bind(playlist_cid)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let name: (String,) = sqlx::query_as("SELECT name FROM playlist WHERE canonical_id = $1")
+        .bind(playlist_cid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(name.0, "New name");
 }
 
@@ -209,12 +203,11 @@ async fn playlist_delete_removes_row(pool: PgPool) {
         .await
         .is_success());
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
-            .bind(playlist_cid)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
+        .bind(playlist_cid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count.0, 0);
 }
 
@@ -240,13 +233,12 @@ async fn library_insert_materialises_row(pool: PgPool) {
     .await;
     assert!(status.is_success());
 
-    let row: (String, String, String) = sqlx::query_as(
-        "SELECT name, color_id, icon_id FROM library WHERE canonical_id = $1",
-    )
-    .bind(library_cid)
-    .fetch_one(&pool)
-    .await
-    .expect("library row not materialised");
+    let row: (String, String, String) =
+        sqlx::query_as("SELECT name, color_id, icon_id FROM library WHERE canonical_id = $1")
+            .bind(library_cid)
+            .fetch_one(&pool)
+            .await
+            .expect("library row not materialised");
 
     assert_eq!(row.0, "Bandes-son");
     // Library defaults differ from playlist (emerald / library).
@@ -269,9 +261,7 @@ async fn rating_set_then_delete(pool: PgPool) {
         json!({ "value": 196 }),
         None, // rating ops don't need profile_canonical_id
     );
-    assert!(push(&auth.base, &auth.token, &[set])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[set]).await.is_success());
 
     let r: (i64,) = sqlx::query_as(
         "SELECT rating FROM user_track_rating WHERE user_id = $1 AND file_hash = $2",
@@ -293,9 +283,7 @@ async fn rating_set_then_delete(pool: PgPool) {
         Value::Null,
         None,
     );
-    assert!(push(&auth.base, &auth.token, &[clear])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[clear]).await.is_success());
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM user_track_rating WHERE user_id = $1 AND file_hash = $2",
@@ -330,14 +318,12 @@ async fn rating_out_of_range_is_400(pool: PgPool) {
     assert!(status.is_server_error());
 
     // Durable log was rolled back too.
-    let count: (i64,) = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sync_op WHERE user_id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&pool)
-    .await
-    .map(|c: i64| (c,))
-    .unwrap();
+    let count: (i64,) = sqlx::query_scalar("SELECT COUNT(*) FROM sync_op WHERE user_id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&pool)
+        .await
+        .map(|c: i64| (c,))
+        .unwrap();
     assert_eq!(count.0, 0);
 }
 
@@ -356,9 +342,7 @@ async fn liked_track_insert_then_delete(pool: PgPool) {
         Value::Null,
         None,
     );
-    assert!(push(&auth.base, &auth.token, &[like])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[like]).await.is_success());
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM user_liked_track WHERE user_id = $1 AND file_hash = $2",
@@ -380,9 +364,7 @@ async fn liked_track_insert_then_delete(pool: PgPool) {
         Value::Null,
         None,
     );
-    assert!(push(&auth.base, &auth.token, &[unlike])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[unlike]).await.is_success());
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM user_liked_track WHERE user_id = $1 AND file_hash = $2",
@@ -418,21 +400,19 @@ async fn missing_profile_canonical_id_skips_apply_but_keeps_log(pool: PgPool) {
     assert!(status.is_success());
 
     // Log row stored.
-    let log_count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM sync_op WHERE user_id = $1")
-            .bind(auth.user_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let log_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sync_op WHERE user_id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(log_count.0, 1);
 
     // Entity NOT materialised.
-    let row_count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
-            .bind(playlist_cid)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist WHERE canonical_id = $1")
+        .bind(playlist_cid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(row_count.0, 0);
 }
 
@@ -461,9 +441,7 @@ async fn two_canonical_ids_land_in_distinct_profiles(pool: PgPool) {
         Some(PROFILE_CID_B),
     );
 
-    assert!(push(&auth.base, &auth.token, &[pa, pb])
-        .await
-        .is_success());
+    assert!(push(&auth.base, &auth.token, &[pa, pb]).await.is_success());
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM profile WHERE user_id = $1 AND canonical_id IS NOT NULL",
