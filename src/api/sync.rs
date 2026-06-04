@@ -205,12 +205,30 @@ async fn push_ops(
             op_kind,
             op_in.payload.as_ref(),
             now,
+            op_in.profile_canonical_id.as_deref(),
         )
         .await;
 
         match insert_res {
             Ok(Some(row)) => {
                 let op = row_to_op(&row);
+
+                // Apply the op into the entity tables in the same
+                // transaction as the durable insert (Phase 1.g.0).
+                // A failure here rolls back the log row too — better
+                // to refuse the push than to leave an op the server
+                // can't honour. Skipped / Unknown are NOT errors:
+                // the durable log keeps them so a future server
+                // release can replay during compaction.
+                match crate::apply::apply_op(&mut tx, user_id, op_in, now).await {
+                    Ok(_outcome) => {}
+                    Err(err) => {
+                        tracing::error!(error = %err, user_id, entity = %op.entity, op = %op.op, "apply failed");
+                        tx.rollback().await.ok();
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "apply failed").into_response();
+                    }
+                }
+
                 accepted.push(op.clone());
                 freshly_inserted.push(op);
             }
@@ -514,5 +532,6 @@ fn row_to_op(row: &PgRow) -> SyncOp {
         op: row.get("op"),
         payload: row.get::<Option<serde_json::Value>, _>("payload"),
         created_at: row.get("created_at"),
+        profile_canonical_id: row.get("profile_canonical_id"),
     }
 }
