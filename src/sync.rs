@@ -102,6 +102,12 @@ pub struct SyncOpIn {
     /// Op-specific JSON payload.
     #[serde(default)]
     pub payload: Option<serde_json::Value>,
+    /// Canonical id of the desktop profile this op originated from.
+    /// Required for the apply pipeline (Phase 1.g.0) to route the op
+    /// to a server `profile` row. `None` from legacy clients — those
+    /// ops still land in the durable log but skip the apply path.
+    #[serde(default)]
+    pub profile_canonical_id: Option<String>,
 }
 
 /// Wire format for an accepted op. Mirrors the row shape so the
@@ -124,6 +130,10 @@ pub struct SyncOp {
     pub op: String,
     pub payload: Option<serde_json::Value>,
     pub created_at: i64,
+    /// Source profile's canonical id, echoed verbatim from the push
+    /// so pulling devices can land the op in the right profile.
+    #[serde(default)]
+    pub profile_canonical_id: Option<String>,
 }
 
 /// Broadcast payload. We pre-serialise to JSON once at emit time so

@@ -23,6 +23,7 @@ use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
 
 pub mod api;
+pub mod apply;
 pub mod auth;
 pub mod config;
 pub mod db;
