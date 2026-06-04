@@ -1,6 +1,6 @@
-//! `/api/v1/share/*` — public share-link surface per Phase 1.g.1.
+//! `/api/v1/share/*` — public share-link surface per Phase 1.g.
 //!
-//! Three routes split across the same auth-vs-public boundary the
+//! Five routes split across the same auth-vs-public boundary the
 //! streaming module uses:
 //!
 //! - **Mint** (`POST /api/v1/profiles/{profile_id}/playlists/{playlist_id}/share`):
@@ -12,6 +12,17 @@
 //! - **Revoke** (`DELETE /api/v1/profiles/{profile_id}/playlists/{playlist_id}/share`):
 //!   JWT-authed. Sets `share_token = NULL`, instantly closing any
 //!   public URL pointing at this playlist.
+//! - **Mint by canonical**
+//!   (`POST /api/v1/share/playlists/by-canonical/{profile_canonical_id}/{playlist_canonical_id}`):
+//!   JWT-authed. Same semantics as `mint`, but keyed on the desktop's
+//!   canonical UUIDs (Phase 1.g.0). The desktop never sees the
+//!   server-side BIGSERIAL ids the apply pipeline assigns, so this
+//!   variant skips the lookup round-trip the desktop would otherwise
+//!   need to translate canonical → server id before calling the
+//!   classic endpoint.
+//! - **Revoke by canonical**
+//!   (`DELETE /api/v1/share/playlists/by-canonical/{profile_canonical_id}/{playlist_canonical_id}`):
+//!   Mirror of revoke for the canonical-id surface.
 //! - **Public read** (`GET /api/v1/share/playlists/{token}`): NOT
 //!   behind the JWT middleware — the token IS the auth. A miss (no
 //!   row matches the token) returns 404 with no body so an attacker
@@ -88,6 +99,8 @@ pub fn auth_router(state: AppState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(mint_share_token))
         .routes(routes!(revoke_share_token))
+        .routes(routes!(mint_share_token_by_canonical))
+        .routes(routes!(revoke_share_token_by_canonical))
         .with_state(state)
 }
 
@@ -154,6 +167,94 @@ async fn revoke_share_token(
         Ok(false) => (StatusCode::NOT_FOUND, "playlist not found").into_response(),
         Err(err) => {
             tracing::error!(error = %err, user_id, profile_id, playlist_id, "share revoke failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "revoke failed").into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/share/playlists/by-canonical/{profile_canonical_id}/{playlist_canonical_id}",
+    tag = "share",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        ("profile_canonical_id" = String, Path, description = "Desktop profile's canonical UUID"),
+        ("playlist_canonical_id" = String, Path, description = "Desktop playlist's canonical UUID"),
+    ),
+    responses(
+        (status = 200, description = "Token minted or echoed back", body = MintResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 404, description = "Profile or playlist not found (or not owned by the caller)"),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn mint_share_token_by_canonical(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Path((profile_canonical_id, playlist_canonical_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match crate::db::share::mint_or_get_token_by_canonical(
+        &state.db,
+        user_id,
+        &profile_canonical_id,
+        &playlist_canonical_id,
+    )
+    .await
+    {
+        Ok(Some(token)) => (StatusCode::OK, Json(MintResponse { token })).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "playlist not found").into_response(),
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                user_id,
+                profile_canonical_id = %profile_canonical_id,
+                playlist_canonical_id = %playlist_canonical_id,
+                "share mint (by canonical) failed",
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, "mint failed").into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/share/playlists/by-canonical/{profile_canonical_id}/{playlist_canonical_id}",
+    tag = "share",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        ("profile_canonical_id" = String, Path, description = "Desktop profile's canonical UUID"),
+        ("playlist_canonical_id" = String, Path, description = "Desktop playlist's canonical UUID"),
+    ),
+    responses(
+        (status = 204, description = "Token cleared (idempotent)"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 404, description = "Profile or playlist not found (or not owned by the caller)"),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn revoke_share_token_by_canonical(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Path((profile_canonical_id, playlist_canonical_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match crate::db::share::revoke_token_by_canonical(
+        &state.db,
+        user_id,
+        &profile_canonical_id,
+        &playlist_canonical_id,
+    )
+    .await
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "playlist not found").into_response(),
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                user_id,
+                profile_canonical_id = %profile_canonical_id,
+                playlist_canonical_id = %playlist_canonical_id,
+                "share revoke (by canonical) failed",
+            );
             (StatusCode::INTERNAL_SERVER_ERROR, "revoke failed").into_response()
         }
     }
