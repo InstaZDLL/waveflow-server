@@ -207,13 +207,49 @@ fn payload_string(
         })
 }
 
-/// Extract an optional string. Returns `Ok(None)` when the key is
-/// absent or explicitly null.
-fn payload_optional_string(payload: Option<&Value>, key: &str) -> Option<String> {
-    payload
-        .and_then(|v| v.get(key))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+/// Extract an optional string with explicit type checking.
+///
+/// Returns:
+/// - `Ok(None)` when the key is absent OR the value is `null` —
+///   both are valid "clear this field" signals from the client.
+/// - `Ok(Some(s))` when the value is a string.
+/// - `Err(InvalidPayload)` when the value is present but not a
+///   string or null (e.g. a number, an object). Silently coercing
+///   those to `None` would mask a desktop bug as a clear-the-field
+///   on the server, so we reject them at the boundary.
+fn payload_optional_string(
+    entity: &'static str,
+    op: &'static str,
+    payload: Option<&Value>,
+    key: &str,
+) -> Result<Option<String>, ApplyError> {
+    let Some(value) = payload.and_then(|v| v.get(key)) else {
+        return Ok(None);
+    };
+    match value {
+        Value::Null => Ok(None),
+        Value::String(s) => Ok(Some(s.clone())),
+        other => Err(ApplyError::InvalidPayload {
+            entity,
+            op,
+            reason: format!(
+                "payload.{key} expected string or null, got {}",
+                json_kind(other)
+            ),
+        }),
+    }
+}
+
+/// Human-readable name of a JSON value's kind for error messages.
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 /// Extract an i64 from `payload.value`. Used by rating ops.
@@ -281,10 +317,11 @@ mod playlist {
         now: i64,
     ) -> Result<ApplyOutcome, ApplyError> {
         let name = payload_string(ENTITY, "insert", op.payload.as_ref(), "name")?;
-        let description = payload_optional_string(op.payload.as_ref(), "description");
-        let color_id = payload_optional_string(op.payload.as_ref(), "color_id")
+        let description =
+            payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "description")?;
+        let color_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "color_id")?
             .unwrap_or_else(|| "violet".to_owned());
-        let icon_id = payload_optional_string(op.payload.as_ref(), "icon_id")
+        let icon_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "icon_id")?
             .unwrap_or_else(|| "music".to_owned());
 
         // ON CONFLICT (profile_id, canonical_id) DO NOTHING — the
@@ -343,7 +380,7 @@ mod playlist {
         };
 
         if field == "description" {
-            let value = payload_optional_string(op.payload.as_ref(), "value");
+            let value = payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?;
             sqlx::query(sql_with_value)
                 .bind(value)
                 .bind(now)
@@ -405,10 +442,11 @@ mod library {
         now: i64,
     ) -> Result<ApplyOutcome, ApplyError> {
         let name = payload_string(ENTITY, "insert", op.payload.as_ref(), "name")?;
-        let description = payload_optional_string(op.payload.as_ref(), "description");
-        let color_id = payload_optional_string(op.payload.as_ref(), "color_id")
+        let description =
+            payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "description")?;
+        let color_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "color_id")?
             .unwrap_or_else(|| "emerald".to_owned());
-        let icon_id = payload_optional_string(op.payload.as_ref(), "icon_id")
+        let icon_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "icon_id")?
             .unwrap_or_else(|| "library".to_owned());
 
         sqlx::query(
@@ -460,7 +498,7 @@ mod library {
         };
 
         if field == "description" {
-            let value = payload_optional_string(op.payload.as_ref(), "value");
+            let value = payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?;
             sqlx::query(sql)
                 .bind(value)
                 .bind(now)
