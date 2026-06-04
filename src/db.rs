@@ -384,4 +384,63 @@ pub mod share {
         .fetch_optional(pool)
         .await
     }
+
+    /// Variant of [`mint_or_get_token`] keyed on canonical ids
+    /// instead of BIGSERIAL ids. The desktop only knows the UUIDs
+    /// it mints locally; the server-side ids are an artefact of
+    /// the apply pipeline that the desktop never sees directly.
+    /// Same race-free `COALESCE` shape, same no-existence-leak
+    /// `Ok(None)` for foreign tenants. The tenant chain becomes
+    /// `(user_id, profile.canonical_id, playlist.canonical_id)`
+    /// — a desktop user can only mint for their own profile, and
+    /// the playlist must already have been materialised by the
+    /// apply pipeline (see `apply::playlist::insert`).
+    pub async fn mint_or_get_token_by_canonical(
+        pool: &PgPool,
+        user_id: i64,
+        profile_canonical_id: &str,
+        playlist_canonical_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let candidate = Alphanumeric.sample_string(&mut rand::thread_rng(), TOKEN_LEN);
+        sqlx::query_scalar::<_, String>(
+            "UPDATE playlist
+                SET share_token = COALESCE(share_token, $1)
+              WHERE canonical_id = $2
+                AND profile_id IN (
+                    SELECT id FROM profile
+                     WHERE user_id = $3 AND canonical_id = $4
+                )
+              RETURNING share_token",
+        )
+        .bind(&candidate)
+        .bind(playlist_canonical_id)
+        .bind(user_id)
+        .bind(profile_canonical_id)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Variant of [`revoke_token`] keyed on canonical ids.
+    pub async fn revoke_token_by_canonical(
+        pool: &PgPool,
+        user_id: i64,
+        profile_canonical_id: &str,
+        playlist_canonical_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE playlist
+                SET share_token = NULL
+              WHERE canonical_id = $1
+                AND profile_id IN (
+                    SELECT id FROM profile
+                     WHERE user_id = $2 AND canonical_id = $3
+                )",
+        )
+        .bind(playlist_canonical_id)
+        .bind(user_id)
+        .bind(profile_canonical_id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
 }
