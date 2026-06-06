@@ -24,6 +24,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 pub mod api;
 pub mod apply;
+pub mod artwork_jobs;
 pub mod artwork_pipeline;
 pub mod auth;
 pub mod config;
