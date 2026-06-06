@@ -627,6 +627,80 @@ pub mod artwork {
         })
     }
 
+    /// List the parents whose variant cache is incomplete — the
+    /// drive for the background scanner ([`crate::artwork_jobs`]).
+    /// Returns the BLAKE3 hex of each parent whose
+    /// `metadata_artwork_variant` row count is below `expected`,
+    /// filtered by the repair-backoff window and ordered so
+    /// recoverable rows always lead.
+    ///
+    /// The query lives here (not in the scanner module) for the same
+    /// reason every other SQL lives in `db.rs` — handlers + jobs stay
+    /// pure orchestration, all schema knowledge funnels through the
+    /// DB layer.
+    ///
+    /// `backoff_cutoff_ms` is the epoch-millis cutoff before which
+    /// a previous failure no longer suppresses the row — pass
+    /// `now_ms - backoff`. Rows whose `last_repair_failure_at`
+    /// falls inside the window are skipped, so an irrecoverable
+    /// parent (e.g. one whose source bytes were lost from
+    /// object_store) can't dominate every cycle and starve
+    /// recoverable parents behind it. The `NULLS FIRST` sort means
+    /// never-tried rows always lead; freshly-failed ones recede
+    /// until the cooldown expires.
+    ///
+    /// Epoch-millis (BIGINT) matches the convention every other
+    /// timestamp column on this server follows so the SQLite mirror
+    /// in waveflow-core stays shape-compatible.
+    pub async fn list_partial_parents(
+        pool: &PgPool,
+        expected: i64,
+        limit: i64,
+        backoff_cutoff_ms: i64,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT a.hash
+               FROM metadata_artwork a
+          LEFT JOIN (
+                  SELECT parent_hash, COUNT(*) AS variant_count
+                    FROM metadata_artwork_variant
+                   GROUP BY parent_hash
+              ) v ON v.parent_hash = a.hash
+              WHERE COALESCE(v.variant_count, 0) < $1
+                AND (a.last_repair_failure_at IS NULL
+                  OR a.last_repair_failure_at < $3)
+              ORDER BY a.last_repair_failure_at ASC NULLS FIRST,
+                       a.created_at ASC
+              LIMIT $2",
+        )
+        .bind(expected)
+        .bind(limit)
+        .bind(backoff_cutoff_ms)
+        .fetch_all(pool)
+        .await
+    }
+
+    /// Stamp `last_repair_failure_at = now_ms` on a parent the
+    /// scanner just failed to repair. Pushes the row to the back of
+    /// the queue for `REPAIR_BACKOFF` so the next cycle can pick up
+    /// other parents instead of retrying the same broken row
+    /// immediately. Caller passes the timestamp explicitly so the
+    /// scanner's clock + the DB's clock stay decoupled (a future
+    /// distributed deploy can mint the timestamp at the worker
+    /// rather than relying on `NOW()`).
+    pub async fn mark_repair_failure(
+        pool: &PgPool,
+        hash: &str,
+        now_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE metadata_artwork SET last_repair_failure_at = $1 WHERE hash = $2")
+            .bind(now_ms)
+            .bind(hash)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     /// List every variant of a parent. The upload handler returns
     /// these in the response so the client knows what's available
     /// without a second round-trip. Ordered by `variant` for stable

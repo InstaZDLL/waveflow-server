@@ -71,6 +71,7 @@ pub async fn spawn_app_with_jwt(pool: PgPool, verifier: Arc<JwtVerifier>) -> Str
         music_root: None,
         stream_secret: None,
         artwork: None,
+        artwork_scanner: None,
     };
 
     let state = AppState {
@@ -126,6 +127,7 @@ pub async fn spawn_app_with_sync(
         music_root: None,
         stream_secret: None,
         artwork: None,
+        artwork_scanner: None,
     };
 
     let state = AppState {
@@ -261,6 +263,7 @@ pub async fn spawn_app_with_jwt_and_stream(
         music_root: Some(music_root.clone()),
         stream_secret: Some(secret.clone()),
         artwork: None,
+        artwork_scanner: None,
     };
 
     let state = AppState {
@@ -305,6 +308,7 @@ pub async fn spawn_app_with_jwt_and_artwork(
         music_root: None,
         stream_secret: None,
         artwork: None, // app() only reads runtime singletons via AppState.
+        artwork_scanner: None,
     };
 
     let storage = ArtworkStorage::local(&artwork_root).expect("local artwork storage init");

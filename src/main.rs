@@ -123,6 +123,33 @@ async fn main() -> anyhow::Result<()> {
         "sync hub started",
     );
 
+    // Background artwork scanner — spawned when both the storage
+    // backend AND the scanner are configured at boot. Held in
+    // `_artwork_scanner_task` for the binary's lifetime; dropping
+    // the handle wouldn't cancel the task, but a future refactor
+    // that loses the binding should fail the borrow checker on the
+    // next read.
+    let _artwork_scanner_task = match (artwork_storage.as_ref(), config.artwork_scanner.as_ref()) {
+        (Some(storage), Some(scanner_cfg)) => {
+            info!(
+                interval_secs = scanner_cfg.interval.as_secs(),
+                batch_size = scanner_cfg.batch_size,
+                "artwork background scanner started",
+            );
+            Some(waveflow_server::artwork_jobs::spawn(
+                db.clone(),
+                storage.clone(),
+                scanner_cfg.clone(),
+            ))
+        }
+        _ => {
+            if artwork_storage.is_some() {
+                info!("artwork background scanner disabled by WAVEFLOW_ARTWORK_SCANNER_DISABLED");
+            }
+            None
+        }
+    };
+
     let state = AppState {
         db,
         jwt_verifier,
