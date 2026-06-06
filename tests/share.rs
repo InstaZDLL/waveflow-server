@@ -358,6 +358,180 @@ async fn by_canonical_mint_resolves_via_public_get(pool: PgPool) {
     assert_eq!(public["name"].as_str(), Some("Soirée canon"));
 }
 
+/// Push a `playlist + field: tracks, insert` op carrying the
+/// 1.j.b-style `snapshots` map so the share preview can render
+/// the tracks. Returns once the apply pipeline has materialised
+/// the rows (the push response is the contract).
+async fn materialise_playlist_tracks_via_sync(
+    base: &str,
+    token: &str,
+    profile_canonical: &str,
+    playlist_canonical: &str,
+    tracks: &[(i64, &str, Option<&str>, i64)],
+) {
+    let mut snapshots = serde_json::Map::new();
+    let mut track_ids = Vec::with_capacity(tracks.len());
+    for (id, title, artist, duration_ms) in tracks {
+        track_ids.push(*id);
+        let mut entry = serde_json::Map::new();
+        entry.insert("title".into(), json!(title));
+        if let Some(a) = artist {
+            entry.insert("artist".into(), json!(a));
+        }
+        entry.insert("duration_ms".into(), json!(*duration_ms));
+        snapshots.insert(id.to_string(), Value::Object(entry));
+    }
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/sync/ops"))
+        .bearer_auth(token)
+        .json(&json!({
+            "device_id": Uuid::new_v4().to_string(),
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 2,
+                "entity": "playlist",
+                "entity_id": playlist_canonical,
+                "field": "tracks",
+                "op": "insert",
+                "payload": {
+                    "track_ids": track_ids,
+                    "snapshots": Value::Object(snapshots),
+                },
+                "profile_canonical_id": profile_canonical,
+            }],
+        }))
+        .send()
+        .await
+        .expect("sync push (tracks) failed");
+    assert!(
+        resp.status().is_success(),
+        "sync push for tracks must succeed: {}",
+        resp.status()
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn public_get_lists_tracks_when_snapshots_present(pool: PgPool) {
+    // Phase 1.j.a end-to-end: desktop emits a playlist insert,
+    // then a tracks insert carrying snapshots. The share preview
+    // public GET must return those tracks in position order with
+    // their title + artist + duration_ms intact.
+    let h = spawn_authenticated(pool, "user-share-tracks").await;
+    let pl_canon = "pl-tracks-snap-share";
+    materialise_playlist_via_sync(&h.base, &h.token, PROF_CANON, pl_canon, "Soirée 1.j").await;
+    materialise_playlist_tracks_via_sync(
+        &h.base,
+        &h.token,
+        PROF_CANON,
+        pl_canon,
+        &[
+            (601, "One More Time", Some("Daft Punk"), 320000),
+            (602, "Around the World", Some("Daft Punk"), 280000),
+        ],
+    )
+    .await;
+
+    let mint: Value = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/share/playlists/by-canonical/{PROF_CANON}/{pl_canon}",
+            h.base
+        ))
+        .bearer_auth(&h.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = mint["token"].as_str().unwrap().to_string();
+
+    let public: Value = reqwest::Client::new()
+        .get(format!("{}/api/v1/share/playlists/{}", h.base, token))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tracks = public["tracks"].as_array().expect("tracks array");
+    assert_eq!(tracks.len(), 2, "both tracks must surface: {public}");
+    assert_eq!(tracks[0]["title"].as_str(), Some("One More Time"));
+    assert_eq!(tracks[0]["artist"].as_str(), Some("Daft Punk"));
+    assert_eq!(tracks[0]["duration_ms"].as_i64(), Some(320000));
+    assert_eq!(tracks[1]["title"].as_str(), Some("Around the World"));
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn public_get_hides_tracks_without_snapshots(pool: PgPool) {
+    // Pre-1.j.b desktop emits tracks ops WITHOUT a `snapshots`
+    // map. The rows still land in `playlist_track` (so a future
+    // re-sync from a snapshot-aware client can populate them
+    // without re-inserting), but the public share preview filters
+    // them out — nothing displayable means nothing to surface.
+    let h = spawn_authenticated(pool, "user-share-tracks-bare").await;
+    let pl_canon = "pl-tracks-no-snap";
+    materialise_playlist_via_sync(&h.base, &h.token, PROF_CANON, pl_canon, "Bare").await;
+
+    // Direct sync push, no snapshots in the payload.
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", h.base))
+        .bearer_auth(&h.token)
+        .json(&json!({
+            "device_id": Uuid::new_v4().to_string(),
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 2,
+                "entity": "playlist",
+                "entity_id": pl_canon,
+                "field": "tracks",
+                "op": "insert",
+                "payload": { "track_ids": [701, 702] },
+                "profile_canonical_id": PROF_CANON,
+            }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let mint: Value = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/share/playlists/by-canonical/{PROF_CANON}/{pl_canon}",
+            h.base
+        ))
+        .bearer_auth(&h.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = mint["token"].as_str().unwrap().to_string();
+
+    let public: Value = reqwest::Client::new()
+        .get(format!("{}/api/v1/share/playlists/{}", h.base, token))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tracks = public["tracks"].as_array().expect("tracks array");
+    assert_eq!(
+        tracks.len(),
+        0,
+        "snapshot-less rows must be hidden from the public preview: {public}",
+    );
+}
+
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn by_canonical_mint_is_idempotent(pool: PgPool) {
     let h = spawn_authenticated(pool, "user-share-canon-idem").await;

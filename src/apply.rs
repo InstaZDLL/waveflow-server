@@ -273,8 +273,10 @@ fn payload_i64(
 // ---------------------------------------------------------------
 
 mod playlist {
+    use serde_json::Value;
     use sqlx::PgConnection;
 
+    use crate::db::playlist_track::TrackSnapshot;
     use crate::sync::SyncOpIn;
 
     use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
@@ -298,10 +300,23 @@ mod playlist {
             ("set", Some(field @ ("name" | "description" | "color_id" | "icon_id"))) => {
                 set_field(conn, profile_id, canonical_id, field, op, now).await
             }
-            // `tracks` ops are recognised but unsupported until
-            // desktop emits file_hash references instead of local
-            // BIGINT track ids. See migration doc.
-            (_, Some("tracks")) => Ok(ApplyOutcome::Skipped),
+            // Track-list mutations (Phase 1.j.a). Desktop emits:
+            // - `insert tracks` with `payload.track_ids: [N, …]`
+            //   (optionally `payload.snapshots: { "<id_str>": { title, artist?, duration_ms? } }`
+            //   from 1.j.b onward).
+            // - `delete tracks` with `payload.track_ids: [N, …]`.
+            // - `set tracks` with `payload: { track_id: N, position: M }`
+            //   for a single reorder.
+            //
+            // `track_id` is the source desktop's local-i64 id, NOT a
+            // server canonical reference. Snapshots are what makes a
+            // row visible in the public share preview; ops without
+            // them are stored but filtered out of the public read.
+            ("insert", Some("tracks")) => {
+                insert_tracks(conn, profile_id, canonical_id, op, now).await
+            }
+            ("delete", Some("tracks")) => delete_tracks(conn, profile_id, canonical_id, op).await,
+            ("set", Some("tracks")) => reorder_track(conn, profile_id, canonical_id, op).await,
             // Anything else with a `field` we don't know about
             // surfaces as Unknown so telemetry can spot a missed
             // protocol extension.
@@ -357,6 +372,229 @@ mod playlist {
             .execute(&mut *conn)
             .await?;
         Ok(ApplyOutcome::Applied)
+    }
+
+    /// Resolve a playlist canonical id to its server `playlist.id`.
+    /// Returns `None` when the parent playlist hasn't been
+    /// materialised yet — caller treats that as `Skipped` so the
+    /// tracks op stays in the durable log for replay once the
+    /// playlist's own insert lands. Tenant scoping is the
+    /// `profile_id` already resolved by `apply_op`.
+    async fn lookup_playlist_id(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        canonical_id: &str,
+    ) -> Result<Option<i64>, ApplyError> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM playlist
+              WHERE profile_id = $1 AND canonical_id = $2",
+        )
+        .bind(profile_id)
+        .bind(canonical_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn insert_tracks(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        canonical_id: &str,
+        op: &SyncOpIn,
+        now: i64,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        let Some(playlist_id) = lookup_playlist_id(conn, profile_id, canonical_id).await? else {
+            // Parent playlist not materialised yet — keep the op in
+            // the log. The desktop only emits tracks ops after the
+            // playlist's own insert, but a server-side ordering
+            // hiccup or out-of-order pull could surface this.
+            return Ok(ApplyOutcome::Skipped);
+        };
+
+        let track_ids = track_ids_from_payload(op)?;
+        if track_ids.is_empty() {
+            return Ok(ApplyOutcome::Applied);
+        }
+
+        let snapshots = snapshots_from_payload(op)?;
+        let rows: Vec<(i64, Option<TrackSnapshot>)> = track_ids
+            .iter()
+            .map(|id| {
+                let snapshot = snapshots.as_ref().and_then(|map| map.get(id).cloned());
+                (*id, snapshot)
+            })
+            .collect();
+
+        crate::db::playlist_track::append_tracks(conn, playlist_id, &rows, now).await?;
+        Ok(ApplyOutcome::Applied)
+    }
+
+    async fn delete_tracks(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        canonical_id: &str,
+        op: &SyncOpIn,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        let Some(playlist_id) = lookup_playlist_id(conn, profile_id, canonical_id).await? else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+        let track_ids = track_ids_from_payload(op)?;
+        if track_ids.is_empty() {
+            return Ok(ApplyOutcome::Applied);
+        }
+        crate::db::playlist_track::remove_tracks(conn, playlist_id, &track_ids).await?;
+        Ok(ApplyOutcome::Applied)
+    }
+
+    async fn reorder_track(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        canonical_id: &str,
+        op: &SyncOpIn,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        let Some(playlist_id) = lookup_playlist_id(conn, profile_id, canonical_id).await? else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+        let payload = op
+            .payload
+            .as_ref()
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "set",
+                reason: "tracks reorder payload missing (expected {track_id, position})".into(),
+            })?;
+        let track_id = payload
+            .get("track_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "set",
+                reason: "payload.track_id missing or not an integer".into(),
+            })?;
+        let position = payload
+            .get("position")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "set",
+                reason: "payload.position missing or not an integer".into(),
+            })?;
+        let position_i32: i32 =
+            i32::try_from(position).map_err(|_| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "set",
+                reason: format!("payload.position {position} out of i32 range"),
+            })?;
+        if position_i32 < 0 {
+            return Err(ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "set",
+                reason: format!("payload.position must be >= 0, got {position_i32}"),
+            });
+        }
+        crate::db::playlist_track::set_position(conn, playlist_id, track_id, position_i32).await?;
+        Ok(ApplyOutcome::Applied)
+    }
+
+    /// Extract `payload.track_ids: [N, …]` — required for both
+    /// insert and delete. Same accept-only-integers shape the
+    /// desktop's inbound parser uses (see desktop crate's apply.rs).
+    fn track_ids_from_payload(op: &SyncOpIn) -> Result<Vec<i64>, ApplyError> {
+        let payload = op
+            .payload
+            .as_ref()
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "tracks",
+                reason: "payload missing (expected {track_ids: [...]})".into(),
+            })?;
+        let arr = payload
+            .get("track_ids")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "tracks",
+                reason: "payload.track_ids missing or not an array".into(),
+            })?;
+        arr.iter()
+            .map(|v| {
+                v.as_i64().ok_or_else(|| ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "tracks",
+                    reason: "payload.track_ids must contain only integers".into(),
+                })
+            })
+            .collect()
+    }
+
+    /// Optionally extract `payload.snapshots: { "<id_str>": { title, artist?, duration_ms? } }`.
+    /// Returns `Ok(None)` when the field is absent (pre-1.j.b
+    /// desktop) — the apply path then stores the rows with NULL
+    /// snapshot fields, which keeps them out of the public share
+    /// preview until a future desktop re-emits with the snapshot.
+    ///
+    /// Returns an error when the field is present but malformed —
+    /// we prefer to reject a corrupt batch up front rather than
+    /// store a mix of populated + NULL rows that would be hard to
+    /// audit later.
+    fn snapshots_from_payload(
+        op: &SyncOpIn,
+    ) -> Result<Option<std::collections::HashMap<i64, TrackSnapshot>>, ApplyError> {
+        let Some(payload) = op.payload.as_ref() else {
+            return Ok(None);
+        };
+        let Some(map) = payload.get("snapshots") else {
+            return Ok(None);
+        };
+        if matches!(map, Value::Null) {
+            return Ok(None);
+        }
+        let obj = map.as_object().ok_or_else(|| ApplyError::InvalidPayload {
+            entity: ENTITY,
+            op: "tracks",
+            reason: "payload.snapshots must be an object keyed by track_id".into(),
+        })?;
+        let mut out = std::collections::HashMap::with_capacity(obj.len());
+        for (key, value) in obj {
+            let track_id: i64 = key.parse().map_err(|_| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "tracks",
+                reason: format!("payload.snapshots key {key:?} is not an integer"),
+            })?;
+            let inner = value
+                .as_object()
+                .ok_or_else(|| ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "tracks",
+                    reason: format!("payload.snapshots[{key}] must be an object"),
+                })?;
+            let title = inner
+                .get("title")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "tracks",
+                    reason: format!("payload.snapshots[{key}].title missing or not a string"),
+                })?
+                .to_owned();
+            let artist = inner
+                .get("artist")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let duration_ms = inner
+                .get("duration_ms")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            out.insert(
+                track_id,
+                TrackSnapshot {
+                    title,
+                    artist,
+                    duration_ms,
+                },
+            );
+        }
+        Ok(Some(out))
     }
 
     async fn set_field(
