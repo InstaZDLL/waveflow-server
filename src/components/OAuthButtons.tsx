@@ -90,9 +90,12 @@ export function OAuthButtons({ enabled, callbackURL }: Props) {
       })
       // Better Auth's `signIn.social` navigates the entire document
       // to the provider, so reaching this line means the redirect
-      // didn't take — surface a generic error and let the user
-      // retry. (Keeping the `pending` state would leave the button
-      // permanently disabled.)
+      // didn't take — surface a generic error (same wording as the
+      // catch branch since the user can't tell which path failed)
+      // and let the user retry. Without `setError` the button just
+      // re-enables silently and the user has no signal that the
+      // click did nothing.
+      setError('Sign-in redirect failed.')
       setPending(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in redirect failed.')
