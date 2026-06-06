@@ -28,7 +28,9 @@ use std::{net::SocketAddr, sync::Arc};
 use std::time::Duration;
 
 use sqlx::PgPool;
-use waveflow_server::{app, auth::JwtVerifier, sync::SyncHub, AppState, Config, StreamCtx};
+use waveflow_server::{
+    app, auth::JwtVerifier, storage::ArtworkStorage, sync::SyncHub, AppState, Config, StreamCtx,
+};
 
 pub use jwks_harness::{good_claims, header_with_kid, JwksHarness, TEST_KID};
 
@@ -68,6 +70,7 @@ pub async fn spawn_app_with_jwt(pool: PgPool, verifier: Arc<JwtVerifier>) -> Str
         jwt_audience: String::new(),
         music_root: None,
         stream_secret: None,
+        artwork: None,
     };
 
     let state = AppState {
@@ -83,6 +86,9 @@ pub async fn spawn_app_with_jwt(pool: PgPool, verifier: Arc<JwtVerifier>) -> Str
         // tests that want deterministic control use the variant
         // below.
         sync: SyncHub::spawn(pool, Duration::from_millis(50), Duration::from_secs(3600)).0,
+        // Artwork storage off by default — tests that exercise the
+        // artwork endpoints use `spawn_app_with_jwt_and_artwork`.
+        artwork: None,
     };
     tokio::spawn(async move {
         axum::serve(
@@ -119,6 +125,7 @@ pub async fn spawn_app_with_sync(
         jwt_audience: String::new(),
         music_root: None,
         stream_secret: None,
+        artwork: None,
     };
 
     let state = AppState {
@@ -126,6 +133,7 @@ pub async fn spawn_app_with_sync(
         jwt_verifier: verifier,
         stream_ctx: None,
         sync,
+        artwork: None,
     };
     tokio::spawn(async move {
         axum::serve(
@@ -252,6 +260,7 @@ pub async fn spawn_app_with_jwt_and_stream(
         jwt_audience: String::new(),
         music_root: Some(music_root.clone()),
         stream_secret: Some(secret.clone()),
+        artwork: None,
     };
 
     let state = AppState {
@@ -259,6 +268,53 @@ pub async fn spawn_app_with_jwt_and_stream(
         jwt_verifier: verifier,
         stream_ctx: Some(Arc::new(StreamCtx { music_root, secret })),
         sync: SyncHub::spawn(pool, Duration::from_millis(50), Duration::from_secs(3600)).0,
+        artwork: None,
+    };
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app(config, state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    format!("http://{addr}")
+}
+
+/// Variant that wires a working `ArtworkStorage` rooted at the
+/// supplied path. Used by the artwork integration tests so the
+/// POST + GET endpoints leave the 503 path and exercise the real
+/// LocalFileSystem backend.
+pub async fn spawn_app_with_jwt_and_artwork(
+    pool: PgPool,
+    verifier: Arc<JwtVerifier>,
+    artwork_root: std::path::PathBuf,
+) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let config = Config {
+        bind_addr: addr,
+        request_timeout_secs: 5,
+        database_url: "<test>".into(),
+        db_max_connections: 1,
+        jwt_jwks_url: String::new(),
+        jwt_issuer: String::new(),
+        jwt_audience: String::new(),
+        music_root: None,
+        stream_secret: None,
+        artwork: None, // app() only reads runtime singletons via AppState.
+    };
+
+    let storage = ArtworkStorage::local(&artwork_root).expect("local artwork storage init");
+
+    let state = AppState {
+        db: pool.clone(),
+        jwt_verifier: verifier,
+        stream_ctx: None,
+        sync: SyncHub::spawn(pool, Duration::from_millis(50), Duration::from_secs(3600)).0,
+        artwork: Some(storage),
     };
     tokio::spawn(async move {
         axum::serve(

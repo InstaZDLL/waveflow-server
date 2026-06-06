@@ -19,6 +19,7 @@ use waveflow_server::{
     auth::{JwtVerifier, JwtVerifierConfig},
     config::Config,
     db,
+    storage::ArtworkStorage,
     sync::{SyncHub, DEFAULT_COMPACTION_INTERVAL, DEFAULT_FLUSH_INTERVAL},
     AppState, StreamCtx,
 };
@@ -76,6 +77,22 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Artwork storage — Some when WAVEFLOW_ARTWORK_LOCAL_DIR is set,
+    // None disables both `/api/v1/artwork/*` routes. The local
+    // backend creates the root directory on the fly so a fresh
+    // container only needs the env set, not a pre-existing dir.
+    let artwork_storage = match config.artwork.as_ref() {
+        Some(cfg) => {
+            let storage = ArtworkStorage::local(&cfg.local_dir)?;
+            info!(local_dir = %cfg.local_dir.display(), "artwork storage enabled (local backend)");
+            Some(storage)
+        }
+        None => {
+            info!("artwork storage disabled (WAVEFLOW_ARTWORK_LOCAL_DIR unset)");
+            None
+        }
+    };
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local = listener.local_addr()?;
     info!(addr = %local, "waveflow-server listening");
@@ -103,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_verifier,
         stream_ctx,
         sync: sync_hub,
+        artwork: artwork_storage,
     };
     axum::serve(
         listener,
