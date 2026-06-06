@@ -4,9 +4,14 @@
 // silent regression would degrade social previews + the rendered
 // page in lockstep.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { formatDuration, formatTrackCountAndRuntime } from './share-format'
+import {
+  DEFAULT_CANONICAL_ORIGIN,
+  formatDuration,
+  formatTrackCountAndRuntime,
+  getCanonicalOrigin,
+} from './share-format'
 import type { PublicTrack } from '@/server-fns/share'
 
 function track(durationMs: number): PublicTrack {
@@ -75,5 +80,46 @@ describe('formatTrackCountAndRuntime', () => {
     // A defensive reader could emit a negative — clamp so the total
     // doesn't go backwards.
     expect(formatTrackCountAndRuntime([track(60_000), track(-30_000)])).toBe('2 tracks · 1 min')
+  })
+})
+
+describe('getCanonicalOrigin', () => {
+  // `process.env` is process-global so each test snapshots + restores
+  // the var rather than racing the suite-wide value.
+  let previous: string | undefined
+  beforeEach(() => {
+    previous = process.env.BETTER_AUTH_URL
+  })
+  afterEach(() => {
+    if (previous === undefined) {
+      delete process.env.BETTER_AUTH_URL
+    } else {
+      process.env.BETTER_AUTH_URL = previous
+    }
+  })
+
+  it('returns the BETTER_AUTH_URL when set', () => {
+    process.env.BETTER_AUTH_URL = 'https://share.example'
+    expect(getCanonicalOrigin()).toBe('https://share.example')
+  })
+
+  it('strips a trailing slash so the share path concatenates cleanly', () => {
+    process.env.BETTER_AUTH_URL = 'https://share.example/'
+    expect(getCanonicalOrigin()).toBe('https://share.example')
+    process.env.BETTER_AUTH_URL = 'https://share.example///'
+    expect(getCanonicalOrigin()).toBe('https://share.example')
+  })
+
+  it('falls back to the default when BETTER_AUTH_URL is unset', () => {
+    delete process.env.BETTER_AUTH_URL
+    expect(getCanonicalOrigin()).toBe(DEFAULT_CANONICAL_ORIGIN)
+  })
+
+  it('treats an empty BETTER_AUTH_URL the same as unset', () => {
+    // Some shells export `Foo=""` which surfaces as `Ok("")`.
+    // Empty origin would produce `/p/<token>` (a bare slash) — no
+    // scraper would respect that, so route through the fallback.
+    process.env.BETTER_AUTH_URL = ''
+    expect(getCanonicalOrigin()).toBe(DEFAULT_CANONICAL_ORIGIN)
   })
 })

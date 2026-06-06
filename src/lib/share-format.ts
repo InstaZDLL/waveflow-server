@@ -10,6 +10,44 @@
 import type { PublicTrack } from '@/server-fns/share'
 
 /**
+ * Default canonical origin for the public share routes. Used as the
+ * fallback when `BETTER_AUTH_URL` is unset at SSR — matches the
+ * hosted deployment so a misconfigured preview env still hands
+ * crawlers something resolvable instead of `undefined/p/<token>`.
+ *
+ * Exported for the unit test to compare against without re-mocking
+ * `process.env` per assertion.
+ */
+export const DEFAULT_CANONICAL_ORIGIN = 'https://waveflow.app'
+
+/**
+ * Resolve the canonical origin for share URLs (issue #21). Reads
+ * `BETTER_AUTH_URL` since that's already the source of truth for
+ * the deployment's public web origin (Better Auth needs it to mint
+ * cookies + sign JWTs scoped to this host). A trailing slash is
+ * stripped so a downstream `${origin}/p/${token}` template doesn't
+ * produce a double slash.
+ *
+ * Returns the [`DEFAULT_CANONICAL_ORIGIN`] when the env is unset.
+ * Empty strings are treated as unset — `process.env` exposes
+ * `Ok("")` for exported-but-empty vars on some shells, and an
+ * empty origin would produce a bare-slash share URL no scraper
+ * would respect.
+ */
+export function getCanonicalOrigin(): string {
+  // `head()` runs SSR-side at the moment a crawler hits the page,
+  // so `process.env` is available. The `typeof process` guard keeps
+  // a client-side re-render (eg. an in-app navigation that re-runs
+  // `head`) from throwing on a ReferenceError.
+  const raw =
+    typeof process !== 'undefined' && process.env?.BETTER_AUTH_URL
+      ? process.env.BETTER_AUTH_URL
+      : ''
+  const trimmed = raw.replace(/\/+$/, '')
+  return trimmed.length > 0 ? trimmed : DEFAULT_CANONICAL_ORIGIN
+}
+
+/**
  * Format a `duration_ms` integer as `mm:ss` (or `h:mm:ss` when the
  * track crosses an hour). Returns an empty string when the value is
  * non-positive — pre-1.j.b desktops emit `0` for the snapshot's
