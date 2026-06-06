@@ -219,6 +219,280 @@ async fn playlist_delete_removes_row(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_insert_tracks_materialises_rows_without_snapshot(pool: PgPool) {
+    // Pre-1.j.b desktop wire — emits `payload.track_ids` only,
+    // no `payload.snapshots`. Rows must land in `playlist_track`
+    // with NULL snapshot fields. Position is auto-assigned starting
+    // at 0.
+    let auth = spawn_authenticated(pool.clone(), "apply-pl-tracks-ins").await;
+    let playlist_cid = "pl-tracks-bare";
+
+    let insert_playlist = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        playlist_cid,
+        None,
+        "insert",
+        json!({ "name": "Mix" }),
+        Some(PROFILE_CID),
+    );
+    let insert_tracks = op(
+        Uuid::new_v4(),
+        2,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "insert",
+        json!({ "track_ids": [101, 102, 103] }),
+        Some(PROFILE_CID),
+    );
+
+    assert!(
+        push(&auth.base, &auth.token, &[insert_playlist, insert_tracks])
+            .await
+            .is_success()
+    );
+
+    let rows: Vec<(i64, i32, Option<String>)> = sqlx::query_as(
+        "SELECT pt.track_id, pt.position, pt.snapshot_title
+           FROM playlist_track pt
+           JOIN playlist p ON p.id = pt.playlist_id
+          WHERE p.canonical_id = $1
+          ORDER BY pt.position ASC",
+    )
+    .bind(playlist_cid)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0], (101, 0, None));
+    assert_eq!(rows[1], (102, 1, None));
+    assert_eq!(rows[2], (103, 2, None));
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_insert_tracks_carries_snapshot(pool: PgPool) {
+    // Post-1.j.b desktop wire — payload now ships `snapshots` keyed
+    // by track id (as string). Snapshot fields must land on the row
+    // so the public share preview can render the title + artist.
+    let auth = spawn_authenticated(pool.clone(), "apply-pl-tracks-snap").await;
+    let playlist_cid = "pl-tracks-snap";
+
+    let insert_playlist = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        playlist_cid,
+        None,
+        "insert",
+        json!({ "name": "Soirée" }),
+        Some(PROFILE_CID),
+    );
+    let insert_tracks = op(
+        Uuid::new_v4(),
+        2,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "insert",
+        json!({
+            "track_ids": [201, 202],
+            "snapshots": {
+                "201": { "title": "Daft", "artist": "Punk", "duration_ms": 222000 },
+                "202": { "title": "Around the World", "duration_ms": 280000 }
+            }
+        }),
+        Some(PROFILE_CID),
+    );
+
+    assert!(
+        push(&auth.base, &auth.token, &[insert_playlist, insert_tracks])
+            .await
+            .is_success()
+    );
+
+    // Tuple type alias keeps clippy's "very complex type" lint
+    // satisfied while still letting the test read like a wire dump.
+    type SnapshotRow = (i64, Option<String>, Option<String>, Option<i64>);
+    let rows: Vec<SnapshotRow> = sqlx::query_as(
+        "SELECT pt.track_id, pt.snapshot_title, pt.snapshot_artist, pt.snapshot_duration_ms
+           FROM playlist_track pt
+           JOIN playlist p ON p.id = pt.playlist_id
+          WHERE p.canonical_id = $1
+          ORDER BY pt.position ASC",
+    )
+    .bind(playlist_cid)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        (201, Some("Daft".into()), Some("Punk".into()), Some(222000))
+    );
+    assert_eq!(
+        rows[1],
+        (202, Some("Around the World".into()), None, Some(280000))
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_delete_tracks_drops_rows(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "apply-pl-tracks-del").await;
+    let playlist_cid = "pl-tracks-del";
+
+    let insert_playlist = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        playlist_cid,
+        None,
+        "insert",
+        json!({ "name": "Doomed" }),
+        Some(PROFILE_CID),
+    );
+    let insert_tracks = op(
+        Uuid::new_v4(),
+        2,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "insert",
+        json!({ "track_ids": [301, 302, 303] }),
+        Some(PROFILE_CID),
+    );
+    let delete_tracks = op(
+        Uuid::new_v4(),
+        3,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "delete",
+        json!({ "track_ids": [302] }),
+        Some(PROFILE_CID),
+    );
+
+    assert!(push(
+        &auth.base,
+        &auth.token,
+        &[insert_playlist, insert_tracks, delete_tracks]
+    )
+    .await
+    .is_success());
+
+    let remaining: Vec<(i64,)> = sqlx::query_as(
+        "SELECT pt.track_id FROM playlist_track pt
+           JOIN playlist p ON p.id = pt.playlist_id
+          WHERE p.canonical_id = $1
+          ORDER BY pt.position ASC",
+    )
+    .bind(playlist_cid)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining.iter().map(|(t,)| *t).collect::<Vec<_>>(),
+        vec![301, 303],
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_set_tracks_reorders_position(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "apply-pl-tracks-reorder").await;
+    let playlist_cid = "pl-tracks-reorder";
+
+    let insert_playlist = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        playlist_cid,
+        None,
+        "insert",
+        json!({ "name": "Reorderable" }),
+        Some(PROFILE_CID),
+    );
+    let insert_tracks = op(
+        Uuid::new_v4(),
+        2,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "insert",
+        json!({ "track_ids": [401, 402, 403] }),
+        Some(PROFILE_CID),
+    );
+    // Move track 403 from position 2 to position 0.
+    let reorder = op(
+        Uuid::new_v4(),
+        3,
+        "playlist",
+        playlist_cid,
+        Some("tracks"),
+        "set",
+        json!({ "track_id": 403, "position": 0 }),
+        Some(PROFILE_CID),
+    );
+
+    assert!(push(
+        &auth.base,
+        &auth.token,
+        &[insert_playlist, insert_tracks, reorder]
+    )
+    .await
+    .is_success());
+
+    let pos_403: i32 = sqlx::query_scalar(
+        "SELECT pt.position FROM playlist_track pt
+           JOIN playlist p ON p.id = pt.playlist_id
+          WHERE p.canonical_id = $1 AND pt.track_id = $2",
+    )
+    .bind(playlist_cid)
+    .bind(403i64)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pos_403, 0,
+        "reorder must move the row to the target position"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_insert_tracks_without_parent_is_skipped(pool: PgPool) {
+    // Tracks op for a playlist whose `insert` op didn't land first
+    // (or got dropped). The apply pipeline should `Skipped` rather
+    // than error so the durable log keeps the op for a future
+    // replay. Push still returns success (apply outcome is
+    // telemetry-only).
+    let auth = spawn_authenticated(pool.clone(), "apply-pl-tracks-orphan").await;
+
+    let orphan_tracks = op(
+        Uuid::new_v4(),
+        1,
+        "playlist",
+        "pl-orphan",
+        Some("tracks"),
+        "insert",
+        json!({ "track_ids": [501, 502] }),
+        Some(PROFILE_CID),
+    );
+
+    let status = push(&auth.base, &auth.token, &[orphan_tracks]).await;
+    assert!(
+        status.is_success(),
+        "skipped apply should still 2xx the push: {status}",
+    );
+
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM playlist_track WHERE track_id IN (501, 502)")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 0, "no rows when the parent playlist is missing");
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn library_insert_materialises_row(pool: PgPool) {
     let auth = spawn_authenticated(pool.clone(), "apply-lib-ins").await;
     let library_cid = "lib-soundtracks";
