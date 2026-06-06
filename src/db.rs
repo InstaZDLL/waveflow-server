@@ -515,4 +515,149 @@ pub mod artwork {
             })
         })
     }
+
+    /// Metadata row for one resize variant. Same shape as
+    /// [`ArtworkMeta`] plus the per-variant dimensions — surfaced
+    /// so a client can pre-size the layout slot without measuring
+    /// the JPEG.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct VariantMeta {
+        pub hash: String,
+        pub mime: String,
+        pub byte_size: i64,
+        pub width: i32,
+        pub height: i32,
+    }
+
+    /// Insert a variant row if absent. Mirrors the parent table's
+    /// race-safe `ON CONFLICT DO NOTHING` shape: two callers
+    /// generating the same variant for the same parent collapse
+    /// into one row (`(parent_hash, variant)` is the PK), and the
+    /// loser's bytes are byte-equal anyway because the resize is
+    /// deterministic. Returns `true` if the row is new.
+    ///
+    /// Same shape as `sync::insert_op_returning`: the parameter
+    /// surface mirrors the table columns one-for-one rather than
+    /// folding them behind a struct, which keeps the call sites
+    /// in `api/artwork.rs` symmetric with the rest of the DB
+    /// helpers. `#[allow(clippy::too_many_arguments)]` is the
+    /// pre-existing convention for that pattern.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_variant_if_absent(
+        pool: &PgPool,
+        parent_hash: &str,
+        variant: &str,
+        hash: &str,
+        mime: &str,
+        byte_size: i64,
+        width: i32,
+        height: i32,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "INSERT INTO metadata_artwork_variant
+                  (parent_hash, variant, hash, mime, byte_size, width, height)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (parent_hash, variant) DO NOTHING",
+        )
+        .bind(parent_hash)
+        .bind(variant)
+        .bind(hash)
+        .bind(mime)
+        .bind(byte_size)
+        .bind(width)
+        .bind(height)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Lookup one variant by `(parent_hash, variant)`. The handler
+    /// hits this when the URL looks like
+    /// `/api/v1/artwork/{parent}/{variant}`.
+    pub async fn fetch_variant(
+        pool: &PgPool,
+        parent_hash: &str,
+        variant: &str,
+    ) -> Result<Option<VariantMeta>, sqlx::Error> {
+        sqlx::query_as::<_, (String, String, i64, i32, i32)>(
+            "SELECT hash, mime, byte_size, width, height
+               FROM metadata_artwork_variant
+              WHERE parent_hash = $1 AND variant = $2",
+        )
+        .bind(parent_hash)
+        .bind(variant)
+        .fetch_optional(pool)
+        .await
+        .map(|opt| {
+            opt.map(|(hash, mime, byte_size, width, height)| VariantMeta {
+                hash,
+                mime,
+                byte_size,
+                width,
+                height,
+            })
+        })
+    }
+
+    /// Lookup a variant by its OWN hash. Lets a client that already
+    /// cached the variant hash hit the bare `GET /api/v1/artwork/{hash}`
+    /// route without paying the parent-lookup detour. Returns the
+    /// projected metadata (same shape the parent endpoint vends), so
+    /// the handler stays uniform across "is this a parent or a
+    /// variant?" cases.
+    pub async fn fetch_meta_by_variant_hash(
+        pool: &PgPool,
+        hash: &str,
+    ) -> Result<Option<ArtworkMeta>, sqlx::Error> {
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT hash, mime, byte_size
+               FROM metadata_artwork_variant
+              WHERE hash = $1
+              LIMIT 1",
+        )
+        .bind(hash)
+        .fetch_optional(pool)
+        .await
+        .map(|opt| {
+            opt.map(|(hash, mime, byte_size)| ArtworkMeta {
+                hash,
+                mime,
+                byte_size,
+            })
+        })
+    }
+
+    /// List every variant of a parent. The upload handler returns
+    /// these in the response so the client knows what's available
+    /// without a second round-trip. Ordered by `variant` for stable
+    /// serialisation across calls.
+    pub async fn fetch_variants_for_parent(
+        pool: &PgPool,
+        parent_hash: &str,
+    ) -> Result<Vec<(String, VariantMeta)>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, String, String, i64, i32, i32)>(
+            "SELECT variant, hash, mime, byte_size, width, height
+               FROM metadata_artwork_variant
+              WHERE parent_hash = $1
+              ORDER BY variant ASC",
+        )
+        .bind(parent_hash)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(variant, hash, mime, byte_size, width, height)| {
+                (
+                    variant,
+                    VariantMeta {
+                        hash,
+                        mime,
+                        byte_size,
+                        width,
+                        height,
+                    },
+                )
+            })
+            .collect())
+    }
 }
