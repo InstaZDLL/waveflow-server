@@ -116,6 +116,71 @@ async fn run_once_repairs_a_partial_cache(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn run_once_repairs_parent_with_no_variants(pool: PgPool) {
+    // Edge case requested in CR: the parent row + parent bytes
+    // both landed, but every variant insert was lost (e.g. the
+    // upload returned 500 right after `storage.put` but before any
+    // variant write). The scanner should treat "zero variants" the
+    // same way it treats "one variant" and regenerate the full set.
+    let dir = tempfile::tempdir().unwrap();
+    let storage = ArtworkStorage::local(dir.path()).expect("local storage");
+
+    let source = synth_jpeg(800, 600);
+    let parent_hash = blake3::hash(&source).to_hex().to_string();
+    storage
+        .put(&parent_hash, source.clone().into())
+        .await
+        .expect("seed parent bytes");
+    sqlx::query("INSERT INTO metadata_artwork (hash, mime, byte_size) VALUES ($1, $2, $3)")
+        .bind(&parent_hash)
+        .bind("image/jpeg")
+        .bind(source.len() as i64)
+        .execute(&pool)
+        .await
+        .expect("seed parent row");
+
+    // Confirm we're starting from zero variant rows for this hash.
+    let pre: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM metadata_artwork_variant WHERE parent_hash = $1",
+    )
+    .bind(&parent_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pre, 0, "test must start with no variant rows");
+
+    let repaired = artwork_jobs::run_once(&pool, &storage, 50)
+        .await
+        .expect("scan cycle should not surface a top-level error");
+    assert_eq!(repaired, 1, "scanner should report one parent repaired");
+
+    let post: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM metadata_artwork_variant WHERE parent_hash = $1",
+    )
+    .bind(&parent_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(post, 2, "scanner must fill both variants from scratch");
+
+    // Spot-check that each canonical variant name landed (`thumb`
+    // + `preview` ordering is verified elsewhere; here we just need
+    // the set to be complete).
+    for variant in ["thumb", "preview"] {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::BIGINT FROM metadata_artwork_variant
+              WHERE parent_hash = $1 AND variant = $2",
+        )
+        .bind(&parent_hash)
+        .bind(variant)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "variant {variant} must have been inserted");
+    }
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn run_once_is_a_noop_when_cache_is_complete(pool: PgPool) {
     // No partial caches in the DB → the scanner should report zero
     // repairs and complete without touching storage.
@@ -135,6 +200,13 @@ async fn run_once_skips_parents_with_missing_bytes(pool: PgPool) {
     // regenerate variants without the source — we expect it to log +
     // count the failure but NOT abort the cycle, returning `0`
     // repaired and leaving the broken parent for the next pass.
+    //
+    // Also asserts the starvation guard: the failed repair stamps
+    // `last_repair_failure_at`, and a second cycle immediately after
+    // the first must NOT see this hash in `list_partial_parents`
+    // anymore (still inside the 1-hour backoff window). Without the
+    // guard, an irrecoverable parent would dominate every cycle's
+    // batch and starve recoverable parents behind it.
     let dir = tempfile::tempdir().unwrap();
     let storage = ArtworkStorage::local(dir.path()).expect("local storage");
 
@@ -151,4 +223,31 @@ async fn run_once_skips_parents_with_missing_bytes(pool: PgPool) {
         .await
         .expect("missing-bytes failure should be swallowed inside the cycle");
     assert_eq!(repaired, 0, "broken parent contributes 0 to the count");
+
+    // Stamp must have landed.
+    let stamped: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_repair_failure_at FROM metadata_artwork WHERE hash = $1")
+            .bind(&phantom_hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        stamped.is_some(),
+        "failed repair must stamp last_repair_failure_at",
+    );
+
+    // A second cycle right after the first must NOT pick the row up
+    // again — the backoff window keeps it out of the candidate set.
+    let recheck = waveflow_server::db::artwork::list_partial_parents(
+        &pool,
+        2,
+        50,
+        chrono::Utc::now() - chrono::Duration::seconds(3600),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !recheck.iter().any(|h| h == &phantom_hash),
+        "backoff must hide the freshly-failed parent from the next cycle",
+    );
 }
