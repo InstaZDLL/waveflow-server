@@ -4,6 +4,7 @@ import {
   type PublicPlaylist,
   type PublicPlaylistResult,
 } from '@/server-fns/share'
+import { formatDuration, formatTrackCountAndRuntime } from '@/lib/share-format'
 
 /**
  * Public preview of a shared playlist. Phase 1.g.2 of the WaveFlow
@@ -54,11 +55,14 @@ export const Route = createFileRoute('/p/$token')({
     }
     const { playlist } = loaderData
     const title = `${playlist.name} · WaveFlow`
+    // Same `X tracks · 32 min` helper the in-page header renders —
+    // social previews stay consistent with the actual rendered page,
+    // so a Discord embed reads the same way as the open tab.
     const description =
       playlist.description ??
-      `A shared playlist on WaveFlow${
-        playlist.tracks.length > 0 ? ` — ${playlist.tracks.length} tracks` : ''
-      }.`
+      (playlist.tracks.length > 0
+        ? `A shared playlist on WaveFlow — ${formatTrackCountAndRuntime(playlist.tracks)}.`
+        : 'A shared playlist on WaveFlow.')
     return {
       meta: [
         { title },
@@ -133,6 +137,7 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
   // surrogate / replacement character.
   const initial = Array.from(playlist.name.trim())[0]?.toUpperCase() ?? '♪'
   const tileClass = colorTileClass(playlist.color_id)
+  const hasTracks = playlist.tracks.length > 0
   return (
     <main className="page-wrap px-4 py-12">
       <section className="island-shell rounded-2xl p-6 sm:p-8">
@@ -148,24 +153,56 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
           {playlist.name}
         </h1>
         {playlist.description && (
-          <p className="mb-6 text-base text-[var(--sea-ink-soft)]">{playlist.description}</p>
+          <p className="mb-4 text-base text-[var(--sea-ink-soft)]">{playlist.description}</p>
+        )}
+        {hasTracks && (
+          <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
+            {formatTrackCountAndRuntime(playlist.tracks)}
+          </p>
         )}
 
-        {playlist.tracks.length === 0 ? (
+        {!hasTracks ? (
           <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
             Track list preview is not available yet. The playlist owner can still see the full
             content in WaveFlow Desktop.
           </p>
         ) : (
-          <ol className="mb-6 list-decimal space-y-1 pl-6 text-sm text-[var(--sea-ink)]">
-            {playlist.tracks.map((track, idx) => (
-              <li key={idx}>
-                {track.title}
-                {track.artist && (
-                  <span className="text-[var(--sea-ink-soft)]"> — {track.artist}</span>
-                )}
-              </li>
-            ))}
+          // Table rather than `<ol>` so the duration column aligns
+          // across rows. `tabular-nums` keeps `5:21` and `12:03` the
+          // same pixel width so the right-aligned column doesn't
+          // jitter as the eye scans down. Position numbers stay
+          // semantic via the explicit `value` column rather than the
+          // browser's auto-numbered `<ol>` because the visible
+          // column index is the actual row position and screen
+          // readers announce it the same way.
+          <ol
+            aria-label="Tracks in this playlist"
+            className="mb-6 divide-y divide-[var(--sea-ink-soft)]/15 text-sm"
+          >
+            {playlist.tracks.map((track, idx) => {
+              const duration = formatDuration(track.duration_ms)
+              return (
+                <li
+                  key={idx}
+                  className="flex items-baseline gap-3 py-2 text-[var(--sea-ink)]"
+                >
+                  <span className="w-6 shrink-0 text-right tabular-nums text-[var(--sea-ink-soft)]">
+                    {idx + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {track.title}
+                    {track.artist && (
+                      <span className="text-[var(--sea-ink-soft)]"> — {track.artist}</span>
+                    )}
+                  </span>
+                  {duration && (
+                    <span className="shrink-0 tabular-nums text-[var(--sea-ink-soft)]">
+                      {duration}
+                    </span>
+                  )}
+                </li>
+              )
+            })}
           </ol>
         )}
 
