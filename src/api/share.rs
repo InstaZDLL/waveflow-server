@@ -287,21 +287,51 @@ async fn get_public_playlist(
             cover_hash,
             created_at,
             updated_at,
-        ))) => (
-            StatusCode::OK,
-            Json(PublicPlaylistResponse {
-                id,
-                name,
-                description,
-                color_id,
-                icon_id,
-                cover_hash,
-                created_at,
-                updated_at,
-                tracks: Vec::new(),
-            }),
-        )
-            .into_response(),
+        ))) => {
+            // Phase 1.j.a — populate the track list from
+            // `playlist_track`, filtered to rows that carry a
+            // snapshot title (the only ones we can display in the
+            // public preview). Pre-1.j.b desktops emit tracks ops
+            // without snapshots; their rows are still tracked but
+            // the public read skips them until the desktop ships
+            // the wire bump.
+            //
+            // Track-list lookup failure logs + falls back to empty
+            // rather than bubbling up — the playlist itself
+            // resolved cleanly, so a downstream tracks query hiccup
+            // shouldn't take the whole preview down. Worst case the
+            // crawler sees an empty list, same shape as a brand-
+            // new playlist.
+            let tracks = match crate::db::playlist_track::fetch_for_share(&state.db, id).await {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|r| PublicTrack {
+                        title: r.title,
+                        artist: r.artist,
+                        duration_ms: r.duration_ms,
+                    })
+                    .collect(),
+                Err(err) => {
+                    tracing::warn!(error = %err, playlist_id = id, "share public tracks lookup failed, falling back to empty");
+                    Vec::new()
+                }
+            };
+            (
+                StatusCode::OK,
+                Json(PublicPlaylistResponse {
+                    id,
+                    name,
+                    description,
+                    color_id,
+                    icon_id,
+                    cover_hash,
+                    created_at,
+                    updated_at,
+                    tracks,
+                }),
+            )
+                .into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(err) => {
             tracing::error!(error = %err, "share public lookup failed");
