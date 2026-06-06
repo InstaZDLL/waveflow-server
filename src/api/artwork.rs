@@ -63,6 +63,15 @@ const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 /// lose alpha + waste bytes.
 const ACCEPTED_MIMES: &[&str] = &["image/jpeg", "image/png", "image/webp"];
 
+/// Number of variants the resize pipeline produces per upload —
+/// currently `thumb` + `preview`. The upload handler compares
+/// against this count on the idempotent re-upload path to detect a
+/// partial cache (an earlier upload that landed the parent + some
+/// variants but lost the rest to a backend / DB hiccup) and trigger
+/// a self-heal pass. Bumped in lockstep with [`VariantKind`] when
+/// a new bucket lands.
+const EXPECTED_VARIANT_COUNT: usize = 2;
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UploadResponse {
     /// BLAKE3 hex digest of the uploaded bytes — the row identity in
@@ -226,9 +235,45 @@ async fn upload_artwork(
         // contract — see `UploadResponse::mime`), and reading
         // through the row is what makes the documented behaviour
         // unconditionally true.
-        let existing_variants = crate::db::artwork::fetch_variants_for_parent(&state.db, &hash)
+        let mut existing_variants = crate::db::artwork::fetch_variants_for_parent(&state.db, &hash)
             .await
             .map_err(ArtworkError::Db)?;
+        // Self-heal: a previous upload could have landed the parent
+        // row + parent bytes but lost a variant write to a backend /
+        // DB hiccup before responding 500 to the caller. Detect that
+        // case (`fetch_variants_for_parent` returns fewer than
+        // [`EXPECTED_VARIANT_COUNT`]) and re-run the pipeline,
+        // writing only the variants that are still missing. Inserts
+        // go through `ON CONFLICT (parent_hash, variant) DO NOTHING`,
+        // so a concurrent repair collapses cleanly.
+        if existing_variants.len() < EXPECTED_VARIANT_COUNT {
+            existing_variants = repair_missing_variants(
+                storage,
+                &state.db,
+                &hash,
+                body.as_ref(),
+                existing_variants,
+            )
+            .await?;
+        }
+        let mut variants_response: Vec<VariantResponse> = existing_variants
+            .into_iter()
+            .map(|(variant, meta)| VariantResponse {
+                url: format!("/api/v1/artwork/{hash}/{variant}"),
+                variant,
+                hash: meta.hash,
+                mime: meta.mime,
+                byte_size: meta.byte_size,
+                width: meta.width,
+                height: meta.height,
+            })
+            .collect();
+        // Stable wire order (alphabetical by variant name). The
+        // `fetch_variants_for_parent` SQL already does `ORDER BY
+        // variant ASC`, but the repair pass can interleave fresh
+        // entries — sort here so the contract holds across both
+        // paths.
+        variants_response.sort_by(|a, b| a.variant.cmp(&b.variant));
         return Ok((
             StatusCode::OK,
             Json(UploadResponse {
@@ -236,18 +281,7 @@ async fn upload_artwork(
                 byte_size: existing.byte_size,
                 mime: existing.mime,
                 url: format!("/api/v1/artwork/{hash}"),
-                variants: existing_variants
-                    .into_iter()
-                    .map(|(variant, meta)| VariantResponse {
-                        url: format!("/api/v1/artwork/{hash}/{variant}"),
-                        variant,
-                        hash: meta.hash,
-                        mime: meta.mime,
-                        byte_size: meta.byte_size,
-                        width: meta.width,
-                        height: meta.height,
-                    })
-                    .collect(),
+                variants: variants_response,
             }),
         )
             .into_response());
@@ -308,6 +342,13 @@ async fn upload_artwork(
             height: variant.height as i32,
         });
     }
+    // Stable wire order: alphabetical by variant name. Pipeline
+    // iteration order is an implementation detail of
+    // [`artwork_pipeline::generate_variants`]; presenting the
+    // response sorted means clients can pin assertions on
+    // `variants[0]` (e.g. "always preview") without re-checking the
+    // source of truth on every PR.
+    variant_responses.sort_by(|a, b| a.variant.cmp(&b.variant));
 
     Ok((
         StatusCode::OK,
@@ -320,6 +361,69 @@ async fn upload_artwork(
         }),
     )
         .into_response())
+}
+
+/// Re-run the resize pipeline against the freshly-received body and
+/// write any variants that are still missing from the cache. Called
+/// from the idempotent re-upload path when the parent row exists but
+/// the variant set is incomplete — the previous upload landed the
+/// parent + parent bytes but lost a variant write to a backend / DB
+/// hiccup before responding 500 to the caller, so the row claims a
+/// complete artwork while the variant table claims otherwise.
+///
+/// Returns the now-complete variant set (re-fetched after the
+/// inserts, so the wire response carries the canonical row state
+/// rather than the in-flight `Variant` shape).
+///
+/// Failure modes propagate normally: pipeline errors map to 400
+/// (corrupt body sent to the idempotent endpoint, same shape as a
+/// fresh upload with garbage); storage / DB errors map to 500. The
+/// repair pass intentionally doesn't fall back to "return the
+/// partial set silently" — the contract `UploadResponse.variants`
+/// documents is "the variants available for this hash", and
+/// lying-by-omission would let a client cache a half-broken artwork
+/// forever.
+async fn repair_missing_variants(
+    storage: &crate::storage::ArtworkStorage,
+    pool: &sqlx::PgPool,
+    parent_hash: &str,
+    source_bytes: &[u8],
+    existing: Vec<(String, crate::db::artwork::VariantMeta)>,
+) -> Result<Vec<(String, crate::db::artwork::VariantMeta)>, ArtworkError> {
+    let pipeline_variants =
+        artwork_pipeline::generate_variants(source_bytes).map_err(ArtworkError::from_pipeline)?;
+
+    let existing_names: std::collections::HashSet<&str> =
+        existing.iter().map(|(name, _)| name.as_str()).collect();
+
+    for variant in &pipeline_variants {
+        if existing_names.contains(variant.kind.as_str()) {
+            continue;
+        }
+        storage
+            .put(&variant.hash, variant.bytes.clone())
+            .await
+            .map_err(ArtworkError::Storage)?;
+        crate::db::artwork::insert_variant_if_absent(
+            pool,
+            parent_hash,
+            variant.kind.as_str(),
+            &variant.hash,
+            variant.mime,
+            variant.byte_size,
+            variant.width as i32,
+            variant.height as i32,
+        )
+        .await
+        .map_err(ArtworkError::Db)?;
+    }
+
+    // Re-fetch so the response reflects the post-repair state —
+    // anything we just inserted now lands in the result alongside
+    // the rows that survived the partial-write incident.
+    crate::db::artwork::fetch_variants_for_parent(pool, parent_hash)
+        .await
+        .map_err(ArtworkError::Db)
 }
 
 /// Fetch artwork bytes by hash. Public — no JWT, the 64-hex hash

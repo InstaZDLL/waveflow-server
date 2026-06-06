@@ -436,6 +436,82 @@ async fn variant_endpoint_returns_404_when_parent_missing(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn re_upload_self_heals_a_missing_variant(pool: PgPool) {
+    // Simulate a partial-write incident: a previous upload landed
+    // the parent row + parent bytes + the `preview` variant, but
+    // lost the `thumb` insert to a backend / DB hiccup before
+    // responding to its caller. The next upload from any client
+    // re-runs the pipeline for the missing buckets and the response
+    // reflects the now-complete set.
+    let dir = tempfile::tempdir().unwrap();
+    let (base, token) = authed_artwork_app(pool.clone(), dir.path()).await;
+
+    let jpeg = synth_jpeg(800, 600);
+    let body: Value = reqwest::Client::new()
+        .post(format!("{base}/api/v1/artwork"))
+        .bearer_auth(&token)
+        .header("Content-Type", "image/jpeg")
+        .body(jpeg.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let parent_hash = body["hash"].as_str().unwrap().to_string();
+    // Snapshot the full variant set the first upload advertised.
+    let full = body["variants"].as_array().unwrap().clone();
+    assert_eq!(full.len(), 2);
+
+    // Manually amputate one variant — same shape as a partial-write
+    // incident leaving `metadata_artwork_variant` short of a row.
+    sqlx::query("DELETE FROM metadata_artwork_variant WHERE parent_hash = $1 AND variant = $2")
+        .bind(&parent_hash)
+        .bind("thumb")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let half_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM metadata_artwork_variant WHERE parent_hash = $1",
+    )
+    .bind(&parent_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(half_count, 1, "delete should leave only the preview row");
+
+    // Re-upload the same bytes. The handler's idempotent path
+    // detects the partial cache and re-runs the pipeline for the
+    // missing variant only.
+    let body2: Value = reqwest::Client::new()
+        .post(format!("{base}/api/v1/artwork"))
+        .bearer_auth(&token)
+        .header("Content-Type", "image/jpeg")
+        .body(jpeg)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let variants2 = body2["variants"].as_array().unwrap();
+    assert_eq!(variants2.len(), 2, "self-heal must restore the full set");
+
+    // The post-heal table should have both rows back.
+    let full_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM metadata_artwork_variant WHERE parent_hash = $1",
+    )
+    .bind(&parent_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        full_count, 2,
+        "self-heal must re-insert the dropped variant"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn bare_get_resolves_variant_hash_via_fallback(pool: PgPool) {
     // The `UploadResponse.variants[].url` advertises the
     // `/parent/variant` shape, but a client that persisted only the
