@@ -627,6 +627,40 @@ pub mod artwork {
         })
     }
 
+    /// List the parents whose variant cache is incomplete — the
+    /// drive for the background scanner ([`crate::artwork_jobs`]).
+    /// Returns the BLAKE3 hex of each parent whose
+    /// `metadata_artwork_variant` row count is below `expected`,
+    /// oldest first so a long backlog drains in the order the
+    /// uploads originally landed.
+    ///
+    /// The query lives here (not in the scanner module) for the same
+    /// reason every other SQL lives in `db.rs` — handlers + jobs stay
+    /// pure orchestration, all schema knowledge funnels through the
+    /// DB layer.
+    pub async fn list_partial_parents(
+        pool: &PgPool,
+        expected: i64,
+        limit: i64,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT a.hash
+               FROM metadata_artwork a
+          LEFT JOIN (
+                  SELECT parent_hash, COUNT(*) AS variant_count
+                    FROM metadata_artwork_variant
+                   GROUP BY parent_hash
+              ) v ON v.parent_hash = a.hash
+              WHERE COALESCE(v.variant_count, 0) < $1
+              ORDER BY a.created_at ASC
+              LIMIT $2",
+        )
+        .bind(expected)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+
     /// List every variant of a parent. The upload handler returns
     /// these in the response so the client knows what's available
     /// without a second round-trip. Ordered by `variant` for stable

@@ -85,6 +85,13 @@ pub struct Config {
     /// philosophy as streaming — a deploy that doesn't want to ship
     /// the feature just leaves the env unset.
     pub artwork: Option<crate::storage::ArtworkConfig>,
+
+    /// Background scanner that periodically repairs partial variant
+    /// caches (Phase 1.i.1). `Some` when the artwork backend is set
+    /// AND `WAVEFLOW_ARTWORK_SCANNER_DISABLED` is unset/empty;
+    /// `None` skips the spawn at boot. Defaults: 5-minute interval,
+    /// 50 parents per cycle.
+    pub artwork_scanner: Option<crate::artwork_jobs::ArtworkScannerConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -109,6 +116,7 @@ impl std::fmt::Debug for Config {
                 &self.stream_secret.as_ref().map(|_| "<redacted>"),
             )
             .field("artwork", &self.artwork)
+            .field("artwork_scanner", &self.artwork_scanner)
             .finish()
     }
 }
@@ -207,6 +215,47 @@ impl Config {
         // var until it wants to ship the cache.
         let artwork = crate::storage::ArtworkConfig::from_env()?;
 
+        // Background self-heal scanner. Only resolved when the
+        // artwork backend itself is enabled (a scanner with no
+        // storage would have nothing to repair) AND the operator
+        // hasn't explicitly disabled it. Defaults are tuned for a
+        // healthy server — see the constants in `artwork_jobs`.
+        let artwork_scanner = if artwork.is_some() {
+            let disabled = std::env::var("WAVEFLOW_ARTWORK_SCANNER_DISABLED")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .is_some();
+            if disabled {
+                None
+            } else {
+                let interval_secs = std::env::var("WAVEFLOW_ARTWORK_SCANNER_INTERVAL_SECS")
+                    .ok()
+                    .map(|s| s.parse::<u64>())
+                    .transpose()
+                    .map_err(|e| {
+                        anyhow::anyhow!("invalid WAVEFLOW_ARTWORK_SCANNER_INTERVAL_SECS: {e}")
+                    })?
+                    .unwrap_or_else(|| crate::artwork_jobs::DEFAULT_SCAN_INTERVAL.as_secs());
+                // Floor at 1 s — zero would busy-loop the worker.
+                let interval = std::time::Duration::from_secs(interval_secs.max(1));
+                let batch_size = std::env::var("WAVEFLOW_ARTWORK_SCANNER_BATCH_SIZE")
+                    .ok()
+                    .map(|s| s.parse::<usize>())
+                    .transpose()
+                    .map_err(|e| {
+                        anyhow::anyhow!("invalid WAVEFLOW_ARTWORK_SCANNER_BATCH_SIZE: {e}")
+                    })?
+                    .unwrap_or(crate::artwork_jobs::DEFAULT_BATCH_SIZE)
+                    .max(1);
+                Some(crate::artwork_jobs::ArtworkScannerConfig {
+                    interval,
+                    batch_size,
+                })
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,
@@ -218,6 +267,7 @@ impl Config {
             music_root,
             stream_secret,
             artwork,
+            artwork_scanner,
         })
     }
 }
