@@ -182,16 +182,23 @@ async fn upload_artwork(
     // saving a backend round-trip in the common case (the desktop
     // bundles cover bytes with sync ops and would otherwise re-send
     // every cached cover on each sync).
-    if let Some(_existing) = crate::db::artwork::fetch_meta(&state.db, &hash)
+    if let Some(existing) = crate::db::artwork::fetch_meta(&state.db, &hash)
         .await
         .map_err(ArtworkError::Db)?
     {
+        // Echo the stored row, not the incoming request: BLAKE3
+        // collision-resistance means `byte_size` is identical
+        // either way, but `mime` could diverge under a future
+        // canonicalisation (the DTO already advertises this
+        // contract — see `UploadResponse::mime`), and reading
+        // through the row is what makes the documented behaviour
+        // unconditionally true.
         return Ok((
             StatusCode::OK,
             Json(UploadResponse {
                 hash: hash.clone(),
-                byte_size,
-                mime,
+                byte_size: existing.byte_size,
+                mime: existing.mime,
                 url: format!("/api/v1/artwork/{hash}"),
             }),
         )
