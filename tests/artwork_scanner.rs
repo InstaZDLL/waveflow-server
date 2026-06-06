@@ -224,8 +224,9 @@ async fn run_once_skips_parents_with_missing_bytes(pool: PgPool) {
         .expect("missing-bytes failure should be swallowed inside the cycle");
     assert_eq!(repaired, 0, "broken parent contributes 0 to the count");
 
-    // Stamp must have landed.
-    let stamped: Option<chrono::DateTime<chrono::Utc>> =
+    // Stamp must have landed (epoch-millis BIGINT — schema
+    // convention every other timestamp column on this server uses).
+    let stamped: Option<i64> =
         sqlx::query_scalar("SELECT last_repair_failure_at FROM metadata_artwork WHERE hash = $1")
             .bind(&phantom_hash)
             .fetch_one(&pool)
@@ -238,14 +239,10 @@ async fn run_once_skips_parents_with_missing_bytes(pool: PgPool) {
 
     // A second cycle right after the first must NOT pick the row up
     // again — the backoff window keeps it out of the candidate set.
-    let recheck = waveflow_server::db::artwork::list_partial_parents(
-        &pool,
-        2,
-        50,
-        chrono::Utc::now() - chrono::Duration::seconds(3600),
-    )
-    .await
-    .unwrap();
+    let cutoff_ms = chrono::Utc::now().timestamp_millis() - 3_600_000;
+    let recheck = waveflow_server::db::artwork::list_partial_parents(&pool, 2, 50, cutoff_ms)
+        .await
+        .unwrap();
     assert!(
         !recheck.iter().any(|h| h == &phantom_hash),
         "backoff must hide the freshly-failed parent from the next cycle",

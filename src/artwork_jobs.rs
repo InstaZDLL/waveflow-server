@@ -135,14 +135,14 @@ pub async fn run_once(
     storage: &ArtworkStorage,
     batch_size: usize,
 ) -> Result<usize, sqlx::Error> {
-    let backoff_cutoff = chrono::Utc::now()
-        - chrono::Duration::from_std(REPAIR_BACKOFF)
-            .expect("REPAIR_BACKOFF fits in chrono::Duration");
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let backoff_ms = i64::try_from(REPAIR_BACKOFF.as_millis()).expect("REPAIR_BACKOFF fits in i64");
+    let backoff_cutoff_ms = now_ms.saturating_sub(backoff_ms);
     let parents = crate::db::artwork::list_partial_parents(
         pool,
         EXPECTED_VARIANT_COUNT,
         batch_size as i64,
-        backoff_cutoff,
+        backoff_cutoff_ms,
     )
     .await?;
     let mut repaired = 0usize;
@@ -164,7 +164,7 @@ pub async fn run_once(
                 // separate DB hiccup just costs us one more
                 // immediate retry.
                 if let Err(mark_err) =
-                    crate::db::artwork::mark_repair_failure(pool, &parent_hash).await
+                    crate::db::artwork::mark_repair_failure(pool, &parent_hash, now_ms).await
                 {
                     tracing::warn!(
                         parent_hash = %parent_hash,
