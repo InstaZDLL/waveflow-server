@@ -32,7 +32,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Extension, Json,
@@ -80,8 +80,18 @@ pub struct UploadResponse {
 }
 
 pub fn auth_router(state: AppState) -> OpenApiRouter {
+    // Raise the default axum body limit above our 4 MiB cap so the
+    // handler's `body.len() > MAX_UPLOAD_BYTES` check is the
+    // authoritative gatekeeper. Without this, axum 0.8's default
+    // 2 MiB limit short-circuits the request to 413 before the
+    // handler runs — which is technically correct but hides our
+    // "exactly 4 MiB allowed" contract. The +1 KiB of slack lets a
+    // borderline 4 MiB upload reach the handler so the boundary
+    // case lands on our error variant (and the matching test
+    // observes a real, handler-issued 413).
     OpenApiRouter::new()
         .routes(routes!(upload_artwork))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024))
         .with_state(state)
 }
 
