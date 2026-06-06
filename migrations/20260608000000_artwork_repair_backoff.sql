@@ -15,8 +15,14 @@
 -- expires, and the queue keeps draining.
 -- =============================================================================
 
+-- `BIGINT` epoch-millis is the convention every other timestamp
+-- column on this server follows (see `CLAUDE.md` → "epoch-millis
+-- BIGINT for timestamps") — keeps Postgres rows shape-compatible
+-- with the SQLite mirror in waveflow-core so a future repository
+-- trait against `metadata_artwork` doesn't need a per-backend
+-- timestamp shim.
 ALTER TABLE metadata_artwork
-    ADD COLUMN last_repair_failure_at TIMESTAMPTZ;
+    ADD COLUMN last_repair_failure_at BIGINT;
 
 -- Index targets the scanner's query shape: filter on the backoff
 -- predicate + sort by the same column. Postgres ignores NULL rows
