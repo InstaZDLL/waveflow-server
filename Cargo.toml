@@ -135,7 +135,7 @@ base64 = "0.22"
 # the JWT test harness uses under dev-deps; one runtime entry
 # suffices. `Alphanumeric.sample_string` is the URL-safe random
 # generator the share helper calls.
-rand = "0.8"
+rand = "0.10"
 
 # Stream files through axum without buffering the whole body. The
 # range handler in `src/api/stream.rs` wraps a `tokio::fs::File` in
@@ -195,7 +195,7 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 # the JWK Set advertises. All dev-only — production never generates
 # keys, it only consumes the JWKS document.
 rsa = "0.9"
-rand = "0.8"
+rand = "0.10"
 
 # ES256 / P-256 keypair generation for the ECDSA mirror of the RSA
 # harness — same role as `rsa` above, just for the elliptic-curve
