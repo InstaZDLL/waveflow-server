@@ -165,6 +165,18 @@ bytes = "1"
 # a shared file across desktop ↔ server caches.
 blake3 = "1"
 
+# Image decode + resize for the artwork pipeline (Phase 1.h.3).
+# `image` is the Rust ecosystem's de facto image library — pure
+# Rust, no native deps. We disable default features (which pull in
+# every supported codec, including HEIC + AVIF + TIFF + farbfeld +
+# QOI + PNM that we don't accept on the wire anyway) and re-enable
+# only the three formats `api/artwork.rs` actually allows: JPEG
+# (encode + decode), PNG (decode), WebP (decode). Variants are
+# re-encoded as JPEG q85, which gives ~60% smaller files than PNG
+# at visually identical quality for cover art (always opaque) — so
+# we don't need the WebP encoder feature.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+
 [dev-dependencies]
 # Activate `use_pem` for the JWT tests only. The harness in
 # `tests/jwks_harness.rs` calls `EncodingKey::from_rsa_pem(…)` to
