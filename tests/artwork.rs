@@ -194,6 +194,31 @@ async fn upload_rejects_empty_body(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn upload_rejects_oversized_body(pool: PgPool) {
+    // Drive the boundary: 4 MiB + 1 byte. The handler-side
+    // `body.len() > MAX_UPLOAD_BYTES` check is the authoritative
+    // gatekeeper — the auth router widens the axum default body
+    // limit just enough (`MAX_UPLOAD_BYTES + 1024`) for this
+    // borderline payload to actually reach the handler and produce
+    // our own 413, instead of axum's pre-handler 413 which would
+    // pass the test for the wrong reason.
+    let dir = tempfile::tempdir().unwrap();
+    let (base, token) = authed_artwork_app(pool, dir.path()).await;
+
+    let oversized = vec![0u8; 4 * 1024 * 1024 + 1];
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/artwork"))
+        .bearer_auth(&token)
+        .header("Content-Type", "image/jpeg")
+        .body(oversized)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn upload_requires_bearer(pool: PgPool) {
     let dir = tempfile::tempdir().unwrap();
     let (base, _token) = authed_artwork_app(pool, dir.path()).await;
