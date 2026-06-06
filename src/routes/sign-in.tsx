@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
+import { OAuthButtons, OAuthDivider } from '@/components/OAuthButtons'
+import { getEnabledProviders, type EnabledProviders } from '@/server-fns/providers'
 
 interface SignInSearch {
   /**
@@ -57,12 +59,19 @@ export const Route = createFileRoute('/sign-in')({
   validateSearch: (raw: Record<string, unknown>): SignInSearch => ({
     continue: typeof raw.continue === 'string' ? raw.continue : undefined,
   }),
+  // SSR-side fetch of the per-provider availability so the markup
+  // never flashes an OAuth button the server can't honour. The
+  // server-fn reads `process.env` directly so it picks up an env
+  // change without a rebuild — useful for swapping credentials on
+  // a running preview.
+  loader: async (): Promise<EnabledProviders> => getEnabledProviders(),
   component: SignIn,
 })
 
 function SignIn() {
   const navigate = useNavigate()
   const search = Route.useSearch()
+  const enabledProviders = Route.useLoaderData()
   const continueTo = safeContinueTarget(search.continue)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -113,6 +122,12 @@ function SignIn() {
         <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
           Sign in
         </h1>
+        {(enabledProviders.google || enabledProviders.apple) && (
+          <div className="mb-4 flex flex-col gap-2">
+            <OAuthButtons enabled={enabledProviders} callbackURL={continueTo} />
+            <OAuthDivider />
+          </div>
+        )}
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
             Email
