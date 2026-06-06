@@ -28,6 +28,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod middleware;
+pub mod storage;
 pub mod stream_token;
 pub mod sync;
 
@@ -82,6 +83,11 @@ pub struct AppState {
     /// 5 s flusher drains, and the daily compaction task. Cheap to
     /// clone — every inner field is `Arc`-backed.
     pub sync: sync::SyncHub,
+    /// Artwork storage handle (Phase 1.h.1). `Some` when
+    /// `WAVEFLOW_ARTWORK_LOCAL_DIR` is set at boot; `None` disables
+    /// both the upload and the public-read endpoint (they answer
+    /// 503). Cheap to clone — the inner `ObjectStore` is `Arc`-backed.
+    pub artwork: Option<storage::ArtworkStorage>,
 }
 
 /// Per-process streaming context built once at boot. Wraps the HMAC

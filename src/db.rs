@@ -444,3 +444,75 @@ pub mod share {
         Ok(res.rows_affected() > 0)
     }
 }
+
+/// Shared artwork cache helpers (Phase 1.h.1). Reads + writes against
+/// the [`metadata_artwork`] table. The bytes themselves live in
+/// `object_store` at `artwork/<hash>`; this module is the metadata
+/// side of the cache, keeping the SQL out of the HTTP handler so
+/// `api/artwork.rs` stays pure orchestration.
+pub mod artwork {
+    use sqlx::PgPool;
+
+    /// Metadata row as projected by the GET handler. Holds enough
+    /// state to vend the correct Content-Type + Content-Length
+    /// without touching the object store for HEAD-style probes.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ArtworkMeta {
+        pub hash: String,
+        pub mime: String,
+        pub byte_size: i64,
+    }
+
+    /// Insert a metadata row if absent. Returns `true` if the row is
+    /// new (caller still needs to upload the bytes), `false` if a row
+    /// with the same hash already existed (caller can skip the
+    /// upload — the bytes are identical by BLAKE3's collision
+    /// resistance).
+    ///
+    /// Concurrency: two clients uploading the same hash race here,
+    /// `ON CONFLICT DO NOTHING` makes both safe — the second insert
+    /// is a no-op and `rows_affected()` returns 0. The bytes upload
+    /// is idempotent in the storage layer too (same payload → same
+    /// final state), so a "winner" doesn't matter.
+    pub async fn insert_if_absent(
+        pool: &PgPool,
+        hash: &str,
+        mime: &str,
+        byte_size: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "INSERT INTO metadata_artwork (hash, mime, byte_size)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (hash) DO NOTHING",
+        )
+        .bind(hash)
+        .bind(mime)
+        .bind(byte_size)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Lookup metadata by hash. `None` when no row exists — the GET
+    /// handler maps that to 404 without consulting the object store
+    /// (cheaper than a backend HEAD, and "in storage but no row"
+    /// shouldn't happen anyway because [`insert_if_absent`] commits
+    /// after the storage write succeeds).
+    pub async fn fetch_meta(pool: &PgPool, hash: &str) -> Result<Option<ArtworkMeta>, sqlx::Error> {
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT hash, mime, byte_size
+               FROM metadata_artwork
+              WHERE hash = $1",
+        )
+        .bind(hash)
+        .fetch_optional(pool)
+        .await
+        .map(|opt| {
+            opt.map(|(hash, mime, byte_size)| ArtworkMeta {
+                hash,
+                mime,
+                byte_size,
+            })
+        })
+    }
+}
