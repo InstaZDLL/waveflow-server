@@ -445,6 +445,173 @@ pub mod share {
     }
 }
 
+/// `playlist_track` materialisation helpers (Phase 1.j.a). Reads +
+/// writes against the join table populated by the apply pipeline
+/// when desktops emit `entity: "playlist", field: "tracks"` ops.
+/// SQL stays here, the apply handlers + the share preview SELECT
+/// only call into these functions.
+pub mod playlist_track {
+    use sqlx::PgConnection;
+
+    /// One row's projection for the public share preview. `snapshot_*`
+    /// fields carry the displayable values cross-device — rows whose
+    /// `snapshot_title IS NULL` (older desktop emitter pre-1.j.b)
+    /// are excluded by the public SELECT so the preview only ever
+    /// surfaces displayable rows.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct PublicTrackRow {
+        pub title: String,
+        pub artist: Option<String>,
+        pub duration_ms: i64,
+    }
+
+    /// Insert / upsert a batch of `(track_id, snapshot?)` pairs into a
+    /// playlist. Position assignment is "append at the end" — we
+    /// SELECT the current MAX(position) once and add 1 per inserted
+    /// row, mirroring the desktop `append_tracks_conn` behaviour.
+    /// `ON CONFLICT (playlist_id, track_id) DO UPDATE` lets a
+    /// re-emit of the same op carry an updated snapshot without
+    /// disturbing the position (the desktop never reorders + inserts
+    /// in the same op, so position writes only come from the
+    /// `set` / reorder path).
+    pub async fn append_tracks(
+        conn: &mut PgConnection,
+        playlist_id: i64,
+        rows: &[(i64, Option<TrackSnapshot>)],
+        now_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        // Read MAX(position) once so we don't pay a round-trip per
+        // row. NULL → -1 so the first inserted lands at position 0.
+        let max_position: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(position) FROM playlist_track WHERE playlist_id = $1")
+                .bind(playlist_id)
+                .fetch_one(&mut *conn)
+                .await?;
+        let mut next_position = max_position.unwrap_or(-1).saturating_add(1);
+
+        for (track_id, snapshot) in rows {
+            let (title, artist, duration_ms) = match snapshot {
+                Some(s) => (Some(s.title.clone()), s.artist.clone(), Some(s.duration_ms)),
+                None => (None, None, None),
+            };
+            sqlx::query(
+                "INSERT INTO playlist_track
+                      (playlist_id, track_id, position, added_at,
+                       snapshot_title, snapshot_artist, snapshot_duration_ms)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT (playlist_id, track_id) DO UPDATE
+                      SET snapshot_title = COALESCE(EXCLUDED.snapshot_title, playlist_track.snapshot_title),
+                          snapshot_artist = COALESCE(EXCLUDED.snapshot_artist, playlist_track.snapshot_artist),
+                          snapshot_duration_ms = COALESCE(EXCLUDED.snapshot_duration_ms, playlist_track.snapshot_duration_ms)",
+            )
+            .bind(playlist_id)
+            .bind(track_id)
+            .bind(next_position)
+            .bind(now_ms)
+            .bind(title)
+            .bind(artist)
+            .bind(duration_ms)
+            .execute(&mut *conn)
+            .await?;
+            next_position = next_position.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    /// Drop tracks from a playlist. The desktop's outbound op is
+    /// "DELETE the set of these track_ids", same shape we model
+    /// here. Unknown ids are silently filtered by the WHERE so a
+    /// replay against a divergent server cache is a no-op rather
+    /// than an error.
+    pub async fn remove_tracks(
+        conn: &mut PgConnection,
+        playlist_id: i64,
+        track_ids: &[i64],
+    ) -> Result<u64, sqlx::Error> {
+        if track_ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query(
+            "DELETE FROM playlist_track
+              WHERE playlist_id = $1 AND track_id = ANY($2)",
+        )
+        .bind(playlist_id)
+        .bind(track_ids)
+        .execute(&mut *conn)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Reorder a single track. The desktop emits one of these per
+    /// drag-and-drop; bulk reorders fan out into N separate ops.
+    /// We UPDATE the target's position; the implicit gap left by
+    /// the old position resolves the next time the desktop replays
+    /// a full snapshot — the public preview reads ORDER BY position
+    /// so gaps just produce the same visible ordering.
+    pub async fn set_position(
+        conn: &mut PgConnection,
+        playlist_id: i64,
+        track_id: i64,
+        new_position: i32,
+    ) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE playlist_track
+                SET position = $3
+              WHERE playlist_id = $1 AND track_id = $2",
+        )
+        .bind(playlist_id)
+        .bind(track_id)
+        .bind(new_position)
+        .execute(&mut *conn)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Snapshot accepted from the `payload.snapshots` map. Title is
+    /// the only required field; artist + duration are present in
+    /// the common case but tolerated absent so a desktop with a
+    /// partial tag library still ships useful previews.
+    #[derive(Debug, Clone)]
+    pub struct TrackSnapshot {
+        pub title: String,
+        pub artist: Option<String>,
+        pub duration_ms: i64,
+    }
+
+    /// Public share preview: list the tracks belonging to a
+    /// playlist, in position order, filtered to rows with a non-
+    /// NULL snapshot title (the only ones we can display in the
+    /// public preview). Desktops still on the pre-1.j.b wire emit
+    /// without snapshots; their rows stay invisible until they
+    /// re-sync on a newer client.
+    pub async fn fetch_for_share(
+        pool: &sqlx::PgPool,
+        playlist_id: i64,
+    ) -> Result<Vec<PublicTrackRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, i64)>(
+            "SELECT snapshot_title, snapshot_artist, COALESCE(snapshot_duration_ms, 0)
+               FROM playlist_track
+              WHERE playlist_id = $1 AND snapshot_title IS NOT NULL
+              ORDER BY position ASC",
+        )
+        .bind(playlist_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(title, artist, duration_ms)| PublicTrackRow {
+                title,
+                artist,
+                duration_ms,
+            })
+            .collect())
+    }
+}
+
 /// Shared artwork cache helpers (Phase 1.h.1). Reads + writes against
 /// the [`metadata_artwork`] table. The bytes themselves live in
 /// `object_store` at `artwork/<hash>`; this module is the metadata
