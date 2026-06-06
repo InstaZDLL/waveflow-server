@@ -93,6 +93,17 @@ curl -X POST http://localhost:3000/api/auth/sign-in/email \
     -d '{"email":"daisy@example.com","password":"correct-horse-battery"}'
 ```
 
+## Repository layout
+
+This repo is a bun workspace. The web app lives at the root (`src/`); shared, framework-agnostic primitives live under `packages/*` so the web app and any future web surface (community-mirror UI, embed widget) consume them as `@waveflow/*` workspace packages.
+
+| Path                      | Package                   | Purpose                                                                                                                                                                                                                                                |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/`                    | `waveflow-web`            | TanStack Start app — routes, server-fns, components, styles.                                                                                                                                                                                           |
+| `packages/design-tokens/` | `@waveflow/design-tokens` | OKLCH accent palettes + 14 theme presets + `applyTheme` helper. Ported from the desktop's [`src/lib/themes.ts`](https://github.com/InstaZDLL/WaveFlow/blob/main/src/lib/themes.ts) so a Lavender preset on either side tints to the exact same violet. |
+
+Adding a package: `mkdir packages/<name>`, drop in a `package.json` with `"name": "@waveflow/<name>"`, declare it as a dependency from the root with `"@waveflow/<name>": "workspace:*"`, and rerun `bun install`.
+
 ## Deploying
 
 The Nitro build produces a self-contained Node server in `.output/`:
