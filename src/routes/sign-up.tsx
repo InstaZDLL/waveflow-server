@@ -1,8 +1,13 @@
 import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
+import { OAuthButtons, OAuthDivider } from '@/components/OAuthButtons'
+import { getEnabledProviders, type EnabledProviders } from '@/server-fns/providers'
 
 export const Route = createFileRoute('/sign-up')({
+  // Same SSR loader as sign-in so the OAuth buttons land on the
+  // first paint without a client-side roundtrip.
+  loader: async (): Promise<EnabledProviders> => getEnabledProviders(),
   component: SignUp,
 })
 
@@ -14,6 +19,10 @@ const MAX_PASSWORD = 128
 // runtime.
 export function SignUp() {
   const navigate = useNavigate()
+  // `useLoaderData` returns the route's loader-data type when called
+  // inside the component; same provider availability we render
+  // OAuth buttons against on the sign-in side.
+  const enabledProviders = Route.useLoaderData()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -74,6 +83,12 @@ export function SignUp() {
         <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
           Sign up
         </h1>
+        {(enabledProviders.google || enabledProviders.apple) && (
+          <div className="mb-4 flex flex-col gap-2">
+            <OAuthButtons enabled={enabledProviders} callbackURL="/" />
+            <OAuthDivider />
+          </div>
+        )}
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
             Display name

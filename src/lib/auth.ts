@@ -32,6 +32,33 @@ if (!process.env.BETTER_AUTH_URL) {
   )
 }
 
+// Social providers (OAuth) — opt-in per provider via env vars.
+// A provider whose credentials are absent stays unconfigured: the
+// sign-in / sign-up routes hide its button (see
+// `getEnabledProviders` in `server-fns/providers.ts`) and Better
+// Auth never advertises the endpoint, so a crafted POST against
+// `/api/auth/sign-in/social` with `provider: 'google'` 404s
+// cleanly instead of throwing midway through the OAuth dance.
+//
+// Apple's `clientSecret` is a JWT signed with the Apple Developer
+// private key (Better Auth doesn't sign it for us); operators
+// generate the JWT out-of-band with `openssl` + the team's
+// AuthKey p8 and set the result in `APPLE_CLIENT_SECRET`. See
+// `.env.example` for the exact recipe.
+const socialProviders: Record<string, { clientId: string; clientSecret: string }> = {}
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  socialProviders.google = {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  }
+}
+if (process.env.APPLE_CLIENT_ID && process.env.APPLE_CLIENT_SECRET) {
+  socialProviders.apple = {
+    clientId: process.env.APPLE_CLIENT_ID,
+    clientSecret: process.env.APPLE_CLIENT_SECRET,
+  }
+}
+
 export const auth = betterAuth({
   database: {
     db,
@@ -39,6 +66,7 @@ export const auth = betterAuth({
   },
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
+  socialProviders,
   emailAndPassword: {
     enabled: true,
     // Email verification stays off for the 1.c.2 transition window.

@@ -22,8 +22,17 @@ vi.mock('@/lib/auth-client', () => ({
   },
 }))
 
+// `Route.useLoaderData` is consumed by the component since the
+// OAuth providers flag landed — extend the mocked file route so it
+// returns a stub instead of `undefined.useLoaderData`. Email-only
+// keeps the OAuth section out of the rendered tree, which is what
+// the existing assertions on labels + the single "Sign up" button
+// expect.
 vi.mock('@tanstack/react-router', () => ({
-  createFileRoute: () => (config: unknown) => config,
+  createFileRoute: () => (config: unknown) => ({
+    ...(config as Record<string, unknown>),
+    useLoaderData: () => ({ email: true, google: false, apple: false }),
+  }),
   useNavigate: () => navigate,
   Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
