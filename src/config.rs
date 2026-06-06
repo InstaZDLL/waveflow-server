@@ -246,7 +246,15 @@ impl Config {
                         anyhow::anyhow!("invalid WAVEFLOW_ARTWORK_SCANNER_BATCH_SIZE: {e}")
                     })?
                     .unwrap_or(crate::artwork_jobs::DEFAULT_BATCH_SIZE)
-                    .max(1);
+                    .max(1)
+                    // The scanner ultimately passes this through to SQL
+                    // `LIMIT $`, which sqlx binds as `i64`. On a 64-bit
+                    // target `usize::MAX > i64::MAX`, so a hostile env
+                    // value above `i64::MAX` would wrap to a negative
+                    // bind and either error inside Postgres or skew
+                    // the query semantics. Clamp here at boot so the
+                    // hot path stays a plain `as i64`.
+                    .min(i64::MAX as usize);
                 Some(crate::artwork_jobs::ArtworkScannerConfig {
                     interval,
                     batch_size,
