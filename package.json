@@ -14,6 +14,9 @@
   "imports": {
     "#/*": "./src/*"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite dev --port 3000",
     "build": "vite build",
