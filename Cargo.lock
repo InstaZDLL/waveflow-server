@@ -3848,6 +3848,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "hmac 0.12.1",
+ "image",
  "jsonwebtoken",
  "object_store",
  "p256",
