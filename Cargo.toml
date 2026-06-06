@@ -144,12 +144,14 @@ tokio-util = { version = "0.7", features = ["io"] }
 
 # Storage abstraction for the artwork cache (Phase 1.h). The Apache
 # `object_store` crate exposes a single `ObjectStore` trait backed by
-# LocalFileSystem (default), S3, Azure Blob, GCS, in-memory. We start
-# with the LocalFileSystem backend in 1.h.1 and unlock S3 in 1.h.2 by
-# enabling the `aws` feature — same trait, no caller change. Default
-# features are inert (just `LocalFileSystem` + `InMemory`), so no
-# extra deps land in the binary until S3 is opted into.
-object_store = "0.12"
+# LocalFileSystem (default), S3, Azure Blob, GCS, in-memory. 1.h.1
+# shipped the LocalFileSystem backend; 1.h.2 unlocks S3 via the
+# `aws` feature — same trait, same `put` / `get` / `head`, so the
+# caller side never branches on backend. AWS, MinIO, Cloudflare R2,
+# Backblaze B2 are all S3-API-compatible and reachable through the
+# same builder (an `WAVEFLOW_ARTWORK_S3_ENDPOINT` override is the
+# only knob a non-AWS provider needs).
+object_store = { version = "0.12", features = ["aws"] }
 
 # Owned byte buffers for the artwork upload path. axum's `Bytes`
 # extractor reads the request body into one shot; `object_store`'s
