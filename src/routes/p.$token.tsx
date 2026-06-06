@@ -4,6 +4,7 @@ import {
   type PublicPlaylist,
   type PublicPlaylistResult,
 } from '@/server-fns/share'
+import { formatDuration, formatTrackCountAndRuntime, getCanonicalOrigin } from '@/lib/share-format'
 
 /**
  * Public preview of a shared playlist. Phase 1.g.2 of the WaveFlow
@@ -35,7 +36,7 @@ export const Route = createFileRoute('/p/$token')({
     return getPublicPlaylist({ data: params.token })
   },
   notFoundComponent: NotFoundPanel,
-  head: ({ loaderData }) => {
+  head: ({ loaderData, params }) => {
     if (!loaderData) {
       // Loader threw `notFound()` — `loaderData` is absent and
       // the router will render `notFoundComponent`. Mirror that
@@ -54,11 +55,24 @@ export const Route = createFileRoute('/p/$token')({
     }
     const { playlist } = loaderData
     const title = `${playlist.name} · WaveFlow`
+    // Same `X tracks · 32 min` helper the in-page header renders —
+    // social previews stay consistent with the actual rendered page,
+    // so a Discord embed reads the same way as the open tab.
     const description =
       playlist.description ??
-      `A shared playlist on WaveFlow${
-        playlist.tracks.length > 0 ? ` — ${playlist.tracks.length} tracks` : ''
-      }.`
+      (playlist.tracks.length > 0
+        ? `A shared playlist on WaveFlow — ${formatTrackCountAndRuntime(playlist.tracks)}.`
+        : 'A shared playlist on WaveFlow.')
+    // Canonical share URL (issue #21). Built from the deployment's
+    // `BETTER_AUTH_URL` (already the source of truth for the web
+    // origin — set both in dev .env and in prod / preview deploys)
+    // with a `waveflow.app` fallback so a misconfigured deploy
+    // still hands social scrapers SOMETHING resolvable. `head()`
+    // runs SSR-side at the moment a crawler hits the page, so
+    // `process.env` is available; the value is read inline rather
+    // than captured in a const because `head()` re-runs per request
+    // and a closure-captured value would freeze on the first SSR.
+    const canonicalUrl = `${getCanonicalOrigin()}/p/${params.token}`
     return {
       meta: [
         { title },
@@ -68,6 +82,11 @@ export const Route = createFileRoute('/p/$token')({
         { property: 'og:title', content: playlist.name },
         { property: 'og:description', content: description },
         { property: 'og:site_name', content: 'WaveFlow' },
+        // og:url pins the canonical share URL so scrapers stop
+        // confusing the share path with whatever referrer they
+        // landed on. Mirror on twitter:url for the Twitter / X
+        // card surface.
+        { property: 'og:url', content: canonicalUrl },
         // Twitter / X cards. `summary_large_image` would also need a
         // hosted cover URL — wired in once the server-side artwork
         // pipeline is live (cover_hash is the BLAKE3 reference,
@@ -75,6 +94,12 @@ export const Route = createFileRoute('/p/$token')({
         { name: 'twitter:card', content: 'summary' },
         { name: 'twitter:title', content: playlist.name },
         { name: 'twitter:description', content: description },
+        { name: 'twitter:url', content: canonicalUrl },
+      ],
+      links: [
+        // Canonical link tag — the HTML-standard equivalent of
+        // og:url, picked up by Google's index + Facebook's debugger.
+        { rel: 'canonical', href: canonicalUrl },
       ],
     }
   },
@@ -133,6 +158,7 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
   // surrogate / replacement character.
   const initial = Array.from(playlist.name.trim())[0]?.toUpperCase() ?? '♪'
   const tileClass = colorTileClass(playlist.color_id)
+  const hasTracks = playlist.tracks.length > 0
   return (
     <main className="page-wrap px-4 py-12">
       <section className="island-shell rounded-2xl p-6 sm:p-8">
@@ -148,24 +174,58 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
           {playlist.name}
         </h1>
         {playlist.description && (
-          <p className="mb-6 text-base text-[var(--sea-ink-soft)]">{playlist.description}</p>
+          <p className="mb-4 text-base text-[var(--sea-ink-soft)]">{playlist.description}</p>
+        )}
+        {hasTracks && (
+          <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
+            {formatTrackCountAndRuntime(playlist.tracks)}
+          </p>
         )}
 
-        {playlist.tracks.length === 0 ? (
+        {!hasTracks ? (
           <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
             Track list preview is not available yet. The playlist owner can still see the full
             content in WaveFlow Desktop.
           </p>
         ) : (
-          <ol className="mb-6 list-decimal space-y-1 pl-6 text-sm text-[var(--sea-ink)]">
-            {playlist.tracks.map((track, idx) => (
-              <li key={idx}>
-                {track.title}
-                {track.artist && (
-                  <span className="text-[var(--sea-ink-soft)]"> — {track.artist}</span>
-                )}
-              </li>
-            ))}
+          // Ordered list styled with flex rows + a fixed-width
+          // position column + `tabular-nums` on the duration cell, so
+          // the duration column aligns across rows the way a `<table>`
+          // would — without losing the semantic "ordered sequence"
+          // affordance that screen readers announce on `<ol>` /
+          // `<li>`. `tabular-nums` keeps `5:21` and `12:03` the same
+          // pixel width on a font that defaults to proportional
+          // digits, so the right-aligned column doesn't jitter as the
+          // eye scans down. The visible position number lives in its
+          // own `<span>` (rather than relying on the browser's
+          // automatic `<ol>` markers) because flex layout lets us pin
+          // it to a fixed `w-6` cell instead of inheriting the marker
+          // box's variable width.
+          <ol
+            aria-label="Tracks in this playlist"
+            className="mb-6 divide-y divide-[var(--sea-ink-soft)]/15 text-sm"
+          >
+            {playlist.tracks.map((track, idx) => {
+              const duration = formatDuration(track.duration_ms)
+              return (
+                <li key={idx} className="flex items-baseline gap-3 py-2 text-[var(--sea-ink)]">
+                  <span className="w-6 shrink-0 text-right tabular-nums text-[var(--sea-ink-soft)]">
+                    {idx + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {track.title}
+                    {track.artist && (
+                      <span className="text-[var(--sea-ink-soft)]"> — {track.artist}</span>
+                    )}
+                  </span>
+                  {duration && (
+                    <span className="shrink-0 tabular-nums text-[var(--sea-ink-soft)]">
+                      {duration}
+                    </span>
+                  )}
+                </li>
+              )
+            })}
           </ol>
         )}
 

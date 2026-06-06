@@ -23,10 +23,11 @@ export interface PublicTrack {
 /**
  * Public preview of a shared playlist. Mirrors the server's
  * `PublicPlaylistResponse` — name + description + cover + brand
- * tokens + timestamps + the (currently always empty) tracks list.
- * Notably absent: `profile_id` and any other tenant-identifying
- * fields. Same DTO drives the `<meta>` tag rendering on
- * `/p/$token`.
+ * tokens + timestamps + the tracks list (populated by Phase 1.j
+ * desktop emitters; older clients leave it empty and the route
+ * renders the "no preview yet" fallback). Notably absent:
+ * `profile_id` and any other tenant-identifying fields. Same DTO
+ * drives the `<meta>` tag rendering on `/p/$token`.
  */
 export interface PublicPlaylist {
   id: number
