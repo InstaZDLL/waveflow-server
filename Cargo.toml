@@ -123,7 +123,7 @@ thiserror = "2"
 # vends a short-lived URL signed with `WAVEFLOW_STREAM_SECRET` and
 # the stream endpoint verifies the signature instead of going through
 # the JWT middleware.
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 
 # Promote `base64` from dev-deps to runtime — the signed-URL token

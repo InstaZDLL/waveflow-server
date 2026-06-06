@@ -3847,7 +3847,7 @@ dependencies = [
  "dashmap",
  "dotenvy",
  "futures-util",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "image",
  "jsonwebtoken",
  "object_store",
