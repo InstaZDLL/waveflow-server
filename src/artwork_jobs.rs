@@ -51,6 +51,15 @@ pub const DEFAULT_SCAN_INTERVAL: Duration = Duration::from_secs(300);
 /// pool — the next tick picks up where this one left off.
 pub const DEFAULT_BATCH_SIZE: usize = 50;
 
+/// How long a parent is excluded from the scan after a failed
+/// repair. Without this cooldown an irrecoverable parent (e.g. one
+/// whose source bytes were lost from object_store) would dominate
+/// every cycle's batch and starve recoverable parents behind it.
+/// One hour gives a transient backend issue plenty of time to
+/// resolve while still letting permanently-broken rows be retried
+/// often enough that a manual fix takes effect quickly.
+pub const REPAIR_BACKOFF: Duration = Duration::from_secs(3600);
+
 /// Knobs loaded from env at boot. Mirrors the `Config::from_env`
 /// shape — every tunable funnels through here, no `std::env` reads
 /// in the scanner's hot loop.
@@ -126,9 +135,16 @@ pub async fn run_once(
     storage: &ArtworkStorage,
     batch_size: usize,
 ) -> Result<usize, sqlx::Error> {
-    let parents =
-        crate::db::artwork::list_partial_parents(pool, EXPECTED_VARIANT_COUNT, batch_size as i64)
-            .await?;
+    let backoff_cutoff = chrono::Utc::now()
+        - chrono::Duration::from_std(REPAIR_BACKOFF)
+            .expect("REPAIR_BACKOFF fits in chrono::Duration");
+    let parents = crate::db::artwork::list_partial_parents(
+        pool,
+        EXPECTED_VARIANT_COUNT,
+        batch_size as i64,
+        backoff_cutoff,
+    )
+    .await?;
     let mut repaired = 0usize;
     for parent_hash in parents {
         match repair_one(pool, storage, &parent_hash).await {
@@ -139,6 +155,23 @@ pub async fn run_once(
                     error = %err,
                     "artwork scanner: parent repair failed",
                 );
+                // Stamp the failure timestamp so the next cycle
+                // skips this row until the backoff expires. A
+                // permanently broken parent stops dominating the
+                // queue; transient failures still get a retry on the
+                // next scan after `REPAIR_BACKOFF`. The mark failure
+                // itself is best-effort — losing the UPDATE to a
+                // separate DB hiccup just costs us one more
+                // immediate retry.
+                if let Err(mark_err) =
+                    crate::db::artwork::mark_repair_failure(pool, &parent_hash).await
+                {
+                    tracing::warn!(
+                        parent_hash = %parent_hash,
+                        error = %mark_err,
+                        "artwork scanner: failed to stamp repair failure",
+                    );
+                }
             }
         }
     }
