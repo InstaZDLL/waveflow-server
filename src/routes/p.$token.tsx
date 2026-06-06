@@ -167,14 +167,19 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
             content in WaveFlow Desktop.
           </p>
         ) : (
-          // Table rather than `<ol>` so the duration column aligns
-          // across rows. `tabular-nums` keeps `5:21` and `12:03` the
-          // same pixel width so the right-aligned column doesn't
-          // jitter as the eye scans down. Position numbers stay
-          // semantic via the explicit `value` column rather than the
-          // browser's auto-numbered `<ol>` because the visible
-          // column index is the actual row position and screen
-          // readers announce it the same way.
+          // Ordered list styled with flex rows + a fixed-width
+          // position column + `tabular-nums` on the duration cell, so
+          // the duration column aligns across rows the way a `<table>`
+          // would — without losing the semantic "ordered sequence"
+          // affordance that screen readers announce on `<ol>` /
+          // `<li>`. `tabular-nums` keeps `5:21` and `12:03` the same
+          // pixel width on a font that defaults to proportional
+          // digits, so the right-aligned column doesn't jitter as the
+          // eye scans down. The visible position number lives in its
+          // own `<span>` (rather than relying on the browser's
+          // automatic `<ol>` markers) because flex layout lets us pin
+          // it to a fixed `w-6` cell instead of inheriting the marker
+          // box's variable width.
           <ol
             aria-label="Tracks in this playlist"
             className="mb-6 divide-y divide-[var(--sea-ink-soft)]/15 text-sm"
