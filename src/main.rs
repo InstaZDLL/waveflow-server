@@ -77,18 +77,26 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Artwork storage — Some when WAVEFLOW_ARTWORK_LOCAL_DIR is set,
+    // Artwork storage — Some when the artwork backend is configured
+    // (`WAVEFLOW_ARTWORK_LOCAL_DIR` for the LocalFileSystem path or
+    // `WAVEFLOW_ARTWORK_S3_BUCKET` + creds for the S3 family).
     // None disables both `/api/v1/artwork/*` routes. The local
     // backend creates the root directory on the fly so a fresh
-    // container only needs the env set, not a pre-existing dir.
+    // container only needs the env set, not a pre-existing dir; the
+    // S3 backend defers credential validation to first use, so a
+    // bad key / bucket surfaces as 500 on the first call rather
+    // than blocking boot.
     let artwork_storage = match config.artwork.as_ref() {
-        Some(cfg) => {
-            let storage = ArtworkStorage::local(&cfg.local_dir)?;
-            info!(local_dir = %cfg.local_dir.display(), "artwork storage enabled (local backend)");
+        Some(backend) => {
+            let storage = ArtworkStorage::from_backend(backend)?;
+            info!(backend = ?backend, "artwork storage enabled");
             Some(storage)
         }
         None => {
-            info!("artwork storage disabled (WAVEFLOW_ARTWORK_LOCAL_DIR unset)");
+            info!(
+                "artwork storage disabled (set WAVEFLOW_ARTWORK_LOCAL_DIR or \
+                 WAVEFLOW_ARTWORK_S3_BUCKET to enable)"
+            );
             None
         }
     };
