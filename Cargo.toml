@@ -142,6 +142,27 @@ rand = "0.8"
 # `ReaderStream` and returns it as an axum response body.
 tokio-util = { version = "0.7", features = ["io"] }
 
+# Storage abstraction for the artwork cache (Phase 1.h). The Apache
+# `object_store` crate exposes a single `ObjectStore` trait backed by
+# LocalFileSystem (default), S3, Azure Blob, GCS, in-memory. We start
+# with the LocalFileSystem backend in 1.h.1 and unlock S3 in 1.h.2 by
+# enabling the `aws` feature — same trait, no caller change. Default
+# features are inert (just `LocalFileSystem` + `InMemory`), so no
+# extra deps land in the binary until S3 is opted into.
+object_store = "0.12"
+
+# Owned byte buffers for the artwork upload path. axum's `Bytes`
+# extractor reads the request body into one shot; `object_store`'s
+# `PutPayload` accepts `Bytes` directly. Already transitive via axum
+# + reqwest; expliciting it here makes the surface area visible to
+# anyone reading the manifest.
+bytes = "1"
+
+# BLAKE3 hashing of uploaded artwork bytes. Same crate the desktop
+# uses to fingerprint cover/picture downloads, so a shared hash means
+# a shared file across desktop ↔ server caches.
+blake3 = "1"
+
 [dev-dependencies]
 # Activate `use_pem` for the JWT tests only. The harness in
 # `tests/jwks_harness.rs` calls `EncodingKey::from_rsa_pem(…)` to
