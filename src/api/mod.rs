@@ -29,6 +29,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::{middleware as auth_middleware, AppState};
 
+mod artwork;
 mod health;
 mod libraries;
 mod playlists;
@@ -64,11 +65,18 @@ pub fn router(state: AppState) -> OpenApiRouter {
     // gate, the token IS the auth.
     let share_public_router = share::public_router(state.clone());
     // Mint stays JWT-authed (verifies tenant ownership before signing).
-    let stream_mint_router = stream::auth_router(state.clone()).layer(auth_layer);
+    let stream_mint_router = stream::auth_router(state.clone()).layer(auth_layer.clone());
     // The stream endpoint itself is HMAC-authed by the token in the
     // URL — mounting it OUTSIDE the JWT layer is what lets a browser
     // hit it from `<audio src>` without a Bearer header.
     let stream_public_router = stream::public_router(state.clone());
+
+    // Artwork — upload stays JWT-authed (any logged-in client can
+    // contribute to the shared cache); public read is hash-gated
+    // (the 64-hex BLAKE3 hash IS the credential, same model as the
+    // share token).
+    let artwork_auth_router = artwork::auth_router(state.clone()).layer(auth_layer);
+    let artwork_public_router = artwork::public_router(state.clone());
 
     OpenApiRouter::new()
         // Probes — no auth, no gate.
@@ -83,4 +91,6 @@ pub fn router(state: AppState) -> OpenApiRouter {
         .merge(share_public_router)
         .merge(stream_mint_router)
         .merge(stream_public_router)
+        .merge(artwork_auth_router)
+        .merge(artwork_public_router)
 }

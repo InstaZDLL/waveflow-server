@@ -78,6 +78,13 @@ pub struct Config {
     /// endpoint returns 503). 32 random bytes (`openssl rand -base64
     /// 32`) is the recommended size.
     pub stream_secret: Option<Vec<u8>>,
+
+    /// Artwork storage configuration. `Some` when
+    /// `WAVEFLOW_ARTWORK_LOCAL_DIR` is set at boot; `None` disables
+    /// the artwork endpoints (they answer 503). Same opt-in
+    /// philosophy as streaming — a deploy that doesn't want to ship
+    /// the feature just leaves the env unset.
+    pub artwork: Option<crate::storage::ArtworkConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -101,6 +108,7 @@ impl std::fmt::Debug for Config {
                 "stream_secret",
                 &self.stream_secret.as_ref().map(|_| "<redacted>"),
             )
+            .field("artwork", &self.artwork)
             .finish()
     }
 }
@@ -193,6 +201,12 @@ impl Config {
             }
         }
 
+        // Artwork storage — opt-in (same shape as streaming). The
+        // `from_env` helper returns `Ok(None)` when the feature is
+        // unconfigured so a fresh deploy doesn't have to set the
+        // var until it wants to ship the cache.
+        let artwork = crate::storage::ArtworkConfig::from_env()?;
+
         Ok(Self {
             bind_addr,
             request_timeout_secs,
@@ -203,6 +217,7 @@ impl Config {
             jwt_audience,
             music_root,
             stream_secret,
+            artwork,
         })
     }
 }
