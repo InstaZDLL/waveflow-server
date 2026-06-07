@@ -1,0 +1,38 @@
+{
+  "name": "@waveflow/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WaveFlow design tokens — OKLCH accent palettes, 14 theme presets, surface tokens. Shared between waveflow-web and any future web surface (community-mirror UI, embed widget). Ports the desktop's `src/lib/themes.ts` so a swap on either side stays visually consistent.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./palettes": {
+      "types": "./src/palettes.ts",
+      "default": "./src/palettes.ts"
+    },
+    "./themes": {
+      "types": "./src/themes.ts",
+      "default": "./src/themes.ts"
+    },
+    "./apply": {
+      "types": "./src/apply.ts",
+      "default": "./src/apply.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.5"
+  }
+}
