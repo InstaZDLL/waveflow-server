@@ -55,6 +55,59 @@ export interface GetPlaylistParams {
   playlistId: number
 }
 
+export interface CreatePlaylistParams {
+  profileId: number
+  name: string
+  description?: string
+  color_id?: string
+  icon_id?: string
+}
+
+/**
+ * Create a custom playlist under `profileId`. The server trims +
+ * validates the name (empty / whitespace-only after trim → 400).
+ * `color_id` / `icon_id` fall back to the server-side defaults
+ * (`violet` / `music`) when omitted. Smart playlists aren't
+ * writable through this route — the server hardcodes `is_smart=0`
+ * on insert.
+ */
+export const createPlaylist = createServerFn({ method: 'POST' })
+  .inputValidator((value: unknown): CreatePlaylistParams => {
+    const raw = value as Partial<CreatePlaylistParams> | undefined
+    const profileId = asPathId(raw?.profileId, 'profileId')
+    const name = typeof raw?.name === 'string' ? raw.name.trim() : ''
+    if (!name) throw new Error('Name is required.')
+    if (name.length > 200) throw new Error('Name must be 200 characters or fewer.')
+    // Description gets the same defensive symmetry as name —
+    // client-side dialog gates at 1000 chars, but a future caller
+    // (another server-fn consumer, a hand-rolled RPC call) would
+    // otherwise only learn the cap from waveflow-server's 400.
+    const description = typeof raw?.description === 'string' ? raw.description.trim() : undefined
+    if (description !== undefined && description.length > 1000) {
+      throw new Error('Description must be 1000 characters or fewer.')
+    }
+    // The remaining optional fields pass through as-is so the
+    // server's defaults / validation own the contract.
+    return {
+      profileId,
+      name,
+      ...(description ? { description } : {}),
+      ...(typeof raw?.color_id === 'string' ? { color_id: raw.color_id } : {}),
+      ...(typeof raw?.icon_id === 'string' ? { icon_id: raw.icon_id } : {}),
+    }
+  })
+  .handler(async ({ data }) =>
+    withSafeErrors('createPlaylist', async () => {
+      const token = await mintToken()
+      const { profileId, ...body } = data
+      return waveflowFetch<Playlist>(`/api/v1/profiles/${profileId}/playlists`, {
+        method: 'POST',
+        token,
+        body,
+      })
+    }),
+  )
+
 /**
  * Fetch a single playlist by id. 404s on a foreign / nonexistent
  * id (surfaced as "Not found." via the error envelope).
