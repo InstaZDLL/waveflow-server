@@ -584,3 +584,330 @@ async fn profile_delete_cascades_to_playlists(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------
+// Phase 1.j.c — owner-facing `/tracks` read (Sprint 4.c.4)
+// ---------------------------------------------------------------
+//
+// `playlist_track` is populated by the apply pipeline today; tests
+// here seed the rows directly via the harness pool so the assertion
+// surface stays on the owner endpoint's contract (ownership chain +
+// ordering + nullable snapshot pass-through) instead of leaking the
+// apply pipeline's own behaviour into every assertion.
+
+/// Direct INSERT into `playlist_track` — bypasses the apply pipeline
+/// because these tests target the owner endpoint, not the sync drain.
+/// `added_at` is a real epoch-millis value so the response field
+/// can be asserted on (a hard-coded `0` would mask a future
+/// projection drift where the column order in `fetch_for_owner`'s
+/// SELECT gets reshuffled).
+async fn seed_playlist_track(
+    pool: &PgPool,
+    playlist_id: i64,
+    track_id: i64,
+    position: i32,
+    added_at: i64,
+    snapshot: Option<(&str, Option<&str>, Option<i64>)>,
+) {
+    let (title, artist, duration_ms) = match snapshot {
+        Some((t, a, d)) => (Some(t.to_string()), a.map(|s| s.to_string()), d),
+        None => (None, None, None),
+    };
+    sqlx::query(
+        "INSERT INTO playlist_track
+              (playlist_id, track_id, position, added_at,
+               snapshot_title, snapshot_artist, snapshot_duration_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(playlist_id)
+    .bind(track_id)
+    .bind(position)
+    .bind(added_at)
+    .bind(title)
+    .bind(artist)
+    .bind(duration_ms)
+    .execute(pool)
+    .await
+    .expect("seed playlist_track");
+}
+
+/// Empty playlist returns `[]` (200), NOT 404 — the row exists, it
+/// just has no tracks.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn list_tracks_empty_playlist_returns_empty_array(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+
+    let id: i64 = reqwest::Client::new()
+        .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
+        .bearer_auth(&auth.token)
+        .json(&json!({ "name": "Empty" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_id}/playlists/{id}/tracks"
+        ))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tracks: Vec<Value> = resp.json().await.unwrap();
+    assert!(
+        tracks.is_empty(),
+        "fresh playlist must return [], got {tracks:?}",
+    );
+}
+
+/// Tracks come back in `(position ASC, track_id ASC)` order, with
+/// the snapshot fields + `added_at` passed through verbatim —
+/// including NULL snapshots (the owner is allowed to see pre-1.j.b
+/// rows; the share-preview filter doesn't apply here). Also
+/// exercises the `track_id ASC` tiebreaker by seeding two rows that
+/// share a position — a missing tiebreaker would let the SQL
+/// shuffle them.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn list_tracks_returns_position_order_with_snapshots(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "test-user").await;
+    let base = auth.base.clone();
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+
+    let id: i64 = reqwest::Client::new()
+        .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
+        .bearer_auth(&auth.token)
+        .json(&json!({ "name": "Soirée" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    // Insert in REVERSE position order to prove ORDER BY actually
+    // fires (a missing ORDER BY would surface the insert order).
+    // `added_at` values are distinct + non-zero so the response
+    // field can be asserted on (a hard-coded 0 would mask a future
+    // projection drift in `fetch_for_owner`'s SELECT).
+    //
+    // Rows at positions 2 + 3 deliberately share the same position
+    // to exercise the `track_id ASC` tiebreaker — without it the
+    // SQL would be free to swap their order.
+    seed_playlist_track(
+        &auth.pool,
+        id,
+        904,
+        2,
+        1_700_000_000_003,
+        Some(("Track 4", Some("Artist W"), Some(190_000))),
+    )
+    .await;
+    seed_playlist_track(
+        &auth.pool,
+        id,
+        903,
+        2,
+        1_700_000_000_002,
+        Some(("Track 3", Some("Artist Z"), Some(180_000))),
+    )
+    .await;
+    // Row whose snapshot is NULL — owner read MUST still return it.
+    seed_playlist_track(&auth.pool, id, 902, 1, 1_700_000_000_001, None).await;
+    seed_playlist_track(
+        &auth.pool,
+        id,
+        901,
+        0,
+        1_700_000_000_000,
+        Some(("Track 1", Some("Artist A"), Some(210_000))),
+    )
+    .await;
+
+    let tracks: Vec<Value> = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_id}/playlists/{id}/tracks"
+        ))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 4);
+
+    assert_eq!(tracks[0]["track_id"].as_i64().unwrap(), 901);
+    assert_eq!(tracks[0]["position"].as_i64().unwrap(), 0);
+    assert_eq!(tracks[0]["added_at"].as_i64().unwrap(), 1_700_000_000_000);
+    assert_eq!(tracks[0]["snapshot_title"], "Track 1");
+    assert_eq!(tracks[0]["snapshot_artist"], "Artist A");
+    assert_eq!(tracks[0]["snapshot_duration_ms"].as_i64().unwrap(), 210_000);
+
+    assert_eq!(tracks[1]["track_id"].as_i64().unwrap(), 902);
+    assert_eq!(tracks[1]["position"].as_i64().unwrap(), 1);
+    assert_eq!(tracks[1]["added_at"].as_i64().unwrap(), 1_700_000_000_001);
+    assert!(
+        tracks[1]["snapshot_title"].is_null(),
+        "pre-1.j.b row MUST surface to the owner with NULL snapshot",
+    );
+    assert!(tracks[1]["snapshot_artist"].is_null());
+    assert!(tracks[1]["snapshot_duration_ms"].is_null());
+
+    // Tiebreaker proof: 903 (lower track_id) MUST come before 904
+    // even though both share position=2 and 904 was inserted FIRST.
+    assert_eq!(tracks[2]["track_id"].as_i64().unwrap(), 903);
+    assert_eq!(tracks[2]["position"].as_i64().unwrap(), 2);
+    assert_eq!(tracks[2]["added_at"].as_i64().unwrap(), 1_700_000_000_002);
+    assert_eq!(tracks[3]["track_id"].as_i64().unwrap(), 904);
+    assert_eq!(tracks[3]["position"].as_i64().unwrap(), 2);
+    assert_eq!(tracks[3]["added_at"].as_i64().unwrap(), 1_700_000_000_003);
+}
+
+/// Tenant-isolation: user B cannot list user A's playlist tracks
+/// through user A's profile id (the proxy attack). 404, not 403 —
+/// blur with non-existence to avoid leaking that the playlist
+/// exists under a different owner.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn list_tracks_foreign_tenant_returns_404(pool: PgPool) {
+    let two = spawn_two_authenticated(pool, "test-user-a", "test-user-b").await;
+    let base = two.base.clone();
+    let a = &two.a;
+    let b = &two.b;
+    let profile_a = mint_profile(&base, &a.token, "A").await;
+    let profile_b = mint_profile(&base, &b.token, "B").await;
+
+    let playlist_id: i64 = reqwest::Client::new()
+        .post(format!("{base}/api/v1/profiles/{profile_a}/playlists"))
+        .bearer_auth(&a.token)
+        .json(&json!({ "name": "A's playlist" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    seed_playlist_track(
+        &two.pool,
+        playlist_id,
+        1001,
+        0,
+        1_700_000_000_000,
+        Some(("A's track", Some("A's artist"), Some(100_000))),
+    )
+    .await;
+
+    // Cover BOTH proxy attacks:
+    //   - via user A's profile id (the real owner's chain) → wrong user
+    //   - via user B's profile id (user B's own chain) → wrong profile
+    // Both must 404 with the same shape so the response doesn't
+    // leak existence.
+    for proxy_profile in [profile_a, profile_b] {
+        let resp = reqwest::Client::new()
+            .get(format!(
+                "{base}/api/v1/profiles/{proxy_profile}/playlists/{playlist_id}/tracks"
+            ))
+            .bearer_auth(&b.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "user B listed A's tracks via profile {proxy_profile}"
+        );
+    }
+
+    // Owner still gets the row through their own chain — proves
+    // the foreign-tenant 404s above weren't because the row was
+    // missing.
+    let tracks: Vec<Value> = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_a}/playlists/{playlist_id}/tracks"
+        ))
+        .bearer_auth(&a.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0]["track_id"].as_i64().unwrap(), 1001);
+}
+
+/// Unknown playlist id is 404 (not 500, not 200 with `[]`). Covers
+/// the early-return path inside `fetch_for_owner` when the
+/// ownership SELECT returns no row.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn list_tracks_unknown_playlist_is_404(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_id}/playlists/999999/tracks"
+        ))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// 401 gate — the JWT middleware MUST reject anonymous requests
+/// before they reach the handler. Symmetric with the 401 assertions
+/// elsewhere in this suite.
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn list_tracks_without_auth_is_401(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "test-user").await;
+    let base = auth.base.clone();
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+
+    let id: i64 = reqwest::Client::new()
+        .post(format!("{base}/api/v1/profiles/{profile_id}/playlists"))
+        .bearer_auth(&auth.token)
+        .json(&json!({ "name": "Locked" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/profiles/{profile_id}/playlists/{id}/tracks"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

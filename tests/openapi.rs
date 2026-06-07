@@ -63,6 +63,10 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         "missing playlists item path in spec"
     );
     assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/playlists/{id}/tracks"),
+        "missing playlist tracks path in spec"
+    );
+    assert!(
         paths.contains_key(
             "/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{track_id}/stream-url"
         ),

@@ -133,10 +133,32 @@ pub struct UpdatePlaylistRequest {
     pub icon_id: Option<String>,
 }
 
+/// Owner-facing track row. Mirrors `playlist_track` columns minus
+/// the redundant `playlist_id` (path-derived). Snapshot fields are
+/// nullable on purpose — pre-1.j.b desktops emitted tracks ops
+/// without them, and the owner is allowed to see the rows anyway
+/// (the public share preview is the only surface that filters NULL
+/// snapshots).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PlaylistTrackResponse {
+    /// Source desktop's local i64 track id. NOT a server-canonical
+    /// reference — a track with id=42 on device A is unrelated to
+    /// id=42 on device B. The web client uses this only to key
+    /// rendered rows; cross-device track resolution is a future
+    /// concern (cf. `migrations/.../playlist_track.sql` header).
+    pub track_id: i64,
+    pub position: i32,
+    pub added_at: i64,
+    pub snapshot_title: Option<String>,
+    pub snapshot_artist: Option<String>,
+    pub snapshot_duration_ms: Option<i64>,
+}
+
 pub fn router(state: AppState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(list_playlists, create_playlist))
         .routes(routes!(get_playlist, update_playlist, delete_playlist))
+        .routes(routes!(list_playlist_tracks))
         .with_state(state)
 }
 
@@ -363,6 +385,55 @@ async fn delete_playlist(
         Err(err) => {
             tracing::error!(error = %err, id, profile_id, user_id, "delete playlist failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "delete failed").into_response()
+        }
+    }
+}
+
+/// List the tracks of a playlist owned by the caller. Same tenant
+/// chain as `get_playlist` (`playlist → profile → user`), same 404
+/// blur for non-existent / foreign-owned rows. The track ids carried
+/// in the response are the source desktop's local i64 ids, NOT
+/// server-canonical references — see [`PlaylistTrackResponse`].
+#[utoipa::path(
+    get,
+    path = "/api/v1/profiles/{profile_id}/playlists/{id}/tracks",
+    tag = "playlists",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        ("profile_id" = i64, Path, description = "Owning profile id"),
+        ("id" = i64, Path, description = "Playlist id"),
+    ),
+    responses(
+        (status = 200, description = "Tracks in position order (may be empty)", body = Vec<PlaylistTrackResponse>),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 404, description = "No playlist with that id under the profile owned by the calling user"),
+        (status = 500, description = "Database or internal failure (body is a plain-text reason)"),
+    ),
+)]
+async fn list_playlist_tracks(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Path((profile_id, id)): Path<(i64, i64)>,
+) -> impl IntoResponse {
+    match crate::db::playlist_track::fetch_for_owner(&state.db, id, profile_id, user_id).await {
+        Ok(Some(rows)) => {
+            let body: Vec<PlaylistTrackResponse> = rows
+                .into_iter()
+                .map(|r| PlaylistTrackResponse {
+                    track_id: r.track_id,
+                    position: r.position,
+                    added_at: r.added_at,
+                    snapshot_title: r.snapshot_title,
+                    snapshot_artist: r.snapshot_artist,
+                    snapshot_duration_ms: r.snapshot_duration_ms,
+                })
+                .collect();
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "playlist not found").into_response(),
+        Err(err) => {
+            tracing::error!(error = %err, id, profile_id, user_id, "list playlist tracks failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "list tracks failed").into_response()
         }
     }
 }
