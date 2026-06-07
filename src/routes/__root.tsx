@@ -39,7 +39,12 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'TanStack Start Starter',
+        title: 'WaveFlow — your music, your server, every device',
+      },
+      {
+        name: 'description',
+        content:
+          'Self-hostable music library that syncs between the WaveFlow desktop app and the web. Your files stay on your server.',
       },
     ],
     links: [
