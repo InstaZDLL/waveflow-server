@@ -683,6 +683,261 @@ pub mod playlist_track {
     }
 }
 
+/// Track-sync materialisation helpers (Phase 4.d.0.2). Upserts
+/// album, artist, track_artist, and track rows from inbound sync
+/// ops. Every helper takes a `&mut PgConnection` so the caller's
+/// transaction wraps the whole chain atomically — a partial apply
+/// (track minted but track_artist write failed) would corrupt the
+/// per-library invariant we just built in 4.d.0.1.
+pub mod track_sync {
+    use sqlx::PgConnection;
+
+    /// Per-row payload for the multi-artist link. `position` is the
+    /// index in the source desktop's `; `-split artist tag — the
+    /// apply pipeline computes it from the array order so the wire
+    /// shape stays compact (`payload.artists: ["A", "B"]`).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ArtistLinkInput {
+        pub name: String,
+        pub position: i32,
+    }
+
+    /// Track upsert payload. Mirrors `TrackResponse` minus the
+    /// server-assigned `id` and the joined `album_id` (the apply
+    /// pipeline resolves the album first, then passes the id here).
+    /// All optional audio specs default to NULL when absent — the
+    /// desktop omits them for codecs that don't expose the value.
+    #[derive(Debug, Clone)]
+    pub struct TrackInput<'a> {
+        pub library_id: i64,
+        pub file_hash: &'a str,
+        pub title: &'a str,
+        pub file_path: &'a str,
+        pub file_size: i64,
+        pub duration_ms: i64,
+        pub track_number: Option<i64>,
+        pub disc_number: Option<i64>,
+        pub year: Option<i64>,
+        pub bitrate: Option<i64>,
+        pub sample_rate: Option<i64>,
+        pub channels: Option<i64>,
+        pub bit_depth: Option<i64>,
+        pub codec: Option<&'a str>,
+        pub musical_key: Option<&'a str>,
+        pub added_at: i64,
+        pub album_id: Option<i64>,
+    }
+
+    /// Insert or update the artist row keyed on `(library_id,
+    /// name)`. Returns the row's id either way. `updated_at` is
+    /// bumped on the upsert path so a later list-by-recently-
+    /// updated query reflects the activity.
+    pub async fn upsert_artist(
+        conn: &mut PgConnection,
+        library_id: i64,
+        name: &str,
+        now: i64,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO artist (library_id, name, created_at, updated_at)
+             VALUES ($1, $2, $3, $3)
+             ON CONFLICT (library_id, name) DO UPDATE
+                 SET updated_at = EXCLUDED.updated_at
+             RETURNING id",
+        )
+        .bind(library_id)
+        .bind(name)
+        .bind(now)
+        .fetch_one(&mut *conn)
+        .await
+    }
+
+    /// Insert or update the album row keyed on the natural key
+    /// `(library_id, canonical_title, album_artist_id)` (UNIQUE
+    /// NULLS NOT DISTINCT so the compilation case with NULL
+    /// `album_artist_id` collapses to one row per
+    /// `(library, title)`). `year` and `is_compilation` propagate
+    /// on the upsert path — a re-emit with corrected metadata
+    /// updates the row in place.
+    pub async fn upsert_album(
+        conn: &mut PgConnection,
+        library_id: i64,
+        canonical_title: &str,
+        album_artist_id: Option<i64>,
+        year: Option<i64>,
+        is_compilation: bool,
+        now: i64,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO album
+                (library_id, canonical_title, album_artist_id,
+                 year, is_compilation, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $6)
+             ON CONFLICT (library_id, canonical_title, album_artist_id) DO UPDATE
+                 SET year = COALESCE(EXCLUDED.year, album.year),
+                     is_compilation = album.is_compilation OR EXCLUDED.is_compilation,
+                     updated_at = EXCLUDED.updated_at
+             RETURNING id",
+        )
+        .bind(library_id)
+        .bind(canonical_title)
+        .bind(album_artist_id)
+        .bind(year)
+        .bind(is_compilation)
+        .bind(now)
+        .fetch_one(&mut *conn)
+        .await
+    }
+
+    /// Insert or update the track row keyed on
+    /// `(library_id, file_path)` — the existing natural key from
+    /// `20260530000003_track.sql:64`. Every scalar field
+    /// (including `file_hash`) overwrites the existing value on
+    /// the upsert path so a tag-edit re-emit reflects the latest
+    /// state. `file_path` is the right upsert key here because the
+    /// desktop's tag-editor rewrites the audio file's metadata
+    /// frames, which changes the BLAKE3 hash but NOT the path —
+    /// keying on `file_hash` would treat every tag edit as a new
+    /// row and trip the pre-existing `(library_id, file_path)`
+    /// UNIQUE on the second pass.
+    pub async fn upsert_track(
+        conn: &mut PgConnection,
+        input: &TrackInput<'_>,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO track (
+                library_id, file_hash, title, file_path, file_size,
+                duration_ms, track_number, disc_number, year,
+                bitrate, sample_rate, channels, bit_depth, codec,
+                musical_key, added_at, album_id
+             )
+             VALUES (
+                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15, $16, $17
+             )
+             ON CONFLICT (library_id, file_path) DO UPDATE
+                 SET title = EXCLUDED.title,
+                     file_hash = EXCLUDED.file_hash,
+                     file_size = EXCLUDED.file_size,
+                     duration_ms = EXCLUDED.duration_ms,
+                     track_number = EXCLUDED.track_number,
+                     disc_number = EXCLUDED.disc_number,
+                     year = EXCLUDED.year,
+                     bitrate = EXCLUDED.bitrate,
+                     sample_rate = EXCLUDED.sample_rate,
+                     channels = EXCLUDED.channels,
+                     bit_depth = EXCLUDED.bit_depth,
+                     codec = EXCLUDED.codec,
+                     musical_key = EXCLUDED.musical_key,
+                     album_id = EXCLUDED.album_id
+             RETURNING id",
+        )
+        .bind(input.library_id)
+        .bind(input.file_hash)
+        .bind(input.title)
+        .bind(input.file_path)
+        .bind(input.file_size)
+        .bind(input.duration_ms)
+        .bind(input.track_number)
+        .bind(input.disc_number)
+        .bind(input.year)
+        .bind(input.bitrate)
+        .bind(input.sample_rate)
+        .bind(input.channels)
+        .bind(input.bit_depth)
+        .bind(input.codec)
+        .bind(input.musical_key)
+        .bind(input.added_at)
+        .bind(input.album_id)
+        .fetch_one(&mut *conn)
+        .await
+    }
+
+    /// Replace the multi-artist link rows for a track. DELETE then
+    /// a single UNNEST-driven INSERT so the apply pipeline pays one
+    /// round-trip for the insert regardless of artist count (a
+    /// per-row loop would be N+1 on the wire). Two-step (replace
+    /// rather than diff) so the apply pipeline doesn't have to
+    /// compute the diff between the inbound payload and the
+    /// existing rows.
+    ///
+    /// Safe because the cross-library composite FK on
+    /// `track_artist` guarantees BOTH `track_id` and `artist_id`
+    /// already live in `library_id` when this is called (the
+    /// caller resolved them before passing in `links`).
+    pub async fn replace_track_artists(
+        conn: &mut PgConnection,
+        track_id: i64,
+        library_id: i64,
+        links: &[(i64, i32)],
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM track_artist WHERE track_id = $1")
+            .bind(track_id)
+            .execute(&mut *conn)
+            .await?;
+        if links.is_empty() {
+            return Ok(());
+        }
+        let artist_ids: Vec<i64> = links.iter().map(|(id, _)| *id).collect();
+        let positions: Vec<i32> = links.iter().map(|(_, pos)| *pos).collect();
+        sqlx::query(
+            "INSERT INTO track_artist (track_id, artist_id, library_id, position)
+             SELECT $1, artist_id, $2, position
+             FROM UNNEST($3::bigint[], $4::int[]) AS t(artist_id, position)",
+        )
+        .bind(track_id)
+        .bind(library_id)
+        .bind(&artist_ids)
+        .bind(&positions)
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete a track keyed on `(library_id, file_path)`. Using
+    /// `file_path` (not `file_hash`) means a per-library file-path
+    /// delete only ever removes one row even when the user has
+    /// the same audio content at two paths in the same library —
+    /// matches the desktop's "delete one file" event. The composite
+    /// FK from `track_artist` cascades the link rows automatically;
+    /// `track.album_id` SET NULL propagates through the schema
+    /// constraints. Returns the number of rows actually removed
+    /// (0 when the file_path isn't known to this library).
+    pub async fn delete_track(
+        conn: &mut PgConnection,
+        library_id: i64,
+        file_path: &str,
+    ) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query("DELETE FROM track WHERE library_id = $1 AND file_path = $2")
+            .bind(library_id)
+            .bind(file_path)
+            .execute(&mut *conn)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Resolve a library canonical id to its server `library.id`
+    /// scoped to the calling profile. `None` covers "library not
+    /// found" / "library belongs to a different profile" — the
+    /// apply pipeline treats both as `Skipped` so the op stays in
+    /// the durable log for replay after the library's own insert
+    /// lands.
+    pub async fn lookup_library_id(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        library_canonical_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM library
+              WHERE profile_id = $1 AND canonical_id = $2",
+        )
+        .bind(profile_id)
+        .bind(library_canonical_id)
+        .fetch_optional(&mut *conn)
+        .await
+    }
+}
+
 /// Shared artwork cache helpers (Phase 1.h.1). Reads + writes against
 /// the [`metadata_artwork`] table. The bytes themselves live in
 /// `object_store` at `artwork/<hash>`; this module is the metadata
