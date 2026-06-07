@@ -28,6 +28,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     passWithNoTests: true,
+    // Pick up tests from the web app AND every workspace package.
+    // Workspace packages (`packages/*`) ship their own suites and
+    // run against the same jsdom env so a DOM helper like
+    // `applyTheme` doesn't need a per-package vitest config.
+    include: ['src/**/*.test.{ts,tsx}', 'packages/*/src/**/*.test.{ts,tsx}'],
     // Vitest 4's per-test timeout default is 5s; the React Testing
     // Library waits routinely push that on a cold runner. Bump to
     // 10s to match the prior scaffold convention.
