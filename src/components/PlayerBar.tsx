@@ -34,6 +34,23 @@ export function PlayerBar() {
   // re-render doesn't double-fire `.play()`.
   const { isPlaying, setIsPlaying, current } = player
   const currentTrackId = current?.trackId
+
+  // Clear any in-progress scrub when the track changes — auto-
+  // advance, next(), and previous() all flip currentTrackId while
+  // a user may still be mid-drag on the old track's slider.
+  // Without this, formatTime(seekScrub ?? player.position) would
+  // freeze on the previous track's timestamp until the user
+  // touches the slider again. Uses the "adjust state on prop
+  // change" pattern from the React docs so the reset lands BEFORE
+  // the render commits — the lint rule rejects setState-inside-
+  // effect, an additional render cycle, OR a setSeekScrub here
+  // during a track-unchanged render is a cheap bail-out.
+  const [lastTrackId, setLastTrackId] = useState(currentTrackId)
+  if (lastTrackId !== currentTrackId) {
+    setLastTrackId(currentTrackId)
+    setSeekScrub(null)
+  }
+
   useEffect(() => {
     const el = audioRef.current
     if (!el) return

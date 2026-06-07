@@ -62,13 +62,20 @@ function TracksView() {
       .slice(startIndex + 1)
       .map(toQueueEntry)
       .filter((e): e is QueueEntry => e !== null)
-    setPendingTrackId(track.id)
+    // Capture the id this invocation owns so a concurrent click
+    // (track A in flight, user clicks track B before A resolves)
+    // can't have the older call's finally wipe the newer pending
+    // marker. The functional setter compares against the LATEST
+    // state, not the captured closure value, so the stale closure
+    // hazard is gone too.
+    const myPending = track.id
+    setPendingTrackId(myPending)
     try {
       await player.playTrack(entry, contextQueue)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start playback.')
     } finally {
-      setPendingTrackId(null)
+      setPendingTrackId((current) => (current === myPending ? null : current))
     }
   }
 
