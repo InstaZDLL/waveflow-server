@@ -45,15 +45,22 @@ export function PlaylistsView() {
     const profileId = data.profileId
     // Navigate first so the user lands on the detail page
     // immediately — the create call already succeeded, the new
-    // playlist exists, the listing's freshness can wait. Firing
-    // invalidate() afterwards keeps the grid up to date in the
-    // background; a rejection here is logged but doesn't bubble
-    // into a failure path the user has to acknowledge for an
-    // operation that's already done.
-    await navigate({
-      to: '/profiles/$profileId/playlists/$playlistId',
-      params: { profileId: String(profileId), playlistId: String(playlist.id) },
-    })
+    // playlist exists, the listing's freshness can wait.
+    //
+    // navigate() returns a Promise the dialog's onCreated caller
+    // intentionally does NOT await, so an unhandled rejection here
+    // would silently disappear. Catch + log so a routing failure
+    // (matcher regression, future beforeLoad guard) leaves a trace
+    // and the background invalidate still runs to refresh the
+    // listing the user is left on.
+    try {
+      await navigate({
+        to: '/profiles/$profileId/playlists/$playlistId',
+        params: { profileId: String(profileId), playlistId: String(playlist.id) },
+      })
+    } catch (err) {
+      console.warn('[playlists] post-create navigation failed:', err)
+    }
     router.invalidate().catch((err) => {
       console.warn('[playlists] post-create invalidate failed:', err)
     })
