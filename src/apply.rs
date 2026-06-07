@@ -97,7 +97,7 @@ pub async fn apply_op(
     // missing canonical id surfaces as `Skipped` rather than a
     // silent partial apply.
     match entity {
-        "playlist" | "library" => {
+        "playlist" | "library" | "track" => {
             let Some(profile_canonical) = op.profile_canonical_id.as_deref() else {
                 tracing::debug!(
                     entity = entity,
@@ -111,6 +111,7 @@ pub async fn apply_op(
             match entity {
                 "playlist" => playlist::apply(conn, profile_id, op, created_at).await,
                 "library" => library::apply(conn, profile_id, op, created_at).await,
+                "track" => track::apply(conn, profile_id, op, created_at).await,
                 _ => unreachable!(),
             }
         }
@@ -864,6 +865,356 @@ mod rating {
                 Ok(ApplyOutcome::Applied)
             }
             _ => Ok(ApplyOutcome::Unknown),
+        }
+    }
+}
+
+// ---------------------------------------------------------------
+// track — keyed on (library_id, file_path). Phase 4.d.0.2.
+// ---------------------------------------------------------------
+//
+// Wire shape:
+// - `entity: "track"`, `entity_id: <file_path>` — the per-library
+//   natural identity (`UNIQUE (library_id, file_path)` from
+//   `20260530000003_track.sql:64`). The BLAKE3 hash rides as a
+//   payload field; using it as `entity_id` would break the
+//   tag-edit upsert (lofty rewrites embedded metadata frames so
+//   the hash changes while the path doesn't — re-emit would land
+//   as INSERT, trip the `(library_id, file_path)` UNIQUE, and 500).
+//   The cross-device-content identity from
+//   `20260604000000_apply_pipeline.sql:26-33` still lives in the
+//   `track.file_hash` column for the liked_track / rating joins;
+//   it just isn't the row identity for the `track` entity itself.
+// - `profile_canonical_id`: required (the dispatcher gates on it).
+// - `payload.library_canonical_id`: required. The library is the
+//   tenant scope — resolved per profile, Skipped if not yet
+//   materialised.
+// - INSERT payload carries the full track metadata — `file_hash`,
+//   `title`, `file_size`, `duration_ms`, the optional audio specs,
+//   the optional `album_title` / `album_artist_name` /
+//   `is_compilation` / `artists: [String, ...]` fields. Multi-
+//   artist position is the array index — the desktop emits its
+//   `; `-split list.
+// - DELETE payload carries only `library_canonical_id`. The
+//   file_path sits in `entity_id`.
+//
+// `set` is intentionally Unknown for tracks today: the desktop's
+// tag-editor save rewrites the audio file and re-emits a full
+// INSERT (the path is unchanged, the hash + tag values aren't).
+// The upsert handles re-emit as a merge — every scalar column
+// overwrites on conflict.
+mod track {
+    use serde_json::Value;
+    use sqlx::PgConnection;
+
+    use crate::db::track_sync::{
+        delete_track, lookup_library_id, replace_track_artists, upsert_album, upsert_artist,
+        upsert_track, ArtistLinkInput, TrackInput,
+    };
+    use crate::sync::SyncOpIn;
+
+    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
+
+    const ENTITY: &str = "track";
+
+    pub async fn apply(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        op: &SyncOpIn,
+        now: i64,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        // entity_id IS the file_path for tracks — see module
+        // banner for the design rationale.
+        let file_path = op.entity_id.as_str();
+        match (op.op.as_str(), op.field.as_deref()) {
+            ("insert", None) => insert(conn, profile_id, file_path, op, now).await,
+            ("delete", None) => delete(conn, profile_id, file_path, op).await,
+            // `set` is reserved for a future incremental-edit flow.
+            // The desktop's current tag-editor saves rewrite the
+            // file (and re-emit INSERT), so `set` would be
+            // unreachable today — surfacing it as Unknown keeps the
+            // door open without committing to a wire shape.
+            _ => Ok(ApplyOutcome::Unknown),
+        }
+    }
+
+    async fn insert(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        file_path: &str,
+        op: &SyncOpIn,
+        now: i64,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        // Library is the tenant scope for the track. A missing
+        // library canonical id means the desktop bug-emitted an
+        // op without it — surface as InvalidPayload rather than
+        // Skipped so the push handler rolls back the durable
+        // insert (the op is structurally broken, not just
+        // out-of-order).
+        let library_canonical_id = payload_string(
+            ENTITY,
+            "insert",
+            op.payload.as_ref(),
+            "library_canonical_id",
+        )?;
+
+        // Library not yet materialised → Skipped. The op stays in
+        // the durable log; the next replay after the library's
+        // own insert lands will apply it.
+        let Some(library_id) = lookup_library_id(conn, profile_id, &library_canonical_id).await?
+        else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+
+        let title = payload_string(ENTITY, "insert", op.payload.as_ref(), "title")?;
+        let file_hash = payload_string(ENTITY, "insert", op.payload.as_ref(), "file_hash")?;
+        let file_size = payload_i64_required(op, "file_size")?;
+        let duration_ms = payload_i64_required(op, "duration_ms")?;
+        let track_number = payload_i64_optional(op, "track_number")?;
+        let disc_number = payload_i64_optional(op, "disc_number")?;
+        let year = payload_i64_optional(op, "year")?;
+        let bitrate = payload_i64_optional(op, "bitrate")?;
+        let sample_rate = payload_i64_optional(op, "sample_rate")?;
+        let channels = payload_i64_optional(op, "channels")?;
+        let bit_depth = payload_i64_optional(op, "bit_depth")?;
+        let codec = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "codec")?;
+        let musical_key =
+            payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "musical_key")?;
+        let added_at = payload_i64_optional(op, "added_at")?.unwrap_or(now);
+
+        // Album metadata. `album_title` is required to mint an
+        // album row. `album_artist_name` is optional — absent
+        // means compilation (NULL album_artist_id in the natural
+        // key). `is_compilation` is sticky — once true on the row,
+        // a re-emit with false leaves it true (handled in
+        // `upsert_album`).
+        //
+        // Reject empty strings here rather than letting them flow
+        // to the `length(...) > 0` CHECK constraints on `album`
+        // and `artist` — the constraint trip would surface as a
+        // 500 (DB error), but an empty string is a structural
+        // payload bug that deserves a 400 with a clear reason.
+        let album_title = reject_empty(
+            payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "album_title")?,
+            "album_title",
+        )?;
+        let album_artist_name = reject_empty(
+            payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "album_artist_name")?,
+            "album_artist_name",
+        )?;
+        let is_compilation = payload_optional_bool(op, "is_compilation")?.unwrap_or(false);
+
+        // Multi-artist array. `position` is the array index — the
+        // desktop emits its `; `-split list in source order.
+        let artists = artists_from_payload(op)?;
+
+        // 1. Upsert every contributor artist (collect their ids).
+        let mut artist_links: Vec<ArtistLinkInput> = Vec::with_capacity(artists.len());
+        for (position, name) in artists.iter().enumerate() {
+            artist_links.push(ArtistLinkInput {
+                name: name.clone(),
+                position: position as i32,
+            });
+        }
+        let mut link_ids: Vec<(i64, i32)> = Vec::with_capacity(artist_links.len());
+        for link in &artist_links {
+            let id = upsert_artist(conn, library_id, &link.name, now).await?;
+            link_ids.push((id, link.position));
+        }
+
+        // 2. Resolve the album artist id (optional). If the album
+        // artist isn't already in `artists`, mint it via the same
+        // upsert so the album FK has something to reference.
+        let album_artist_id = match album_artist_name.as_deref() {
+            Some(name) => {
+                // Re-use an already-upserted artist if the album
+                // artist matches one of the contributors.
+                let existing = artist_links
+                    .iter()
+                    .zip(link_ids.iter())
+                    .find_map(|(link, (id, _))| if link.name == name { Some(*id) } else { None });
+                match existing {
+                    Some(id) => Some(id),
+                    None => Some(upsert_artist(conn, library_id, name, now).await?),
+                }
+            }
+            None => None,
+        };
+
+        // 3. Upsert the album row if a title is present.
+        let album_id = match album_title.as_deref() {
+            Some(title) => Some(
+                upsert_album(
+                    conn,
+                    library_id,
+                    title,
+                    album_artist_id,
+                    year,
+                    is_compilation,
+                    now,
+                )
+                .await?,
+            ),
+            None => None,
+        };
+
+        // 4. Upsert the track row.
+        let input = TrackInput {
+            library_id,
+            file_hash: &file_hash,
+            title: &title,
+            file_path,
+            file_size,
+            duration_ms,
+            track_number,
+            disc_number,
+            year,
+            bitrate,
+            sample_rate,
+            channels,
+            bit_depth,
+            codec: codec.as_deref(),
+            musical_key: musical_key.as_deref(),
+            added_at,
+            album_id,
+        };
+        let track_id = upsert_track(conn, &input).await?;
+
+        // 5. Replace the multi-artist link rows for this track.
+        replace_track_artists(conn, track_id, library_id, &link_ids).await?;
+
+        Ok(ApplyOutcome::Applied)
+    }
+
+    async fn delete(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        file_path: &str,
+        op: &SyncOpIn,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        let library_canonical_id = payload_string(
+            ENTITY,
+            "delete",
+            op.payload.as_ref(),
+            "library_canonical_id",
+        )?;
+        let Some(library_id) = lookup_library_id(conn, profile_id, &library_canonical_id).await?
+        else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+        delete_track(conn, library_id, file_path).await?;
+        Ok(ApplyOutcome::Applied)
+    }
+
+    /// Reject empty-string optional payload fields. The schema
+    /// CHECK constraints (`length(...) > 0` on `album.canonical_title`
+    /// and `artist.name`) would surface an empty string as a 500
+    /// rather than a 400, so the apply layer catches it first.
+    fn reject_empty(value: Option<String>, key: &str) -> Result<Option<String>, ApplyError> {
+        if let Some(ref s) = value {
+            if s.is_empty() {
+                return Err(ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "insert",
+                    reason: format!("payload.{key} must not be empty"),
+                });
+            }
+        }
+        Ok(value)
+    }
+
+    /// Extract `payload.artists: [String, ...]`. Absent / null /
+    /// empty array all collapse to an empty Vec — the desktop
+    /// emits an empty list for tracks without an artist tag, and
+    /// the apply path must NOT reject those as InvalidPayload.
+    fn artists_from_payload(op: &SyncOpIn) -> Result<Vec<String>, ApplyError> {
+        let Some(payload) = op.payload.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let Some(value) = payload.get("artists") else {
+            return Ok(Vec::new());
+        };
+        if matches!(value, Value::Null) {
+            return Ok(Vec::new());
+        }
+        let arr = value.as_array().ok_or_else(|| ApplyError::InvalidPayload {
+            entity: ENTITY,
+            op: "insert",
+            reason: "payload.artists must be an array of strings".into(),
+        })?;
+        let mut out = Vec::with_capacity(arr.len());
+        for (idx, entry) in arr.iter().enumerate() {
+            let name = entry.as_str().ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "insert",
+                reason: format!("payload.artists[{idx}] must be a string"),
+            })?;
+            if name.is_empty() {
+                return Err(ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "insert",
+                    reason: format!("payload.artists[{idx}] must not be empty"),
+                });
+            }
+            out.push(name.to_owned());
+        }
+        Ok(out)
+    }
+
+    fn payload_i64_required(op: &SyncOpIn, key: &str) -> Result<i64, ApplyError> {
+        op.payload
+            .as_ref()
+            .and_then(|p| p.get(key))
+            .and_then(Value::as_i64)
+            .ok_or_else(|| ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "insert",
+                reason: format!("payload.{key} missing or not an integer"),
+            })
+    }
+
+    fn payload_i64_optional(op: &SyncOpIn, key: &str) -> Result<Option<i64>, ApplyError> {
+        let Some(payload) = op.payload.as_ref() else {
+            return Ok(None);
+        };
+        let Some(value) = payload.get(key) else {
+            return Ok(None);
+        };
+        match value {
+            Value::Null => Ok(None),
+            Value::Number(_) => {
+                value
+                    .as_i64()
+                    .map(Some)
+                    .ok_or_else(|| ApplyError::InvalidPayload {
+                        entity: ENTITY,
+                        op: "insert",
+                        reason: format!("payload.{key} must fit in i64"),
+                    })
+            }
+            _ => Err(ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "insert",
+                reason: format!("payload.{key} must be an integer or null"),
+            }),
+        }
+    }
+
+    fn payload_optional_bool(op: &SyncOpIn, key: &str) -> Result<Option<bool>, ApplyError> {
+        let Some(payload) = op.payload.as_ref() else {
+            return Ok(None);
+        };
+        let Some(value) = payload.get(key) else {
+            return Ok(None);
+        };
+        match value {
+            Value::Null => Ok(None),
+            Value::Bool(b) => Ok(Some(*b)),
+            _ => Err(ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "insert",
+                reason: format!("payload.{key} must be a boolean or null"),
+            }),
         }
     }
 }
