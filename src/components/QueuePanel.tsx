@@ -11,6 +11,7 @@
 import { useEffect, useRef } from 'react'
 
 import WaveflowLogo from './WaveflowLogo'
+import { useFocusTrap } from '@/lib/use-focus-trap'
 import { usePlayer, type PlayingTrack, type QueueEntry } from '@/lib/player-context'
 
 export interface QueuePanelProps {
@@ -27,7 +28,10 @@ function formatDuration(ms: number): string {
 
 export function QueuePanel({ open, onClose }: QueuePanelProps) {
   const player = usePlayer()
+  const dialogRef = useRef<HTMLElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useFocusTrap(open, dialogRef)
 
   // Move focus to the close button on open so keyboard users land
   // inside the drawer. Restoring focus to the trigger on close is
@@ -60,14 +64,12 @@ export function QueuePanel({ open, onClose }: QueuePanelProps) {
         className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
       />
       <aside
+        ref={dialogRef}
         id="player-queue-panel"
         role="dialog"
-        // `aria-modal` deliberately omitted — promising modal
-        // semantics to AT requires a real focus trap, which lands
-        // in 4.b.2 alongside the Now Playing overlay. Today Tab
-        // can leak to the page behind; ESC + the close button +
-        // backdrop click cover deliberate dismissal.
+        aria-modal="true"
         aria-label="Playback queue"
+        tabIndex={-1}
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-[var(--line)] bg-[var(--header-bg)] backdrop-blur-lg"
       >
         <header className="flex flex-shrink-0 items-center justify-between border-b border-[var(--line)] px-4 py-3">
