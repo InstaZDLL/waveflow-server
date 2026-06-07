@@ -26,7 +26,32 @@
 -- target is PG17) makes NULL collapse to a single row per
 -- (library, title) for the "Various Artists" case rather than
 -- letting two compilation rows co-exist with NULL album_artist_id.
+--
+-- == Cross-library invariant ==
+--
+-- The per-library scope is enforced at the schema level via
+-- composite FKs: every entity-to-entity link carries `library_id`
+-- in BOTH columns of the FK, with the parent's `UNIQUE (id,
+-- library_id)` as the target. A try to set
+-- `album.album_artist_id` to an artist in a different library
+-- fails the composite FK; same for `track.album_id` and
+-- `track_artist (track_id, artist_id)`. Without these the schema
+-- would silently allow inter-library cross-links, which the
+-- per-library cascade chain assumes don't exist.
+--
+-- `ON DELETE SET NULL (col)` is the PG15+ column-level form: when
+-- the referenced parent disappears, only the FK column listed gets
+-- nulled out — `library_id` itself stays intact, so a track whose
+-- album was scrubbed keeps its library membership. Targets PG17,
+-- same version gate as `UNIQUE NULLS NOT DISTINCT`.
 -- =============================================================================
+
+-- Step 1: existing `track` table needs a composite UNIQUE (id,
+-- library_id) so the new tables can use it as a composite FK
+-- target. `track.id` is already PK so this is a one-time index
+-- add, not a structural change.
+ALTER TABLE track ADD CONSTRAINT track_id_library_uniq
+    UNIQUE (id, library_id);
 
 CREATE TABLE artist (
     id              BIGSERIAL   PRIMARY KEY,
@@ -49,7 +74,13 @@ CREATE TABLE artist (
     -- per-profile uniqueness. Re-emit of the same artist on
     -- sync = ON CONFLICT DO UPDATE (handled by 4.d.0.2's
     -- apply path).
-    UNIQUE (library_id, name)
+    UNIQUE (library_id, name),
+
+    -- Composite UNIQUE target for the cross-library guards on
+    -- `album.album_artist_id` and `track_artist.artist_id`. Lets
+    -- the dependent FK enforce that `(artist_id, library_id)`
+    -- pairs resolve only to artists in the same library.
+    UNIQUE (id, library_id)
 );
 
 CREATE TABLE album (
@@ -66,12 +97,9 @@ CREATE TABLE album (
     -- Album Artist FK. NULL for compilations (the apply pipeline
     -- sets this to NULL when the source ships `is_compilation`
     -- = true OR when `merge_implicit_compilations` collapses ≥ 3
-    -- distinct-artist same-title rows). `ON DELETE SET NULL` so
-    -- a future artist scrub doesn't cascade to the album row —
-    -- we'd rather surface a "missing album artist" warning than
-    -- lose the album's tracks.
-    album_artist_id    BIGINT
-                       REFERENCES artist(id) ON DELETE SET NULL,
+    -- distinct-artist same-title rows). Composite FK below
+    -- enforces same-library scope.
+    album_artist_id    BIGINT,
 
     -- Release year if known. BIGINT for cross-backend parity
     -- with the desktop's `track.year` (which also uses BIGINT)
@@ -104,7 +132,22 @@ CREATE TABLE album (
     -- albums with the same title could co-exist with NULL ids
     -- and the apply-time upsert would have to special-case the
     -- IS NULL match. PG15+ syntax; we target PG17.
-    UNIQUE NULLS NOT DISTINCT (library_id, canonical_title, album_artist_id)
+    UNIQUE NULLS NOT DISTINCT (library_id, canonical_title, album_artist_id),
+
+    -- Composite UNIQUE target for the cross-library guard on
+    -- `track.album_id`. Same shape as `artist`.
+    UNIQUE (id, library_id),
+
+    -- Cross-library guard: `album_artist_id` must reference an
+    -- artist row in the SAME library. The composite FK forces the
+    -- second column (library_id) to match between album and
+    -- artist, so an attempt to link an album in library A to an
+    -- artist in library B fails. `SET NULL (album_artist_id)`
+    -- (PG15+ column-level form) drops only the artist link when
+    -- the artist is deleted — `album.library_id` stays intact.
+    FOREIGN KEY (album_artist_id, library_id)
+        REFERENCES artist (id, library_id)
+        ON DELETE SET NULL (album_artist_id)
 );
 
 -- Multi-artist join. Position preserves the order the source
@@ -129,12 +172,28 @@ CREATE TABLE album (
 -- cover or the audio file row would be a user-visible mistake,
 -- but losing the (track ↔ artist) pairing is just garbage
 -- collection.
+--
+-- `library_id` is denormalised onto this join so the composite
+-- FKs to track + artist can enforce that BOTH ends live in the
+-- same library. The apply pipeline (4.d.0.2) derives it from
+-- `track.library_id` at upsert time.
 CREATE TABLE track_artist (
-    track_id     BIGINT     NOT NULL REFERENCES track(id) ON DELETE CASCADE,
-    artist_id    BIGINT     NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    track_id     BIGINT     NOT NULL,
+    artist_id    BIGINT     NOT NULL,
+    library_id   BIGINT     NOT NULL,
     position     INTEGER    NOT NULL CHECK (position >= 0),
 
-    PRIMARY KEY (track_id, artist_id)
+    PRIMARY KEY (track_id, artist_id),
+
+    -- Cross-library guards: both composite FKs share the same
+    -- `library_id` column on the join side, so the only way to
+    -- INSERT a row is for track AND artist to already be in the
+    -- referenced library. A pair that straddles two libraries
+    -- can't satisfy both FKs at once.
+    FOREIGN KEY (track_id, library_id)
+        REFERENCES track (id, library_id) ON DELETE CASCADE,
+    FOREIGN KEY (artist_id, library_id)
+        REFERENCES artist (id, library_id) ON DELETE CASCADE
 );
 
 -- Reverse-direction index for the artist drill-down query
@@ -163,11 +222,18 @@ CREATE INDEX artist_library_updated_idx
 
 -- Track ↔ album link. Nullable because free-form rips (single
 -- mp3s without album metadata) have no album row to point at.
--- `ON DELETE SET NULL` so an album scrub doesn't cascade into
--- the tracks themselves — they survive as orphan tracks
--- discoverable via `WHERE album_id IS NULL`.
-ALTER TABLE track ADD COLUMN album_id BIGINT
-    REFERENCES album(id) ON DELETE SET NULL;
+-- Composite FK enforces that the linked album lives in the same
+-- library as the track. `ON DELETE SET NULL (album_id)` (PG15+
+-- column-level form) drops only the album link when the album is
+-- deleted — `track.library_id` stays intact, so the audio file
+-- row survives as an orphan discoverable via
+-- `WHERE album_id IS NULL`.
+ALTER TABLE track ADD COLUMN album_id BIGINT;
+
+ALTER TABLE track ADD CONSTRAINT track_album_fk
+    FOREIGN KEY (album_id, library_id)
+        REFERENCES album (id, library_id)
+        ON DELETE SET NULL (album_id);
 
 -- Album drill-down: `SELECT * FROM track WHERE album_id = $1
 -- ORDER BY disc_number, track_number`. Index on `(album_id,
