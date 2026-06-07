@@ -4,7 +4,14 @@ import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-r
 import { DeletePlaylistDialog } from '@/components/DeletePlaylistDialog'
 import { PlaylistFormDialog } from '@/components/PlaylistFormDialog'
 import { formatTime } from '@/lib/format-time'
-import { deletePlaylist, getPlaylist, updatePlaylist, type Playlist } from '@/server-fns/playlists'
+import {
+  deletePlaylist,
+  getPlaylist,
+  getPlaylistTracks,
+  updatePlaylist,
+  type Playlist,
+  type PlaylistTrack,
+} from '@/server-fns/playlists'
 
 // Auth gating inherited from the `_authed` parent layout.
 export const Route = createFileRoute('/_authed/profiles/$profileId/playlists/$playlistId')({
@@ -15,8 +22,25 @@ export const Route = createFileRoute('/_authed/profiles/$profileId/playlists/$pl
       return { kind: 'error', message: 'Invalid profile or playlist id.' }
     }
     try {
-      const playlist = await getPlaylist({ data: { profileId, playlistId } })
-      return { kind: 'ready', profileId, playlist }
+      // Fetch the metadata + tracks in parallel — both target the
+      // same tenant chain so the server validates the ownership
+      // twice (cheap) but the wall-clock is the slower of the two.
+      // The track read is guarded against its own failure: if the
+      // metadata resolved but the track list errored, we still
+      // render the playlist (the user can edit / delete / navigate
+      // out) and surface a non-blocking alert on the empty rail.
+      const [playlist, tracksResult] = await Promise.all([
+        getPlaylist({ data: { profileId, playlistId } }),
+        getPlaylistTracks({ data: { profileId, playlistId } })
+          .then((tracks): TrackFetchResult => ({ ok: true, tracks }))
+          .catch(
+            (err: unknown): TrackFetchResult => ({
+              ok: false,
+              error: err instanceof Error ? err.message : 'Failed to load tracks.',
+            }),
+          ),
+      ])
+      return { kind: 'ready', profileId, playlist, tracksResult }
     } catch (err) {
       return {
         kind: 'error',
@@ -27,8 +51,15 @@ export const Route = createFileRoute('/_authed/profiles/$profileId/playlists/$pl
   component: PlaylistDetailView,
 })
 
-type LoaderData =
-  | { kind: 'ready'; profileId: number; playlist: Playlist }
+export type TrackFetchResult = { ok: true; tracks: PlaylistTrack[] } | { ok: false; error: string }
+
+export type LoaderData =
+  | {
+      kind: 'ready'
+      profileId: number
+      playlist: Playlist
+      tracksResult: TrackFetchResult
+    }
   | { kind: 'error'; message: string }
 
 // Exported for direct unit-render — sidesteps the file-route + router
@@ -104,22 +135,7 @@ export function PlaylistDetailView() {
                 </div>
               )}
             </div>
-            <div className="mt-8 rounded-xl border border-dashed border-[var(--line)] bg-[var(--chip-bg)] p-6 text-sm text-[var(--sea-ink-soft)]">
-              <p className="font-semibold text-[var(--sea-ink)]">Tracks coming soon</p>
-              <p className="mt-2">
-                The web client can read playlist metadata today, but the per-playlist track listing
-                endpoint hasn&apos;t shipped on{' '}
-                <a
-                  href="https://github.com/InstaZDLL/waveflow-server"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-semibold text-[var(--sea-ink)] underline"
-                >
-                  waveflow-server
-                </a>{' '}
-                yet. Until it does, edit playlists from the desktop app.
-              </p>
-            </div>
+            <TrackList result={data.tracksResult} />
             <p className="mt-6">
               <Link
                 to="/profiles/$profileId/playlists"
@@ -203,5 +219,89 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
         )}
       </p>
     </div>
+  )
+}
+
+function TrackList({ result }: { result: TrackFetchResult }) {
+  if (!result.ok) {
+    return (
+      <div
+        role="alert"
+        className="mt-8 rounded-xl border border-red-200 bg-red-50/60 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+      >
+        Could not load tracks: {result.error}
+      </div>
+    )
+  }
+  if (result.tracks.length === 0) {
+    return (
+      <div className="mt-8 rounded-xl border border-dashed border-[var(--line)] bg-[var(--chip-bg)] p-6 text-sm text-[var(--sea-ink-soft)]">
+        <p className="font-semibold text-[var(--sea-ink)]">No tracks yet</p>
+        <p className="mt-2">
+          Add tracks to this playlist from the desktop app — they&apos;ll sync over and show up
+          here.
+        </p>
+      </div>
+    )
+  }
+  // Ordinals are 1..N over the rendered array order — mainstream
+  // player convention (Spotify / Apple Music / YouTube Music all
+  // do this). We deliberately do NOT render `track.position` to
+  // the user: it's the desktop's storage column and goes sparse
+  // after deletes, so showing it would surface internal gaps
+  // (e.g. "1, 2, 4, 7") that mean nothing on this surface. The
+  // server still ORDER BY `position`, so the array order IS the
+  // user's intended sequence.
+  return (
+    <ul
+      aria-label="Playlist tracks"
+      className="mt-8 flex flex-col divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--chip-bg)]"
+    >
+      {result.tracks.map((track, index) => (
+        <TrackRow key={track.track_id} track={track} ordinal={index + 1} />
+      ))}
+    </ul>
+  )
+}
+
+function TrackRow({ track, ordinal }: { track: PlaylistTrack; ordinal: number }) {
+  // Pre-1.j.b desktops emitted tracks ops without snapshots — the
+  // owner is allowed to see those rows on this surface, so render
+  // a placeholder rather than hiding them. We display the rendered
+  // ordinal rather than the wire `track_id` so the placeholder
+  // doesn't leak the desktop's local i64 row id (which means
+  // nothing on another device's view and changes per-desktop).
+  const title = track.snapshot_title ?? `Track ${ordinal}`
+  const hasMetadata = track.snapshot_title !== null
+  const durationSec =
+    track.snapshot_duration_ms !== null && track.snapshot_duration_ms > 0
+      ? track.snapshot_duration_ms / 1000
+      : null
+  return (
+    <li className="flex items-center gap-3 px-4 py-3">
+      <span
+        aria-hidden="true"
+        className="w-6 flex-shrink-0 text-right text-xs tabular-nums text-[var(--sea-ink-soft)]"
+      >
+        {ordinal}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p
+          className={`truncate text-sm font-semibold ${
+            hasMetadata ? 'text-[var(--sea-ink)]' : 'text-[var(--sea-ink-soft)] italic'
+          }`}
+        >
+          {title}
+        </p>
+        {track.snapshot_artist && (
+          <p className="truncate text-xs text-[var(--sea-ink-soft)]">{track.snapshot_artist}</p>
+        )}
+      </div>
+      {durationSec !== null && (
+        <span className="flex-shrink-0 text-xs tabular-nums text-[var(--sea-ink-soft)]">
+          {formatTime(durationSec)}
+        </span>
+      )}
+    </li>
   )
 }
