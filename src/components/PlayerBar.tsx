@@ -8,7 +8,7 @@
 // Renders nothing when `current` is null — the UI doesn't reserve
 // space for an empty bar.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import WaveflowLogo from './WaveflowLogo'
 import { usePlayer } from '@/lib/player-context'
@@ -16,6 +16,12 @@ import { usePlayer } from '@/lib/player-context'
 export function PlayerBar() {
   const player = usePlayer()
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  // Local seek-scrub state — the slider mirrors `player.position`
+  // when idle but tracks the user's thumb during a drag. We only
+  // call `player.seek()` on pointer release so a single drag
+  // produces one seek event instead of one per pixel (which would
+  // hammer the seekVersion counter + audio.currentTime).
+  const [seekScrub, setSeekScrub] = useState<number | null>(null)
 
   // Apply the latest volume to the element whenever it changes.
   // The element's own state isn't reactive — we sync it via effect.
@@ -164,14 +170,40 @@ export function PlayerBar() {
           min={0}
           max={durationSec || 0}
           step={1}
-          value={player.position}
-          onChange={(e) => player.seek(Number(e.target.value))}
+          value={seekScrub ?? player.position}
+          onChange={(e) => setSeekScrub(Number(e.target.value))}
+          // Pointer events cover mouse + touch + pen in one API.
+          // Commit the scrub on release (lift) OR on cancel
+          // (pointer leaves the viewport mid-drag). Keyboard arrow
+          // adjustments don't fire pointer events — they go through
+          // `onKeyUp` so the same commit path runs.
+          onPointerUp={() => {
+            if (seekScrub !== null) {
+              player.seek(seekScrub)
+              setSeekScrub(null)
+            }
+          }}
+          onPointerCancel={() => setSeekScrub(null)}
+          onKeyUp={(e) => {
+            if (
+              seekScrub !== null &&
+              (e.key === 'ArrowLeft' ||
+                e.key === 'ArrowRight' ||
+                e.key === 'Home' ||
+                e.key === 'End' ||
+                e.key === 'PageUp' ||
+                e.key === 'PageDown')
+            ) {
+              player.seek(seekScrub)
+              setSeekScrub(null)
+            }
+          }}
           aria-label="Seek"
           className="hidden min-w-0 flex-1 sm:block"
           style={{ accentColor: 'var(--accent-600)' }}
         />
         <span className="hidden w-20 text-right text-xs tabular-nums text-[var(--sea-ink-soft)] sm:inline">
-          {formatTime(player.position)} / {formatTime(durationSec)}
+          {formatTime(seekScrub ?? player.position)} / {formatTime(durationSec)}
         </span>
 
         <div className="hidden items-center gap-2 lg:flex">
