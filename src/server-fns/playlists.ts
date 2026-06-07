@@ -108,6 +108,93 @@ export const createPlaylist = createServerFn({ method: 'POST' })
     }),
   )
 
+export interface UpdatePlaylistParams {
+  profileId: number
+  playlistId: number
+  name?: string
+  description?: string
+  color_id?: string
+  icon_id?: string
+}
+
+/**
+ * Partially update a playlist. Every field is optional; the server
+ * COALESCEs absent fields against the current row so a PATCH with
+ * only `name` set leaves the description untouched. `name` must be
+ * non-empty / non-whitespace when present (rejected with 400 on
+ * the server; mirrored client-side here for symmetry with
+ * `createPlaylist`).
+ *
+ * Smart playlists aren't writable here either — the server's
+ * repository call refuses to PATCH a row where `is_smart=1` so a
+ * mistaken edit from the web UI surfaces as 404.
+ */
+export const updatePlaylist = createServerFn({ method: 'POST' })
+  .inputValidator((value: unknown): UpdatePlaylistParams => {
+    const raw = value as Partial<UpdatePlaylistParams> | undefined
+    const profileId = asPathId(raw?.profileId, 'profileId')
+    const playlistId = asPathId(raw?.playlistId, 'playlistId')
+    const out: UpdatePlaylistParams = { profileId, playlistId }
+    if (typeof raw?.name === 'string') {
+      const trimmed = raw.name.trim()
+      if (!trimmed) throw new Error('Name is required.')
+      if (trimmed.length > 200) throw new Error('Name must be 200 characters or fewer.')
+      out.name = trimmed
+    }
+    if (typeof raw?.description === 'string') {
+      const trimmed = raw.description.trim()
+      if (trimmed.length > 1000) {
+        throw new Error('Description must be 1000 characters or fewer.')
+      }
+      // Empty-after-trim still goes through — that's how the user
+      // signals "clear the description". The server treats it as
+      // an explicit value (not Option::None) because the key is
+      // present.
+      out.description = trimmed
+    }
+    if (typeof raw?.color_id === 'string') out.color_id = raw.color_id
+    if (typeof raw?.icon_id === 'string') out.icon_id = raw.icon_id
+    return out
+  })
+  .handler(async ({ data }) =>
+    withSafeErrors('updatePlaylist', async () => {
+      const token = await mintToken()
+      const { profileId, playlistId, ...body } = data
+      return waveflowFetch<Playlist>(`/api/v1/profiles/${profileId}/playlists/${playlistId}`, {
+        method: 'PATCH',
+        token,
+        body,
+      })
+    }),
+  )
+
+export interface DeletePlaylistParams {
+  profileId: number
+  playlistId: number
+}
+
+/**
+ * Delete a playlist. 204 on success, 404 on a foreign / nonexistent
+ * id (surfaced as "Not found." via the error envelope).
+ */
+export const deletePlaylist = createServerFn({ method: 'POST' })
+  .inputValidator((value: unknown): DeletePlaylistParams => {
+    const raw = value as Partial<DeletePlaylistParams> | undefined
+    return {
+      profileId: asPathId(raw?.profileId, 'profileId'),
+      playlistId: asPathId(raw?.playlistId, 'playlistId'),
+    }
+  })
+  .handler(async ({ data }) =>
+    withSafeErrors('deletePlaylist', async () => {
+      const token = await mintToken()
+      await waveflowFetch<void>(`/api/v1/profiles/${data.profileId}/playlists/${data.playlistId}`, {
+        method: 'DELETE',
+        token,
+      })
+    }),
+  )
+
 /**
  * Fetch a single playlist by id. 404s on a foreign / nonexistent
  * id (surfaced as "Not found." via the error envelope).

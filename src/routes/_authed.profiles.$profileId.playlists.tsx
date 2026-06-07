@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 
-import { CreatePlaylistDialog } from '@/components/CreatePlaylistDialog'
+import { PlaylistFormDialog } from '@/components/PlaylistFormDialog'
 import { formatTime } from '@/lib/format-time'
-import { listPlaylists, type Playlist } from '@/server-fns/playlists'
+import { createPlaylist, listPlaylists, type Playlist } from '@/server-fns/playlists'
 
 // Auth gating inherited from the `_authed` parent layout.
 export const Route = createFileRoute('/_authed/profiles/$profileId/playlists')({
@@ -131,11 +131,20 @@ export function PlaylistsView() {
       </section>
 
       {canCreate && (
-        <CreatePlaylistDialog
+        <PlaylistFormDialog
           open={createOpen}
-          profileId={data.profileId}
+          mode="create"
           onClose={() => setCreateOpen(false)}
-          onCreated={onCreated}
+          submit={(values) =>
+            createPlaylist({
+              data: {
+                profileId: data.profileId,
+                name: values.name,
+                ...(values.description ? { description: values.description } : {}),
+              },
+            })
+          }
+          onSubmitted={onCreated}
         />
       )}
     </main>
