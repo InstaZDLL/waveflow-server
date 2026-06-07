@@ -57,10 +57,27 @@ export function DeletePlaylistDialog({
     if (open) cancelButtonRef.current?.focus()
   }, [open])
 
+  // ESC + backdrop dismissals MUST NOT close while the request
+  // is in flight. The Cancel button is already gated via its
+  // `disabled` prop; this read-the-current-submitting-via-ref
+  // pattern keeps the keydown listener stable (no re-attach
+  // every flip of `submitting`). Sync via effect because
+  // react-hooks/refs rejects a write at render time.
+  const submittingRef = useRef(submitting)
+  useEffect(() => {
+    submittingRef.current = submitting
+  }, [submitting])
+  function attemptClose() {
+    if (submittingRef.current) return
+    onClose()
+  }
+
   useEffect(() => {
     if (!open) return
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (submittingRef.current) return
+      onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -85,7 +102,7 @@ export function DeletePlaylistDialog({
     <>
       <div
         aria-hidden="true"
-        onClick={onClose}
+        onClick={attemptClose}
         className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
       />
       <div
