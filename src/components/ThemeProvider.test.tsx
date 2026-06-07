@@ -3,7 +3,7 @@
 // `useTheme` throws when called outside the provider.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 
 const setStoredThemeId = vi.fn()
 
@@ -79,15 +79,65 @@ describe('ThemeProvider', () => {
     // CI doesn't read it as a regression.
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await act(async () => {
+    act(() => {
       result.current.setTheme('lavender')
-      // Yield to the rejected microtask so the rollback runs before
-      // we assert.
-      await Promise.resolve()
     })
 
-    expect(result.current.theme.id).toBe('default-dark')
-    expect(document.documentElement.getAttribute('data-theme')).toBe('default-dark')
+    // `waitFor` polls until the rejection handler + rollback have
+    // actually run. The previous `await Promise.resolve()` only
+    // yielded one microtask, which happened to work today but
+    // would flake on any change that adds a second microtask hop
+    // (e.g. a future `requestIdleCallback` shim, an async wrapper
+    // around `applyTheme`).
+    await waitFor(() => {
+      expect(result.current.theme.id).toBe('default-dark')
+      expect(document.documentElement.getAttribute('data-theme')).toBe('default-dark')
+    })
+    errorSpy.mockRestore()
+  })
+
+  it('does not roll back when a newer setTheme has superseded the failing one', async () => {
+    // First request: lavender → rejects.
+    // Second request: crimson → resolves.
+    // The lavender rejection must NOT roll back to default-dark
+    // because the user has since asked for crimson — clobbering
+    // crimson would leave the UI on a stale preset.
+    let resolveFirst: (() => void) | undefined
+    setStoredThemeId.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          resolveFirst = () => reject(new Error('server down'))
+        }),
+    )
+    setStoredThemeId.mockResolvedValueOnce({ themeId: 'crimson' })
+
+    const { result } = renderHook(() => useTheme(), {
+      wrapper: ({ children }) => (
+        <ThemeProvider initialThemeId="default-dark">{children}</ThemeProvider>
+      ),
+    })
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    act(() => {
+      result.current.setTheme('lavender')
+    })
+    act(() => {
+      result.current.setTheme('crimson')
+    })
+
+    // Trigger the queued rejection now that crimson is the latest
+    // requested theme. The handler runs and finds its `resolved`
+    // ('lavender') doesn't match `lastRequestedThemeIdRef.current`
+    // ('crimson'), so it skips the rollback.
+    act(() => {
+      resolveFirst?.()
+    })
+
+    await waitFor(() => {
+      expect(result.current.theme.id).toBe('crimson')
+      expect(document.documentElement.getAttribute('data-theme')).toBe('crimson')
+    })
     errorSpy.mockRestore()
   })
 })
