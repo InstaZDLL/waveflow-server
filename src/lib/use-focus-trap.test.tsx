@@ -112,4 +112,16 @@ describe('useFocusTrap', () => {
     fireEvent.keyDown(outside, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByTestId('first'))
   })
+
+  it('pulls outside focus back to the first focusable on Shift+Tab', () => {
+    // Same containment guarantee but the Shift+Tab direction —
+    // the outside branch fires regardless of `shiftKey` so a
+    // user wrapping backwards from outside the dialog still
+    // lands inside instead of escaping further.
+    render(<Harness />)
+    const outside = screen.getByTestId('outside-after')
+    outside.focus()
+    fireEvent.keyDown(outside, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(screen.getByTestId('first'))
+  })
 })
