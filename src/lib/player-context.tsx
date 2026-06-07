@@ -96,6 +96,16 @@ interface PlayerActions {
   seek: (seconds: number) => void
   /** 0.0 – 1.0. Persists to localStorage. */
   setVolume: (volume: number) => void
+  /**
+   * Jump to a specific entry in the queue. Only the prior current
+   * is pushed to history — skipped items are dropped on the floor
+   * (mainstream-player convention: Spotify, Apple Music, YouTube
+   * Music all do this). Preserves the `history[0] = most-
+   * recently-HEARD` invariant so a subsequent `previous()` walks
+   * back to the prior current rather than a fabricated backlog of
+   * unheard tracks. The resolved entry's URL is minted on demand.
+   */
+  playQueueAt: (index: number) => Promise<void>
 }
 
 /** Internal: also exposes setters PlayerBar needs to sync from `<audio>` events. */
@@ -280,6 +290,42 @@ export function PlayerProvider({ children }: PlayerProviderProps) {
     setPosition(seconds)
   }, [])
 
+  const playQueueAt = useCallback(
+    async (index: number): Promise<void> => {
+      if (index < 0 || index >= queue.length) return
+      const target = queue[index]
+      const rest = queue.slice(index + 1)
+      const seq = ++mintSeqRef.current
+      setIsLoading(true)
+      try {
+        const url = await mintUrl(target)
+        if (seq !== mintSeqRef.current) return
+        // Mirror `next()`'s history shape: ONLY the prior current
+        // is pushed. Items between the prior current and the jump
+        // target were never actually heard, so they're dropped on
+        // the floor — same behaviour Spotify / Apple Music /
+        // YouTube Music ship, and the same invariant `next()` /
+        // `previous()` rely on (history[0] = most-recently HEARD).
+        setHistory((h) => {
+          if (!current) return h
+          const { url: _strip, ...raw } = current
+          return [raw, ...h]
+        })
+        setCurrent({ ...target, url })
+        setQueue(rest)
+        setPosition(0)
+        setIsPlaying(true)
+      } catch (err) {
+        if (seq !== mintSeqRef.current) return
+        console.error('[player] playQueueAt failed:', err)
+        throw err
+      } finally {
+        if (seq === mintSeqRef.current) setIsLoading(false)
+      }
+    },
+    [current, queue],
+  )
+
   const setVolume = useCallback((value: number) => {
     const clamped = Math.min(1, Math.max(0, value))
     setVolumeState(clamped)
@@ -303,6 +349,7 @@ export function PlayerProvider({ children }: PlayerProviderProps) {
       previous,
       seek,
       setVolume,
+      playQueueAt,
       setIsPlaying,
       setPosition,
       seekVersion,
@@ -322,6 +369,7 @@ export function PlayerProvider({ children }: PlayerProviderProps) {
       previous,
       seek,
       setVolume,
+      playQueueAt,
       seekVersion,
       seekTargetSec,
     ],
