@@ -1,7 +1,6 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Player, type PlayingTrack } from '@/components/Player'
-import { getStreamUrl } from '@/server-fns/stream'
+import { usePlayer, type QueueEntry } from '@/lib/player-context'
 import { listTracks, type Track } from '@/server-fns/tracks'
 
 // Auth gating inherited from the `_authed` parent layout.
@@ -31,43 +30,37 @@ type LoaderData =
 
 function TracksView() {
   const data = Route.useLoaderData()
-  const [current, setCurrent] = useState<PlayingTrack | null>(null)
+  const player = usePlayer()
   const [error, setError] = useState<string | null>(null)
-  const [pendingTrackId, setPendingTrackId] = useState<number | null>(null)
-  // Monotonic counter that disambiguates concurrent `play()` calls.
-  // Without it, fast double-clicks (or a deliberate spam) can race:
-  // the older fetch resolves last and overwrites the newer track.
-  const requestSeq = useRef(0)
+
+  function toQueueEntry(track: Track): QueueEntry | null {
+    if (data.kind !== 'ready') return null
+    return {
+      profileId: data.profileId,
+      libraryId: data.libraryId,
+      trackId: track.id,
+      title: track.title,
+      durationMs: track.duration_ms,
+    }
+  }
 
   async function play(track: Track) {
     if (data.kind !== 'ready') return
-    const seq = ++requestSeq.current
+    const entry = toQueueEntry(track)
+    if (!entry) return
     setError(null)
-    setPendingTrackId(track.id)
+    // Seed the queue with the surrounding tracks AFTER the clicked
+    // one so `next()` auto-advances down the list. URLs aren't
+    // minted upfront — `next()` resolves each on demand.
+    const startIndex = data.tracks.findIndex((t) => t.id === track.id)
+    const contextQueue = data.tracks
+      .slice(startIndex + 1)
+      .map(toQueueEntry)
+      .filter((e): e is QueueEntry => e !== null)
     try {
-      const { url } = await getStreamUrl({
-        data: {
-          profileId: data.profileId,
-          libraryId: data.libraryId,
-          trackId: track.id,
-        },
-      })
-      // Drop the response on the floor if a newer play() started
-      // while we awaited. The latest click wins.
-      if (seq !== requestSeq.current) return
-      setCurrent({
-        id: track.id,
-        title: track.title,
-        url,
-        durationMs: track.duration_ms,
-      })
+      await player.playTrack(entry, contextQueue)
     } catch (err) {
-      if (seq !== requestSeq.current) return
       setError(err instanceof Error ? err.message : 'Could not start playback.')
-    } finally {
-      if (seq === requestSeq.current) {
-        setPendingTrackId(null)
-      }
     }
   }
 
@@ -102,8 +95,8 @@ function TracksView() {
           {data.kind === 'ready' && data.tracks.length > 0 && (
             <ul className="divide-y divide-[var(--line)]">
               {data.tracks.map((track) => {
-                const isCurrent = current?.id === track.id
-                const isPending = pendingTrackId === track.id
+                const isCurrent = player.current?.trackId === track.id
+                const isPending = player.isLoading && isCurrent
                 return (
                   <li key={track.id} className="flex items-center gap-3 py-2">
                     <button
@@ -151,15 +144,6 @@ function TracksView() {
           )}
         </section>
       </main>
-
-      {/*
-        Keying the Player by the current track id (or `idle` when
-        nothing's playing) remounts the component on every track
-        swap. That resets its internal `playing` / `position` state
-        without a `setState`-in-effect, which the React hooks lint
-        rule (v7) flags.
-      */}
-      <Player key={current?.id ?? 'idle'} current={current} />
     </>
   )
 }

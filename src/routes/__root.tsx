@@ -4,8 +4,10 @@ import { TanStackDevtools } from '@tanstack/react-devtools'
 import { findTheme } from '@waveflow/design-tokens'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
+import { PlayerBar } from '../components/PlayerBar'
 import { ThemeProvider } from '../components/ThemeProvider'
 import { ThemeStyle } from '../components/ThemeStyle'
+import { PlayerProvider } from '../lib/player-context'
 import { getStoredThemeId } from '../server-fns/theme'
 
 import appCss from '../styles.css?url'
@@ -68,9 +70,12 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body className="font-sans antialiased [overflow-wrap:anywhere] selection:bg-[rgba(79,184,178,0.24)]">
         <ThemeProvider initialThemeId={themeId}>
-          <Header />
-          {children}
-          <Footer />
+          <PlayerProvider>
+            <Header />
+            {children}
+            <Footer />
+            <PlayerBar />
+          </PlayerProvider>
         </ThemeProvider>
         <TanStackDevtools
           config={{
