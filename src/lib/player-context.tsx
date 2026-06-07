@@ -97,10 +97,13 @@ interface PlayerActions {
   /** 0.0 – 1.0. Persists to localStorage. */
   setVolume: (volume: number) => void
   /**
-   * Jump to a specific entry in the queue. Items skipped over are
-   * moved to history in their original order, so a user who jumps
-   * 3 tracks ahead can still `previous()` back through them. The
-   * resolved entry's URL is minted on demand.
+   * Jump to a specific entry in the queue. Only the prior current
+   * is pushed to history — skipped items are dropped on the floor
+   * (mainstream-player convention: Spotify, Apple Music, YouTube
+   * Music all do this). Preserves the `history[0] = most-
+   * recently-HEARD` invariant so a subsequent `previous()` walks
+   * back to the prior current rather than a fabricated backlog of
+   * unheard tracks. The resolved entry's URL is minted on demand.
    */
   playQueueAt: (index: number) => Promise<void>
 }
