@@ -18,6 +18,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -57,16 +58,31 @@ export function ThemeProvider({ initialThemeId, children }: ThemeProviderProps) 
     applyTheme(theme)
   }, [theme])
 
+  // Tracks the most recently REQUESTED theme id (not necessarily
+  // the one currently persisted). A rejection from the server-fn
+  // should ONLY roll back if no newer request has been issued in
+  // the meantime — otherwise a slow first request that fails would
+  // clobber a successful second request, leaving the UI on a stale
+  // preset. `useRef` so the latest value is visible to every
+  // pending `.catch` without forcing a re-render.
+  const lastRequestedThemeIdRef = useRef<string>(findTheme(initialThemeId).id)
+
   const setTheme = useCallback(
     (id: string) => {
       const resolved = findTheme(id).id
       const previous = themeId
+      lastRequestedThemeIdRef.current = resolved
       setThemeId(resolved)
       // Optimistic — the server-fn writes the cookie. On failure,
-      // roll back so the DOM, cookie, and React state agree.
+      // roll back so the DOM, cookie, and React state agree. Skip
+      // the rollback if a newer request has superseded this one:
+      // the newer request's success or failure now owns the state.
       setStoredThemeId({ data: { themeId: resolved } }).catch((err) => {
         console.error('ThemeProvider: failed to persist theme', err)
-        setThemeId(previous)
+        if (lastRequestedThemeIdRef.current === resolved) {
+          lastRequestedThemeIdRef.current = previous
+          setThemeId(previous)
+        }
       })
     },
     [themeId],

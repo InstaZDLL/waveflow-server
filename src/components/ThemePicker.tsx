@@ -10,6 +10,7 @@
 // to the package's roster shows up automatically.
 
 import { THEME_PRESETS, type ThemePreset } from '@waveflow/design-tokens'
+import { useRef, type KeyboardEvent } from 'react'
 
 import { useTheme } from './ThemeProvider'
 
@@ -89,6 +90,59 @@ interface ThemeRowProps {
 }
 
 function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeRowProps) {
+  // ARIA radiogroup keyboard model — Tab moves INTO the group once
+  // (only the active tile carries tabIndex=0), then Arrow keys
+  // navigate AND select inside the group. The pattern matches the
+  // WAI-ARIA Authoring Practices radiogroup recipe.
+  // <https://www.w3.org/WAI/ARIA/apg/patterns/radio/>
+  //
+  // Refs are needed because moving focus on arrow keys means
+  // calling `.focus()` on a sibling button — `document.activeElement`
+  // is the source-of-truth for which tile the screen reader is on
+  // and a controlled-state-only solution would never sync focus.
+  const refs = useRef<Array<HTMLButtonElement | null>>([])
+  const activeIndex = presets.findIndex((p) => p.id === activeId)
+  // If the user lands on a row whose presets don't include the
+  // currently active id (e.g. they're on a Dark preset and the Light
+  // row is what they tabbed into), expose tabIndex=0 on the first
+  // tile so the row is still reachable.
+  const tabStopIndex = activeIndex === -1 ? 0 : activeIndex
+
+  function moveTo(targetIndex: number, preset: ThemePreset) {
+    refs.current[targetIndex]?.focus()
+    onSelect(preset.id)
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown': {
+        event.preventDefault()
+        const next = (currentIndex + 1) % presets.length
+        moveTo(next, presets[next])
+        return
+      }
+      case 'ArrowLeft':
+      case 'ArrowUp': {
+        event.preventDefault()
+        const prev = (currentIndex - 1 + presets.length) % presets.length
+        moveTo(prev, presets[prev])
+        return
+      }
+      case ' ':
+      case 'Enter': {
+        // The native `<button>` already fires `click` on Space /
+        // Enter, but only `Enter` is guaranteed on every browser
+        // for radio-pattern buttons. Wire both explicitly so the
+        // intent (select-this-radio) is unambiguous regardless of
+        // browser default.
+        event.preventDefault()
+        onSelect(presets[currentIndex].id)
+        return
+      }
+    }
+  }
+
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--sea-ink-soft)]">
@@ -99,7 +153,7 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
         aria-label={`${heading} themes`}
         className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
       >
-        {presets.map((preset) => {
+        {presets.map((preset, index) => {
           const isActive = preset.id === activeId
           return (
             <button
@@ -107,7 +161,12 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
               type="button"
               role="radio"
               aria-checked={isActive}
+              ref={(el) => {
+                refs.current[index] = el
+              }}
+              tabIndex={index === tabStopIndex ? 0 : -1}
               onClick={() => onSelect(preset.id)}
+              onKeyDown={(event) => onKeyDown(event, index)}
               className={`group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
                 isActive
                   ? 'border-[var(--sea-ink)] bg-white/80 shadow-sm dark:bg-black/30'
