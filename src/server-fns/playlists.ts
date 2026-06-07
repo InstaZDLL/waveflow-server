@@ -216,3 +216,58 @@ export const getPlaylist = createServerFn({ method: 'GET' })
       )
     }),
   )
+
+/**
+ * One row of the playlist's track list. The server returns rows
+ * in `(position ASC, track_id ASC)` order. Snapshot fields are
+ * nullable on purpose: pre-1.j.b desktops emitted tracks ops
+ * without them, and the owner is allowed to see the rows anyway
+ * (the public share preview is the only surface that filters
+ * NULL snapshots). The UI renders a placeholder for those rows
+ * rather than hiding them.
+ *
+ * `track_id` is the SOURCE desktop's local i64 id — NOT a
+ * server-canonical reference. Treat it as opaque row-key
+ * material only; cross-device track resolution is a future
+ * concern (phase 1.k server-side). The UI should NOT render it
+ * to the user — it changes per-desktop and means nothing on
+ * another device's view.
+ *
+ * `position` is 0-indexed on the wire (matches the desktop's
+ * SQLite column). The web UI renders ordinals as `1..N` over
+ * the rendered array order — see `TrackList` for the rationale.
+ * Sparse positions (gaps from deletes) are tolerated by the
+ * server's `ORDER BY` and don't surface to the user.
+ */
+export interface PlaylistTrack {
+  track_id: number
+  position: number
+  added_at: number
+  snapshot_title: string | null
+  snapshot_artist: string | null
+  snapshot_duration_ms: number | null
+}
+
+/**
+ * Fetch the tracks of a playlist owned by the calling user. 404s
+ * on a foreign / nonexistent playlist (surfaced as "Not found."
+ * via the error envelope). Empty playlist returns `[]`, NOT 404
+ * — the row exists, it just has no tracks.
+ */
+export const getPlaylistTracks = createServerFn({ method: 'GET' })
+  .inputValidator((value: unknown): GetPlaylistParams => {
+    const raw = value as Partial<GetPlaylistParams> | undefined
+    return {
+      profileId: asPathId(raw?.profileId, 'profileId'),
+      playlistId: asPathId(raw?.playlistId, 'playlistId'),
+    }
+  })
+  .handler(async ({ data }) =>
+    withSafeErrors('getPlaylistTracks', async () => {
+      const token = await mintToken()
+      return waveflowFetch<PlaylistTrack[]>(
+        `/api/v1/profiles/${data.profileId}/playlists/${data.playlistId}/tracks`,
+        { token },
+      )
+    }),
+  )
