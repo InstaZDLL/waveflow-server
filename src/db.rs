@@ -610,6 +610,77 @@ pub mod playlist_track {
             })
             .collect())
     }
+
+    /// One row's projection for the owner-facing track list. Carries
+    /// the source desktop's local `track_id` (the `playlist_track`
+    /// PK component, NOT a server-canonical reference) + position +
+    /// added_at + the optional snapshot fields. The owner is allowed
+    /// to see rows whose snapshot is NULL — pre-1.j.b desktops
+    /// emitted ops without snapshots; the row still belongs to the
+    /// playlist and the owner can see "Track #<id>" placeholders
+    /// until they re-sync on a newer client. The public share
+    /// preview filters NULL snapshots, the owner read does not.
+    #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+    pub struct OwnerTrackRow {
+        pub track_id: i64,
+        pub position: i32,
+        pub added_at: i64,
+        pub snapshot_title: Option<String>,
+        pub snapshot_artist: Option<String>,
+        pub snapshot_duration_ms: Option<i64>,
+    }
+
+    /// Owner-facing track list: validate the tenant chain
+    /// `playlist → profile → user` first, then fetch every row in
+    /// position order. `Ok(None)` covers "no such playlist", "wrong
+    /// profile", and "wrong user" with the same response so the
+    /// handler can blur the three into a single 404.
+    ///
+    /// Two round-trips on purpose: a single CTE-joined SELECT would
+    /// conflate "playlist not owned" with "playlist owned but empty"
+    /// in the result set (both yield zero rows), and we need the
+    /// 404 vs `[]` distinction at the HTTP boundary. The window
+    /// between the ownership check and the fetch is benign
+    /// *because* `playlist_track.playlist_id` carries
+    /// `ON DELETE CASCADE` (migration `20260609000000_playlist_track.sql`):
+    /// the only way a row can vanish between the two queries is via
+    /// parent-playlist deletion, which makes `[]` the correct answer
+    /// — same shape a brand-new empty playlist returns. If a future
+    /// migration adds another row-hiding mechanism (soft-delete,
+    /// archive flag, conditional unique), the rationale here needs
+    /// to be re-evaluated.
+    pub async fn fetch_for_owner(
+        pool: &sqlx::PgPool,
+        playlist_id: i64,
+        profile_id: i64,
+        user_id: i64,
+    ) -> Result<Option<Vec<OwnerTrackRow>>, sqlx::Error> {
+        let owned: Option<(i64,)> = sqlx::query_as(
+            "SELECT pl.id
+               FROM playlist pl
+               INNER JOIN profile p ON p.id = pl.profile_id
+              WHERE pl.id = $1 AND pl.profile_id = $2 AND p.user_id = $3",
+        )
+        .bind(playlist_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, OwnerTrackRow>(
+            "SELECT track_id, position, added_at,
+                    snapshot_title, snapshot_artist, snapshot_duration_ms
+               FROM playlist_track
+              WHERE playlist_id = $1
+              ORDER BY position ASC, track_id ASC",
+        )
+        .bind(playlist_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(rows))
+    }
 }
 
 /// Shared artwork cache helpers (Phase 1.h.1). Reads + writes against
