@@ -1,8 +1,9 @@
 // useFocusTrap tests — exercise the Tab/Shift+Tab wrap behaviour
-// and the no-focusable fallback (pin to container). jsdom doesn't
-// move focus on Tab natively, so we simulate by manually setting
-// focus to the first / last button, dispatching a Tab keydown on
-// the container, and asserting the hook moved focus to the other
+// and the no-focusable fallback. jsdom doesn't move focus on Tab
+// natively, so we simulate by manually focusing the element we
+// want to start from, dispatching a Tab keydown ON THAT element
+// (the listener lives on document, so any descendant target
+// reaches it), and asserting the hook moved focus to the other
 // end of the chain.
 
 import { useRef, useState } from 'react'
@@ -57,7 +58,9 @@ describe('useFocusTrap', () => {
     const last = screen.getByTestId('last')
     last.focus()
     expect(document.activeElement).toBe(last)
-    fireEvent.keyDown(screen.getByTestId('trap-container'), { key: 'Tab' })
+    // Event fires on the focused element (last) and bubbles to
+    // the document-level listener the hook attached.
+    fireEvent.keyDown(last, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByTestId('first'))
   })
 
@@ -65,7 +68,7 @@ describe('useFocusTrap', () => {
     render(<Harness />)
     const first = screen.getByTestId('first')
     first.focus()
-    fireEvent.keyDown(screen.getByTestId('trap-container'), { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(screen.getByTestId('last'))
   })
 
@@ -73,7 +76,7 @@ describe('useFocusTrap', () => {
     render(<Harness />)
     const middle = screen.getByTestId('middle')
     middle.focus()
-    fireEvent.keyDown(screen.getByTestId('trap-container'), { key: 'Tab' })
+    fireEvent.keyDown(middle, { key: 'Tab' })
     // The hook only forces a wrap from the boundaries (first/last)
     // or when focus has drifted outside the container. Middle
     // sits in neither bucket, so focus stays where it was — the
@@ -93,7 +96,7 @@ describe('useFocusTrap', () => {
     render(<Harness initialActive={false} />)
     const middle = screen.getByTestId('middle')
     middle.focus()
-    fireEvent.keyDown(screen.getByTestId('trap-container'), { key: 'Tab' })
+    fireEvent.keyDown(middle, { key: 'Tab' })
     // No listener attached, so the synthetic event is a no-op
     // and focus stays on middle (where it was).
     expect(document.activeElement).toBe(middle)
@@ -103,7 +106,10 @@ describe('useFocusTrap', () => {
     render(<Harness />)
     const outside = screen.getByTestId('outside-before')
     outside.focus()
-    fireEvent.keyDown(screen.getByTestId('trap-container'), { key: 'Tab' })
+    // Document-level listener means the Tab fired on the outside
+    // element reaches the hook — which detects focus is OUTSIDE
+    // the container and pulls it back in.
+    fireEvent.keyDown(outside, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByTestId('first'))
   })
 })

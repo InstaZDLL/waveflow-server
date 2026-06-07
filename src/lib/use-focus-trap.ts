@@ -6,7 +6,14 @@
 // The hook is intentionally small: it queries the container for
 // focusable descendants every time Tab is pressed (cheap — there
 // are usually <20 of them) so a dynamic re-render of the dialog
-// doesn't desync the trap from the current DOM.
+// doesn't desync the trap from the current DOM. The listener
+// lives on `document` (capture phase) — a container-scoped
+// listener would miss Tab events fired outside the dialog, which
+// is exactly the case the "pulled back to first" branch exists
+// to handle. Reading `containerRef.current` inside the handler
+// also makes the trap robust against a consumer that swaps the
+// underlying node mid-life (e.g. a portal re-target) without a
+// re-attach cycle.
 //
 // Restoration of focus on close is the PARENT's responsibility —
 // every dialog in this app already wires `setOpen(false)` next to
@@ -26,6 +33,22 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
+function focusables(container: HTMLElement): HTMLElement[] {
+  // `Element.checkVisibility()` is the standards-track replacement
+  // for the old `offsetParent !== null` trick — it returns false
+  // for `display: none`, `visibility: hidden`, and dimensionless
+  // elements in a real browser; jsdom doesn't implement it,
+  // returning `undefined`, which we OR-with-true to fall through.
+  // Works in Chromium 105+ / Firefox 125+ / Safari 17.4+; older
+  // browsers see the fallback (no filter) which is the same
+  // posture this hook took before the method shipped.
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) =>
+      !el.hasAttribute('aria-hidden') &&
+      (el.checkVisibility?.({ checkOpacity: false, checkVisibilityCSS: true }) ?? true),
+  )
+}
+
 /**
  * @param active   — turn the trap on/off (typically the dialog's
  *                   open state).
@@ -35,35 +58,17 @@ const FOCUSABLE_SELECTOR = [
 export function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     if (!active) return
-    const container = containerRef.current
-    if (!container) return
-
-    function focusables(): HTMLElement[] {
-      if (!container) return []
-      // `Element.checkVisibility()` is the standards-track replacement
-      // for the old `offsetParent !== null` trick — it returns
-      // false for `display: none`, `visibility: hidden`, and
-      // dimensionless elements in a real browser; jsdom doesn't
-      // implement it, returning `undefined`, which we OR-with-true
-      // to fall through. Works in Chromium 105+ / Firefox 125+ /
-      // Safari 17.4+; older browsers see the fallback (no filter)
-      // which is the same posture this hook took before the
-      // method shipped.
-      return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-        (el) =>
-          !el.hasAttribute('aria-hidden') &&
-          (el.checkVisibility?.({ checkOpacity: false, checkVisibilityCSS: true }) ?? true),
-      )
-    }
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Tab') return
-      const items = focusables()
+      const container = containerRef.current
+      if (!container) return
+      const items = focusables(container)
       if (items.length === 0) {
         // Nothing focusable inside — keep focus pinned to the
         // container itself so it doesn't leak to the page behind.
         event.preventDefault()
-        container?.focus()
+        container.focus()
         return
       }
       const first = items[0]
@@ -75,7 +80,7 @@ export function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElemen
       } else if (!event.shiftKey && activeEl === last) {
         event.preventDefault()
         first.focus()
-      } else if (activeEl && !container?.contains(activeEl)) {
+      } else if (activeEl && !container.contains(activeEl)) {
         // Focus drifted outside (clicked something or programmatic
         // focus jumped) — pull it back to the first focusable.
         event.preventDefault()
@@ -83,7 +88,7 @@ export function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElemen
       }
     }
 
-    container.addEventListener('keydown', onKeyDown)
-    return () => container.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
   }, [active, containerRef])
 }
