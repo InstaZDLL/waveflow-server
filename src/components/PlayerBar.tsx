@@ -10,18 +10,29 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+import { QueuePanel } from './QueuePanel'
 import WaveflowLogo from './WaveflowLogo'
 import { usePlayer } from '@/lib/player-context'
 
 export function PlayerBar() {
   const player = usePlayer()
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const queueToggleRef = useRef<HTMLButtonElement | null>(null)
   // Local seek-scrub state — the slider mirrors `player.position`
   // when idle but tracks the user's thumb during a drag. We only
   // call `player.seek()` on pointer release so a single drag
   // produces one seek event instead of one per pixel (which would
   // hammer the seekVersion counter + audio.currentTime).
   const [seekScrub, setSeekScrub] = useState<number | null>(null)
+  // Drawer state. The QueuePanel is mounted as a sibling, but its
+  // open/closed signal lives here so the toggle button reads the
+  // same source of truth. Closing the drawer restores focus to
+  // the toggle button so keyboard navigation isn't stranded.
+  const [queueOpen, setQueueOpen] = useState(false)
+  const closeQueue = () => {
+    setQueueOpen(false)
+    queueToggleRef.current?.focus()
+  }
 
   // Apply the latest volume to the element whenever it changes.
   // The element's own state isn't reactive — we sync it via effect.
@@ -248,6 +259,20 @@ export function PlayerBar() {
             style={{ accentColor: 'var(--accent-600)' }}
           />
         </div>
+
+        <button
+          ref={queueToggleRef}
+          type="button"
+          onClick={() => setQueueOpen((open) => !open)}
+          aria-label={queueOpen ? 'Close queue' : 'Open queue'}
+          aria-expanded={queueOpen}
+          aria-controls="player-queue-panel"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)]"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm10 0l6-3.5L14 9z" />
+          </svg>
+        </button>
       </div>
 
       {/*
@@ -279,6 +304,7 @@ export function PlayerBar() {
         }}
         className="hidden"
       />
+      <QueuePanel open={queueOpen} onClose={closeQueue} />
     </div>
   )
 }
