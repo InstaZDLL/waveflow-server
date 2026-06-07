@@ -1,7 +1,10 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
+import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 
+import { DeletePlaylistDialog } from '@/components/DeletePlaylistDialog'
+import { PlaylistFormDialog } from '@/components/PlaylistFormDialog'
 import { formatTime } from '@/lib/format-time'
-import { getPlaylist, type Playlist } from '@/server-fns/playlists'
+import { deletePlaylist, getPlaylist, updatePlaylist, type Playlist } from '@/server-fns/playlists'
 
 // Auth gating inherited from the `_authed` parent layout.
 export const Route = createFileRoute('/_authed/profiles/$profileId/playlists/$playlistId')({
@@ -33,6 +36,41 @@ type LoaderData =
 // the full router.
 export function PlaylistDetailView() {
   const data = Route.useLoaderData()
+  const router = useRouter()
+  const navigate = useNavigate()
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const isReady = data.kind === 'ready'
+  // Smart playlists are read-only on the web in v1 — the server's
+  // repo refuses to PATCH them anyway, and the editor for smart
+  // rules lives on the desktop. Hide the action buttons for them
+  // so the user doesn't get a "not found" surprise after a click.
+  const canMutate = isReady && data.playlist.is_smart === 0
+
+  function onEdited(_updated: Playlist) {
+    setEditOpen(false)
+    router.invalidate().catch((err) => {
+      console.warn('[playlists] post-edit invalidate failed:', err)
+    })
+  }
+
+  async function onDeleted() {
+    setDeleteOpen(false)
+    if (!isReady) return
+    const profileId = data.profileId
+    router.invalidate().catch((err) => {
+      console.warn('[playlists] post-delete invalidate failed:', err)
+    })
+    try {
+      await navigate({
+        to: '/profiles/$profileId/playlists',
+        params: { profileId: String(profileId) },
+      })
+    } catch (err) {
+      console.warn('[playlists] post-delete navigation failed:', err)
+    }
+  }
 
   return (
     <main className="page-wrap px-4 py-12 pb-32">
@@ -45,7 +83,27 @@ export function PlaylistDetailView() {
 
         {data.kind === 'ready' && (
           <>
-            <PlaylistHeader playlist={data.playlist} />
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <PlaylistHeader playlist={data.playlist} />
+              {canMutate && (
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditOpen(true)}
+                    className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteOpen(true)}
+                    className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/40"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="mt-8 rounded-xl border border-dashed border-[var(--line)] bg-[var(--chip-bg)] p-6 text-sm text-[var(--sea-ink-soft)]">
               <p className="font-semibold text-[var(--sea-ink)]">Tracks coming soon</p>
               <p className="mt-2">
@@ -74,6 +132,45 @@ export function PlaylistDetailView() {
           </>
         )}
       </section>
+
+      {canMutate && (
+        <>
+          <PlaylistFormDialog
+            open={editOpen}
+            mode="edit"
+            initial={{
+              name: data.playlist.name,
+              description: data.playlist.description ?? '',
+            }}
+            onClose={() => setEditOpen(false)}
+            submit={(values) =>
+              updatePlaylist({
+                data: {
+                  profileId: data.profileId,
+                  playlistId: data.playlist.id,
+                  name: values.name,
+                  // PlaylistFormDialog passes through the cleared
+                  // description as an empty string in edit mode so the
+                  // server overwrites the existing value.
+                  ...(values.description !== undefined ? { description: values.description } : {}),
+                },
+              })
+            }
+            onSubmitted={onEdited}
+          />
+          <DeletePlaylistDialog
+            open={deleteOpen}
+            playlistName={data.playlist.name}
+            onClose={() => setDeleteOpen(false)}
+            submit={() =>
+              deletePlaylist({
+                data: { profileId: data.profileId, playlistId: data.playlist.id },
+              })
+            }
+            onDeleted={onDeleted}
+          />
+        </>
+      )}
     </main>
   )
 }

@@ -27,10 +27,10 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }))
 
-// Stub the create-playlist dialog so the listing unit-test
-// doesn't drag its own server-fn import chain along.
-vi.mock('@/components/CreatePlaylistDialog', () => ({
-  CreatePlaylistDialog: () => null,
+// Stub the form dialog so the listing unit-test doesn't drag
+// its own (focus-trap, theming) deps into the listing render.
+vi.mock('@/components/PlaylistFormDialog', () => ({
+  PlaylistFormDialog: () => null,
 }))
 
 // The route file imports `listPlaylists` at the module top, which
