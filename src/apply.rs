@@ -1127,6 +1127,13 @@ mod track {
     /// empty array all collapse to an empty Vec — the desktop
     /// emits an empty list for tracks without an artist tag, and
     /// the apply path must NOT reject those as InvalidPayload.
+    ///
+    /// Deduplicates first-seen-order: a desktop that ships
+    /// `["A", "A"]` (e.g., a tag with a duplicated artist after
+    /// the `";"` split) collapses to `["A"]` here. Without this,
+    /// `upsert_artist` returns the same id for both entries and
+    /// `replace_track_artists` trips the `(track_id, artist_id)`
+    /// PK on the second INSERT.
     fn artists_from_payload(op: &SyncOpIn) -> Result<Vec<String>, ApplyError> {
         let Some(payload) = op.payload.as_ref() else {
             return Ok(Vec::new());
@@ -1142,6 +1149,8 @@ mod track {
             op: "insert",
             reason: "payload.artists must be an array of strings".into(),
         })?;
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(arr.len());
         let mut out = Vec::with_capacity(arr.len());
         for (idx, entry) in arr.iter().enumerate() {
             let name = entry.as_str().ok_or_else(|| ApplyError::InvalidPayload {
@@ -1156,7 +1165,10 @@ mod track {
                     reason: format!("payload.artists[{idx}] must not be empty"),
                 });
             }
-            out.push(name.to_owned());
+            if seen.insert(name.to_owned()) {
+                out.push(name.to_owned());
+            }
+            // else: duplicate — silently dropped (first-seen wins).
         }
         Ok(out)
     }
