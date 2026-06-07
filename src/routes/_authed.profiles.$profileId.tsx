@@ -71,7 +71,19 @@ function LibrariesView() {
           </ul>
         )}
 
-        <p className="mt-6">
+        {data.kind === 'ready' && (
+          <p className="mt-6">
+            <Link
+              to="/profiles/$profileId/playlists"
+              params={{ profileId: String(data.profileId) }}
+              className="text-sm font-semibold text-[var(--sea-ink)] underline"
+            >
+              View playlists →
+            </Link>
+          </p>
+        )}
+
+        <p className="mt-3">
           <Link to="/profiles" className="text-sm text-[var(--sea-ink-soft)] underline">
             ← Back to profiles
           </Link>
