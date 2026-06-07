@@ -13,6 +13,7 @@
         "@tanstack/react-router-ssr-query": "latest",
         "@tanstack/react-start": "latest",
         "@tanstack/router-plugin": "^1.132.0",
+        "@waveflow/design-tokens": "workspace:*",
         "better-auth": "1.6.13",
         "kysely": "~0.28.17",
         "lucide-react": "^1.17.0",
