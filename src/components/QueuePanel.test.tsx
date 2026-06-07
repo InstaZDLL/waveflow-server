@@ -96,10 +96,12 @@ describe('QueuePanel', () => {
     await user.click(screen.getByRole('button', { name: /seed/i }))
 
     // Click "Jump to Track 3" → playQueueAt(1) → current=3, queue=[],
-    // history=[1, 2].
+    // history=[1]. Track 2 was skipped over and dropped on the
+    // floor (mainstream-player convention) — only the prior
+    // current (1) lands in history.
     await user.click(screen.getByRole('button', { name: /jump to track 3/i }))
 
-    // After the jump, "Recently played" appears with tracks 1 + 2.
+    // After the jump, "Recently played" appears with the prior current.
     expect(screen.getByText(/recently played/i)).toBeTruthy()
   })
 
