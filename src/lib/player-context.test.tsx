@@ -226,6 +226,68 @@ describe('next / previous', () => {
   })
 })
 
+describe('playQueueAt', () => {
+  it('jumps to a queue entry + pushes the prior current into history', async () => {
+    const { result } = mount()
+    await act(async () => {
+      await result.current.playTrack(makeEntry(1), [makeEntry(2), makeEntry(3), makeEntry(4)])
+    })
+    // Jump to index 2 → track 4. Skipped 2 + 3 were never heard,
+    // so they DON'T enter history — only the prior current (1)
+    // does. Mirrors next()'s history shape so
+    // history[0] = most-recently-heard remains invariant.
+    await act(async () => {
+      await result.current.playQueueAt(2)
+    })
+    expect(result.current.current?.trackId).toBe(4)
+    expect(result.current.queue).toEqual([])
+    expect(result.current.history.map((h) => h.trackId)).toEqual([1])
+  })
+
+  it('plays a queue entry at index 0 without leaking it back into history', async () => {
+    const { result } = mount()
+    await act(async () => {
+      await result.current.playTrack(makeEntry(1), [makeEntry(2)])
+    })
+    await act(async () => {
+      await result.current.playQueueAt(0)
+    })
+    expect(result.current.current?.trackId).toBe(2)
+    expect(result.current.history.map((h) => h.trackId)).toEqual([1])
+  })
+
+  it('a jump + a previous returns to the prior current (not a skipped item)', async () => {
+    const { result } = mount()
+    await act(async () => {
+      await result.current.playTrack(makeEntry(1), [makeEntry(2), makeEntry(3), makeEntry(4)])
+    })
+    // Play 1, jump 4 ; previous should walk back to 1, NOT 3 or 2.
+    await act(async () => {
+      await result.current.playQueueAt(2)
+    })
+    await act(async () => {
+      await result.current.previous()
+    })
+    expect(result.current.current?.trackId).toBe(1)
+  })
+
+  it('is a no-op for an out-of-range index', async () => {
+    const { result } = mount()
+    await act(async () => {
+      await result.current.playTrack(makeEntry(1), [makeEntry(2)])
+    })
+    const callsBefore = getStreamUrl.mock.calls.length
+    await act(async () => {
+      await result.current.playQueueAt(99)
+    })
+    await act(async () => {
+      await result.current.playQueueAt(-1)
+    })
+    expect(getStreamUrl.mock.calls.length).toBe(callsBefore)
+    expect(result.current.current?.trackId).toBe(1)
+  })
+})
+
 describe('volume + togglePlayPause', () => {
   it('togglePlayPause flips isPlaying when a track is loaded', async () => {
     const { result } = mount()
