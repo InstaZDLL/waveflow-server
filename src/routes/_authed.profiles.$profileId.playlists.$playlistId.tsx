@@ -89,7 +89,7 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
             className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
             style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
           >
-            Auto
+            Smart
           </span>
         )}
       </div>
