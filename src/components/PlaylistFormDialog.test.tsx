@@ -273,6 +273,34 @@ describe('PlaylistFormDialog — edit mode', () => {
     })
   })
 
+  it('ignores Escape + backdrop dismissals while the submit is in flight', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    let resolve: ((p: ReturnType<typeof makePlaylist>) => void) | undefined
+    const submit = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof makePlaylist>>((r) => {
+          resolve = r
+        }),
+    )
+    render(
+      <PlaylistFormDialog
+        open={true}
+        mode="edit"
+        initial={{ name: 'In-flight' }}
+        onClose={onClose}
+        submit={submit}
+        onSubmitted={() => {}}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await user.keyboard('{Escape}')
+    const backdrop = document.querySelector('[aria-hidden="true"].fixed')
+    await user.click(backdrop as HTMLElement)
+    expect(onClose).not.toHaveBeenCalled()
+    resolve?.(makePlaylist())
+  })
+
   it('shows the busy label while the submit promise is pending', async () => {
     const user = userEvent.setup()
     let resolve: ((p: ReturnType<typeof makePlaylist>) => void) | undefined
