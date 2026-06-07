@@ -10,28 +10,36 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+import { NowPlayingOverlay } from './NowPlayingOverlay'
 import { QueuePanel } from './QueuePanel'
 import WaveflowLogo from './WaveflowLogo'
+import { formatTime } from '@/lib/format-time'
 import { usePlayer } from '@/lib/player-context'
 
 export function PlayerBar() {
   const player = usePlayer()
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const queueToggleRef = useRef<HTMLButtonElement | null>(null)
+  const nowPlayingTriggerRef = useRef<HTMLButtonElement | null>(null)
   // Local seek-scrub state — the slider mirrors `player.position`
   // when idle but tracks the user's thumb during a drag. We only
   // call `player.seek()` on pointer release so a single drag
   // produces one seek event instead of one per pixel (which would
   // hammer the seekVersion counter + audio.currentTime).
   const [seekScrub, setSeekScrub] = useState<number | null>(null)
-  // Drawer state. The QueuePanel is mounted as a sibling, but its
-  // open/closed signal lives here so the toggle button reads the
-  // same source of truth. Closing the drawer restores focus to
-  // the toggle button so keyboard navigation isn't stranded.
+  // Drawer state. Queue + Now Playing are mounted as siblings,
+  // but their open/closed signals live here so the toggle buttons
+  // read the same source of truth. Closing each restores focus to
+  // its trigger so keyboard navigation isn't stranded.
   const [queueOpen, setQueueOpen] = useState(false)
+  const [nowPlayingOpen, setNowPlayingOpen] = useState(false)
   const closeQueue = () => {
     setQueueOpen(false)
     queueToggleRef.current?.focus()
+  }
+  const closeNowPlaying = () => {
+    setNowPlayingOpen(false)
+    nowPlayingTriggerRef.current?.focus()
   }
 
   // Apply the latest volume to the element whenever it changes.
@@ -104,14 +112,22 @@ export function PlayerBar() {
       className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--header-bg)] backdrop-blur-lg"
     >
       <div className="page-wrap flex items-center gap-3 px-3 py-2.5 sm:gap-4 sm:px-4 sm:py-3">
-        {/* Cover placeholder — accent-tinted brand mark until the
-            scanner pipes cover URLs through the listing payload. */}
-        <div
-          className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg shadow-[0_4px_12px_rgba(0,0,0,0.08)] sm:h-14 sm:w-14"
+        {/* Cover placeholder doubles as the Now Playing trigger —
+            accent-tinted brand mark until the scanner pipes cover
+            URLs through the listing payload. */}
+        <button
+          ref={nowPlayingTriggerRef}
+          type="button"
+          onClick={() => setNowPlayingOpen(true)}
+          aria-label="Open now playing"
+          aria-haspopup="dialog"
+          aria-expanded={nowPlayingOpen}
+          aria-controls="player-now-playing"
+          className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition hover:scale-105 sm:h-14 sm:w-14"
           style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
         >
           <WaveflowLogo size={28} label={null} />
-        </div>
+        </button>
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
@@ -305,14 +321,7 @@ export function PlayerBar() {
         className="hidden"
       />
       <QueuePanel open={queueOpen} onClose={closeQueue} />
+      <NowPlayingOverlay open={nowPlayingOpen} onClose={closeNowPlaying} />
     </div>
   )
-}
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
-  const total = Math.floor(seconds)
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
