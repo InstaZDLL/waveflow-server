@@ -32,6 +32,11 @@ function TracksView() {
   const data = Route.useLoaderData()
   const player = usePlayer()
   const [error, setError] = useState<string | null>(null)
+  // `player.isLoading` flips on for ANY in-flight URL mint
+  // (playTrack / next / previous). To show the spinner on the row
+  // the user actually clicked, we track which trackId is pending
+  // locally and pair the global isLoading with this id.
+  const [pendingTrackId, setPendingTrackId] = useState<number | null>(null)
 
   function toQueueEntry(track: Track): QueueEntry | null {
     if (data.kind !== 'ready') return null
@@ -57,10 +62,13 @@ function TracksView() {
       .slice(startIndex + 1)
       .map(toQueueEntry)
       .filter((e): e is QueueEntry => e !== null)
+    setPendingTrackId(track.id)
     try {
       await player.playTrack(entry, contextQueue)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start playback.')
+    } finally {
+      setPendingTrackId(null)
     }
   }
 
@@ -96,7 +104,7 @@ function TracksView() {
             <ul className="divide-y divide-[var(--line)]">
               {data.tracks.map((track) => {
                 const isCurrent = player.current?.trackId === track.id
-                const isPending = player.isLoading && isCurrent
+                const isPending = pendingTrackId === track.id
                 return (
                   <li key={track.id} className="flex items-center gap-3 py-2">
                     <button
