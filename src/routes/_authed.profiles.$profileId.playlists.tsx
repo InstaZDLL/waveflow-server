@@ -1,5 +1,7 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
+import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 
+import { CreatePlaylistDialog } from '@/components/CreatePlaylistDialog'
 import { formatTime } from '@/lib/format-time'
 import { listPlaylists, type Playlist } from '@/server-fns/playlists'
 
@@ -32,14 +34,59 @@ type LoaderData =
 // the full router.
 export function PlaylistsView() {
   const data = Route.useLoaderData()
+  const router = useRouter()
+  const navigate = useNavigate()
+  const [createOpen, setCreateOpen] = useState(false)
+  const canCreate = data.kind === 'ready'
+
+  async function onCreated(playlist: Playlist) {
+    setCreateOpen(false)
+    if (data.kind !== 'ready') return
+    const profileId = data.profileId
+    // Navigate first so the user lands on the detail page
+    // immediately — the create call already succeeded, the new
+    // playlist exists, the listing's freshness can wait.
+    //
+    // navigate() returns a Promise the dialog's onCreated caller
+    // intentionally does NOT await, so an unhandled rejection here
+    // would silently disappear. Catch + log so a routing failure
+    // (matcher regression, future beforeLoad guard) leaves a trace
+    // and the background invalidate still runs to refresh the
+    // listing the user is left on.
+    try {
+      await navigate({
+        to: '/profiles/$profileId/playlists/$playlistId',
+        params: { profileId: String(profileId), playlistId: String(playlist.id) },
+      })
+    } catch (err) {
+      console.warn('[playlists] post-create navigation failed:', err)
+    }
+    router.invalidate().catch((err) => {
+      console.warn('[playlists] post-create invalidate failed:', err)
+    })
+  }
 
   return (
     <main className="page-wrap px-4 py-12">
       <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Playlists</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Your playlists
-        </h1>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="island-kicker mb-2">Playlists</p>
+            <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+              Your playlists
+            </h1>
+          </div>
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="rounded-full px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:opacity-95"
+              style={{ backgroundColor: 'var(--accent-600)' }}
+            >
+              + Create playlist
+            </button>
+          )}
+        </div>
 
         {data.kind === 'error' && (
           <p role="alert" className="text-base text-red-600 dark:text-red-400">
@@ -82,6 +129,15 @@ export function PlaylistsView() {
           </p>
         )}
       </section>
+
+      {canCreate && (
+        <CreatePlaylistDialog
+          open={createOpen}
+          profileId={data.profileId}
+          onClose={() => setCreateOpen(false)}
+          onCreated={onCreated}
+        />
+      )}
     </main>
   )
 }

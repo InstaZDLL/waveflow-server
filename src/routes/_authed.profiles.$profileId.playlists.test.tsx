@@ -12,15 +12,25 @@ import { render, screen, within } from '@testing-library/react'
 // time (the file route is module-scoped, so `vi.spyOn(Route, ...)`
 // only sees the value at first import).
 let loaderData: unknown = null
+const navigate = vi.fn()
+const invalidate = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => (config: unknown) => ({
     ...(config as Record<string, unknown>),
     useLoaderData: () => loaderData,
   }),
+  useRouter: () => ({ invalidate }),
+  useNavigate: () => navigate,
   Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
   ),
+}))
+
+// Stub the create-playlist dialog so the listing unit-test
+// doesn't drag its own server-fn import chain along.
+vi.mock('@/components/CreatePlaylistDialog', () => ({
+  CreatePlaylistDialog: () => null,
 }))
 
 // The route file imports `listPlaylists` at the module top, which
