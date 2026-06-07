@@ -952,14 +952,13 @@ async fn track_insert_creates_track_album_and_artists(pool: PgPool) {
 
     // Artist row(s) — both the album artist AND the contributor
     // list dedupe to a single row because they match the same name.
-    let artist_count: (i64,) =
-        sqlx::query_scalar::<_, (i64,)>("SELECT COUNT(*) FROM artist WHERE name = $1")
-            .bind("Daft Punk")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let artist_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artist WHERE name = $1")
+        .bind("Daft Punk")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
-        artist_count.0, 1,
+        artist_count, 1,
         "album_artist + contributor with the same name MUST dedupe to one row"
     );
 
@@ -1179,12 +1178,13 @@ async fn track_insert_with_unknown_library_skips_but_logs(pool: PgPool) {
     // lands. Push still succeeds (the durable log is the contract).
     let auth = spawn_authenticated(pool.clone(), "apply-track-skip").await;
     let file_path = "/music/t.mp3";
+    let op_id = Uuid::new_v4();
 
     let status = push(
         &auth.base,
         &auth.token,
         &[op(
-            Uuid::new_v4(),
+            op_id,
             1,
             "track",
             file_path,
@@ -1213,6 +1213,91 @@ async fn track_insert_with_unknown_library_skips_but_logs(pool: PgPool) {
     assert_eq!(
         count.0, 0,
         "Skipped op MUST NOT materialise a track row — replay after library insert lands does"
+    );
+
+    // Durability: the op MUST land in `sync_op` so a later replay
+    // (after the library's own insert) materialises the track.
+    // Without this assertion, a refactor that drops the op on the
+    // floor would silently break the Skipped-then-replay contract.
+    let logged: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_op
+          WHERE user_id = $1 AND operation_id = $2
+            AND entity = 'track' AND entity_id = $3",
+    )
+    .bind(auth.user_id)
+    .bind(op_id)
+    .bind(file_path)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged, 1,
+        "Skipped track op MUST be persisted in sync_op for replay"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn track_insert_dedups_duplicate_artists(pool: PgPool) {
+    // A desktop that ships a duplicated artist (e.g., a tag with
+    // the same name twice after the `";"` split) must NOT trip
+    // the `(track_id, artist_id)` PK on the second
+    // `replace_track_artists` insert. `artists_from_payload`
+    // dedupes first-seen-order; the test pins that contract.
+    let auth = spawn_authenticated(pool.clone(), "apply-track-dup").await;
+    let library_cid = "lib-dup";
+    let file_path = "/music/dup.mp3";
+
+    materialise_library(&auth.base, &auth.token, library_cid, "L").await;
+
+    let status = push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            2,
+            "track",
+            file_path,
+            None,
+            "insert",
+            track_insert_payload(
+                library_cid,
+                "Twice",
+                "hash-dup",
+                None,
+                None,
+                false,
+                &["Daft Punk", "Daft Punk", "Pharrell Williams", "Daft Punk"],
+            ),
+            Some(PROFILE_CID),
+        )],
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "duplicate-artist payload MUST NOT trip the PK (got {status})"
+    );
+
+    // First-seen wins → "Daft Punk" at position 0, "Pharrell
+    // Williams" at position 1. Subsequent "Daft Punk" entries
+    // dropped silently.
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT a.name, ta.position
+           FROM track_artist ta
+           JOIN artist a ON a.id = ta.artist_id
+          WHERE ta.track_id = (SELECT id FROM track WHERE file_path = $1)
+          ORDER BY ta.position ASC",
+    )
+    .bind(file_path)
+    .fetch_all(&pool)
+    .await
+    .expect("track_artist select");
+    assert_eq!(
+        rows,
+        vec![
+            ("Daft Punk".to_owned(), 0),
+            ("Pharrell Williams".to_owned(), 1),
+        ],
+        "dedupe MUST preserve first-seen order"
     );
 }
 
