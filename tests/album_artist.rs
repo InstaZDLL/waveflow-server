@@ -110,14 +110,16 @@ async fn insert_album(
 }
 
 /// Insert a track row directly. `album_id` is `Option<i64>` so
-/// orphan tracks (no album) are testable.
-async fn insert_track(
+/// orphan tracks (no album) are testable. Returns `Result` so
+/// cross-library tests that expect the composite FK to reject the
+/// row can call this without panicking.
+async fn try_insert_track(
     pool: &PgPool,
     library_id: i64,
     file_path: &str,
     title: &str,
     album_id: Option<i64>,
-) -> i64 {
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
         "INSERT INTO track
             (library_id, file_path, file_size, title, duration_ms,
@@ -133,7 +135,54 @@ async fn insert_track(
     .bind(FIXED_NOW_MS)
     .fetch_one(pool)
     .await
-    .expect("insert track")
+}
+
+async fn insert_track(
+    pool: &PgPool,
+    library_id: i64,
+    file_path: &str,
+    title: &str,
+    album_id: Option<i64>,
+) -> i64 {
+    try_insert_track(pool, library_id, file_path, title, album_id)
+        .await
+        .expect("insert track")
+}
+
+/// Insert a track_artist row. `library_id` matches the cross-
+/// library guard's composite FK target — it MUST equal both
+/// `track.library_id` and `artist.library_id`, otherwise the
+/// composite FK rejects the row. Returns `Result` so cross-
+/// library tests can catch the rejection without panicking.
+async fn try_insert_track_artist(
+    pool: &PgPool,
+    track_id: i64,
+    artist_id: i64,
+    library_id: i64,
+    position: i32,
+) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO track_artist (track_id, artist_id, library_id, position)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(track_id)
+    .bind(artist_id)
+    .bind(library_id)
+    .bind(position)
+    .execute(pool)
+    .await
+}
+
+async fn insert_track_artist(
+    pool: &PgPool,
+    track_id: i64,
+    artist_id: i64,
+    library_id: i64,
+    position: i32,
+) {
+    try_insert_track_artist(pool, track_id, artist_id, library_id, position)
+        .await
+        .expect("insert track_artist");
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -148,8 +197,14 @@ async fn album_natural_key_collapses_compilation_with_null_artist(pool: PgPool) 
     let library_id = mint_library(&auth.base, &auth.token, profile_id, "lib-1").await;
 
     // First compilation row with NULL album_artist_id — must succeed.
-    let first =
-        insert_album(&pool, library_id, "Now That's What I Call Music", None, true).await;
+    let first = insert_album(
+        &pool,
+        library_id,
+        "Now That's What I Call Music",
+        None,
+        true,
+    )
+    .await;
     assert!(
         first.is_ok(),
         "first compilation insert must succeed (got {first:?})"
@@ -158,8 +213,14 @@ async fn album_natural_key_collapses_compilation_with_null_artist(pool: PgPool) 
     // Second insert with the SAME (library_id, canonical_title) AND
     // NULL album_artist_id MUST fail — NULLS NOT DISTINCT collapses
     // the two NULL keys, the natural-key UNIQUE catches the duplicate.
-    let second =
-        insert_album(&pool, library_id, "Now That's What I Call Music", None, true).await;
+    let second = insert_album(
+        &pool,
+        library_id,
+        "Now That's What I Call Music",
+        None,
+        true,
+    )
+    .await;
     let Err(err) = second else {
         panic!("duplicate compilation insert must violate UNIQUE NULLS NOT DISTINCT, got Ok");
     };
@@ -208,8 +269,7 @@ async fn album_natural_key_separates_compilation_from_attributed(pool: PgPool) {
     assert!(comp.is_ok(), "compilation insert failed: {comp:?}");
 
     let artist = insert_artist(&pool, library_id, "Specific Artist").await;
-    let attributed =
-        insert_album(&pool, library_id, "Greatest Hits", Some(artist), false).await;
+    let attributed = insert_album(&pool, library_id, "Greatest Hits", Some(artist), false).await;
     assert!(
         attributed.is_ok(),
         "compilation + attributed row with same title MUST coexist: {attributed:?}",
@@ -277,16 +337,15 @@ async fn library_delete_cascades_to_album_artist_and_track_artist(pool: PgPool) 
     let album_id = insert_album(&pool, library_id, "Discovery", Some(artist_id), false)
         .await
         .expect("album insert");
-    let track_id = insert_track(&pool, library_id, "/music/one.mp3", "One More Time", Some(album_id))
-        .await;
-    sqlx::query(
-        "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, 0)",
+    let track_id = insert_track(
+        &pool,
+        library_id,
+        "/music/one.mp3",
+        "One More Time",
+        Some(album_id),
     )
-    .bind(track_id)
-    .bind(artist_id)
-    .execute(&pool)
-    .await
-    .expect("track_artist insert");
+    .await;
+    insert_track_artist(&pool, track_id, artist_id, library_id, 0).await;
 
     // Delete the library. ON DELETE CASCADE on track.library_id +
     // album.library_id + artist.library_id MUST reclaim everything.
@@ -326,8 +385,14 @@ async fn track_album_id_goes_null_on_album_delete(pool: PgPool) {
     let album_id = insert_album(&pool, library_id, "Some Album", Some(artist_id), false)
         .await
         .expect("album insert");
-    let track_id =
-        insert_track(&pool, library_id, "/music/a.mp3", "Some Track", Some(album_id)).await;
+    let track_id = insert_track(
+        &pool,
+        library_id,
+        "/music/a.mp3",
+        "Some Track",
+        Some(album_id),
+    )
+    .await;
 
     sqlx::query("DELETE FROM album WHERE id = $1")
         .bind(album_id)
@@ -398,14 +463,7 @@ async fn track_delete_cascades_to_track_artist(pool: PgPool) {
 
     let artist_id = insert_artist(&pool, library_id, "Solo Artist").await;
     let track_id = insert_track(&pool, library_id, "/music/x.mp3", "X", None).await;
-    sqlx::query(
-        "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, 0)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .execute(&pool)
-    .await
-    .expect("track_artist insert");
+    insert_track_artist(&pool, track_id, artist_id, library_id, 0).await;
 
     sqlx::query("DELETE FROM track WHERE id = $1")
         .bind(track_id)
@@ -413,12 +471,11 @@ async fn track_delete_cascades_to_track_artist(pool: PgPool) {
         .await
         .expect("track delete");
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM track_artist WHERE track_id = $1")
-            .bind(track_id)
-            .fetch_one(&pool)
-            .await
-            .expect("track_artist count");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track_artist WHERE track_id = $1")
+        .bind(track_id)
+        .fetch_one(&pool)
+        .await
+        .expect("track_artist count");
     assert_eq!(count, 0, "track delete must cascade into track_artist");
 }
 
@@ -435,22 +492,9 @@ async fn track_artist_pk_prevents_duplicate_pairing(pool: PgPool) {
     let artist_id = insert_artist(&pool, library_id, "Solo Artist").await;
     let track_id = insert_track(&pool, library_id, "/music/y.mp3", "Y", None).await;
 
-    sqlx::query(
-        "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, 0)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .execute(&pool)
-    .await
-    .expect("first track_artist insert");
+    insert_track_artist(&pool, track_id, artist_id, library_id, 0).await;
 
-    let dup = sqlx::query(
-        "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, 1)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .execute(&pool)
-    .await;
+    let dup = try_insert_track_artist(&pool, track_id, artist_id, library_id, 1).await;
     assert!(
         dup.is_err(),
         "duplicate (track_id, artist_id) must violate the PK"
@@ -473,15 +517,7 @@ async fn track_artist_position_preserves_multi_artist_order(pool: PgPool) {
     // SELECT would return them in insertion order and the
     // assertion would still pass.
     for (artist_id, position) in [(c, 2_i32), (b, 1), (a, 0)] {
-        sqlx::query(
-            "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, $3)",
-        )
-        .bind(track_id)
-        .bind(artist_id)
-        .bind(position)
-        .execute(&pool)
-        .await
-        .expect("track_artist insert");
+        insert_track_artist(&pool, track_id, artist_id, library_id, position).await;
     }
 
     let rows: Vec<(i64, i32)> = sqlx::query_as(
@@ -535,12 +571,86 @@ async fn track_artist_rejects_negative_position(pool: PgPool) {
     let track_id = insert_track(&pool, library_id, "/music/n.mp3", "Neg", None).await;
     let artist_id = insert_artist(&pool, library_id, "Neg Artist").await;
 
-    let res = sqlx::query(
-        "INSERT INTO track_artist (track_id, artist_id, position) VALUES ($1, $2, -1)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .execute(&pool)
-    .await;
+    let res = try_insert_track_artist(&pool, track_id, artist_id, library_id, -1).await;
     assert!(res.is_err(), "negative position must fail the CHECK");
+}
+
+// ────────────────────────────────────────────────────────────────
+// Cross-library invariant — the per-library scope MUST be enforced
+// at the schema level. Without these guards a track in library A
+// could falsely reference an album / artist that lives in library
+// B, and the cascade chain (which assumes intra-library locality)
+// would leak rows on a library delete.
+// ────────────────────────────────────────────────────────────────
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn album_artist_cross_library_constraint(pool: PgPool) {
+    // Try to create an album in lib_a pointing at an artist that
+    // lives in lib_b. The composite FK on `(album_artist_id,
+    // library_id) → artist(id, library_id)` MUST reject this.
+    let auth = spawn_authenticated(pool.clone(), "test-user").await;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let lib_a = mint_library(&auth.base, &auth.token, profile_id, "lib-A").await;
+    let lib_b = mint_library(&auth.base, &auth.token, profile_id, "lib-B").await;
+
+    let artist_in_b = insert_artist(&pool, lib_b, "Cross-Library Artist").await;
+
+    let cross = insert_album(&pool, lib_a, "Cross Album", Some(artist_in_b), false).await;
+    assert!(
+        cross.is_err(),
+        "album in lib-A linking to artist in lib-B MUST violate composite FK: {cross:?}"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn track_cross_library_album_constraint(pool: PgPool) {
+    // Try to insert a track in lib_b that points at an album in
+    // lib_a. The composite FK on `(album_id, library_id) →
+    // album(id, library_id)` MUST reject this.
+    let auth = spawn_authenticated(pool.clone(), "test-user").await;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let lib_a = mint_library(&auth.base, &auth.token, profile_id, "lib-A").await;
+    let lib_b = mint_library(&auth.base, &auth.token, profile_id, "lib-B").await;
+
+    let album_in_a = insert_album(&pool, lib_a, "A's Album", None, false)
+        .await
+        .expect("album insert");
+
+    let cross = try_insert_track(&pool, lib_b, "/music/cross.mp3", "Cross", Some(album_in_a)).await;
+    assert!(
+        cross.is_err(),
+        "track in lib-B linking to album in lib-A MUST violate composite FK: {cross:?}"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn track_artist_cross_library_constraint(pool: PgPool) {
+    // Try to insert a `track_artist` row pairing a track in lib_a
+    // with an artist in lib_b. The two composite FKs on track_artist
+    // SHARE the same `library_id` column, so there's no value that
+    // can satisfy both — whichever library_id we pass, one of the
+    // FKs rejects the row.
+    let auth = spawn_authenticated(pool.clone(), "test-user").await;
+    let profile_id = mint_profile(&auth.base, &auth.token, "Alice").await;
+    let lib_a = mint_library(&auth.base, &auth.token, profile_id, "lib-A").await;
+    let lib_b = mint_library(&auth.base, &auth.token, profile_id, "lib-B").await;
+
+    let track_in_a = insert_track(&pool, lib_a, "/music/a.mp3", "A's Track", None).await;
+    let artist_in_b = insert_artist(&pool, lib_b, "B's Artist").await;
+
+    // Try library_id = lib_a: track FK satisfied (track is in
+    // lib_a), but artist FK fails (artist isn't in lib_a).
+    let with_a = try_insert_track_artist(&pool, track_in_a, artist_in_b, lib_a, 0).await;
+    assert!(
+        with_a.is_err(),
+        "track_artist pairing across libraries (library_id = lib_a) MUST fail the artist composite FK: {with_a:?}"
+    );
+
+    // Try library_id = lib_b: artist FK satisfied (artist is in
+    // lib_b), but track FK fails (track isn't in lib_b).
+    let with_b = try_insert_track_artist(&pool, track_in_a, artist_in_b, lib_b, 0).await;
+    assert!(
+        with_b.is_err(),
+        "track_artist pairing across libraries (library_id = lib_b) MUST fail the track composite FK: {with_b:?}"
+    );
 }
