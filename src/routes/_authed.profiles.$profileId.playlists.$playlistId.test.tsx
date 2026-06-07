@@ -65,8 +65,10 @@ describe('PlaylistDetailView', () => {
       playlist: makePlaylist({ is_smart: 1, name: 'Daily Mix 2' }),
     }
     render(<PlaylistDetailView />)
+    // Kicker reads "Smart playlist" + the badge reads "Smart" —
+    // two matches confirm both surfaces are tagged.
     expect(screen.getByText(/smart playlist/i)).toBeTruthy()
-    expect(screen.getByText(/auto/i)).toBeTruthy()
+    expect(screen.getAllByText(/^smart$/i)).toHaveLength(1)
   })
 
   it('renders the loader error path', () => {
