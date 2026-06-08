@@ -24,7 +24,12 @@ use bytes::Bytes;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path as StorePath;
-use object_store::{Error as ObjectStoreError, ObjectStore, PutPayload};
+// object_store 0.13 moved `put` / `get` / `head` off the bare
+// `ObjectStore` trait onto the `ObjectStoreExt` extension trait —
+// importing both restores the call shape we use against
+// `Arc<dyn ObjectStore>` throughout this module + `api/artwork.rs`
+// + `artwork_jobs.rs`.
+use object_store::{Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutPayload};
 use thiserror::Error;
 
 /// Per-process artwork storage handle. Cheap to clone — the inner

@@ -151,7 +151,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 # Backblaze B2 are all S3-API-compatible and reachable through the
 # same builder (an `WAVEFLOW_ARTWORK_S3_ENDPOINT` override is the
 # only knob a non-AWS provider needs).
-object_store = { version = "0.12", features = ["aws"] }
+object_store = { version = "0.13", features = ["aws"] }
 
 # Owned byte buffers for the artwork upload path. axum's `Bytes`
 # extractor reads the request body into one shot; `object_store`'s
