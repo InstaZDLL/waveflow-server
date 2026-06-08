@@ -123,8 +123,8 @@ thiserror = "2"
 # vends a short-lived URL signed with `WAVEFLOW_STREAM_SECRET` and
 # the stream endpoint verifies the signature instead of going through
 # the JWT middleware.
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 
 # Promote `base64` from dev-deps to runtime — the signed-URL token
 # encodes the payload + signature as base64url. Already pinned to
@@ -135,6 +135,11 @@ base64 = "0.22"
 # the JWT test harness uses under dev-deps; one runtime entry
 # suffices. `Alphanumeric.sample_string` is the URL-safe random
 # generator the share helper calls.
+#
+# Pinned to 0.8 because `rsa = "0.9"` (the dev-dep that signs the
+# JWT test fixtures) requires `rand_core::CryptoRngCore` from the
+# 0.8/0.9 lineage. Bumping to 0.10 fails the test build until
+# `rsa` cuts a 0.10-compatible release. Revisit once it does.
 rand = "0.8"
 
 # Stream files through axum without buffering the whole body. The
