@@ -5,9 +5,14 @@
 //! readiness, `profiles.rs` covers tenant-scoped profile CRUD,
 //! `libraries.rs` covers tenant-scoped library CRUD nested under a
 //! profile, `tracks.rs` covers tenant-scoped track CRUD nested under
-//! a library, `playlists.rs` covers tenant-scoped playlist CRUD
-//! nested under a profile. Future modules will cover `sync`, `stream`
-//! (per RFC-001 §6 / §7).
+//! a library, `albums.rs` + `artists.rs` cover the read-only browse
+//! surface materialised by the sync apply pipeline (phase 4.d.0.4),
+//! `playlists.rs` covers tenant-scoped playlist CRUD nested under a
+//! profile, `sync.rs` carries the apply pipeline + WebSocket fan-out
+//! (RFC-001 §6), `stream.rs` carries the HMAC-gated audio streaming
+//! surface (RFC-001 §7), `artwork.rs` carries the shared artwork
+//! cache (phase 1.h), `share.rs` carries the public playlist share
+//! surface (phase 1.g).
 //!
 //! Versioning policy: every resource module mounts under `/api/v1/`
 //! (except `/health` and `/ready`, which are unversioned by
@@ -29,6 +34,8 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::{middleware as auth_middleware, AppState};
 
+mod albums;
+mod artists;
 mod artwork;
 mod health;
 mod libraries;
@@ -55,6 +62,8 @@ pub fn router(state: AppState) -> OpenApiRouter {
     let profiles_router = profiles::router(state.clone()).layer(auth_layer.clone());
     let libraries_router = libraries::router(state.clone()).layer(auth_layer.clone());
     let tracks_router = tracks::router(state.clone()).layer(auth_layer.clone());
+    let albums_router = albums::router(state.clone()).layer(auth_layer.clone());
+    let artists_router = artists::router(state.clone()).layer(auth_layer.clone());
     let playlists_router = playlists::router(state.clone()).layer(auth_layer.clone());
     let sync_router = sync::router(state.clone()).layer(auth_layer.clone());
     // Mint + revoke stay JWT-authed (verify tenant ownership before
@@ -85,6 +94,8 @@ pub fn router(state: AppState) -> OpenApiRouter {
         .merge(profiles_router)
         .merge(libraries_router)
         .merge(tracks_router)
+        .merge(albums_router)
+        .merge(artists_router)
         .merge(playlists_router)
         .merge(sync_router)
         .merge(share_mint_router)
