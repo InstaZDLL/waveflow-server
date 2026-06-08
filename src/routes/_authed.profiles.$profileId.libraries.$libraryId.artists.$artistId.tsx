@@ -23,37 +23,43 @@ export const Route = createFileRoute(
     // Same shape as the album drill-down: tracks fetch is the
     // authoritative "is this URL valid" signal (it does its own
     // ownership check on the artist row), the list fetch is
-    // best-effort metadata for the header. See the album-detail
+    // best-effort metadata for the header. The two run in PARALLEL
+    // so total wait = max(tracks, list); see the album-detail
     // loader header for the full rationale.
-    let tracks: Track[]
-    try {
-      tracks = await getArtistTracks({ data: { profileId, libraryId, artistId } })
-    } catch (err) {
-      return {
-        kind: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load tracks.',
-      }
+    type TracksOutcome = { ok: true; tracks: Track[] } | { ok: false; message: string }
+    const [tracksResult, artistResult] = await Promise.all([
+      getArtistTracks({ data: { profileId, libraryId, artistId } })
+        .then((t): TracksOutcome => ({ ok: true, tracks: t }))
+        .catch(
+          (err: unknown): TracksOutcome => ({
+            ok: false,
+            message: err instanceof Error ? err.message : 'Failed to load tracks.',
+          }),
+        ),
+      listArtists({ data: { profileId, libraryId } })
+        .then(
+          (artists): ArtistLookupResult => ({
+            ok: true,
+            artist: artists.find((a) => a.id === artistId) ?? null,
+          }),
+        )
+        .catch(
+          (err: unknown): ArtistLookupResult => ({
+            ok: false,
+            error: err instanceof Error ? err.message : 'Failed to resolve artist metadata.',
+          }),
+        ),
+    ])
+    if (!tracksResult.ok) {
+      return { kind: 'error', message: tracksResult.message }
     }
-    const artistResult = await listArtists({ data: { profileId, libraryId } })
-      .then(
-        (artists): ArtistLookupResult => ({
-          ok: true,
-          artist: artists.find((a) => a.id === artistId) ?? null,
-        }),
-      )
-      .catch(
-        (err: unknown): ArtistLookupResult => ({
-          ok: false,
-          error: err instanceof Error ? err.message : 'Failed to resolve artist metadata.',
-        }),
-      )
     return {
       kind: 'ready',
       profileId,
       libraryId,
       artistId,
       artistResult,
-      tracks,
+      tracks: tracksResult.tracks,
     }
   },
   component: ArtistDetailView,

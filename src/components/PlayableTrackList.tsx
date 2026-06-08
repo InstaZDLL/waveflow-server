@@ -11,7 +11,7 @@
 // surface can drive the inline error via `error` / `onError` and
 // hide the rendered banner.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { usePlayer, type QueueEntry } from '@/lib/player-context'
 import { formatTime } from '@/lib/format-time'
 import type { Track } from '@/server-fns/tracks'
@@ -51,6 +51,14 @@ export function PlayableTrackList({
   // the user actually clicked, we track which trackId is pending
   // locally and pair it with the global isLoading.
   const [pendingTrackId, setPendingTrackId] = useState<number | null>(null)
+  // Mirror of `pendingTrackId` we can read synchronously from the
+  // catch block — `useState` reads always see the captured-render
+  // value, not the latest, so a stale `playTrack` failure that
+  // resolves AFTER the user clicked a different row would otherwise
+  // call `setError` with the old track's failure message while the
+  // new track is happily playing. The ref tells us "is THIS click
+  // still the active one?" at the moment the error lands.
+  const pendingTrackIdRef = useRef<number | null>(null)
 
   function toQueueEntry(track: Track): QueueEntry {
     return {
@@ -83,12 +91,22 @@ export function PlayableTrackList({
     // hazard is gone too.
     const myPending = track.id
     setPendingTrackId(myPending)
+    pendingTrackIdRef.current = myPending
     try {
       await player.playTrack(toQueueEntry(track), contextQueue)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not start playback.')
+      // Only surface the error if THIS click is still the active
+      // one — a later click that preempted us already owns the UI
+      // and a stale "Could not start playback." would attach to
+      // the wrong track.
+      if (pendingTrackIdRef.current === myPending) {
+        setError(err instanceof Error ? err.message : 'Could not start playback.')
+      }
     } finally {
       setPendingTrackId((current) => (current === myPending ? null : current))
+      if (pendingTrackIdRef.current === myPending) {
+        pendingTrackIdRef.current = null
+      }
     }
   }
 

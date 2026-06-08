@@ -25,43 +25,48 @@ export const Route = createFileRoute(
     // the authoritative "is this URL valid" signal. The list fetch
     // is purely for the header subtitle (`album_artist_name` etc.)
     // — its failures degrade gracefully into a neutral header.
-    let tracks: Track[]
-    try {
-      tracks = await getAlbumTracks({ data: { profileId, libraryId, albumId } })
-    } catch (err) {
-      return {
-        kind: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load tracks.',
-      }
+    //
+    // The two run in PARALLEL so total wait = max(tracks, list)
+    // rather than the sum. Header metadata can still come back
+    // slowly on a large library (5k+ albums), so awaiting it
+    // sequentially after the tracks would double the perceived
+    // load time. Each promise carries its own inline `.catch` so
+    // `Promise.all` itself cannot reject — we check the tracks
+    // outcome explicitly after the join.
+    type TracksOutcome = { ok: true; tracks: Track[] } | { ok: false; message: string }
+    const [tracksResult, albumResult] = await Promise.all([
+      getAlbumTracks({ data: { profileId, libraryId, albumId } })
+        .then((t): TracksOutcome => ({ ok: true, tracks: t }))
+        .catch(
+          (err: unknown): TracksOutcome => ({
+            ok: false,
+            message: err instanceof Error ? err.message : 'Failed to load tracks.',
+          }),
+        ),
+      listAlbums({ data: { profileId, libraryId } })
+        .then(
+          (albums): AlbumLookupResult => ({
+            ok: true,
+            album: albums.find((a) => a.id === albumId) ?? null,
+          }),
+        )
+        .catch(
+          (err: unknown): AlbumLookupResult => ({
+            ok: false,
+            error: err instanceof Error ? err.message : 'Failed to resolve album metadata.',
+          }),
+        ),
+    ])
+    if (!tracksResult.ok) {
+      return { kind: 'error', message: tracksResult.message }
     }
-    // Header metadata — best-effort. The server has no per-id GET
-    // for albums yet (4.d.0.4 only ships the list + drill-down),
-    // so we resolve the row from the per-library list. If the list
-    // fails (transient 500) or the album isn't in the returned set
-    // (race window: a peer device deleted it between the two
-    // requests, but the tracks fetch raced to OK first), the
-    // header falls back to a neutral "Album" — the tracks below
-    // are still playable so the page stays useful.
-    const albumResult = await listAlbums({ data: { profileId, libraryId } })
-      .then(
-        (albums): AlbumLookupResult => ({
-          ok: true,
-          album: albums.find((a) => a.id === albumId) ?? null,
-        }),
-      )
-      .catch(
-        (err: unknown): AlbumLookupResult => ({
-          ok: false,
-          error: err instanceof Error ? err.message : 'Failed to resolve album metadata.',
-        }),
-      )
     return {
       kind: 'ready',
       profileId,
       libraryId,
       albumId,
       albumResult,
-      tracks,
+      tracks: tracksResult.tracks,
     }
   },
   component: AlbumDetailView,
