@@ -938,6 +938,313 @@ pub mod track_sync {
     }
 }
 
+/// Album browse helpers (Phase 4.d.0.4). Reads against the `album`
+/// table for the `GET /api/v1/profiles/{p}/libraries/{l}/albums`
+/// surface plus the per-album drill-down. Writes still go through
+/// `track_sync::upsert_album` from the apply pipeline — this module
+/// is read-only.
+///
+/// Same 2-query ownership-check + fetch shape as
+/// [`playlist_track::fetch_for_owner`]: ownership SELECT first to
+/// distinguish 404 ("library not owned" / "album not owned") from
+/// 200 `[]` ("owned but empty"), then the bulk row fetch. The race
+/// window between the two is benign because every parent (library →
+/// profile) carries `ON DELETE CASCADE` — the only way a row can
+/// vanish between the two queries is parent-tenant deletion, which
+/// makes `[]` the correct answer (same shape a brand-new empty
+/// library returns).
+pub mod album {
+    use sqlx::PgPool;
+    use waveflow_core::domain::track::TrackRow;
+
+    /// Wire-shaped album row. Joins `artist` once to surface the
+    /// `album_artist_name` so the album-grid UI on the web doesn't
+    /// have to fan out N artist lookups. `album_artist_name` is
+    /// `None` for compilations (the schema's `NULLS NOT DISTINCT`
+    /// collapse keeps one row per `(library, title)` with NULL
+    /// `album_artist_id`).
+    #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+    pub struct AlbumRow {
+        pub id: i64,
+        pub canonical_title: String,
+        pub album_artist_id: Option<i64>,
+        pub album_artist_name: Option<String>,
+        pub year: Option<i64>,
+        pub cover_hash: Option<String>,
+        pub is_compilation: bool,
+        pub created_at: i64,
+        pub updated_at: i64,
+    }
+
+    /// List every album under `(library_id, profile_id, user_id)`,
+    /// most-recently-updated first. `Ok(None)` covers "no such
+    /// library", "library belongs to another profile", and "profile
+    /// belongs to another user" — the handler blurs the three into
+    /// a single 404. `Ok(Some(vec![]))` is "owned but empty" and
+    /// renders as `[]`. The ORDER BY rides
+    /// `album_library_updated_idx (library_id, updated_at DESC)`
+    /// planted in `20260608120000_album_artist.sql:217-218`.
+    ///
+    /// `id ASC` is the tie-breaker on equal `updated_at` so the
+    /// order is deterministic across pages even when a batch
+    /// upsert (the apply pipeline runs a whole sync round in one
+    /// transaction) stamps several rows with the same epoch
+    /// millisecond — without it, list pagination would shuffle on
+    /// each request.
+    pub async fn list_for_library(
+        pool: &PgPool,
+        library_id: i64,
+        profile_id: i64,
+        user_id: i64,
+    ) -> Result<Option<Vec<AlbumRow>>, sqlx::Error> {
+        let owned: Option<(i64,)> = sqlx::query_as(
+            "SELECT l.id
+               FROM library l
+               INNER JOIN profile p ON p.id = l.profile_id
+              WHERE l.id = $1 AND l.profile_id = $2 AND p.user_id = $3",
+        )
+        .bind(library_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, AlbumRow>(
+            "SELECT a.id,
+                    a.canonical_title,
+                    a.album_artist_id,
+                    ar.name AS album_artist_name,
+                    a.year,
+                    a.cover_hash,
+                    a.is_compilation,
+                    a.created_at,
+                    a.updated_at
+               FROM album a
+               LEFT JOIN artist ar ON ar.id = a.album_artist_id
+              WHERE a.library_id = $1
+              ORDER BY a.updated_at DESC, a.id ASC",
+        )
+        .bind(library_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(rows))
+    }
+
+    /// Drill-down: tracks under `album_id`, scoped to the tenant
+    /// chain `track → library → profile → user`. `Ok(None)` covers
+    /// every non-owned case (album missing / foreign library /
+    /// foreign profile / foreign user). `Ok(Some(vec![]))` is
+    /// "album owned but empty" — possible when every track linked
+    /// to it was deleted (the FK is `ON DELETE SET NULL` so the
+    /// album row outlives its tracks).
+    ///
+    /// Column projection matches `PostgresTrackRepository::
+    /// list_for_library` (NULL placeholders for the joined columns
+    /// that aren't yet stored server-side) so the resulting
+    /// `TrackRow` flows through `From<TrackRow> for TrackResponse`
+    /// unchanged. `ORDER BY disc_number, track_number` rides the
+    /// `track_album_idx` planted in the schema migration.
+    pub async fn list_tracks_for_album(
+        pool: &PgPool,
+        album_id: i64,
+        library_id: i64,
+        profile_id: i64,
+        user_id: i64,
+    ) -> Result<Option<Vec<TrackRow>>, sqlx::Error> {
+        let owned: Option<(i64,)> = sqlx::query_as(
+            "SELECT a.id
+               FROM album a
+               INNER JOIN library l ON l.id = a.library_id
+               INNER JOIN profile p ON p.id = l.profile_id
+              WHERE a.id = $1
+                AND a.library_id = $2
+                AND l.profile_id = $3
+                AND p.user_id = $4",
+        )
+        .bind(album_id)
+        .bind(library_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, TrackRow>(
+            "SELECT t.id,
+                    t.library_id,
+                    t.title,
+                    t.album_id,
+                    NULL::text    AS album_title,
+                    NULL::bigint  AS artist_id,
+                    NULL::text    AS artist_name,
+                    NULL::text    AS artist_ids,
+                    t.duration_ms,
+                    t.track_number,
+                    t.disc_number,
+                    t.year,
+                    t.bitrate,
+                    t.sample_rate,
+                    t.channels,
+                    t.bit_depth,
+                    t.codec,
+                    t.musical_key,
+                    t.file_path,
+                    t.file_size,
+                    t.added_at,
+                    NULL::text    AS artwork_hash,
+                    NULL::text    AS artwork_format,
+                    t.rating
+               FROM track t
+              WHERE t.album_id = $1 AND t.library_id = $2
+              ORDER BY t.disc_number NULLS LAST,
+                       t.track_number NULLS LAST,
+                       t.id ASC",
+        )
+        .bind(album_id)
+        .bind(library_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(rows))
+    }
+}
+
+/// Artist browse helpers (Phase 4.d.0.4). Mirrors [`album`] for the
+/// `artist` table — same 2-query ownership-check shape, same 404 /
+/// 200 [] blur. Writes still go through `track_sync::upsert_artist`.
+pub mod artist {
+    use sqlx::PgPool;
+    use waveflow_core::domain::track::TrackRow;
+
+    /// Wire-shaped artist row. `picture_hash` is the BLAKE3 hex of
+    /// the artist picture in the shared metadata cache — `None`
+    /// until the artist-picture pipeline ships server-side.
+    #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+    pub struct ArtistRow {
+        pub id: i64,
+        pub name: String,
+        pub picture_hash: Option<String>,
+        pub created_at: i64,
+        pub updated_at: i64,
+    }
+
+    /// List every artist under `(library_id, profile_id, user_id)`,
+    /// most-recently-updated first. Same 404 vs `[]` blur as
+    /// [`album::list_for_library`]. The ORDER BY rides
+    /// `artist_library_updated_idx (library_id, updated_at DESC)`.
+    pub async fn list_for_library(
+        pool: &PgPool,
+        library_id: i64,
+        profile_id: i64,
+        user_id: i64,
+    ) -> Result<Option<Vec<ArtistRow>>, sqlx::Error> {
+        let owned: Option<(i64,)> = sqlx::query_as(
+            "SELECT l.id
+               FROM library l
+               INNER JOIN profile p ON p.id = l.profile_id
+              WHERE l.id = $1 AND l.profile_id = $2 AND p.user_id = $3",
+        )
+        .bind(library_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, ArtistRow>(
+            "SELECT id, name, picture_hash, created_at, updated_at
+               FROM artist
+              WHERE library_id = $1
+              ORDER BY updated_at DESC, id ASC",
+        )
+        .bind(library_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(rows))
+    }
+
+    /// Drill-down: tracks contributed by `artist_id`, scoped to the
+    /// tenant chain `track → library → profile → user`. Tracks
+    /// surface through `track_artist`, so a multi-artist track
+    /// appears under every contributor. `Ok(None)` covers every
+    /// non-owned case.
+    ///
+    /// `DISTINCT` is defensive — the `track_artist` PK
+    /// `(track_id, artist_id)` already guarantees no duplicates,
+    /// but a future schema relax (e.g. a per-version row) would
+    /// silently double-fetch without it. Cheap on Postgres because
+    /// the index is unique already. ORDER BY matches the album
+    /// drill-down for a consistent UI feel.
+    pub async fn list_tracks_for_artist(
+        pool: &PgPool,
+        artist_id: i64,
+        library_id: i64,
+        profile_id: i64,
+        user_id: i64,
+    ) -> Result<Option<Vec<TrackRow>>, sqlx::Error> {
+        let owned: Option<(i64,)> = sqlx::query_as(
+            "SELECT a.id
+               FROM artist a
+               INNER JOIN library l ON l.id = a.library_id
+               INNER JOIN profile p ON p.id = l.profile_id
+              WHERE a.id = $1
+                AND a.library_id = $2
+                AND l.profile_id = $3
+                AND p.user_id = $4",
+        )
+        .bind(artist_id)
+        .bind(library_id)
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, TrackRow>(
+            "SELECT DISTINCT
+                    t.id,
+                    t.library_id,
+                    t.title,
+                    t.album_id,
+                    NULL::text    AS album_title,
+                    NULL::bigint  AS artist_id,
+                    NULL::text    AS artist_name,
+                    NULL::text    AS artist_ids,
+                    t.duration_ms,
+                    t.track_number,
+                    t.disc_number,
+                    t.year,
+                    t.bitrate,
+                    t.sample_rate,
+                    t.channels,
+                    t.bit_depth,
+                    t.codec,
+                    t.musical_key,
+                    t.file_path,
+                    t.file_size,
+                    t.added_at,
+                    NULL::text    AS artwork_hash,
+                    NULL::text    AS artwork_format,
+                    t.rating
+               FROM track t
+               INNER JOIN track_artist ta ON ta.track_id = t.id
+              WHERE ta.artist_id = $1 AND t.library_id = $2
+              ORDER BY t.disc_number NULLS LAST,
+                       t.track_number NULLS LAST,
+                       t.id ASC",
+        )
+        .bind(artist_id)
+        .bind(library_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(rows))
+    }
+}
+
 /// Shared artwork cache helpers (Phase 1.h.1). Reads + writes against
 /// the [`metadata_artwork`] table. The bytes themselves live in
 /// `object_store` at `artwork/<hash>`; this module is the metadata
