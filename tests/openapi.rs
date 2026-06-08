@@ -54,6 +54,29 @@ async fn openapi_doc_lists_every_handler(pool: PgPool) {
         paths.contains_key("/api/v1/profiles/{profile_id}/libraries/{library_id}/tracks/{id}"),
         "missing tracks item path in spec"
     );
+    // Phase 4.d.0.4 browse surface — drop the `#[utoipa::path]` macro
+    // from any of these and the web client stops seeing them in the
+    // docs.
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/libraries/{library_id}/albums"),
+        "missing albums collection path in spec"
+    );
+    assert!(
+        paths.contains_key(
+            "/api/v1/profiles/{profile_id}/libraries/{library_id}/albums/{id}/tracks"
+        ),
+        "missing album drill-down path in spec"
+    );
+    assert!(
+        paths.contains_key("/api/v1/profiles/{profile_id}/libraries/{library_id}/artists"),
+        "missing artists collection path in spec"
+    );
+    assert!(
+        paths.contains_key(
+            "/api/v1/profiles/{profile_id}/libraries/{library_id}/artists/{id}/tracks"
+        ),
+        "missing artist drill-down path in spec"
+    );
     assert!(
         paths.contains_key("/api/v1/profiles/{profile_id}/playlists"),
         "missing playlists collection path in spec"
