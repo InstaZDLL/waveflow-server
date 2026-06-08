@@ -1,5 +1,12 @@
+import { useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { PlayableTrackList } from '@/components/PlayableTrackList'
+import {
+  TrackFilterBar,
+  applyFilters,
+  initialTrackFilters,
+  type TrackFilters,
+} from '@/components/TrackFilterBar'
 import { listTracks, type Track } from '@/server-fns/tracks'
 
 // Auth gating inherited from the `_authed` parent layout.
@@ -29,6 +36,24 @@ type LoaderData =
 
 function TracksView() {
   const data = Route.useLoaderData()
+  // Filter state lives in the route so a re-render from the player
+  // (which propagates through `usePlayer` inside `PlayableTrackList`)
+  // doesn't reset the user's query. Initial value is the shared
+  // sensible-defaults object so the first paint matches the server
+  // ordering exactly (recent first, no search, no codec filter).
+  const [filters, setFilters] = useState<TrackFilters>(initialTrackFilters)
+  // Depend on `data` directly because TanStack's `useLoaderData`
+  // returns a reference-stable snapshot per loader resolution — the
+  // player tick lives in a separate context and doesn't churn it.
+  // Reading `data.kind` / `data.tracks` inside the callback (rather
+  // than a hoisted `const`) keeps the react-hooks/exhaustive-deps
+  // rule happy. The error branch returns `[]` once and reuses it
+  // since `data` is stable, so the empty-state case has no extra
+  // allocation cost.
+  const filteredTracks = useMemo(
+    () => (data.kind === 'ready' ? applyFilters(data.tracks, filters) : []),
+    [data, filters],
+  )
 
   return (
     <main className="page-wrap px-4 py-12 pb-32">
@@ -69,12 +94,24 @@ function TracksView() {
           </p>
         )}
 
+        {data.kind === 'ready' && data.tracks.length > 0 && (
+          <TrackFilterBar tracks={data.tracks} filters={filters} onFiltersChange={setFilters} />
+        )}
+
         {data.kind === 'ready' && (
           <PlayableTrackList
             profileId={data.profileId}
             libraryId={data.libraryId}
-            tracks={data.tracks}
-            emptyMessage="No tracks in this library yet."
+            tracks={filteredTracks}
+            // Distinguish "library has no tracks" from "filter
+            // hides every row" — the latter is the user's own
+            // doing and the empty copy below points at what they
+            // can change.
+            emptyMessage={
+              data.tracks.length === 0
+                ? 'No tracks in this library yet.'
+                : 'No tracks match the current filters.'
+            }
             label="Library tracks"
           />
         )}

@@ -19,7 +19,18 @@ export default function Header() {
       // current view.
       console.error('[auth] sign-out failed:', err)
     }
-    await navigate({ to: '/sign-in' })
+    // Mirror the Settings page's `try/catch` around `navigate` —
+    // TanStack Router can reject if a `beforeLoad` guard throws
+    // or the user unmounts mid-await. Without the guard the
+    // rejection lands as an unhandled promise in the console
+    // while the user is stuck on the authed page with a cleared
+    // cookie. Logging keeps it diagnosable; we don't surface to
+    // the user because the cookie clear already happened.
+    try {
+      await navigate({ to: '/sign-in' })
+    } catch (err) {
+      console.warn('[auth] post-sign-out navigation failed:', err)
+    }
   }
 
   return (
@@ -51,6 +62,15 @@ export default function Header() {
               activeProps={{ className: 'nav-link is-active' }}
             >
               Library
+            </Link>
+          )}
+          {session?.user && (
+            <Link
+              to="/settings"
+              className="nav-link"
+              activeProps={{ className: 'nav-link is-active' }}
+            >
+              Settings
             </Link>
           )}
         </div>
