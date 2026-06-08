@@ -3,8 +3,8 @@
 // fake stream URL) and exercises the empty state, the row render,
 // and the play-click → context-queue handshake.
 
-import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 const getStreamUrl = vi.fn(async ({ data }: { data: { trackId: number } }) => ({
@@ -46,6 +46,16 @@ function CurrentTrackProbe() {
 }
 
 describe('PlayableTrackList', () => {
+  beforeEach(() => {
+    // Reset between specs so a previous test's rejection mock
+    // doesn't leak into the "render the codec subline" case
+    // (which doesn't reconfigure the mock).
+    getStreamUrl.mockReset()
+    getStreamUrl.mockImplementation(async ({ data }: { data: { trackId: number } }) => ({
+      url: `https://stream.example/track/${data.trackId}.mp3`,
+    }))
+  })
+
   it('renders the empty-state message when no tracks are passed', () => {
     render(
       <PlayerProvider>
@@ -103,10 +113,48 @@ describe('PlayableTrackList', () => {
     expect(getStreamUrl).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ trackId: 11 }) }),
     )
-    // PlayerProvider promotes the entry to `current` synchronously
-    // after the URL resolves — the button click `await`s the
-    // playTrack promise so by here it's settled.
-    expect(screen.getByTestId('current').textContent).toBe('11')
+    // Promotion to `current` happens AFTER `await playTrack(...)`
+    // resolves inside the click handler, which itself isn't awaited
+    // by the synchronous `onClick` — so `userEvent.click` can return
+    // before the state update lands. Wait for it explicitly instead
+    // of asserting synchronously.
+    await waitFor(() => {
+      expect(screen.getByTestId('current').textContent).toBe('11')
+    })
+  })
+
+  it('surfaces a role="alert" + keeps player.current untouched when playTrack rejects', async () => {
+    // Make the stream-mint reject so PlayerProvider.playTrack
+    // propagates the failure into PlayableTrackList's catch.
+    getStreamUrl.mockRejectedValueOnce(new Error('stream-mint exploded'))
+
+    const user = userEvent.setup()
+    render(
+      <PlayerProvider>
+        <CurrentTrackProbe />
+        <PlayableTrackList
+          profileId={1}
+          libraryId={2}
+          tracks={[makeTrack(11, { title: 'Alpha' })]}
+          emptyMessage="empty"
+          label="Test tracks"
+        />
+      </PlayerProvider>,
+    )
+    expect(screen.getByTestId('current').textContent).toBe('none')
+
+    await user.click(screen.getByRole('button', { name: /play alpha/i }))
+
+    // The inline alert appears once the rejected playTrack flushes
+    // through the catch block.
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/stream-mint exploded/i)
+    // `current` must stay `none` — a failed mint shouldn't promote
+    // a track. We assert with `waitFor` to be sure no late
+    // microtask flipped it.
+    await waitFor(() => {
+      expect(screen.getByTestId('current').textContent).toBe('none')
+    })
   })
 
   it('renders the codec subline only when present', () => {
