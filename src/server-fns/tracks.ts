@@ -10,6 +10,17 @@ import { asPathId, mintToken, withSafeErrors } from './_internal'
 export interface Track {
   id: number
   library_id: number
+  /**
+   * FK into the per-library `album` row, populated since Phase
+   * 4.d.0.4. `null` for free-form tracks the sync apply pipeline
+   * couldn't group (no album metadata in the source tag) — and
+   * still `null` on every response from `listTracks` until the
+   * `/tracks` collection's SELECT (lives in waveflow-core) is
+   * bumped to project the column. The drill-down endpoints
+   * (`/albums/{id}/tracks`, `/artists/{id}/tracks`) already
+   * surface the real value.
+   */
+  album_id: number | null
   title: string
   file_path: string
   file_size: number
