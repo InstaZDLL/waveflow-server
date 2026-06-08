@@ -47,15 +47,12 @@ pub struct TrackResponse {
     pub id: i64,
     pub library_id: i64,
     /// FK into `album`. NULL for free-form tracks the apply pipeline
-    /// couldn't group (no album metadata in the source tag). Populated
-    /// from `t.album_id` by every endpoint that returns this struct.
-    /// The Phase 4.d.0.4 drill-down (`/artists/{id}/tracks`) relies on
-    /// this so a contributed track can deep-link to its album page
-    /// without an extra `/tracks/{id}` round-trip per row. The legacy
-    /// `/tracks` collection currently still NULL-projects the column
-    /// (its SELECT lives in waveflow-core and predates the album
-    /// table); a follow-up bumps core to project the real value
-    /// everywhere.
+    /// couldn't group (no album metadata in the source tag).
+    /// Populated from `t.album_id` by every endpoint that returns
+    /// this struct, including the legacy `/tracks` collection
+    /// (the waveflow-core SELECT was bumped to project the real
+    /// value after the album table landed — see the desktop's
+    /// PR closing the asymmetry).
     pub album_id: Option<i64>,
     pub title: String,
     pub duration_ms: i64,
