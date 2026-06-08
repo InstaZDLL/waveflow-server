@@ -8,8 +8,11 @@
 //! a library, `albums.rs` + `artists.rs` cover the read-only browse
 //! surface materialised by the sync apply pipeline (phase 4.d.0.4),
 //! `playlists.rs` covers tenant-scoped playlist CRUD nested under a
-//! profile. Future modules will cover `sync`, `stream` (per RFC-001
-//! §6 / §7).
+//! profile, `sync.rs` carries the apply pipeline + WebSocket fan-out
+//! (RFC-001 §6), `stream.rs` carries the HMAC-gated audio streaming
+//! surface (RFC-001 §7), `artwork.rs` carries the shared artwork
+//! cache (phase 1.h), `share.rs` carries the public playlist share
+//! surface (phase 1.g).
 //!
 //! Versioning policy: every resource module mounts under `/api/v1/`
 //! (except `/health` and `/ready`, which are unversioned by
