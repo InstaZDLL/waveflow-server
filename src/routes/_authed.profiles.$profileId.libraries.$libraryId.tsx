@@ -36,12 +36,33 @@ type LoaderData =
 
 function TracksView() {
   const data = Route.useLoaderData()
+  // Raw route params — TanStack keeps the SAME component instance
+  // when only params change (e.g. user navigates from
+  // /libraries/2 → /libraries/3), so the `filters` state below
+  // would otherwise persist the previous library's query into
+  // the new view and surface a misleading "No tracks match…"
+  // banner. We use `Route.useParams()` (reference-stable per
+  // resolved value) as the reset signal.
+  const { profileId, libraryId } = Route.useParams()
+  const tenantKey = `${profileId}/${libraryId}`
   // Filter state lives in the route so a re-render from the player
   // (which propagates through `usePlayer` inside `PlayableTrackList`)
   // doesn't reset the user's query. Initial value is the shared
   // sensible-defaults object so the first paint matches the server
   // ordering exactly (recent first, no search, no codec filter).
   const [filters, setFilters] = useState<TrackFilters>(initialTrackFilters)
+  // Adjust-state-on-prop-change (the documented codebase pattern,
+  // see CLAUDE.md). Resetting `filters` from inside a `useEffect`
+  // would schedule an extra render with the stale filter still
+  // applied, briefly flashing "No tracks match…" on the new
+  // library; doing the reset during render fixes the state before
+  // the first paint AND sidesteps the
+  // react-hooks/set-state-in-effect lint.
+  const [lastTenantKey, setLastTenantKey] = useState(tenantKey)
+  if (lastTenantKey !== tenantKey) {
+    setLastTenantKey(tenantKey)
+    setFilters(initialTrackFilters)
+  }
   // Depend on `data` directly because TanStack's `useLoaderData`
   // returns a reference-stable snapshot per loader resolution — the
   // player tick lives in a separate context and doesn't churn it.
