@@ -17,7 +17,10 @@
 //! the expiry.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use hmac::{Hmac, Mac};
+// hmac 0.13 split `new_from_slice` out behind the `KeyInit` trait,
+// so the bare `Hmac::new_from_slice` call below now needs the trait
+// in scope alongside `Mac`.
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
