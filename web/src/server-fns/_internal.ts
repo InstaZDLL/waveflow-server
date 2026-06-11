@@ -71,14 +71,14 @@ export async function withSafeErrors<T>(label: string, body: () => Promise<T>): 
     return await body()
   } catch (err) {
     if (err instanceof NotSignedInError) {
-      throw new Error('Session expired. Please sign in again.')
+      throw new Error('Session expired. Please sign in again.', { cause: err })
     }
     if (err instanceof WaveflowServerError) {
       console.error(`[server-fn] ${label} → waveflow-server ${err.status}:`, err.message)
-      throw new Error(safeMessageForStatus(err.status))
+      throw new Error(safeMessageForStatus(err.status), { cause: err })
     }
     console.error(`[server-fn] ${label} failed:`, err)
-    throw new Error('Could not reach waveflow-server. Please try again.')
+    throw new Error('Could not reach waveflow-server. Please try again.', { cause: err })
   }
 }
 
