@@ -1,13 +1,32 @@
-name: CI
+name: CI (Web)
+
+# Web client CI. Triggered only on web/** changes (plus this
+# workflow file). Mirrors the workflow that lived at
+# `web/.github/workflows/ci.yml` before the monorepo merge but with
+# every shell step rooted in `web/` and the trigger gated by path.
 
 on:
   push:
     branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/ci-web.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/ci-web.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
 
 jobs:
   lint-typecheck-build-test:
@@ -16,7 +35,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           # `actions/checkout` shallow-clones by default; fine for
           # this job — we don't grep git history.

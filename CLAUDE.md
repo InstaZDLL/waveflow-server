@@ -4,9 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`waveflow-server` is the self-hosted backend for [WaveFlow](https://github.com/InstaZDLL/WaveFlow): an axum (Rust) + PostgreSQL service for multi-device library sync, browser playback, and public shareable playlists. It is a single binary crate (`name = "waveflow-server"`), a Linux/macOS daemon by design — *not* the desktop binary.
+This is a **monorepo** that ships two halves of the WaveFlow platform:
+
+- `/` — `waveflow-server`, the self-hosted backend: axum (Rust) + PostgreSQL service for multi-device library sync, browser playback, public shareable playlists. A single binary crate (`name = "waveflow-server"`), Linux/macOS daemon by design.
+- `web/` — `waveflow-web`, the React + TanStack Start frontend that runs Better Auth (issues the JWT this server consumes) and renders the player + library / playlist views on top of the API.
+
+The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) lives in its own repository — local-only software, GPL-3.0, different release cadence. It consumes this monorepo's API but is **not** part of this codebase.
 
 The authoritative design lives in [RFC-001](https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md) in the main repo. **Read it before adding a new module.** Work is phased against the main repo's Phase 1 milestone; the README's status line tracks the current sub-phase.
+
+## When to read which CLAUDE.md
+
+This file covers cross-repo conventions (auth boundary, sync wire shape, repo hygiene). For half-specific deep dives:
+
+- Server-only conventions stay below in the same file (tenant isolation, SQL access rules, sqlx migration policy).
+- Web-only conventions live in [`web/CLAUDE.md`](web/CLAUDE.md) (TanStack server-fns, route conventions, Better Auth plumbing, design-tokens package).
+
+A change touching both halves (the JWT contract, the sync wire shape, the schema parity) is the case to keep in mind when writing — those land in a single PR by design.
 
 ## Commands
 
