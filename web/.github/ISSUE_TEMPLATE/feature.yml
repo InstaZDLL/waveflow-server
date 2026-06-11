@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a new capability for waveflow-web.
+title: '[Feature] '
+labels: ['type:feature']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. Please explain the **user-facing problem**
+        before proposing a solution — that gives us room to discuss alternatives.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the user-facing problem?
+      description: One paragraph. What is the user trying to do that they can't do today?
+      placeholder: 'When I share a playlist link from the web client, the recipient lands on a sign-in wall even for public playlists.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+      description: Optional. If you have a specific idea, lay it out — but the problem statement above is what we'll mostly discuss.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Other approaches you thought about and discarded, with the trade-off.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Screenshots, related issues, prior art.

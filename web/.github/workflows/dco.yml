@@ -1,0 +1,55 @@
+name: DCO sign-off check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: Verify Signed-off-by trailer
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+        with:
+          # Need the full range of PR commits so we can check each
+          # one for the sign-off trailer.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify every commit in the PR carries `Signed-off-by:`
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Walk every commit between the PR's base and head. A
+          # missing trailer on *any* commit fails the job.
+          missing=0
+          while IFS= read -r sha; do
+            # `--format=%(trailers:key=Signed-off-by)` prints the
+            # joined trailer values (empty if absent). Both upper-
+            # and lower-case keys match per git's case-insensitive
+            # trailer machinery.
+            value=$(git log -1 --format='%(trailers:key=Signed-off-by)' "$sha")
+            if [ -z "$value" ]; then
+              echo "::error::Commit $sha is missing a Signed-off-by trailer."
+              missing=$((missing + 1))
+            fi
+          done < <(git rev-list "$BASE_SHA..$HEAD_SHA")
+
+          if [ "$missing" -gt 0 ]; then
+            echo
+            echo "DCO check failed: $missing commit(s) without sign-off."
+            echo "Fix locally with:"
+            echo "  git rebase --signoff $BASE_SHA"
+            echo "Then force-push."
+            exit 1
+          fi
+          echo "All commits carry a DCO sign-off."
