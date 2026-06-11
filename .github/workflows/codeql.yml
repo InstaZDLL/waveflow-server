@@ -3,8 +3,22 @@ name: CodeQL
 on:
   push:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "migrations/**"
+      - "tests/**"
+      - ".github/workflows/**"
   pull_request:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "migrations/**"
+      - "tests/**"
+      - ".github/workflows/**"
   schedule:
     - cron: "34 7 * * 4"
 

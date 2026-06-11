@@ -1,16 +1,35 @@
-name: CI
+name: CI (Rust)
+
+# Server-side Rust CI. Triggered on changes to Cargo / migrations /
+# src / tests / its own workflow file — never on web/-only edits.
+# A diff that touches BOTH halves of the monorepo runs both this
+# workflow and ci-web.yml.
 
 on:
   push:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "migrations/**"
+      - "tests/**"
+      - ".github/workflows/ci-rust.yml"
   pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "migrations/**"
+      - "tests/**"
+      - ".github/workflows/ci-rust.yml"
 
 permissions:
   contents: read
 
 # Cancel in-progress runs for the same PR or branch when a new commit lands.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
