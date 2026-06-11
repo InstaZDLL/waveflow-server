@@ -42,7 +42,12 @@ jobs:
           fetch-depth: 1
 
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        # Pinned to the v2.2.0 commit SHA. `pull_request` runs with a
+        # read-only token but CodeQL's actions/unpinned-tag rule
+        # treats every third-party action as supply-chain surface, so
+        # we use the same hash-pinned posture the rest of the repo's
+        # workflows already follow.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
