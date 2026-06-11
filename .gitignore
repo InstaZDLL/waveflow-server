@@ -18,3 +18,10 @@ node_modules/
 *.swo
 .DS_Store
 Thumbs.db
+
+# AI related files
+.agents/*
+.claude/*
+.mcp.json
+skills-lock.json
+.codex

@@ -22,8 +22,10 @@
     "fmt:check": "concurrently --names server,web --prefix-colors blue,magenta \"bun run fmt:check:server\" \"bun run fmt:check:web\"",
     "fmt:check:server": "cargo fmt --all --check",
     "fmt:check:web": "bun --cwd=web run format:check",
-    "typecheck": "bun --cwd=web run typecheck",
-    "check": "cargo check --all-targets --all-features",
+    "typecheck": "concurrently --names server,web --prefix-colors blue,magenta \"bun run typecheck:server\" \"bun run typecheck:web\"",
+    "typecheck:server": "cargo check --all-targets --all-features",
+    "typecheck:web": "bun --cwd=web run typecheck",
+    "check": "bun run typecheck",
     "db:migrate": "bun --cwd=web run db:migrate"
   },
   "devDependencies": {
