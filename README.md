@@ -29,9 +29,32 @@ TL;DR:
 
 For visual end-to-end QA there's a sibling [`waveflow-dev-stack`](https://github.com/InstaZDLL/waveflow-dev-stack) repo (Postgres + .env templates + step-by-step) so you don't have to hand-stitch the wiring every time.
 
-For day-to-day work on a single half:
+### One-shot from the repo root
 
-### Server (`/`)
+A small root `package.json` ships with `concurrently` so you can run both halves at once without `cd`-ing into `web/`:
+
+```bash
+bun install                                     # installs concurrently + each side's deps
+bun --cwd=web install                           # one-time, until web's deps are workspace-hoisted
+
+bun run dev                                     # cargo run + bun --cwd=web run dev, prefixed output
+bun run build                                   # release Rust + Vite/Nitro production build
+bun run test                                    # cargo test + vitest run
+bun run lint                                    # cargo clippy + eslint
+bun run fmt                                     # cargo fmt + prettier --write
+bun run fmt:check                               # CI-shape: read-only check on both sides
+bun run typecheck                               # tsc on web/ (server gets its own check via cargo)
+bun run check                                   # cargo check --all-targets --all-features
+bun run db:migrate                              # Better Auth migrations on web/ Postgres
+```
+
+Each composite script delegates to the side-specific scripts (`dev:server` / `dev:web`, etc.) so a contributor working on one half only can target it directly. `--cwd=web` makes `bun` resolve the package + lockfile relative to `web/` without changing the shell's cwd.
+
+### Single-side workflows
+
+You can still run one half on its own if you only care about that side.
+
+#### Server (`/`)
 
 ```bash
 # Postgres ≥ 15 reachable on DATABASE_URL.
@@ -52,7 +75,7 @@ The boot sequence connects to Postgres, applies pending migrations, and serves:
 
 > 🔒 **Auth: JWT-only.** Every `/api/v1/*` request must carry an `Authorization: Bearer <jwt>` header signed by the configured Better Auth issuer (`web/`'s instance). Boot requires the full `WAVEFLOW_JWT_JWKS_URL` / `WAVEFLOW_JWT_ISSUER` / `WAVEFLOW_JWT_AUDIENCE` triple.
 
-### Web (`web/`)
+#### Web (`web/`)
 
 ```bash
 cd web

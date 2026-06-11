@@ -1,0 +1,32 @@
+{
+  "name": "waveflow-platform",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Monorepo dev orchestration for waveflow-server (Rust) + waveflow-web (TanStack Start) — run both halves from the repo root.",
+  "scripts": {
+    "dev": "concurrently --names server,web --prefix-colors blue,magenta --kill-others-on-fail \"bun run dev:server\" \"bun run dev:web\"",
+    "dev:server": "cargo run",
+    "dev:web": "bun --cwd=web run dev",
+    "build": "concurrently --names server,web --prefix-colors blue,magenta \"bun run build:server\" \"bun run build:web\"",
+    "build:server": "cargo build --release",
+    "build:web": "bun --cwd=web run build",
+    "test": "concurrently --names server,web --prefix-colors blue,magenta \"bun run test:server\" \"bun run test:web\"",
+    "test:server": "cargo test --all-features",
+    "test:web": "bun --cwd=web run test",
+    "lint": "concurrently --names server,web --prefix-colors blue,magenta \"bun run lint:server\" \"bun run lint:web\"",
+    "lint:server": "cargo clippy --all-targets --all-features -- -D warnings",
+    "lint:web": "bun --cwd=web run lint",
+    "fmt": "concurrently --names server,web --prefix-colors blue,magenta \"bun run fmt:server\" \"bun run fmt:web\"",
+    "fmt:server": "cargo fmt --all",
+    "fmt:web": "bun --cwd=web run format",
+    "fmt:check": "concurrently --names server,web --prefix-colors blue,magenta \"bun run fmt:check:server\" \"bun run fmt:check:web\"",
+    "fmt:check:server": "cargo fmt --all --check",
+    "fmt:check:web": "bun --cwd=web run format:check",
+    "typecheck": "bun --cwd=web run typecheck",
+    "check": "cargo check --all-targets --all-features",
+    "db:migrate": "bun --cwd=web run db:migrate"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}
