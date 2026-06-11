@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-typecheck-build-test:
+    name: Lint / Typecheck / Build / Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # `actions/checkout` shallow-clones by default; fine for
+          # this job — we don't grep git history.
+          fetch-depth: 1
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        # `--frozen-lockfile` makes a CI bun.lock drift fail loud
+        # instead of silently regenerating against the registry.
+        run: bun install --frozen-lockfile
+
+      - name: Prettier check
+        run: bun run format:check
+
+      - name: ESLint
+        run: bun run lint
+
+      - name: Build
+        # Runs first so the TanStack Router plugin can regenerate
+        # `src/routeTree.gen.ts` (which is gitignored). The typecheck
+        # step below imports it; without a prior build it would 404.
+        run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        # `vitest run` is configured in package.json — no watch mode
+        # so it exits cleanly under the runner.
+        run: bun run test
