@@ -1,0 +1,124 @@
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+
+import { ThemePicker } from '@/components/ThemePicker'
+import { authClient, useSession } from '@/lib/auth-client'
+
+export const Route = createFileRoute('/_authed/settings')({
+  component: SettingsPage,
+})
+
+// Exported for direct unit-render — sidesteps the file-route + router
+// shell so a vitest spec can mount the picker in isolation.
+export function SettingsPage() {
+  return (
+    <main className="page-wrap px-4 py-12">
+      <section className="island-shell mx-auto max-w-3xl rounded-2xl p-6 sm:p-8">
+        <p className="island-kicker mb-2">Settings</p>
+        <h1 className="display-title mb-6 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+          Account
+        </h1>
+        <AccountCard />
+
+        <hr className="my-8 border-t border-[var(--line)]" />
+
+        <h2 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)] sm:text-3xl">
+          Appearance
+        </h2>
+        <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
+          Pick a theme. Your choice is stored as a cookie so the next page render already paints the
+          right palette — no flash of the brand colour while React hydrates.
+        </p>
+        <ThemePicker />
+      </section>
+    </main>
+  )
+}
+
+// Exported so a unit test can mount the card without standing up
+// the full Settings page (and without needing the ThemePicker's
+// theme-context plumbing).
+export function AccountCard() {
+  const { data: session, isPending } = useSession()
+  const navigate = useNavigate()
+  // `useSession()` flips `isPending` to true on the very first
+  // render even when the parent `_authed` layout has already
+  // resolved the session server-side. The skeleton keeps the page
+  // from flickering "Loading…" for that single render.
+  if (isPending) {
+    return (
+      <p className="text-sm text-[var(--sea-ink-soft)]" aria-live="polite">
+        Loading account details…
+      </p>
+    )
+  }
+  if (!session?.user) {
+    // The `_authed` layout's `beforeLoad` guard normally redirects
+    // an unauthenticated visitor to `/sign-in` before this view
+    // renders — but a session that expires while the user is
+    // sitting on the Settings page can leave `useSession` returning
+    // `null` without a navigation. Render an explicit "signed out"
+    // fallback so the page stays informative rather than crashing
+    // on `session.user.email`.
+    return (
+      <p className="text-sm text-[var(--sea-ink-soft)]" role="alert">
+        Your session expired. Please sign in again to manage your account.
+      </p>
+    )
+  }
+  async function onSignOut() {
+    try {
+      await authClient.signOut()
+    } catch (err) {
+      // Same rationale as the Header's sign-out: network failure
+      // leaves the local cookie behind, but the server has almost
+      // certainly cleared its side already. Log + navigate anyway
+      // so the user lands somewhere sensible.
+      console.error('[settings] sign-out failed:', err)
+    }
+    try {
+      await navigate({ to: '/sign-in' })
+    } catch (err) {
+      console.warn('[settings] post-sign-out navigation failed:', err)
+    }
+  }
+  return (
+    <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-[auto_1fr]">
+      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Name</dt>
+      <dd className="text-sm text-[var(--sea-ink)]">
+        {session.user.name || <span className="italic text-[var(--sea-ink-soft)]">Not set</span>}
+      </dd>
+      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Email</dt>
+      <dd className="text-sm text-[var(--sea-ink)]">{session.user.email}</dd>
+      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Member since</dt>
+      <dd className="text-sm text-[var(--sea-ink-soft)]">
+        {formatCreatedAt(session.user.createdAt)}
+      </dd>
+      <dd className="col-span-full mt-2">
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-4 py-2 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+        >
+          Sign out
+        </button>
+      </dd>
+    </dl>
+  )
+}
+
+/**
+ * Format Better Auth's `createdAt` (a `Date` over the wire on the
+ * react-query payload, but tolerated as a string for resilience to
+ * future shape changes) for display. Falls back to a dash for the
+ * rare row where the column is somehow missing — better than
+ * "Invalid Date".
+ */
+function formatCreatedAt(value: Date | string | null | undefined): string {
+  if (!value) return '—'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  // `dateStyle: 'medium'` gives "Jun 8, 2026" in en-US, "8 juin 2026"
+  // in fr-FR, etc. — the browser's locale wins, matching the rest
+  // of the app's date rendering convention.
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)
+}

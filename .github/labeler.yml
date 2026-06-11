@@ -1,0 +1,127 @@
+# Path-based auto-labels for pull requests. Consumed by
+# `actions/labeler` in `.github/workflows/label-pr.yml`. Keep the
+# scopes coarse — fine-grained per-file rules become noise on a
+# refactor that touches everything.
+#
+# Label naming mirrors the desktop's convention (`scope: foo` with a
+# space, not `scope:foo`) so a contributor jumping between repos
+# sees a consistent palette in the GitHub label sidebar.
+
+# ─────────────────────────────────────────────────────────────
+# Top-level halves of the monorepo. Most PRs touch one side or
+# the other; a small minority that wire a contract change end up
+# carrying both — that's a useful signal in the PR list.
+# ─────────────────────────────────────────────────────────────
+
+'scope: server':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Cargo.toml'
+          - 'Cargo.lock'
+          - 'src/**'
+          - 'migrations/**'
+          - 'tests/**'
+
+'scope: web':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'web/**'
+
+# ─────────────────────────────────────────────────────────────
+# Server-side fine scopes (inside src/).
+# ─────────────────────────────────────────────────────────────
+
+'scope: api':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/api/**'
+          - 'src/lib.rs'
+
+'scope: db':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/db.rs'
+          - 'src/db/**'
+          - 'migrations/**'
+
+'scope: auth':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/auth.rs'
+          - 'src/middleware.rs'
+          - 'web/src/auth/**'
+          - 'web/src/lib/auth.ts'
+          - 'web/src/lib/auth-client.ts'
+          - 'web/src/routes/sign-in/**'
+          - 'web/src/routes/sign-up/**'
+          - 'web/src/routes/api/auth/**'
+
+'scope: sync':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/api/sync.rs'
+          - 'src/apply.rs'
+          - 'src/apply/**'
+
+'scope: streaming':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/api/stream.rs'
+          - 'src/stream_token.rs'
+
+'scope: artwork':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/api/artwork.rs'
+          - 'src/artwork_pipeline.rs'
+          - 'src/artwork_jobs.rs'
+          - 'src/storage.rs'
+
+# ─────────────────────────────────────────────────────────────
+# Web fine scopes (inside web/src/).
+# ─────────────────────────────────────────────────────────────
+
+'scope: routes':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'web/src/routes/**'
+
+'scope: components':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'web/src/components/**'
+
+'scope: design-tokens':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'web/packages/design-tokens/**'
+
+# ─────────────────────────────────────────────────────────────
+# Cross-cutting.
+# ─────────────────────────────────────────────────────────────
+
+'scope: tooling':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'web/.husky/**'
+          - 'web/eslint.config.js'
+          - 'web/.prettierrc.json'
+          - 'web/.commitlintrc.cjs'
+          - 'web/vite.config.ts'
+          - 'web/vitest.config.ts'
+          - 'web/tsconfig.json'
+
+'scope: deps':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'web/package.json'
+          - 'web/bun.lock'
+          - 'Cargo.toml'
+          - 'Cargo.lock'
+
+'scope: docs':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
