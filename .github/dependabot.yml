@@ -1,6 +1,7 @@
 version: 2
 
 updates:
+  # Server-side Rust crates (root Cargo workspace).
   - package-ecosystem: cargo
     directory: "/"
     schedule:
@@ -11,6 +12,7 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
+      - "scope: server"
       - cargo
     commit-message:
       prefix: chore
@@ -26,6 +28,52 @@ updates:
     ignore:
       - dependency-name: waveflow-core
 
+  # Web client (TanStack Start app) lives under web/ since the
+  # monorepo merge. The npm ecosystem covers Bun's package.json +
+  # bun.lock — Dependabot doesn't have a dedicated Bun parser yet,
+  # but the npm resolver reads the lockfile correctly.
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - "scope: web"
+    commit-message:
+      prefix: chore
+    groups:
+      # Roll patch + minor bumps into one PR per week so the review
+      # surface stays bounded. Majors stay individual — they're
+      # likely to need code edits (cf. jsonwebtoken 9→10 on the
+      # server, kysely 0.29 on the web).
+      npm-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+      # TanStack ecosystem bumps tend to land in lockstep across
+      # @tanstack/react-router, @tanstack/react-start,
+      # @tanstack/router-plugin etc. Group them so a coordinated
+      # version doesn't surface as 5 individual PRs.
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+    ignore:
+      # Held back at 0.28.x — kysely 0.29 moved
+      # `DEFAULT_MIGRATION_LOCK_TABLE` to the `kysely/migration`
+      # subpath and Better Auth's bundled kysely-adapter still
+      # imports it from the root export, so any 0.29.x bump breaks
+      # `bun run build` with MISSING_EXPORT. Lift this ignore once
+      # @better-auth/kysely-adapter ships a release that follows
+      # the new import path.
+      - dependency-name: kysely
+        versions:
+          - ">=0.29.0"
+
+  # CI workflow actions — single entry covers .github/workflows/*.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -36,6 +84,7 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
+      - "scope: tooling"
       - github-actions
     commit-message:
       prefix: chore

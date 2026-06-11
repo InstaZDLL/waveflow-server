@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: fr-FR
+tone_instructions: >-
+  Sois direct et concis. Priorise les bugs réels, les régressions
+  utilisateur, les problèmes de sécurité, les erreurs de logique et les
+  oublis de tests/validation. Évite les remarques purement cosmétiques.
+early_access: true
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+    ignore_title_keywords:
+      - 'chore: bump'
+      - 'chore(main): release'
+      - 'release-please'
+      - 'dependabot'
+      - '[bot]'
+  path_filters:
+    - '!**/dist/**'
+    - '!**/node_modules/**'
+    - '!**/.output/**'
+    - '!**/.nitro/**'
+    - '!**/.tanstack/**'
+    - '!**/.vinxi/**'
+    - '!secrets/**'
+    - '!bun.lock'
+    - '!*.lock'
+    - '!src/routeTree.gen.ts'
+  path_instructions:
+    - path: 'src/**'
+      instructions: >-
+        Frontend React 19 + TanStack Start (Vite + Nitro) + Tailwind CSS 4.
+        Vérifie les erreurs de state/effects, l'usage correct des hooks et
+        loaders TanStack Router, les problèmes d'accessibilité visibles, les
+        régressions de navigation. Évite les suggestions de style si Prettier
+        / ESLint les couvrent déjà.
+    - path: 'src/routes/**'
+      instructions: >-
+        Routes file-based de TanStack Router. Vérifie l'utilisation correcte
+        de `createFileRoute`, des `loader`/`beforeLoad` (auth, prefetch), de
+        la composition layout (`__root.tsx`, `_layout.tsx`). Signale toute
+        fetch côté client qui devrait être un loader, ou tout loader bloquant
+        qui devrait être déféré au client.
+    - path: 'src/routes/api/**'
+      instructions: >-
+        Server-side API routes (Nitro). Vérifie la validation d'input, la
+        gestion d'erreur, les codes HTTP, et l'absence de logique métier
+        spécifique qui devrait vivre sur waveflow-server (le serveur Rust).
+        Ce répertoire ne doit héberger QUE la couche d'adaptation entre le
+        navigateur et waveflow-server / Better Auth.
+    - path: 'src/auth/**'
+      instructions: >-
+        Intégration Better Auth + propagation du token Bearer vers
+        waveflow-server. Signale toute fuite de credentials dans les logs,
+        toute lecture côté client de cookies sensibles, et tout
+        contournement de session. Le JWT exposé au client doit être un access
+        token court (15 min max) — pas le refresh.
+    - path: '.github/workflows/**'
+      instructions: >-
+        Workflows GitHub Actions. Vérifie les `permissions:` minimales, les
+        versions épinglées des actions (avec hash idéalement), l'absence de
+        `pull_request_target` sur des steps qui exécutent du code de la PR,
+        et l'absence de `secrets.*` exposés involontairement.
+    - path: '.commitlintrc.cjs'
+      instructions: >-
+        Convention commits enforcée. Tout changement de règles doit s'aligner
+        avec le repo desktop (`InstaZDLL/WaveFlow`) et waveflow-server.
+    - path: 'vite.config.ts'
+      instructions: >-
+        Vite + plugins TanStack Start + Nitro. Vérifie que les plugins sont
+        dans l'ordre canonique (`tanstackStart` avant `viteReact`), que les
+        externals/aliases ne masquent pas de bug, et que la config dev ne
+        diverge pas de la build prod sans rationale.
+    - path: 'package.json'
+      instructions: >-
+        Toute nouvelle dépendance doit être justifiable (lib éprouvée,
+        maintenue récemment, license compatible AGPL-3.0). Vérifie que les
+        scripts (`dev`, `build`, `typecheck`, `lint`, `format`, `test`)
+        restent dans le contrat documenté par `README.md`.

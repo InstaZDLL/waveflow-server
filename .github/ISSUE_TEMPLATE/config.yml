@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions, discussions, ideas
+    url: https://github.com/InstaZDLL/waveflow-web/discussions
+    about: For open-ended questions or proposals that aren't yet bugs or feature requests.
+  - name: Security vulnerabilities
+    url: https://github.com/InstaZDLL/waveflow-web/security/advisories/new
+    about: Please use GitHub's private vulnerability reporting — don't open a public issue.
