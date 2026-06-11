@@ -6,6 +6,11 @@ target/
 .env
 .env.local
 
+# Root package.json's only runtime dep is `concurrently` (dev tooling
+# orchestrator). Lockfile stays committed at the root; node_modules
+# is regenerated on `bun install`.
+node_modules/
+
 # IDE / OS noise
 .vscode/
 .idea/
