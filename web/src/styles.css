@@ -25,6 +25,10 @@
 }
 
 :root {
+  /* Fallback only: canonical theme tokens come from @waveflow/design-tokens.
+     ThemeStyle emits DEFAULT_THEME_ID via themeCssDeclarations during SSR,
+     then ThemeProvider applies runtime changes through applyTheme. Keep these
+     defaults in sync with the design-tokens DEFAULT_THEME_ID palette/surfaces. */
   --accent-50: oklch(0.979 0.021 166.113);
   --accent-100: oklch(0.95 0.052 163.051);
   --accent-200: oklch(0.905 0.093 164.15);
