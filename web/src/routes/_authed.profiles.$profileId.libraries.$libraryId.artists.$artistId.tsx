@@ -125,9 +125,7 @@ function ArtistHeader({ result }: { result: ArtistLookupResult }) {
     return (
       <div className="mb-6 flex flex-col gap-2">
         <p className="section-eyebrow m-0">Artist</p>
-        <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
-          Artist
-        </h1>
+        <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">Artist</h1>
         {!result.ok && (
           <p className="text-xs text-[var(--sea-ink-soft)]">
             Artist details unavailable: {result.error}

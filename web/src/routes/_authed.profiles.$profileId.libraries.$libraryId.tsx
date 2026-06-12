@@ -86,27 +86,27 @@ function TracksView() {
           </div>
           {data.kind === 'ready' && (
             <nav aria-label="Library browse" className="flex flex-wrap gap-2">
-            <Link
-              to="/profiles/$profileId/libraries/$libraryId/albums"
-              params={{
-                profileId: String(data.profileId),
-                libraryId: String(data.libraryId),
-              }}
-              className="button button-ghost"
-            >
-              Albums
-            </Link>
-            <Link
-              to="/profiles/$profileId/libraries/$libraryId/artists"
-              params={{
-                profileId: String(data.profileId),
-                libraryId: String(data.libraryId),
-              }}
-              className="button button-ghost"
-            >
-              Artists
-            </Link>
-          </nav>
+              <Link
+                to="/profiles/$profileId/libraries/$libraryId/albums"
+                params={{
+                  profileId: String(data.profileId),
+                  libraryId: String(data.libraryId),
+                }}
+                className="button button-ghost"
+              >
+                Albums
+              </Link>
+              <Link
+                to="/profiles/$profileId/libraries/$libraryId/artists"
+                params={{
+                  profileId: String(data.profileId),
+                  libraryId: String(data.libraryId),
+                }}
+                className="button button-ghost"
+              >
+                Artists
+              </Link>
+            </nav>
           )}
         </div>
 

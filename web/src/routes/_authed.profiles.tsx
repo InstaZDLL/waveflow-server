@@ -30,7 +30,9 @@ function ProfilesView() {
         <div className="section-header">
           <div>
             <p className="section-eyebrow mb-2">Profiles</p>
-            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">Choose a workspace</h1>
+            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
+              Choose a workspace
+            </h1>
           </div>
         </div>
 

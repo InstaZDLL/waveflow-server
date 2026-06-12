@@ -130,9 +130,7 @@ export function PlayerBar() {
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-[var(--sea-ink)]">
-            {player.current.title}
-          </p>
+          <p className="truncate text-sm font-bold text-[var(--sea-ink)]">{player.current.title}</p>
           {player.current.artist && (
             <p className="truncate text-xs text-[var(--sea-ink-soft)]">{player.current.artist}</p>
           )}
