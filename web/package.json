@@ -8,9 +8,10 @@
   "homepage": "https://waveflow.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/InstaZDLL/waveflow-web.git"
+    "url": "https://github.com/InstaZDLL/waveflow-server.git",
+    "directory": "web"
   },
-  "bugs": "https://github.com/InstaZDLL/waveflow-web/issues",
+  "bugs": "https://github.com/InstaZDLL/waveflow-server/issues",
   "imports": {
     "#/*": "./src/*"
   },
