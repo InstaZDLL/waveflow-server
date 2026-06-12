@@ -32,23 +32,21 @@ export function AlbumsView() {
   const data = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Library</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Albums
-        </h1>
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <p className="section-eyebrow mb-2">Library</p>
+        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">Albums</h1>
 
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
 
         {data.kind === 'ready' && data.albums.length === 0 && (
-          <p className="text-base text-[var(--sea-ink-soft)]">
+          <div className="status-card">
             No albums in this library yet. The desktop app populates these as it scans your music.
-          </p>
+          </div>
         )}
 
         {data.kind === 'ready' && data.albums.length > 0 && (
@@ -62,9 +60,12 @@ export function AlbumsView() {
                     libraryId: String(data.libraryId),
                     albumId: String(album.id),
                   }}
-                  className="block rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4 no-underline transition hover:opacity-90"
+                  className="card-link"
                 >
-                  <p className="truncate text-base font-semibold text-[var(--sea-ink)]">
+                  <div className="mb-4 art-tile h-14 w-14 text-xl font-bold">
+                    {Array.from(album.canonical_title.trim())[0]?.toUpperCase() ?? 'A'}
+                  </div>
+                  <p className="truncate text-base font-bold text-[var(--sea-ink)]">
                     {album.canonical_title}
                   </p>
                   <p className="mt-1 truncate text-xs text-[var(--sea-ink-soft)]">
@@ -90,7 +91,7 @@ export function AlbumsView() {
                 profileId: String(data.profileId),
                 libraryId: String(data.libraryId),
               }}
-              className="text-sm text-[var(--sea-ink-soft)] underline"
+              className="back-link"
             >
               ← Back to library
             </Link>

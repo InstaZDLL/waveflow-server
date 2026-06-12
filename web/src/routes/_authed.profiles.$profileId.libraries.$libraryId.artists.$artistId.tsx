@@ -82,10 +82,10 @@ export function ArtistDetailView() {
   const data = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
@@ -108,7 +108,7 @@ export function ArtistDetailView() {
                   profileId: String(data.profileId),
                   libraryId: String(data.libraryId),
                 }}
-                className="text-sm text-[var(--sea-ink-soft)] underline"
+                className="back-link"
               >
                 ← Back to artists
               </Link>
@@ -124,8 +124,8 @@ function ArtistHeader({ result }: { result: ArtistLookupResult }) {
   if (!result.ok || !result.artist) {
     return (
       <div className="mb-6 flex flex-col gap-2">
-        <p className="island-kicker m-0">Artist</p>
-        <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+        <p className="section-eyebrow m-0">Artist</p>
+        <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
           Artist
         </h1>
         {!result.ok && (
@@ -138,8 +138,8 @@ function ArtistHeader({ result }: { result: ArtistLookupResult }) {
   }
   return (
     <div className="mb-6 flex flex-col gap-2">
-      <p className="island-kicker m-0">Artist</p>
-      <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+      <p className="section-eyebrow m-0">Artist</p>
+      <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
         {result.artist.name}
       </h1>
     </div>

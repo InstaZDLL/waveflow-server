@@ -109,7 +109,7 @@ export function PlayerBar() {
     <div
       role="region"
       aria-label="Now playing"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--header-bg)] backdrop-blur-lg"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--header-bg)] shadow-[0_-20px_60px_rgba(0,0,0,0.12)] backdrop-blur-xl"
     >
       <div className="page-wrap flex items-center gap-3 px-3 py-2.5 sm:gap-4 sm:px-4 sm:py-3">
         {/* Cover placeholder doubles as the Now Playing trigger —
@@ -123,14 +123,14 @@ export function PlayerBar() {
           aria-haspopup="dialog"
           aria-expanded={nowPlayingOpen}
           aria-controls="player-now-playing"
-          className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition hover:scale-105 sm:h-14 sm:w-14"
+          className="art-tile flex h-12 w-12 flex-shrink-0 items-center justify-center transition hover:scale-105 sm:h-14 sm:w-14"
           style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
         >
           <WaveflowLogo size={28} label={null} />
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+          <p className="truncate text-sm font-bold text-[var(--sea-ink)]">
             {player.current.title}
           </p>
           {player.current.artist && (
@@ -143,7 +143,7 @@ export function PlayerBar() {
             type="button"
             onClick={player.previous}
             aria-label="Previous track"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
             disabled={player.isLoading}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -156,7 +156,7 @@ export function PlayerBar() {
             onClick={player.togglePlayPause}
             aria-label={player.isPlaying ? 'Pause' : 'Play'}
             disabled={player.isLoading}
-            className="flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:opacity-90 disabled:opacity-50"
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition hover:-translate-y-0.5 disabled:opacity-50"
             style={{ backgroundColor: 'var(--sea-ink)' }}
           >
             {player.isLoading ? (
@@ -200,7 +200,7 @@ export function PlayerBar() {
             type="button"
             onClick={player.next}
             aria-label="Next track"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
             disabled={player.isLoading || player.queue.length === 0}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -283,7 +283,7 @@ export function PlayerBar() {
           aria-label={queueOpen ? 'Close queue' : 'Open queue'}
           aria-expanded={queueOpen}
           aria-controls="player-queue-panel"
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)]"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)]"
         >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path fill="currentColor" d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm10 0l6-3.5L14 9z" />
