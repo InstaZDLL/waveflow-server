@@ -89,7 +89,7 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
             type="button"
             onClick={onClose}
             aria-label="Close now playing"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)]"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-(--sea-ink) transition hover:bg-(--link-bg-hover)"
           >
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
@@ -111,18 +111,14 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
             <WaveflowLogo size={120} label={null} />
           </div>
           <div className="flex flex-col gap-1">
-            <h2 className="text-2xl font-bold text-[var(--sea-ink)] sm:text-3xl">
-              {current.title}
-            </h2>
-            {current.artist && (
-              <p className="text-base text-[var(--sea-ink-soft)]">{current.artist}</p>
-            )}
+            <h2 className="text-2xl font-bold text-(--sea-ink) sm:text-3xl">{current.title}</h2>
+            {current.artist && <p className="text-base text-(--sea-ink-soft)">{current.artist}</p>}
           </div>
         </div>
 
         <div className="flex w-full max-w-xl flex-col gap-4">
           <div className="flex items-center gap-3">
-            <span className="w-12 text-right text-xs tabular-nums text-[var(--sea-ink-soft)]">
+            <span className="w-12 text-right text-xs tabular-nums text-(--sea-ink-soft)">
               {formatTime(seekScrub ?? player.position)}
             </span>
             <input
@@ -157,7 +153,7 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
               className="min-w-0 flex-1"
               style={{ accentColor: 'var(--accent-600)' }}
             />
-            <span className="w-12 text-left text-xs tabular-nums text-[var(--sea-ink-soft)]">
+            <span className="w-12 text-left text-xs tabular-nums text-(--sea-ink-soft)">
               {formatTime(durationSec)}
             </span>
           </div>
@@ -168,7 +164,7 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
               onClick={player.previous}
               aria-label="Previous track"
               disabled={player.isLoading}
-              className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+              className="flex h-12 w-12 items-center justify-center rounded-full text-(--sea-ink) transition hover:bg-(--link-bg-hover) disabled:opacity-40"
             >
               <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
                 <path d="M6 6h2v12H6zM9.5 12l8.5-6v12z" fill="currentColor" />
@@ -198,7 +194,7 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
               onClick={player.next}
               aria-label="Next track"
               disabled={player.isLoading || player.queue.length === 0}
-              className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+              className="flex h-12 w-12 items-center justify-center rounded-full text-(--sea-ink) transition hover:bg-(--link-bg-hover) disabled:opacity-40"
             >
               <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
                 <path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z" fill="currentColor" />
@@ -212,7 +208,7 @@ export function NowPlayingOverlay({ open, onClose }: NowPlayingOverlayProps) {
               width="18"
               height="18"
               aria-hidden="true"
-              className="text-[var(--sea-ink-soft)]"
+              className="text-(--sea-ink-soft)"
             >
               <path
                 fill="currentColor"

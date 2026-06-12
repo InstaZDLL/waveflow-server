@@ -25,23 +25,27 @@ function ProfilesView() {
   const data = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Profiles</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Your profiles
-        </h1>
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <div className="section-header">
+          <div>
+            <p className="section-eyebrow mb-2">Profiles</p>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">
+              Choose a workspace
+            </h1>
+          </div>
+        </div>
 
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
 
         {data.kind === 'ready' && data.profiles.length === 0 && (
-          <p className="text-base text-[var(--sea-ink-soft)]">
+          <div className="status-card">
             No profiles yet. The desktop app or the API will create the first one for you.
-          </p>
+          </div>
         )}
 
         {data.kind === 'ready' && data.profiles.length > 0 && (
@@ -51,10 +55,13 @@ function ProfilesView() {
                 <Link
                   to="/profiles/$profileId"
                   params={{ profileId: String(p.id) }}
-                  className="block rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4 no-underline transition hover:opacity-90"
+                  className="card-link"
                 >
-                  <p className="text-base font-semibold text-[var(--sea-ink)]">{p.name}</p>
-                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                  <div className="mb-4 art-tile h-12 w-12 text-lg font-bold">
+                    {p.name.trim()[0]?.toUpperCase() ?? 'P'}
+                  </div>
+                  <p className="text-base font-bold text-(--sea-ink)">{p.name}</p>
+                  <p className="mt-1 text-xs text-(--sea-ink-soft)">
                     Last used {new Date(p.last_used_at).toLocaleDateString()}
                   </p>
                 </Link>

@@ -77,40 +77,41 @@ function TracksView() {
   )
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Library</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Tracks
-        </h1>
-
-        {data.kind === 'ready' && (
-          <nav aria-label="Library browse" className="mb-6 flex flex-wrap gap-2">
-            <Link
-              to="/profiles/$profileId/libraries/$libraryId/albums"
-              params={{
-                profileId: String(data.profileId),
-                libraryId: String(data.libraryId),
-              }}
-              className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:opacity-90"
-            >
-              Browse albums →
-            </Link>
-            <Link
-              to="/profiles/$profileId/libraries/$libraryId/artists"
-              params={{
-                profileId: String(data.profileId),
-                libraryId: String(data.libraryId),
-              }}
-              className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:opacity-90"
-            >
-              Browse artists →
-            </Link>
-          </nav>
-        )}
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <div className="section-header">
+          <div>
+            <p className="section-eyebrow mb-2">Library</p>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Tracks</h1>
+          </div>
+          {data.kind === 'ready' && (
+            <nav aria-label="Library browse" className="flex flex-wrap gap-2">
+              <Link
+                to="/profiles/$profileId/libraries/$libraryId/albums"
+                params={{
+                  profileId: String(data.profileId),
+                  libraryId: String(data.libraryId),
+                }}
+                className="button button-ghost"
+              >
+                Albums
+              </Link>
+              <Link
+                to="/profiles/$profileId/libraries/$libraryId/artists"
+                params={{
+                  profileId: String(data.profileId),
+                  libraryId: String(data.libraryId),
+                }}
+                className="button button-ghost"
+              >
+                Artists
+              </Link>
+            </nav>
+          )}
+        </div>
 
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
@@ -142,7 +143,7 @@ function TracksView() {
             <Link
               to="/profiles/$profileId"
               params={{ profileId: String(data.profileId) }}
-              className="text-sm text-[var(--sea-ink-soft)] underline"
+              className="back-link"
             >
               ← Back to libraries
             </Link>

@@ -67,38 +67,35 @@ export function PlaylistsView() {
   }
 
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <div className="section-header">
           <div>
-            <p className="island-kicker mb-2">Playlists</p>
-            <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-              Your playlists
-            </h1>
+            <p className="section-eyebrow mb-2">Playlists</p>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Your playlists</h1>
           </div>
           {canCreate && (
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="rounded-full px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:opacity-95"
-              style={{ backgroundColor: 'var(--accent-600)' }}
+              className="button button-primary"
             >
-              + Create playlist
+              Create playlist
             </button>
           )}
         </div>
 
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
 
         {data.kind === 'ready' && data.playlists.length === 0 && (
-          <p className="text-base text-[var(--sea-ink-soft)]">
+          <div className="status-card">
             No playlists yet. Create one from the desktop app — it&apos;ll sync here next time you
             open the page.
-          </p>
+          </div>
         )}
 
         {data.kind === 'ready' && data.playlists.length > 0 && (
@@ -114,7 +111,7 @@ export function PlaylistsView() {
             <Link
               to="/profiles/$profileId"
               params={{ profileId: String(data.profileId) }}
-              className="text-sm text-[var(--sea-ink-soft)] underline"
+              className="back-link"
             >
               ← Back to libraries
             </Link>
@@ -123,7 +120,7 @@ export function PlaylistsView() {
 
         {data.kind === 'error' && (
           <p className="mt-6">
-            <Link to="/profiles" className="text-sm text-[var(--sea-ink-soft)] underline">
+            <Link to="/profiles" className="back-link">
               ← Back to profiles
             </Link>
           </p>
@@ -166,15 +163,16 @@ function PlaylistCard({ profileId, playlist }: PlaylistCardProps) {
           profileId: String(profileId),
           playlistId: String(playlist.id),
         }}
-        className="block rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4 no-underline transition hover:-translate-y-0.5 hover:opacity-95"
+        className="card-link"
       >
+        <div className="mb-4 art-tile h-14 w-14 text-xl font-bold">
+          {Array.from(playlist.name.trim())[0]?.toUpperCase() ?? 'P'}
+        </div>
         <div className="flex items-start justify-between gap-3">
-          <p className="flex-1 truncate text-base font-semibold text-[var(--sea-ink)]">
-            {playlist.name}
-          </p>
+          <p className="flex-1 truncate text-base font-bold text-(--sea-ink)">{playlist.name}</p>
           {isSmart && (
             <span
-              className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+              className="flex-shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
               style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
             >
               Smart
@@ -182,11 +180,9 @@ function PlaylistCard({ profileId, playlist }: PlaylistCardProps) {
           )}
         </div>
         {playlist.description && (
-          <p className="mt-1 line-clamp-2 text-xs text-[var(--sea-ink-soft)]">
-            {playlist.description}
-          </p>
+          <p className="mt-1 line-clamp-2 text-xs text-(--sea-ink-soft)">{playlist.description}</p>
         )}
-        <p className="mt-2 text-xs text-[var(--sea-ink-soft)]">
+        <p className="mt-2 text-xs text-(--sea-ink-soft)">
           {playlist.track_count} {playlist.track_count === 1 ? 'track' : 'tracks'}
           {playlist.total_duration_ms > 0 && (
             <span> · {formatTime(playlist.total_duration_ms / 1000)}</span>
