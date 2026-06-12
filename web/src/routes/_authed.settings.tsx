@@ -14,9 +14,7 @@ export function SettingsPage() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad mx-auto max-w-3xl">
         <p className="section-eyebrow mb-2">Settings</p>
-        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">
-          Account
-        </h1>
+        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">Account</h1>
         <AccountCard />
 
         <hr className="my-8 border-t border-[var(--line)]" />
@@ -94,11 +92,7 @@ export function AccountCard() {
         {formatCreatedAt(session.user.createdAt)}
       </dd>
       <dd className="col-span-full mt-2">
-        <button
-          type="button"
-          onClick={onSignOut}
-          className="button button-ghost"
-        >
+        <button type="button" onClick={onSignOut} className="button button-ghost">
           Sign out
         </button>
       </dd>

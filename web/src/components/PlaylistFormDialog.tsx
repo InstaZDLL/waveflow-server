@@ -204,11 +204,7 @@ export function PlaylistFormDialog({
               >
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="button button-primary"
-              >
+              <button type="submit" disabled={submitting} className="button button-primary">
                 {submitting ? busyLabel : idleLabel}
               </button>
             </div>
