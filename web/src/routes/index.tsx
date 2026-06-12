@@ -32,7 +32,7 @@ function App() {
               <p className="section-eyebrow m-0">WaveFlow</p>
             </div>
             <h1 className="section-title max-w-4xl">Your music library, served from home.</h1>
-            <p className="mt-6 max-w-[62ch] text-base leading-8 text-[var(--sea-ink-soft)] sm:text-lg">
+            <p className="mt-6 max-w-[62ch] text-base leading-8 text-(--sea-ink-soft) sm:text-lg">
               Run the Rust server where your files already live. Browse, stream, sync playlists, and
               share selected mixes from any browser without handing your listening habits to a
               recommendation feed.
@@ -60,12 +60,12 @@ function App() {
           </div>
         </div>
 
-        <div className="relative min-h-[24rem] border-t border-[var(--line)] p-5 lg:border-l lg:border-t-0">
+        <div className="relative min-h-[24rem] border-t border-(--line) p-5 lg:border-l lg:border-t-0">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_12%,color-mix(in_oklab,var(--accent-500)_22%,transparent),transparent_34%)]" />
           <div className="relative grid h-full grid-rows-[1fr_auto] gap-5">
             <div className="art-tile relative overflow-hidden rounded-[1.25rem] p-6">
-              <div className="absolute inset-x-8 top-10 h-28 rounded-full border border-[var(--line)]" />
-              <div className="absolute inset-x-14 top-20 h-28 rounded-full border border-[var(--line)]" />
+              <div className="absolute inset-x-8 top-10 h-28 rounded-full border border-(--line)" />
+              <div className="absolute inset-x-14 top-20 h-28 rounded-full border border-(--line)" />
               <div className="relative mt-auto w-full">
                 <div className="mb-5 flex items-end gap-2">
                   {[44, 76, 118, 68, 96, 52, 128, 82].map((height, index) => (
@@ -83,11 +83,11 @@ function App() {
                     />
                   ))}
                 </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
-                  <p className="m-0 text-sm font-bold text-[var(--sea-ink)]">
+                <div className="rounded-xl border border-(--line) bg-(--surface-strong) p-4">
+                  <p className="m-0 text-sm font-bold text-(--sea-ink)">
                     Basement server / Living room browser
                   </p>
-                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                  <p className="mt-1 text-xs text-(--sea-ink-soft)">
                     FLAC streams, playlist sync, public previews
                   </p>
                 </div>
@@ -100,8 +100,8 @@ function App() {
                 ['AGPL', 'web + server'],
               ].map(([value, label]) => (
                 <div key={label} className="quiet-panel p-3">
-                  <dt className="text-lg font-bold tabular-nums text-[var(--sea-ink)]">{value}</dt>
-                  <dd className="mt-1 text-[0.68rem] font-semibold tracking-[0.07em] text-[var(--sea-ink-soft)] uppercase">
+                  <dt className="text-lg font-bold tabular-nums text-(--sea-ink)">{value}</dt>
+                  <dd className="mt-1 text-[0.68rem] font-semibold tracking-[0.07em] text-(--sea-ink-soft) uppercase">
                     {label}
                   </dd>
                 </div>
@@ -132,22 +132,22 @@ function App() {
             className="feature-card rise-in rounded-2xl p-5"
             style={{ animationDelay: `${index * 90 + 80}ms` }}
           >
-            <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">{title}</h2>
-            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">{desc}</p>
+            <h2 className="mb-2 text-base font-semibold text-(--sea-ink)">{title}</h2>
+            <p className="m-0 text-sm text-(--sea-ink-soft)">{desc}</p>
           </article>
         ))}
       </section>
 
       <section className="panel panel-pad mt-8">
         <p className="section-eyebrow mb-2">Self-hosted, open source</p>
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
+        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-(--sea-ink-soft)">
           <li>
             The web client is{' '}
             <a
               href="https://github.com/InstaZDLL/waveflow-web"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               AGPL-3.0
             </a>
@@ -156,7 +156,7 @@ function App() {
               href="https://github.com/InstaZDLL/WaveFlow"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               GPL-3.0
             </a>
@@ -168,7 +168,7 @@ function App() {
               href="https://github.com/InstaZDLL/waveflow-server"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               waveflow-server
             </a>{' '}
@@ -176,7 +176,7 @@ function App() {
           </li>
           <li>
             Theme the whole app from{' '}
-            <Link to="/settings" className="font-semibold text-[var(--sea-ink)] underline">
+            <Link to="/settings" className="font-semibold text-(--sea-ink) underline">
               Settings → Appearance
             </Link>{' '}
             — 14 OKLCH presets, light or dark.

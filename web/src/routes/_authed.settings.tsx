@@ -14,15 +14,15 @@ export function SettingsPage() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad mx-auto max-w-3xl">
         <p className="section-eyebrow mb-2">Settings</p>
-        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">Account</h1>
+        <h1 className="display-title mb-6 text-4xl font-bold text-(--sea-ink)">Account</h1>
         <AccountCard />
 
-        <hr className="my-8 border-t border-[var(--line)]" />
+        <hr className="my-8 border-t border-(--line)" />
 
-        <h2 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)] sm:text-3xl">
+        <h2 className="display-title mb-4 text-2xl font-bold text-(--sea-ink) sm:text-3xl">
           Appearance
         </h2>
-        <p className="mb-6 max-w-[62ch] text-sm leading-6 text-[var(--sea-ink-soft)]">
+        <p className="mb-6 max-w-[62ch] text-sm leading-6 text-(--sea-ink-soft)">
           Pick a palette for this browser. The cookie-backed choice is applied before React
           hydrates, so navigation keeps the same colour system from the first paint.
         </p>
@@ -81,16 +81,14 @@ export function AccountCard() {
   }
   return (
     <dl className="quiet-panel grid gap-x-6 gap-y-3 p-4 sm:grid-cols-[auto_1fr]">
-      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Name</dt>
-      <dd className="text-sm text-[var(--sea-ink)]">
-        {session.user.name || <span className="italic text-[var(--sea-ink-soft)]">Not set</span>}
+      <dt className="text-sm font-semibold text-(--sea-ink-soft)">Name</dt>
+      <dd className="text-sm text-(--sea-ink)">
+        {session.user.name || <span className="italic text-(--sea-ink-soft)">Not set</span>}
       </dd>
-      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Email</dt>
-      <dd className="text-sm text-[var(--sea-ink)]">{session.user.email}</dd>
-      <dt className="text-sm font-semibold text-[var(--sea-ink-soft)]">Member since</dt>
-      <dd className="text-sm text-[var(--sea-ink-soft)]">
-        {formatCreatedAt(session.user.createdAt)}
-      </dd>
+      <dt className="text-sm font-semibold text-(--sea-ink-soft)">Email</dt>
+      <dd className="text-sm text-(--sea-ink)">{session.user.email}</dd>
+      <dt className="text-sm font-semibold text-(--sea-ink-soft)">Member since</dt>
+      <dd className="text-sm text-(--sea-ink-soft)">{formatCreatedAt(session.user.createdAt)}</dd>
       <dd className="col-span-full mt-2">
         <button type="button" onClick={onSignOut} className="button button-ghost">
           Sign out

@@ -132,21 +132,21 @@ export function PlayableTrackList({
                 onClick={() => play(track)}
                 disabled={isPending}
                 aria-label={`Play ${track.title}`}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] text-xs font-bold transition hover:bg-[var(--link-bg-hover)] disabled:opacity-50"
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-(--line) bg-(--chip-bg) text-xs font-bold transition hover:bg-(--link-bg-hover) disabled:opacity-50"
               >
                 {isPending ? '…' : '▶'}
               </button>
               <div className="min-w-0 flex-1">
                 <p
-                  className={`truncate text-sm ${isCurrent ? 'font-bold text-[var(--sea-ink)]' : 'font-medium text-[var(--sea-ink)]'}`}
+                  className={`truncate text-sm ${isCurrent ? 'font-bold text-(--sea-ink)' : 'font-medium text-(--sea-ink)'}`}
                 >
                   {track.title}
                 </p>
                 {track.codec && (
-                  <p className="truncate text-xs text-[var(--sea-ink-soft)]">{track.codec}</p>
+                  <p className="truncate text-xs text-(--sea-ink-soft)">{track.codec}</p>
                 )}
               </div>
-              <span className="text-xs tabular-nums text-[var(--sea-ink-soft)]">
+              <span className="text-xs tabular-nums text-(--sea-ink-soft)">
                 {formatTime(track.duration_ms / 1000)}
               </span>
             </li>

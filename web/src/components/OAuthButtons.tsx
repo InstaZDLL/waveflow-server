@@ -135,10 +135,10 @@ export function OAuthButtons({ enabled, callbackURL }: Props) {
  */
 export function OAuthDivider() {
   return (
-    <div className="my-2 flex items-center gap-3 text-xs uppercase tracking-wider text-[var(--sea-ink-soft)]">
-      <span className="h-px flex-1 bg-[var(--line)]" />
+    <div className="my-2 flex items-center gap-3 text-xs uppercase tracking-wider text-(--sea-ink-soft)">
+      <span className="h-px flex-1 bg-(--line)" />
       <span>or</span>
-      <span className="h-px flex-1 bg-[var(--line)]" />
+      <span className="h-px flex-1 bg-(--line)" />
     </div>
   )
 }

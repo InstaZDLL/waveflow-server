@@ -79,10 +79,10 @@ function DesktopLoginPage() {
       <main className="page-wrap app-main px-4">
         <section className="panel panel-pad mx-auto max-w-md">
           <p className="island-kicker mb-2">WaveFlow desktop</p>
-          <h1 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)]">
+          <h1 className="display-title mb-4 text-2xl font-bold text-(--sea-ink)">
             Invalid sign-in link
           </h1>
-          <p className="text-sm text-[var(--sea-ink-soft)]">
+          <p className="text-sm text-(--sea-ink-soft)">
             The desktop sent us a callback URL we can&apos;t use. The link must point at the local
             handshake listener on
             <code className="mx-1 rounded bg-black/5 px-1 py-0.5 text-xs">http://127.0.0.1</code>
@@ -98,10 +98,10 @@ function DesktopLoginPage() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad mx-auto max-w-md">
         <p className="island-kicker mb-2">WaveFlow desktop</p>
-        <h1 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)]">
+        <h1 className="display-title mb-4 text-2xl font-bold text-(--sea-ink)">
           Couldn&apos;t issue a desktop token
         </h1>
-        <p className="text-sm text-[var(--sea-ink-soft)]">
+        <p className="text-sm text-(--sea-ink-soft)">
           Better Auth wouldn&apos;t mint a JWT for this session. Try signing out and back in, or
           contact your administrator if the problem persists.
         </p>

@@ -30,7 +30,7 @@ function ProfilesView() {
         <div className="section-header">
           <div>
             <p className="section-eyebrow mb-2">Profiles</p>
-            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">
               Choose a workspace
             </h1>
           </div>
@@ -58,10 +58,10 @@ function ProfilesView() {
                   className="card-link"
                 >
                   <div className="mb-4 art-tile h-12 w-12 text-lg font-bold">
-                    {Array.from(p.name.trim())[0]?.toUpperCase() ?? 'P'}
+                    {p.name.trim()[0]?.toUpperCase() ?? 'P'}
                   </div>
-                  <p className="text-base font-bold text-[var(--sea-ink)]">{p.name}</p>
-                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                  <p className="text-base font-bold text-(--sea-ink)">{p.name}</p>
+                  <p className="mt-1 text-xs text-(--sea-ink-soft)">
                     Last used {new Date(p.last_used_at).toLocaleDateString()}
                   </p>
                 </Link>

@@ -109,7 +109,7 @@ export function PlayerBar() {
     <div
       role="region"
       aria-label="Now playing"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--header-bg)] shadow-[0_-20px_60px_rgba(0,0,0,0.12)] backdrop-blur-xl"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-(--line) bg-(--header-bg) shadow-[0_-20px_60px_rgba(0,0,0,0.12)] backdrop-blur-xl"
     >
       <div className="page-wrap flex items-center gap-3 px-3 py-2.5 sm:gap-4 sm:px-4 sm:py-3">
         {/* Cover placeholder doubles as the Now Playing trigger —
@@ -130,9 +130,9 @@ export function PlayerBar() {
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-[var(--sea-ink)]">{player.current.title}</p>
+          <p className="truncate text-sm font-bold text-(--sea-ink)">{player.current.title}</p>
           {player.current.artist && (
-            <p className="truncate text-xs text-[var(--sea-ink-soft)]">{player.current.artist}</p>
+            <p className="truncate text-xs text-(--sea-ink-soft)">{player.current.artist}</p>
           )}
         </div>
 
@@ -141,7 +141,7 @@ export function PlayerBar() {
             type="button"
             onClick={player.previous}
             aria-label="Previous track"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--sea-ink) transition hover:bg-(--link-bg-hover) disabled:opacity-40"
             disabled={player.isLoading}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -198,7 +198,7 @@ export function PlayerBar() {
             type="button"
             onClick={player.next}
             aria-label="Next track"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--sea-ink) transition hover:bg-(--link-bg-hover) disabled:opacity-40"
             disabled={player.isLoading || player.queue.length === 0}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -244,7 +244,7 @@ export function PlayerBar() {
           className="hidden min-w-0 flex-1 sm:block"
           style={{ accentColor: 'var(--accent-600)' }}
         />
-        <span className="hidden w-20 text-right text-xs tabular-nums text-[var(--sea-ink-soft)] sm:inline">
+        <span className="hidden w-20 text-right text-xs tabular-nums text-(--sea-ink-soft) sm:inline">
           {formatTime(seekScrub ?? player.position)} / {formatTime(durationSec)}
         </span>
 
@@ -254,7 +254,7 @@ export function PlayerBar() {
             width="18"
             height="18"
             aria-hidden="true"
-            className="text-[var(--sea-ink-soft)]"
+            className="text-(--sea-ink-soft)"
           >
             <path
               fill="currentColor"
@@ -281,7 +281,7 @@ export function PlayerBar() {
           aria-label={queueOpen ? 'Close queue' : 'Open queue'}
           aria-expanded={queueOpen}
           aria-controls="player-queue-panel"
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl text-[var(--sea-ink)] transition hover:bg-[var(--link-bg-hover)]"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl text-(--sea-ink) transition hover:bg-(--link-bg-hover)"
         >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path fill="currentColor" d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm10 0l6-3.5L14 9z" />

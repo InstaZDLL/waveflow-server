@@ -72,9 +72,7 @@ export function PlaylistsView() {
         <div className="section-header">
           <div>
             <p className="section-eyebrow mb-2">Playlists</p>
-            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
-              Your playlists
-            </h1>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Your playlists</h1>
           </div>
           {canCreate && (
             <button
@@ -171,9 +169,7 @@ function PlaylistCard({ profileId, playlist }: PlaylistCardProps) {
           {Array.from(playlist.name.trim())[0]?.toUpperCase() ?? 'P'}
         </div>
         <div className="flex items-start justify-between gap-3">
-          <p className="flex-1 truncate text-base font-bold text-[var(--sea-ink)]">
-            {playlist.name}
-          </p>
+          <p className="flex-1 truncate text-base font-bold text-(--sea-ink)">{playlist.name}</p>
           {isSmart && (
             <span
               className="flex-shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
@@ -184,11 +180,9 @@ function PlaylistCard({ profileId, playlist }: PlaylistCardProps) {
           )}
         </div>
         {playlist.description && (
-          <p className="mt-1 line-clamp-2 text-xs text-[var(--sea-ink-soft)]">
-            {playlist.description}
-          </p>
+          <p className="mt-1 line-clamp-2 text-xs text-(--sea-ink-soft)">{playlist.description}</p>
         )}
-        <p className="mt-2 text-xs text-[var(--sea-ink-soft)]">
+        <p className="mt-2 text-xs text-(--sea-ink-soft)">
           {playlist.track_count} {playlist.track_count === 1 ? 'track' : 'tracks'}
           {playlist.total_duration_ms > 0 && (
             <span> · {formatTime(playlist.total_duration_ms / 1000)}</span>

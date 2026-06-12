@@ -145,7 +145,7 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-(--sea-ink-soft)">
         {heading}
       </h3>
       <div
@@ -169,16 +169,16 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
               onKeyDown={(event) => onKeyDown(event, index)}
               className={`group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:-translate-y-0.5 ${
                 isActive
-                  ? 'border-[var(--sea-ink)] bg-[var(--link-bg-hover)] shadow-sm'
-                  : 'border-[var(--line)] bg-[var(--chip-bg)] hover:border-[var(--line-strong)] hover:bg-[var(--link-bg-hover)]'
+                  ? 'border-(--sea-ink) bg-(--link-bg-hover) shadow-sm'
+                  : 'border-(--line) bg-(--chip-bg) hover:border-(--line-strong) hover:bg-(--link-bg-hover)'
               }`}
             >
               <SwatchRow accent={preset.accent} />
-              <span className="flex-1 truncate text-sm font-medium text-[var(--sea-ink)]">
+              <span className="flex-1 truncate text-sm font-medium text-(--sea-ink)">
                 {resolveLabel(preset.labelKey)}
               </span>
               {isActive && (
-                <span aria-hidden="true" className="text-xs font-semibold text-[var(--sea-ink)]">
+                <span aria-hidden="true" className="text-xs font-semibold text-(--sea-ink)">
                   ✓
                 </span>
               )}
