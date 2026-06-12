@@ -76,8 +76,8 @@ function DesktopLoginPage() {
 
   if (ctx.status === 'invalid-callback') {
     return (
-      <main className="page-wrap px-4 py-12">
-        <section className="island-shell mx-auto max-w-md rounded-2xl p-6 sm:p-8">
+      <main className="page-wrap app-main px-4">
+        <section className="panel panel-pad mx-auto max-w-md">
           <p className="island-kicker mb-2">WaveFlow desktop</p>
           <h1 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)]">
             Invalid sign-in link
@@ -95,8 +95,8 @@ function DesktopLoginPage() {
   }
 
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell mx-auto max-w-md rounded-2xl p-6 sm:p-8">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad mx-auto max-w-md">
         <p className="island-kicker mb-2">WaveFlow desktop</p>
         <h1 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)]">
           Couldn&apos;t issue a desktop token

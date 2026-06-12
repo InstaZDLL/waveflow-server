@@ -104,31 +104,31 @@ export function PlaylistDetailView() {
   }
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
 
         {data.kind === 'ready' && (
           <>
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="section-header">
               <PlaylistHeader playlist={data.playlist} />
               {canMutate && (
                 <div className="flex flex-shrink-0 items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setEditOpen(true)}
-                    className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+                    className="button button-ghost min-h-0 px-3 py-2"
                   >
                     Edit
                   </button>
                   <button
                     type="button"
                     onClick={() => setDeleteOpen(true)}
-                    className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/40"
+                    className="button button-danger min-h-0 px-3 py-2"
                   >
                     Delete
                   </button>
@@ -140,7 +140,7 @@ export function PlaylistDetailView() {
               <Link
                 to="/profiles/$profileId/playlists"
                 params={{ profileId: String(data.profileId) }}
-                className="text-sm text-[var(--sea-ink-soft)] underline"
+                className="back-link"
               >
                 ← Back to playlists
               </Link>
@@ -196,17 +196,17 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <p className="island-kicker m-0">{isSmart ? 'Smart playlist' : 'Playlist'}</p>
+        <p className="section-eyebrow m-0">{isSmart ? 'Smart playlist' : 'Playlist'}</p>
         {isSmart && (
           <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+            className="rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
             style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
           >
             Smart
           </span>
         )}
       </div>
-      <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+      <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
         {playlist.name}
       </h1>
       {playlist.description && (
@@ -227,7 +227,7 @@ function TrackList({ result }: { result: TrackFetchResult }) {
     return (
       <div
         role="alert"
-        className="mt-8 rounded-xl border border-red-200 bg-red-50/60 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+        className="error-card mt-8 text-sm"
       >
         Could not load tracks: {result.error}
       </div>
@@ -235,7 +235,7 @@ function TrackList({ result }: { result: TrackFetchResult }) {
   }
   if (result.tracks.length === 0) {
     return (
-      <div className="mt-8 rounded-xl border border-dashed border-[var(--line)] bg-[var(--chip-bg)] p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="status-card mt-8 text-sm">
         <p className="font-semibold text-[var(--sea-ink)]">No tracks yet</p>
         <p className="mt-2">
           Add tracks to this playlist from the desktop app — they&apos;ll sync over and show up
@@ -255,7 +255,7 @@ function TrackList({ result }: { result: TrackFetchResult }) {
   return (
     <ul
       aria-label="Playlist tracks"
-      className="mt-8 flex flex-col divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--chip-bg)]"
+      className="media-list mt-8"
     >
       {result.tracks.map((track, index) => (
         <TrackRow key={track.track_id} track={track} ordinal={index + 1} />
@@ -278,7 +278,7 @@ function TrackRow({ track, ordinal }: { track: PlaylistTrack; ordinal: number })
       ? track.snapshot_duration_ms / 1000
       : null
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
+    <li className="media-row">
       <span
         aria-hidden="true"
         className="w-6 flex-shrink-0 text-right text-xs tabular-nums text-[var(--sea-ink-soft)]"

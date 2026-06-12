@@ -160,9 +160,9 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
   const tileClass = colorTileClass(playlist.color_id)
   const hasTracks = playlist.tracks.length > 0
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Shared playlist</p>
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <p className="section-eyebrow mb-2">Shared playlist</p>
         <div
           role="img"
           aria-label={`Cover for ${playlist.name}`}
@@ -170,7 +170,7 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
         >
           <span className="text-5xl font-bold leading-none sm:text-6xl">{initial}</span>
         </div>
-        <h1 className="display-title mb-3 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+        <h1 className="display-title mb-3 text-4xl font-bold text-[var(--sea-ink)]">
           {playlist.name}
         </h1>
         {playlist.description && (
@@ -183,10 +183,10 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
         )}
 
         {!hasTracks ? (
-          <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
+          <div className="status-card mb-6 text-sm">
             Track list preview is not available yet. The playlist owner can still see the full
             content in WaveFlow Desktop.
-          </p>
+          </div>
         ) : (
           // Ordered list styled with flex rows + a fixed-width
           // position column + `tabular-nums` on the duration cell, so
@@ -203,12 +203,12 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
           // box's variable width.
           <ol
             aria-label="Tracks in this playlist"
-            className="mb-6 divide-y divide-[var(--sea-ink-soft)]/15 text-sm"
+            className="media-list mb-6 text-sm"
           >
             {playlist.tracks.map((track, idx) => {
               const duration = formatDuration(track.duration_ms)
               return (
-                <li key={idx} className="flex items-baseline gap-3 py-2 text-[var(--sea-ink)]">
+                <li key={idx} className="media-row items-baseline text-[var(--sea-ink)]">
                   <span className="w-6 shrink-0 text-right tabular-nums text-[var(--sea-ink-soft)]">
                     {idx + 1}
                   </span>
@@ -230,7 +230,7 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
         )}
 
         <p>
-          <Link to="/" className="text-sm text-[var(--sea-ink-soft)] underline">
+          <Link to="/" className="back-link">
             ← What is WaveFlow?
           </Link>
         </p>
@@ -241,17 +241,17 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
 
 function NotFoundPanel() {
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Playlist not found</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <p className="section-eyebrow mb-2">Playlist not found</p>
+        <h1 className="display-title mb-4 text-4xl font-bold text-[var(--sea-ink)]">
           This share link is no longer active.
         </h1>
         <p className="mb-6 text-base text-[var(--sea-ink-soft)]">
           The playlist may have been made private, or the link was mistyped.
         </p>
         <p>
-          <Link to="/" className="text-sm text-[var(--sea-ink-soft)] underline">
+          <Link to="/" className="back-link">
             ← Go to WaveFlow
           </Link>
         </p>
@@ -262,14 +262,14 @@ function NotFoundPanel() {
 
 function ErrorPanel({ message }: { message: string }) {
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Couldn&apos;t load this playlist</p>
-        <h1 className="display-title mb-4 text-2xl font-bold text-[var(--sea-ink)] sm:text-3xl">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <p className="section-eyebrow mb-2">Couldn&apos;t load this playlist</p>
+        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)]">
           {message}
         </h1>
         <p>
-          <Link to="/" className="text-sm text-[var(--sea-ink-soft)] underline">
+          <Link to="/" className="back-link">
             ← Go to WaveFlow
           </Link>
         </p>

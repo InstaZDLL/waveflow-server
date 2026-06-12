@@ -4,7 +4,7 @@ export default function Footer() {
   const year = new Date().getFullYear()
 
   return (
-    <footer className="mt-20 border-t border-[var(--line)] px-4 pb-14 pt-10 text-[var(--sea-ink-soft)]">
+    <footer className="site-footer mt-20 px-4 pb-14 pt-10 text-[var(--sea-ink-soft)]">
       <div className="page-wrap flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
         <div className="flex items-center gap-2">
           <span style={{ color: 'var(--accent-600)' }}>
@@ -23,7 +23,7 @@ export default function Footer() {
             . Open source under AGPL-3.0.
           </p>
         </div>
-        <p className="island-kicker m-0">Your music, your server, every device.</p>
+        <p className="m-0 text-xs font-semibold tracking-[0.08em] uppercase">Your files stay home</p>
       </div>
       <div className="mt-4 flex justify-center gap-4">
         <a

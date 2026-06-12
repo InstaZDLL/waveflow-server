@@ -47,7 +47,7 @@ export function TrackFilterBar({ tracks, filters, onFiltersChange }: TrackFilter
   const codecs = useMemo(() => collectCodecs(tracks), [tracks])
 
   return (
-    <div className="mb-6 flex flex-col gap-3">
+    <div className="quiet-panel mb-6 flex flex-col gap-3 p-3">
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex-1 min-w-[12rem]">
           <span className="sr-only">Search tracks</span>
@@ -56,7 +56,7 @@ export function TrackFilterBar({ tracks, filters, onFiltersChange }: TrackFilter
             value={filters.query}
             onChange={(e) => onFiltersChange({ ...filters, query: e.target.value })}
             placeholder="Search by title…"
-            className="w-full rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2 text-sm text-[var(--sea-ink)] outline-none transition focus:border-[var(--accent-600)]"
+            className="input text-sm"
           />
         </label>
         <label className="flex items-center gap-2 text-sm text-[var(--sea-ink-soft)]">
@@ -64,7 +64,7 @@ export function TrackFilterBar({ tracks, filters, onFiltersChange }: TrackFilter
           <select
             value={filters.sortMode}
             onChange={(e) => onFiltersChange({ ...filters, sortMode: e.target.value as SortMode })}
-            className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-2 py-1.5 text-sm text-[var(--sea-ink)] outline-none transition focus:border-[var(--accent-600)]"
+            className="select min-h-0 py-2 text-sm"
           >
             <option value="recent">Recently added</option>
             <option value="title">Title (A→Z)</option>
@@ -128,7 +128,7 @@ function CodecChip({
       onClick={onClick}
       aria-pressed={active}
       aria-label={ariaLabel}
-      className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
         active
           ? 'border-[var(--accent-600)] bg-[var(--accent-600)] text-white'
           : 'border-[var(--line)] bg-[var(--chip-bg)] text-[var(--sea-ink)] hover:opacity-90'

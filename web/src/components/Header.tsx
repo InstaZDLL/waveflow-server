@@ -34,12 +34,12 @@ export default function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 backdrop-blur-lg">
-      <nav className="page-wrap flex flex-wrap items-center gap-x-3 gap-y-2 py-3 sm:py-4">
+    <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 backdrop-blur-xl">
+      <nav className="page-wrap flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
         <h2 className="m-0 flex-shrink-0 text-base font-semibold tracking-tight">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm text-[var(--sea-ink)] no-underline shadow-[0_8px_24px_rgba(30,90,72,0.08)] sm:px-4 sm:py-2"
+            className="inline-flex items-center gap-2 rounded-xl border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2 text-sm text-[var(--sea-ink)] no-underline shadow-[0_1px_0_var(--inset-glint)_inset]"
           >
             <span style={{ color: 'var(--accent-600)' }}>
               <WaveflowLogo size={18} label={null} />
@@ -48,7 +48,7 @@ export default function Header() {
           </Link>
         </h2>
 
-        <div className="order-3 flex w-full flex-wrap items-center gap-x-4 gap-y-1 pb-1 text-sm font-semibold sm:order-none sm:w-auto sm:flex-nowrap sm:pb-0">
+        <div className="order-3 flex w-full flex-wrap items-center gap-x-1 gap-y-1 pb-1 text-sm font-semibold sm:order-none sm:w-auto sm:flex-nowrap sm:pb-0">
           <Link to="/" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
             Home
           </Link>
@@ -109,7 +109,7 @@ export default function Header() {
               <button
                 type="button"
                 onClick={onSignOut}
-                className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90"
+                className="button button-ghost min-h-0 px-3 py-2"
               >
                 Sign out
               </button>
@@ -125,7 +125,7 @@ export default function Header() {
               </Link>
               <Link
                 to="/sign-up"
-                className="rounded-xl bg-[var(--sea-ink)] px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+                className="button button-primary min-h-0 px-3 py-2"
               >
                 Sign up
               </Link>

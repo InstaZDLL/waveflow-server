@@ -77,12 +77,10 @@ export function SignUp() {
   }
 
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell mx-auto max-w-md rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Create account</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Sign up
-        </h1>
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad mx-auto max-w-md">
+        <p className="section-eyebrow mb-2">Create account</p>
+        <h1 className="display-title mb-5 text-4xl font-bold text-[var(--sea-ink)]">Sign up</h1>
         {(enabledProviders.google || enabledProviders.apple) && (
           <div className="mb-4 flex flex-col gap-2">
             <OAuthButtons enabled={enabledProviders} callbackURL="/" />
@@ -99,7 +97,7 @@ export function SignUp() {
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-base text-[var(--sea-ink)] outline-none transition focus:border-[var(--sea)] focus:ring-2 focus:ring-[var(--sea)]/30 dark:bg-black/30"
+              className="input text-base"
             />
           </label>
 
@@ -112,7 +110,7 @@ export function SignUp() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-base text-[var(--sea-ink)] outline-none transition focus:border-[var(--sea)] focus:ring-2 focus:ring-[var(--sea)]/30 dark:bg-black/30"
+              className="input text-base"
             />
           </label>
 
@@ -127,7 +125,7 @@ export function SignUp() {
               maxLength={MAX_PASSWORD}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-base text-[var(--sea-ink)] outline-none transition focus:border-[var(--sea)] focus:ring-2 focus:ring-[var(--sea)]/30 dark:bg-black/30"
+              className="input text-base"
             />
             <span className="text-xs font-normal text-[var(--sea-ink-soft)]">
               {MIN_PASSWORD}–{MAX_PASSWORD} characters.
@@ -135,7 +133,7 @@ export function SignUp() {
           </label>
 
           {error && (
-            <p role="alert" className="text-sm font-medium text-red-600 dark:text-red-400">
+            <p role="alert" className="error-card text-sm font-medium">
               {error}
             </p>
           )}
@@ -143,7 +141,7 @@ export function SignUp() {
           <button
             type="submit"
             disabled={loading}
-            className="rounded-xl bg-[var(--sea-ink)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="button button-primary w-full"
           >
             {loading ? 'Creating account…' : 'Sign up'}
           </button>

@@ -145,7 +145,7 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--sea-ink-soft)]">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
         {heading}
       </h3>
       <div
@@ -167,10 +167,10 @@ function ThemeRow({ heading, presets, activeId, onSelect, resolveLabel }: ThemeR
               tabIndex={index === tabStopIndex ? 0 : -1}
               onClick={() => onSelect(preset.id)}
               onKeyDown={(event) => onKeyDown(event, index)}
-              className={`group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
+              className={`group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:-translate-y-0.5 ${
                 isActive
-                  ? 'border-[var(--sea-ink)] bg-white/80 shadow-sm dark:bg-black/30'
-                  : 'border-[var(--line)] bg-white/40 hover:border-[var(--sea-ink)]/40 hover:bg-white/60 dark:bg-black/15 dark:hover:bg-black/25'
+                  ? 'border-[var(--sea-ink)] bg-[var(--link-bg-hover)] shadow-sm'
+                  : 'border-[var(--line)] bg-[var(--chip-bg)] hover:border-[var(--line-strong)] hover:bg-[var(--link-bg-hover)]'
               }`}
             >
               <SwatchRow accent={preset.accent} />
