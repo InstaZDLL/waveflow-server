@@ -117,10 +117,7 @@ export function PlayableTrackList({
   return (
     <>
       {error && (
-        <p
-          role="alert"
-          className="error-card mb-4 text-sm"
-        >
+        <p role="alert" className="error-card mb-4 text-sm">
           {error}
         </p>
       )}
@@ -140,7 +137,9 @@ export function PlayableTrackList({
                 {isPending ? '…' : '▶'}
               </button>
               <div className="min-w-0 flex-1">
-                <p className={`truncate text-sm ${isCurrent ? 'font-bold text-[var(--sea-ink)]' : 'font-medium text-[var(--sea-ink)]'}`}>
+                <p
+                  className={`truncate text-sm ${isCurrent ? 'font-bold text-[var(--sea-ink)]' : 'font-medium text-[var(--sea-ink)]'}`}
+                >
                   {track.title}
                 </p>
                 {track.codec && (

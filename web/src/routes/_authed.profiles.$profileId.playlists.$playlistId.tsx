@@ -206,9 +206,7 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
           </span>
         )}
       </div>
-      <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
-        {playlist.name}
-      </h1>
+      <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">{playlist.name}</h1>
       {playlist.description && (
         <p className="text-sm text-[var(--sea-ink-soft)]">{playlist.description}</p>
       )}
@@ -225,10 +223,7 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
 function TrackList({ result }: { result: TrackFetchResult }) {
   if (!result.ok) {
     return (
-      <div
-        role="alert"
-        className="error-card mt-8 text-sm"
-      >
+      <div role="alert" className="error-card mt-8 text-sm">
         Could not load tracks: {result.error}
       </div>
     )
@@ -253,10 +248,7 @@ function TrackList({ result }: { result: TrackFetchResult }) {
   // server still ORDER BY `position`, so the array order IS the
   // user's intended sequence.
   return (
-    <ul
-      aria-label="Playlist tracks"
-      className="media-list mt-8"
-    >
+    <ul aria-label="Playlist tracks" className="media-list mt-8">
       {result.tracks.map((track, index) => (
         <TrackRow key={track.track_id} track={track} ordinal={index + 1} />
       ))}

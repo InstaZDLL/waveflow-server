@@ -201,10 +201,7 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
           // automatic `<ol>` markers) because flex layout lets us pin
           // it to a fixed `w-6` cell instead of inheriting the marker
           // box's variable width.
-          <ol
-            aria-label="Tracks in this playlist"
-            className="media-list mb-6 text-sm"
-          >
+          <ol aria-label="Tracks in this playlist" className="media-list mb-6 text-sm">
             {playlist.tracks.map((track, idx) => {
               const duration = formatDuration(track.duration_ms)
               return (
@@ -265,9 +262,7 @@ function ErrorPanel({ message }: { message: string }) {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad">
         <p className="section-eyebrow mb-2">Couldn&apos;t load this playlist</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)]">
-          {message}
-        </h1>
+        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)]">{message}</h1>
         <p>
           <Link to="/" className="back-link">
             ← Go to WaveFlow

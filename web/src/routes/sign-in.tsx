@@ -159,11 +159,7 @@ function SignIn() {
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="button button-primary w-full"
-          >
+          <button type="submit" disabled={loading} className="button button-primary w-full">
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
 

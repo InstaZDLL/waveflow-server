@@ -138,11 +138,7 @@ export function SignUp() {
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="button button-primary w-full"
-          >
+          <button type="submit" disabled={loading} className="button button-primary w-full">
             {loading ? 'Creating account…' : 'Sign up'}
           </button>
 

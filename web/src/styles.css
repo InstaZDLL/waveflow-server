@@ -6,7 +6,41 @@
   --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
 }
 
+@theme inline {
+  --color-accent-50: var(--accent-50);
+  --color-accent-100: var(--accent-100);
+  --color-accent-200: var(--accent-200);
+  --color-accent-300: var(--accent-300);
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+  --color-accent-700: var(--accent-700);
+  --color-accent-800: var(--accent-800);
+  --color-accent-900: var(--accent-900);
+  --color-accent-950: var(--accent-950);
+  --color-surface-dark: var(--color-surface-dark);
+  --color-surface-dark-elevated: var(--color-surface-dark-elevated);
+  --color-surface-light: var(--color-surface-light);
+  --color-surface-light-elevated: var(--color-surface-light-elevated);
+}
+
 :root {
+  --accent-50: oklch(0.979 0.021 166.113);
+  --accent-100: oklch(0.95 0.052 163.051);
+  --accent-200: oklch(0.905 0.093 164.15);
+  --accent-300: oklch(0.845 0.143 164.978);
+  --accent-400: oklch(0.765 0.177 163.223);
+  --accent-500: oklch(0.696 0.17 162.48);
+  --accent-600: oklch(0.596 0.145 163.225);
+  --accent-700: oklch(0.508 0.118 165.612);
+  --accent-800: oklch(0.432 0.095 166.913);
+  --accent-900: oklch(0.378 0.077 168.94);
+  --accent-950: oklch(0.262 0.051 172.552);
+  --ambient-bg: #ffffff;
+  --color-surface-dark: #121212;
+  --color-surface-dark-elevated: #181818;
+  --color-surface-light: #ffffff;
+  --color-surface-light-elevated: #fafafa;
   --sea-ink: #19201f;
   --sea-ink-soft: #5e6b68;
   --lagoon: #4b8f82;
@@ -33,6 +67,7 @@
 }
 
 :root[data-theme='dark'] {
+  --ambient-bg: #121212;
   --sea-ink: #f0f4ee;
   --sea-ink-soft: #a5b1ad;
   --lagoon: #72b8a9;
@@ -60,6 +95,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
+    --ambient-bg: #121212;
     --sea-ink: #f0f4ee;
     --sea-ink-soft: #a5b1ad;
     --lagoon: #72b8a9;
@@ -257,6 +293,8 @@ a {
 .app-main {
   padding-block: 3rem 8rem;
 }
+
+/* Tailwind generates spacing, sizing, typography, and layout utilities; only WaveFlow design primitives live here. */
 
 .page-stack {
   display: grid;
