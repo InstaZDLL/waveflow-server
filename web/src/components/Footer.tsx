@@ -4,7 +4,7 @@ export default function Footer() {
   const year = new Date().getFullYear()
 
   return (
-    <footer className="site-footer mt-20 px-4 pb-14 pt-10 text-[var(--sea-ink-soft)]">
+    <footer className="site-footer mt-20 px-4 pb-14 pt-10 text-(--sea-ink-soft)">
       <div className="page-wrap flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
         <div className="flex items-center gap-2">
           <span style={{ color: 'var(--accent-600)' }}>
@@ -16,7 +16,7 @@ export default function Footer() {
               href="https://github.com/InstaZDLL"
               target="_blank"
               rel="noreferrer"
-              className="font-semibold text-[var(--sea-ink)] no-underline hover:underline"
+              className="font-semibold text-(--sea-ink) no-underline hover:underline"
             >
               InstaZDLL
             </a>
@@ -32,7 +32,7 @@ export default function Footer() {
           href="https://github.com/InstaZDLL/WaveFlow"
           target="_blank"
           rel="noreferrer"
-          className="rounded-xl p-2 text-[var(--sea-ink-soft)] transition hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
+          className="rounded-xl p-2 text-(--sea-ink-soft) transition hover:bg-(--link-bg-hover) hover:text-(--sea-ink)"
         >
           <span className="sr-only">WaveFlow on GitHub</span>
           <svg viewBox="0 0 16 16" aria-hidden="true" width="32" height="32">

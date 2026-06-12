@@ -34,9 +34,7 @@ function LibrariesView() {
         <div className="section-header">
           <div>
             <p className="section-eyebrow mb-2">Libraries</p>
-            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
-              Choose a library
-            </h1>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Choose a library</h1>
           </div>
           {data.kind === 'ready' && (
             <Link
@@ -77,8 +75,8 @@ function LibrariesView() {
                   <div className="mb-4 art-tile h-12 w-12 text-lg font-bold">
                     {Array.from(lib.name.trim())[0]?.toUpperCase() ?? 'L'}
                   </div>
-                  <p className="text-base font-bold text-[var(--sea-ink)]">{lib.name}</p>
-                  <p className="mt-1 text-xs font-semibold text-[var(--sea-ink-soft)]">
+                  <p className="text-base font-bold text-(--sea-ink)">{lib.name}</p>
+                  <p className="mt-1 text-xs font-semibold text-(--sea-ink-soft)">
                     {lib.track_count} {lib.track_count === 1 ? 'track' : 'tracks'}
                   </p>
                 </Link>

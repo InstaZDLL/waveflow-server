@@ -170,14 +170,12 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
         >
           <span className="text-5xl font-bold leading-none sm:text-6xl">{initial}</span>
         </div>
-        <h1 className="display-title mb-3 text-4xl font-bold text-[var(--sea-ink)]">
-          {playlist.name}
-        </h1>
+        <h1 className="display-title mb-3 text-4xl font-bold text-(--sea-ink)">{playlist.name}</h1>
         {playlist.description && (
-          <p className="mb-4 text-base text-[var(--sea-ink-soft)]">{playlist.description}</p>
+          <p className="mb-4 text-base text-(--sea-ink-soft)">{playlist.description}</p>
         )}
         {hasTracks && (
-          <p className="mb-6 text-sm text-[var(--sea-ink-soft)]">
+          <p className="mb-6 text-sm text-(--sea-ink-soft)">
             {formatTrackCountAndRuntime(playlist.tracks)}
           </p>
         )}
@@ -205,20 +203,18 @@ function PlaylistPanel({ playlist }: { playlist: PublicPlaylist }) {
             {playlist.tracks.map((track, idx) => {
               const duration = formatDuration(track.duration_ms)
               return (
-                <li key={idx} className="media-row items-baseline text-[var(--sea-ink)]">
-                  <span className="w-6 shrink-0 text-right tabular-nums text-[var(--sea-ink-soft)]">
+                <li key={idx} className="media-row items-baseline text-(--sea-ink)">
+                  <span className="w-6 shrink-0 text-right tabular-nums text-(--sea-ink-soft)">
                     {idx + 1}
                   </span>
                   <span className="min-w-0 flex-1 truncate">
                     {track.title}
                     {track.artist && (
-                      <span className="text-[var(--sea-ink-soft)]"> — {track.artist}</span>
+                      <span className="text-(--sea-ink-soft)"> — {track.artist}</span>
                     )}
                   </span>
                   {duration && (
-                    <span className="shrink-0 tabular-nums text-[var(--sea-ink-soft)]">
-                      {duration}
-                    </span>
+                    <span className="shrink-0 tabular-nums text-(--sea-ink-soft)">{duration}</span>
                   )}
                 </li>
               )
@@ -241,10 +237,10 @@ function NotFoundPanel() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad">
         <p className="section-eyebrow mb-2">Playlist not found</p>
-        <h1 className="display-title mb-4 text-4xl font-bold text-[var(--sea-ink)]">
+        <h1 className="display-title mb-4 text-4xl font-bold text-(--sea-ink)">
           This share link is no longer active.
         </h1>
-        <p className="mb-6 text-base text-[var(--sea-ink-soft)]">
+        <p className="mb-6 text-base text-(--sea-ink-soft)">
           The playlist may have been made private, or the link was mistyped.
         </p>
         <p>
@@ -262,7 +258,7 @@ function ErrorPanel({ message }: { message: string }) {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad">
         <p className="section-eyebrow mb-2">Couldn&apos;t load this playlist</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)]">{message}</h1>
+        <h1 className="display-title mb-4 text-3xl font-bold text-(--sea-ink)">{message}</h1>
         <p>
           <Link to="/" className="back-link">
             ← Go to WaveFlow

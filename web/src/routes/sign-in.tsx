@@ -119,7 +119,7 @@ function SignIn() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad mx-auto max-w-md">
         <p className="section-eyebrow mb-2">Welcome back</p>
-        <h1 className="display-title mb-5 text-4xl font-bold text-[var(--sea-ink)]">Sign in</h1>
+        <h1 className="display-title mb-5 text-4xl font-bold text-(--sea-ink)">Sign in</h1>
         {(enabledProviders.google || enabledProviders.apple) && (
           <div className="mb-4 flex flex-col gap-2">
             <OAuthButtons enabled={enabledProviders} callbackURL={continueTo} />
@@ -127,7 +127,7 @@ function SignIn() {
           </div>
         )}
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+          <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
             Email
             <input
               type="email"
@@ -140,7 +140,7 @@ function SignIn() {
             />
           </label>
 
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+          <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
             Password
             <input
               type="password"
@@ -163,9 +163,9 @@ function SignIn() {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <p className="text-center text-sm text-[var(--sea-ink-soft)]">
+          <p className="text-center text-sm text-(--sea-ink-soft)">
             Don&apos;t have an account?{' '}
-            <Link to="/sign-up" className="font-semibold text-[var(--sea-ink)] underline">
+            <Link to="/sign-up" className="font-semibold text-(--sea-ink) underline">
               Sign up
             </Link>
           </p>

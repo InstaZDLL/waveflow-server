@@ -159,11 +159,11 @@ export function PlaylistFormDialog({
         className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-md -translate-y-1/2 px-4"
       >
         <div className="panel panel-pad">
-          <h2 id={headingId} className="text-xl font-bold text-[var(--sea-ink)]">
+          <h2 id={headingId} className="text-xl font-bold text-(--sea-ink)">
             {heading}
           </h2>
           <form onSubmit={onFormSubmit} noValidate className="mt-4 flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+            <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
               Name
               <input
                 ref={nameInputRef}
@@ -177,8 +177,8 @@ export function PlaylistFormDialog({
                 className="input text-base"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
-              Description <span className="font-normal text-[var(--sea-ink-soft)]">(optional)</span>
+            <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
+              Description <span className="font-normal text-(--sea-ink-soft)">(optional)</span>
               <textarea
                 name="description"
                 rows={3}

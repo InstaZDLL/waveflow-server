@@ -206,11 +206,11 @@ function PlaylistHeader({ playlist }: { playlist: Playlist }) {
           </span>
         )}
       </div>
-      <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">{playlist.name}</h1>
+      <h1 className="display-title text-4xl font-bold text-(--sea-ink)">{playlist.name}</h1>
       {playlist.description && (
-        <p className="text-sm text-[var(--sea-ink-soft)]">{playlist.description}</p>
+        <p className="text-sm text-(--sea-ink-soft)">{playlist.description}</p>
       )}
-      <p className="text-xs text-[var(--sea-ink-soft)]">
+      <p className="text-xs text-(--sea-ink-soft)">
         {playlist.track_count} {playlist.track_count === 1 ? 'track' : 'tracks'}
         {playlist.total_duration_ms > 0 && (
           <span> · {formatTime(playlist.total_duration_ms / 1000)}</span>
@@ -231,7 +231,7 @@ function TrackList({ result }: { result: TrackFetchResult }) {
   if (result.tracks.length === 0) {
     return (
       <div className="status-card mt-8 text-sm">
-        <p className="font-semibold text-[var(--sea-ink)]">No tracks yet</p>
+        <p className="font-semibold text-(--sea-ink)">No tracks yet</p>
         <p className="mt-2">
           Add tracks to this playlist from the desktop app — they&apos;ll sync over and show up
           here.
@@ -273,24 +273,24 @@ function TrackRow({ track, ordinal }: { track: PlaylistTrack; ordinal: number })
     <li className="media-row">
       <span
         aria-hidden="true"
-        className="w-6 flex-shrink-0 text-right text-xs tabular-nums text-[var(--sea-ink-soft)]"
+        className="w-6 flex-shrink-0 text-right text-xs tabular-nums text-(--sea-ink-soft)"
       >
         {ordinal}
       </span>
       <div className="min-w-0 flex-1">
         <p
           className={`truncate text-sm font-semibold ${
-            hasMetadata ? 'text-[var(--sea-ink)]' : 'text-[var(--sea-ink-soft)] italic'
+            hasMetadata ? 'text-(--sea-ink)' : 'text-(--sea-ink-soft) italic'
           }`}
         >
           {title}
         </p>
         {track.snapshot_artist && (
-          <p className="truncate text-xs text-[var(--sea-ink-soft)]">{track.snapshot_artist}</p>
+          <p className="truncate text-xs text-(--sea-ink-soft)">{track.snapshot_artist}</p>
         )}
       </div>
       {durationSec !== null && (
-        <span className="flex-shrink-0 text-xs tabular-nums text-[var(--sea-ink-soft)]">
+        <span className="flex-shrink-0 text-xs tabular-nums text-(--sea-ink-soft)">
           {formatTime(durationSec)}
         </span>
       )}

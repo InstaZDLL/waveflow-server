@@ -59,7 +59,7 @@ export function TrackFilterBar({ tracks, filters, onFiltersChange }: TrackFilter
             className="input text-sm"
           />
         </label>
-        <label className="flex items-center gap-2 text-sm text-[var(--sea-ink-soft)]">
+        <label className="flex items-center gap-2 text-sm text-(--sea-ink-soft)">
           Sort:
           <select
             value={filters.sortMode}
@@ -130,8 +130,8 @@ function CodecChip({
       aria-label={ariaLabel}
       className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
         active
-          ? 'border-[var(--accent-600)] bg-[var(--accent-600)] text-white'
-          : 'border-[var(--line)] bg-[var(--chip-bg)] text-[var(--sea-ink)] hover:opacity-90'
+          ? 'border-(--accent-600) bg-(--accent-600) text-white'
+          : 'border-(--line) bg-(--chip-bg) text-(--sea-ink) hover:opacity-90'
       }`}
     >
       {label}

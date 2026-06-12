@@ -35,7 +35,7 @@ export function AlbumsView() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad">
         <p className="section-eyebrow mb-2">Library</p>
-        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">Albums</h1>
+        <h1 className="display-title mb-6 text-4xl font-bold text-(--sea-ink)">Albums</h1>
 
         {data.kind === 'error' && (
           <p role="alert" className="error-card text-sm">
@@ -65,10 +65,10 @@ export function AlbumsView() {
                   <div className="mb-4 art-tile h-14 w-14 text-xl font-bold">
                     {Array.from(album.canonical_title.trim())[0]?.toUpperCase() ?? 'A'}
                   </div>
-                  <p className="truncate text-base font-bold text-[var(--sea-ink)]">
+                  <p className="truncate text-base font-bold text-(--sea-ink)">
                     {album.canonical_title}
                   </p>
-                  <p className="mt-1 truncate text-xs text-[var(--sea-ink-soft)]">
+                  <p className="mt-1 truncate text-xs text-(--sea-ink-soft)">
                     {/* Compilation rows have null album_artist_name —
                         render the conventional "Various Artists"
                         rather than leaking an empty subtitle. */}

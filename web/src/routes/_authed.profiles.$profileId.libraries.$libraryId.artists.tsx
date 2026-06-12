@@ -35,7 +35,7 @@ export function ArtistsView() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad">
         <p className="section-eyebrow mb-2">Library</p>
-        <h1 className="display-title mb-6 text-4xl font-bold text-[var(--sea-ink)]">Artists</h1>
+        <h1 className="display-title mb-6 text-4xl font-bold text-(--sea-ink)">Artists</h1>
 
         {data.kind === 'error' && (
           <p role="alert" className="error-card text-sm">
@@ -65,9 +65,7 @@ export function ArtistsView() {
                   <div className="mb-4 art-tile h-14 w-14 text-xl font-bold">
                     {Array.from(artist.name.trim())[0]?.toUpperCase() ?? 'A'}
                   </div>
-                  <p className="truncate text-base font-bold text-[var(--sea-ink)]">
-                    {artist.name}
-                  </p>
+                  <p className="truncate text-base font-bold text-(--sea-ink)">{artist.name}</p>
                 </Link>
               </li>
             ))}

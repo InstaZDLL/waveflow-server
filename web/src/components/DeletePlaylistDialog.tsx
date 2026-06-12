@@ -114,12 +114,12 @@ export function DeletePlaylistDialog({
         className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-md -translate-y-1/2 px-4"
       >
         <div className="panel panel-pad">
-          <h2 id={headingId} className="text-xl font-bold text-[var(--sea-ink)]">
+          <h2 id={headingId} className="text-xl font-bold text-(--sea-ink)">
             Delete playlist
           </h2>
-          <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-            <span className="font-semibold text-[var(--sea-ink)]">{playlistName}</span> will be
-            removed permanently. The tracks themselves are not deleted; they stay in your library.
+          <p className="mt-3 text-sm text-(--sea-ink-soft)">
+            <span className="font-semibold text-(--sea-ink)">{playlistName}</span> will be removed
+            permanently. The tracks themselves are not deleted; they stay in your library.
           </p>
 
           {error && (

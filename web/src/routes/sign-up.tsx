@@ -80,7 +80,7 @@ export function SignUp() {
     <main className="page-wrap app-main px-4">
       <section className="panel panel-pad mx-auto max-w-md">
         <p className="section-eyebrow mb-2">Create account</p>
-        <h1 className="display-title mb-5 text-4xl font-bold text-[var(--sea-ink)]">Sign up</h1>
+        <h1 className="display-title mb-5 text-4xl font-bold text-(--sea-ink)">Sign up</h1>
         {(enabledProviders.google || enabledProviders.apple) && (
           <div className="mb-4 flex flex-col gap-2">
             <OAuthButtons enabled={enabledProviders} callbackURL="/" />
@@ -88,7 +88,7 @@ export function SignUp() {
           </div>
         )}
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+          <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
             Display name
             <input
               type="text"
@@ -101,7 +101,7 @@ export function SignUp() {
             />
           </label>
 
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+          <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
             Email
             <input
               type="email"
@@ -114,7 +114,7 @@ export function SignUp() {
             />
           </label>
 
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+          <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
             Password
             <input
               type="password"
@@ -127,7 +127,7 @@ export function SignUp() {
               onChange={(e) => setPassword(e.target.value)}
               className="input text-base"
             />
-            <span className="text-xs font-normal text-[var(--sea-ink-soft)]">
+            <span className="text-xs font-normal text-(--sea-ink-soft)">
               {MIN_PASSWORD}–{MAX_PASSWORD} characters.
             </span>
           </label>
@@ -142,9 +142,9 @@ export function SignUp() {
             {loading ? 'Creating account…' : 'Sign up'}
           </button>
 
-          <p className="text-center text-sm text-[var(--sea-ink-soft)]">
+          <p className="text-center text-sm text-(--sea-ink-soft)">
             Already have an account?{' '}
-            <Link to="/sign-in" className="font-semibold text-[var(--sea-ink)] underline">
+            <Link to="/sign-in" className="font-semibold text-(--sea-ink) underline">
               Sign in
             </Link>
           </p>

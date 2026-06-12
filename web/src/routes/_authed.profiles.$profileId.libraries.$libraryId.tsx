@@ -82,7 +82,7 @@ function TracksView() {
         <div className="section-header">
           <div>
             <p className="section-eyebrow mb-2">Library</p>
-            <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">Tracks</h1>
+            <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Tracks</h1>
           </div>
           {data.kind === 'ready' && (
             <nav aria-label="Library browse" className="flex flex-wrap gap-2">
