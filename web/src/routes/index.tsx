@@ -33,8 +33,8 @@ function App() {
             </div>
             <h1 className="section-title max-w-4xl">Your music library, served from home.</h1>
             <p className="mt-6 max-w-[62ch] text-base leading-8 text-[var(--sea-ink-soft)] sm:text-lg">
-              Run the Rust server where your files already live. Browse, stream, sync playlists,
-              and share selected mixes from any browser without handing your listening habits to a
+              Run the Rust server where your files already live. Browse, stream, sync playlists, and
+              share selected mixes from any browser without handing your listening habits to a
               recommendation feed.
             </p>
           </div>

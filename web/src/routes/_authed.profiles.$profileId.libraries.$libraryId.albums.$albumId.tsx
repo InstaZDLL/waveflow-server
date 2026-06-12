@@ -136,9 +136,7 @@ function AlbumHeader({ result }: { result: AlbumLookupResult }) {
     return (
       <div className="mb-6 flex flex-col gap-2">
         <p className="section-eyebrow m-0">Album</p>
-        <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">
-          Album
-        </h1>
+        <h1 className="display-title text-4xl font-bold text-[var(--sea-ink)]">Album</h1>
         {!result.ok && (
           <p className="text-xs text-[var(--sea-ink-soft)]">
             Album details unavailable: {result.error}

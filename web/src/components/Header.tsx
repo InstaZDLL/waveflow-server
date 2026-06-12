@@ -123,10 +123,7 @@ export default function Header() {
               >
                 Sign in
               </Link>
-              <Link
-                to="/sign-up"
-                className="button button-primary min-h-0 px-3 py-2"
-              >
+              <Link to="/sign-up" className="button button-primary min-h-0 px-3 py-2">
                 Sign up
               </Link>
             </>

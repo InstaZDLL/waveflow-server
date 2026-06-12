@@ -23,7 +23,9 @@ export default function Footer() {
             . Open source under AGPL-3.0.
           </p>
         </div>
-        <p className="m-0 text-xs font-semibold tracking-[0.08em] uppercase">Your files stay home</p>
+        <p className="m-0 text-xs font-semibold tracking-[0.08em] uppercase">
+          Your files stay home
+        </p>
       </div>
       <div className="mt-4 flex justify-center gap-4">
         <a

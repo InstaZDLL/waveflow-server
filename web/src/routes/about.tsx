@@ -35,19 +35,25 @@ function About() {
           <li>
             <article className="quiet-panel h-full p-4">
               <strong className="text-[var(--sea-ink)]">Web client</strong>
-              <p className="mt-2">Browse your library, edit playlists, and manage your profile from any browser.</p>
+              <p className="mt-2">
+                Browse your library, edit playlists, and manage your profile from any browser.
+              </p>
             </article>
           </li>
           <li>
             <article className="quiet-panel h-full p-4">
               <strong className="text-[var(--sea-ink)]">Self-host backend</strong>
-              <p className="mt-2">A single Rust binary serves streaming, sync, OAuth, and the API surface.</p>
+              <p className="mt-2">
+                A single Rust binary serves streaming, sync, OAuth, and the API surface.
+              </p>
             </article>
           </li>
           <li>
             <article className="quiet-panel h-full p-4">
               <strong className="text-[var(--sea-ink)]">Multi-profile</strong>
-              <p className="mt-2">One server can host multiple users, each with their own library and sync stream.</p>
+              <p className="mt-2">
+                One server can host multiple users, each with their own library and sync stream.
+              </p>
             </article>
           </li>
           <li>
