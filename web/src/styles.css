@@ -1,76 +1,128 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@500;600;700;800&family=Geist:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
 
 @theme {
-  --font-sans: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-accent-50: var(--accent-50);
+  --color-accent-100: var(--accent-100);
+  --color-accent-200: var(--accent-200);
+  --color-accent-300: var(--accent-300);
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+  --color-accent-700: var(--accent-700);
+  --color-accent-800: var(--accent-800);
+  --color-accent-900: var(--accent-900);
+  --color-accent-950: var(--accent-950);
+  --color-surface-dark: var(--color-surface-dark);
+  --color-surface-dark-elevated: var(--color-surface-dark-elevated);
+  --color-surface-light: var(--color-surface-light);
+  --color-surface-light-elevated: var(--color-surface-light-elevated);
 }
 
 :root {
-  --sea-ink: #173a40;
-  --sea-ink-soft: #416166;
-  --lagoon: #4fb8b2;
-  --lagoon-deep: #328f97;
-  --palm: #2f6a4a;
-  --sand: #e7f0e8;
-  --foam: #f3faf5;
-  --surface: rgba(255, 255, 255, 0.74);
-  --surface-strong: rgba(255, 255, 255, 0.9);
-  --line: rgba(23, 58, 64, 0.14);
-  --inset-glint: rgba(255, 255, 255, 0.82);
-  --kicker: rgba(47, 106, 74, 0.9);
-  --bg-base: #e7f3ec;
-  --header-bg: rgba(251, 255, 248, 0.84);
-  --chip-bg: rgba(255, 255, 255, 0.8);
-  --chip-line: rgba(47, 106, 74, 0.18);
-  --link-bg-hover: rgba(255, 255, 255, 0.9);
-  --hero-a: rgba(79, 184, 178, 0.36);
-  --hero-b: rgba(47, 106, 74, 0.2);
+  /* Fallback only: canonical theme tokens come from @waveflow/design-tokens.
+     ThemeStyle emits DEFAULT_THEME_ID via themeCssDeclarations during SSR,
+     then ThemeProvider applies runtime changes through applyTheme. Keep these
+     defaults in sync with the design-tokens DEFAULT_THEME_ID palette/surfaces. */
+  --accent-50: oklch(0.979 0.021 166.113);
+  --accent-100: oklch(0.95 0.052 163.051);
+  --accent-200: oklch(0.905 0.093 164.15);
+  --accent-300: oklch(0.845 0.143 164.978);
+  --accent-400: oklch(0.765 0.177 163.223);
+  --accent-500: oklch(0.696 0.17 162.48);
+  --accent-600: oklch(0.596 0.145 163.225);
+  --accent-700: oklch(0.508 0.118 165.612);
+  --accent-800: oklch(0.432 0.095 166.913);
+  --accent-900: oklch(0.378 0.077 168.94);
+  --accent-950: oklch(0.262 0.051 172.552);
+  --ambient-bg: #ffffff;
+  --color-surface-dark: #121212;
+  --color-surface-dark-elevated: #181818;
+  --color-surface-light: #ffffff;
+  --color-surface-light-elevated: #fafafa;
+  --sea-ink: #19201f;
+  --sea-ink-soft: #5e6b68;
+  --lagoon: #4b8f82;
+  --lagoon-deep: #2f6f68;
+  --palm: #304f45;
+  --sand: #e9ede6;
+  --foam: #f7f8f2;
+  --surface: rgba(255, 255, 250, 0.72);
+  --surface-strong: rgba(255, 255, 250, 0.94);
+  --line: rgba(25, 32, 31, 0.13);
+  --line-strong: rgba(25, 32, 31, 0.22);
+  --inset-glint: rgba(255, 255, 255, 0.9);
+  --kicker: rgba(74, 92, 86, 0.96);
+  --bg-base: #ecefe8;
+  --header-bg: rgba(247, 248, 242, 0.86);
+  --chip-bg: rgba(255, 255, 250, 0.76);
+  --chip-line: rgba(25, 32, 31, 0.14);
+  --link-bg-hover: rgba(255, 255, 250, 0.9);
+  --hero-a: rgba(75, 143, 130, 0.22);
+  --hero-b: rgba(196, 119, 84, 0.15);
+  --danger: #b42318;
+  --danger-bg: #fff1ee;
+  --success: #2f6f68;
 }
 
 :root[data-theme='dark'] {
-  --sea-ink: #d7ece8;
-  --sea-ink-soft: #afcdc8;
-  --lagoon: #60d7cf;
-  --lagoon-deep: #8de5db;
-  --palm: #6ec89a;
-  --sand: #0f1a1e;
-  --foam: #101d22;
-  --surface: rgba(16, 30, 34, 0.8);
-  --surface-strong: rgba(15, 27, 31, 0.92);
-  --line: rgba(141, 229, 219, 0.18);
-  --inset-glint: rgba(194, 247, 238, 0.14);
-  --kicker: #b8efe5;
-  --bg-base: #0a1418;
-  --header-bg: rgba(10, 20, 24, 0.8);
-  --chip-bg: rgba(13, 28, 32, 0.9);
-  --chip-line: rgba(141, 229, 219, 0.24);
-  --link-bg-hover: rgba(24, 44, 49, 0.8);
-  --hero-a: rgba(96, 215, 207, 0.18);
-  --hero-b: rgba(110, 200, 154, 0.12);
+  --ambient-bg: #121212;
+  --sea-ink: #f0f4ee;
+  --sea-ink-soft: #a5b1ad;
+  --lagoon: #72b8a9;
+  --lagoon-deep: #9ad5ca;
+  --palm: #9bbfaf;
+  --sand: #101513;
+  --foam: #131816;
+  --surface: rgba(24, 31, 28, 0.76);
+  --surface-strong: rgba(21, 27, 25, 0.96);
+  --line: rgba(240, 244, 238, 0.12);
+  --line-strong: rgba(240, 244, 238, 0.2);
+  --inset-glint: rgba(255, 255, 255, 0.1);
+  --kicker: #bcc9c4;
+  --bg-base: #0d1210;
+  --header-bg: rgba(13, 18, 16, 0.82);
+  --chip-bg: rgba(31, 39, 36, 0.78);
+  --chip-line: rgba(240, 244, 238, 0.13);
+  --link-bg-hover: rgba(255, 255, 255, 0.07);
+  --hero-a: rgba(114, 184, 169, 0.15);
+  --hero-b: rgba(196, 119, 84, 0.1);
+  --danger: #ffb4a8;
+  --danger-bg: rgba(180, 35, 24, 0.16);
+  --success: #9ad5ca;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --sea-ink: #d7ece8;
-    --sea-ink-soft: #afcdc8;
-    --lagoon: #60d7cf;
-    --lagoon-deep: #8de5db;
-    --palm: #6ec89a;
-    --sand: #0f1a1e;
-    --foam: #101d22;
-    --surface: rgba(16, 30, 34, 0.8);
-    --surface-strong: rgba(15, 27, 31, 0.92);
-    --line: rgba(141, 229, 219, 0.18);
-    --inset-glint: rgba(194, 247, 238, 0.14);
-    --kicker: #b8efe5;
-    --bg-base: #0a1418;
-    --header-bg: rgba(10, 20, 24, 0.8);
-    --chip-bg: rgba(13, 28, 32, 0.9);
-    --chip-line: rgba(141, 229, 219, 0.24);
-    --link-bg-hover: rgba(24, 44, 49, 0.8);
-    --hero-a: rgba(96, 215, 207, 0.18);
-    --hero-b: rgba(110, 200, 154, 0.12);
+    --ambient-bg: #121212;
+    --sea-ink: #f0f4ee;
+    --sea-ink-soft: #a5b1ad;
+    --lagoon: #72b8a9;
+    --lagoon-deep: #9ad5ca;
+    --palm: #9bbfaf;
+    --sand: #101513;
+    --foam: #131816;
+    --surface: rgba(24, 31, 28, 0.76);
+    --surface-strong: rgba(21, 27, 25, 0.96);
+    --line: rgba(240, 244, 238, 0.12);
+    --line-strong: rgba(240, 244, 238, 0.2);
+    --inset-glint: rgba(255, 255, 255, 0.1);
+    --kicker: #bcc9c4;
+    --bg-base: #0d1210;
+    --header-bg: rgba(13, 18, 16, 0.82);
+    --chip-bg: rgba(31, 39, 36, 0.78);
+    --chip-line: rgba(240, 244, 238, 0.13);
+    --link-bg-hover: rgba(255, 255, 255, 0.07);
+    --hero-a: rgba(114, 184, 169, 0.15);
+    --hero-b: rgba(196, 119, 84, 0.1);
+    --danger: #ffb4a8;
+    --danger-bg: rgba(180, 35, 24, 0.16);
+    --success: #9ad5ca;
   }
 }
 
@@ -90,13 +142,13 @@ body {
   font-family: var(--font-sans);
   background-color: var(--bg-base);
   background:
-    radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
-    radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
-    radial-gradient(720px 380px at 50% 115%, rgba(79, 184, 178, 0.1), transparent 68%),
+    radial-gradient(900px 460px at -6% -8%, var(--hero-a), transparent 64%),
+    radial-gradient(800px 440px at 108% 2%, var(--hero-b), transparent 66%),
+    radial-gradient(760px 420px at 54% 120%, rgba(75, 143, 130, 0.1), transparent 70%),
     linear-gradient(
       180deg,
-      color-mix(in oklab, var(--sand) 68%, white) 0%,
-      var(--foam) 44%,
+      color-mix(in oklab, var(--sand) 76%, white) 0%,
+      var(--foam) 48%,
       var(--bg-base) 100%
     );
   overflow-x: hidden;
@@ -110,11 +162,9 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  opacity: 0.28;
-  background:
-    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 34%),
-    radial-gradient(circle at 78% 26%, rgba(79, 184, 178, 0.2), transparent 42%),
-    radial-gradient(circle at 42% 82%, rgba(47, 106, 74, 0.14), transparent 36%);
+  opacity: 0.18;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.42'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
 }
 
 body::after {
@@ -123,11 +173,11 @@ body::after {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  opacity: 0.14;
+  opacity: 0.16;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
-  background-size: 28px 28px;
+    linear-gradient(rgba(127, 143, 136, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127, 143, 136, 0.1) 1px, transparent 1px);
+  background-size: 36px 36px;
   mask-image: radial-gradient(circle at 50% 30%, black, transparent 78%);
 }
 
@@ -139,7 +189,7 @@ a {
 }
 
 a:hover {
-  color: #246f76;
+  color: var(--sea-ink);
 }
 
 code {
@@ -160,34 +210,30 @@ pre code {
 }
 
 .page-wrap {
-  width: min(1080px, calc(100% - 2rem));
+  width: min(1180px, calc(100% - 2rem));
   margin-inline: auto;
 }
 
 .display-title {
-  font-family: 'Fraunces', Georgia, serif;
+  font-family: 'Cabinet Grotesk', var(--font-sans);
+  letter-spacing: 0;
+  text-wrap: balance;
 }
 
 .island-shell {
   border: 1px solid var(--line);
-  background: linear-gradient(165deg, var(--surface-strong), var(--surface));
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
   box-shadow:
     0 1px 0 var(--inset-glint) inset,
-    0 22px 44px rgba(30, 90, 72, 0.1),
-    0 6px 18px rgba(23, 58, 64, 0.08);
-  backdrop-filter: blur(4px);
+    0 26px 70px rgba(12, 18, 16, 0.12),
+    0 8px 22px rgba(12, 18, 16, 0.08);
+  backdrop-filter: blur(14px);
 }
 
 .feature-card {
-  background: linear-gradient(
-    165deg,
-    color-mix(in oklab, var(--surface-strong) 93%, white 7%),
-    var(--surface)
-  );
-  box-shadow:
-    0 1px 0 var(--inset-glint) inset,
-    0 18px 34px rgba(30, 90, 72, 0.1),
-    0 4px 14px rgba(23, 58, 64, 0.06);
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-strong) 88%, transparent);
+  box-shadow: 0 1px 0 var(--inset-glint) inset;
 }
 
 .feature-card:hover {
@@ -206,10 +252,10 @@ a {
 }
 
 .island-kicker {
-  letter-spacing: 0.16em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
   font-weight: 700;
-  font-size: 0.69rem;
+  font-size: 0.68rem;
   color: var(--kicker);
 }
 
@@ -217,31 +263,24 @@ a {
   position: relative;
   display: inline-flex;
   align-items: center;
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
   text-decoration: none;
   color: var(--sea-ink-soft);
 }
 
 .nav-link::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: -6px;
-  width: 100%;
-  height: 2px;
-  transform: scaleX(0);
-  transform-origin: left;
-  background: linear-gradient(90deg, var(--lagoon), #7ed3bf);
-  transition: transform 170ms ease;
+  display: none;
 }
 
 .nav-link:hover,
 .nav-link.is-active {
   color: var(--sea-ink);
+  background: var(--link-bg-hover);
 }
 
-.nav-link:hover::after,
-.nav-link.is-active::after {
-  transform: scaleX(1);
+.nav-link.is-active {
+  box-shadow: 0 0 0 1px var(--line) inset;
 }
 
 @media (max-width: 640px) {
@@ -253,6 +292,243 @@ a {
 .site-footer {
   border-top: 1px solid var(--line);
   background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);
+}
+
+.app-main {
+  padding-block: 3rem 8rem;
+}
+
+/* Tailwind generates spacing, sizing, typography, and layout utilities; only WaveFlow design primitives live here. */
+
+.page-stack {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.section-eyebrow {
+  color: var(--sea-ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  color: var(--sea-ink);
+  font-family: 'Cabinet Grotesk', var(--font-sans);
+  font-size: clamp(2rem, 6vw, 4.7rem);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 0.92;
+  text-wrap: balance;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
+  box-shadow:
+    0 1px 0 var(--inset-glint) inset,
+    0 20px 52px rgba(12, 18, 16, 0.1);
+  backdrop-filter: blur(14px);
+}
+
+.panel-pad {
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.quiet-panel {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--chip-bg) 78%, transparent);
+}
+
+.button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border-radius: 0.75rem;
+  padding: 0.62rem 0.95rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.button-primary {
+  background: var(--sea-ink);
+  color: var(--foam);
+}
+
+.button-accent {
+  background: var(--accent-600);
+  color: white;
+}
+
+.button-ghost {
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--sea-ink);
+}
+
+.button-danger {
+  border: 1px solid color-mix(in oklab, var(--danger) 34%, transparent);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--chip-bg);
+  color: var(--sea-ink);
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.input,
+.select {
+  min-height: 2.65rem;
+  padding: 0.62rem 0.8rem;
+}
+
+.textarea {
+  padding: 0.72rem 0.8rem;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: color-mix(in oklab, var(--accent-600) 62%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent-500) 20%, transparent);
+}
+
+.status-card {
+  border: 1px dashed var(--line-strong);
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--chip-bg) 70%, transparent);
+  padding: 1.35rem;
+  color: var(--sea-ink-soft);
+}
+
+.error-card {
+  border: 1px solid color-mix(in oklab, var(--danger) 28%, transparent);
+  border-radius: 1rem;
+  background: var(--danger-bg);
+  padding: 1rem;
+  color: var(--danger);
+}
+
+.media-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--chip-bg) 70%, transparent);
+}
+
+.media-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.78rem 0.95rem;
+}
+
+.media-row + .media-row {
+  border-top: 1px solid var(--line);
+}
+
+.media-row:hover {
+  background: color-mix(in oklab, var(--link-bg-hover) 82%, transparent);
+}
+
+.art-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.9rem;
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--accent-500) 32%, transparent), transparent),
+    color-mix(in oklab, var(--chip-bg) 84%, var(--sea-ink) 8%);
+  color: var(--sea-ink);
+  box-shadow: 0 1px 0 var(--inset-glint) inset;
+}
+
+.card-link {
+  display: block;
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--chip-bg) 74%, transparent);
+  padding: 1rem;
+  color: var(--sea-ink);
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.card-link:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+  background: var(--link-bg-hover);
+}
+
+.back-link {
+  color: var(--sea-ink-soft);
+  font-size: 0.875rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--sea-ink);
+  text-decoration: underline;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid color-mix(in oklab, var(--accent-500) 45%, transparent);
+  outline-offset: 3px;
+}
+
+button:disabled,
+.button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .rise-in {

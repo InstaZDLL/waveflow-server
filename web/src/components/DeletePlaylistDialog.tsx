@@ -111,19 +111,19 @@ export function DeletePlaylistDialog({
         aria-modal="true"
         aria-labelledby={headingId}
         tabIndex={-1}
-        className="fixed inset-x-0 top-1/2 z-50 mx-auto -translate-y-1/2 w-full max-w-md px-4"
+        className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-md -translate-y-1/2 px-4"
       >
-        <div className="rounded-2xl border border-[var(--line)] bg-[var(--header-bg)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.2)] backdrop-blur-lg">
-          <h2 id={headingId} className="text-xl font-bold text-[var(--sea-ink)]">
+        <div className="panel panel-pad">
+          <h2 id={headingId} className="text-xl font-bold text-(--sea-ink)">
             Delete playlist
           </h2>
-          <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-            <span className="font-semibold text-[var(--sea-ink)]">{playlistName}</span> will be
-            removed permanently. The tracks themselves are not deleted; they stay in your library.
+          <p className="mt-3 text-sm text-(--sea-ink-soft)">
+            <span className="font-semibold text-(--sea-ink)">{playlistName}</span> will be removed
+            permanently. The tracks themselves are not deleted; they stay in your library.
           </p>
 
           {error && (
-            <p role="alert" className="mt-4 text-sm font-medium text-red-600 dark:text-red-400">
+            <p role="alert" className="error-card mt-4 text-sm font-medium">
               {error}
             </p>
           )}
@@ -134,7 +134,7 @@ export function DeletePlaylistDialog({
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-4 py-2 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="button button-ghost"
             >
               Cancel
             </button>
@@ -142,8 +142,7 @@ export function DeletePlaylistDialog({
               type="button"
               onClick={onConfirm}
               disabled={submitting}
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              style={{ backgroundColor: '#dc2626' }}
+              className="button button-danger"
             >
               {submitting ? 'Deleting…' : 'Delete playlist'}
             </button>

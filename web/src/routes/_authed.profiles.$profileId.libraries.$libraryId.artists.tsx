@@ -32,23 +32,21 @@ export function ArtistsView() {
   const data = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">Library</p>
-        <h1 className="display-title mb-4 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Artists
-        </h1>
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
+        <p className="section-eyebrow mb-2">Library</p>
+        <h1 className="display-title mb-6 text-4xl font-bold text-(--sea-ink)">Artists</h1>
 
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
 
         {data.kind === 'ready' && data.artists.length === 0 && (
-          <p className="text-base text-[var(--sea-ink-soft)]">
+          <div className="status-card">
             No artists in this library yet. The desktop app populates these as it scans your music.
-          </p>
+          </div>
         )}
 
         {data.kind === 'ready' && data.artists.length > 0 && (
@@ -62,11 +60,12 @@ export function ArtistsView() {
                     libraryId: String(data.libraryId),
                     artistId: String(artist.id),
                   }}
-                  className="block rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] p-4 no-underline transition hover:opacity-90"
+                  className="card-link"
                 >
-                  <p className="truncate text-base font-semibold text-[var(--sea-ink)]">
-                    {artist.name}
-                  </p>
+                  <div className="mb-4 art-tile h-14 w-14 text-xl font-bold">
+                    {Array.from(artist.name.trim())[0]?.toUpperCase() ?? 'A'}
+                  </div>
+                  <p className="truncate text-base font-bold text-(--sea-ink)">{artist.name}</p>
                 </Link>
               </li>
             ))}
@@ -81,7 +80,7 @@ export function ArtistsView() {
                 profileId: String(data.profileId),
                 libraryId: String(data.libraryId),
               }}
-              className="text-sm text-[var(--sea-ink-soft)] underline"
+              className="back-link"
             >
               ← Back to library
             </Link>

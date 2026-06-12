@@ -21,62 +21,93 @@ function App() {
   const { isSignedIn } = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 pb-8 pt-14">
-      <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-6 py-10 sm:px-10 sm:py-14">
-        <div
-          className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full"
-          style={{
-            background:
-              'radial-gradient(circle, color-mix(in oklab, var(--accent-500) 32%, transparent), transparent 66%)',
-          }}
-        />
-        <div
-          className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full"
-          style={{
-            background:
-              'radial-gradient(circle, color-mix(in oklab, var(--accent-700) 18%, transparent), transparent 66%)',
-          }}
-        />
-        <div className="mb-3 flex items-center gap-3">
-          <span style={{ color: 'var(--accent-600)' }}>
-            <WaveflowLogo size={48} label={null} />
-          </span>
-          <p className="island-kicker m-0">WaveFlow</p>
+    <main className="page-wrap app-main px-4">
+      <section className="panel rise-in relative grid min-h-[72dvh] overflow-hidden rounded-[1.5rem] lg:grid-cols-[1.08fr_0.92fr]">
+        <div className="relative z-10 flex flex-col justify-between gap-12 p-6 sm:p-10 lg:p-12">
+          <div>
+            <div className="mb-7 flex items-center gap-3">
+              <span className="art-tile h-12 w-12" style={{ color: 'var(--accent-700)' }}>
+                <WaveflowLogo size={30} label={null} />
+              </span>
+              <p className="section-eyebrow m-0">WaveFlow</p>
+            </div>
+            <h1 className="section-title max-w-4xl">Your music library, served from home.</h1>
+            <p className="mt-6 max-w-[62ch] text-base leading-8 text-(--sea-ink-soft) sm:text-lg">
+              Run the Rust server where your files already live. Browse, stream, sync playlists, and
+              share selected mixes from any browser without handing your listening habits to a
+              recommendation feed.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            {isSignedIn ? (
+              <Link to="/profiles" className="button button-primary">
+                Open library
+              </Link>
+            ) : (
+              <Link to="/sign-up" className="button button-primary">
+                Create account
+              </Link>
+            )}
+            <a
+              href="https://github.com/InstaZDLL/WaveFlow/releases/latest"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="button button-ghost"
+            >
+              Desktop app
+            </a>
+          </div>
         </div>
-        <h1 className="display-title mb-5 max-w-3xl text-4xl leading-[1.02] font-bold tracking-tight text-[var(--sea-ink)] sm:text-6xl">
-          Your music, your server, every device.
-        </h1>
-        <p className="mb-8 max-w-2xl text-base text-[var(--sea-ink-soft)] sm:text-lg">
-          A self-hostable music library that syncs between the WaveFlow desktop app and the web.
-          Your files stay on your server. No ads, no tracking, no recommendations engine looking
-          over your shoulder.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          {isSignedIn ? (
-            <Link
-              to="/profiles"
-              className="rounded-full px-5 py-2.5 text-sm font-semibold text-white no-underline transition hover:-translate-y-0.5"
-              style={{ backgroundColor: 'var(--accent-600)' }}
-            >
-              Open my library
-            </Link>
-          ) : (
-            <Link
-              to="/sign-up"
-              className="rounded-full px-5 py-2.5 text-sm font-semibold text-white no-underline transition hover:-translate-y-0.5"
-              style={{ backgroundColor: 'var(--accent-600)' }}
-            >
-              Create your account
-            </Link>
-          )}
-          <a
-            href="https://github.com/InstaZDLL/WaveFlow/releases/latest"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full border border-[rgba(23,58,64,0.2)] bg-white/50 px-5 py-2.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:-translate-y-0.5 hover:border-[rgba(23,58,64,0.35)]"
-          >
-            Get the desktop app
-          </a>
+
+        <div className="relative min-h-[24rem] border-t border-(--line) p-5 lg:border-l lg:border-t-0">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_12%,color-mix(in_oklab,var(--accent-500)_22%,transparent),transparent_34%)]" />
+          <div className="relative grid h-full grid-rows-[1fr_auto] gap-5">
+            <div className="art-tile relative overflow-hidden rounded-[1.25rem] p-6">
+              <div className="absolute inset-x-8 top-10 h-28 rounded-full border border-(--line)" />
+              <div className="absolute inset-x-14 top-20 h-28 rounded-full border border-(--line)" />
+              <div className="relative mt-auto w-full">
+                <div className="mb-5 flex items-end gap-2">
+                  {[44, 76, 118, 68, 96, 52, 128, 82].map((height, index) => (
+                    <span
+                      key={index}
+                      className="block flex-1 rounded-t-md"
+                      style={{
+                        height,
+                        background:
+                          index % 2 === 0
+                            ? 'var(--sea-ink)'
+                            : 'color-mix(in oklab, var(--accent-600) 74%, var(--sea-ink))',
+                        opacity: 0.82,
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="rounded-xl border border-(--line) bg-(--surface-strong) p-4">
+                  <p className="m-0 text-sm font-bold text-(--sea-ink)">
+                    Basement server / Living room browser
+                  </p>
+                  <p className="mt-1 text-xs text-(--sea-ink-soft)">
+                    FLAC streams, playlist sync, public previews
+                  </p>
+                </div>
+              </div>
+            </div>
+            <dl className="grid grid-cols-3 gap-2 text-center">
+              {[
+                ['60s', 'signed URLs'],
+                ['0', 'ad pixels'],
+                ['AGPL', 'web + server'],
+              ].map(([value, label]) => (
+                <div key={label} className="quiet-panel p-3">
+                  <dt className="text-lg font-bold tabular-nums text-(--sea-ink)">{value}</dt>
+                  <dd className="mt-1 text-[0.68rem] font-semibold tracking-[0.07em] text-(--sea-ink-soft) uppercase">
+                    {label}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         </div>
       </section>
 
@@ -98,25 +129,25 @@ function App() {
         ].map(([title, desc], index) => (
           <article
             key={title}
-            className="island-shell feature-card rise-in rounded-2xl p-5"
+            className="feature-card rise-in rounded-2xl p-5"
             style={{ animationDelay: `${index * 90 + 80}ms` }}
           >
-            <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">{title}</h2>
-            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">{desc}</p>
+            <h2 className="mb-2 text-base font-semibold text-(--sea-ink)">{title}</h2>
+            <p className="m-0 text-sm text-(--sea-ink-soft)">{desc}</p>
           </article>
         ))}
       </section>
 
-      <section className="island-shell mt-8 rounded-2xl p-6">
-        <p className="island-kicker mb-2">Self-hosted, open source</p>
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
+      <section className="panel panel-pad mt-8">
+        <p className="section-eyebrow mb-2">Self-hosted, open source</p>
+        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-(--sea-ink-soft)">
           <li>
             The web client is{' '}
             <a
               href="https://github.com/InstaZDLL/waveflow-web"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               AGPL-3.0
             </a>
@@ -125,7 +156,7 @@ function App() {
               href="https://github.com/InstaZDLL/WaveFlow"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               GPL-3.0
             </a>
@@ -137,7 +168,7 @@ function App() {
               href="https://github.com/InstaZDLL/waveflow-server"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-[var(--sea-ink)] underline"
+              className="font-semibold text-(--sea-ink) underline"
             >
               waveflow-server
             </a>{' '}
@@ -145,7 +176,7 @@ function App() {
           </li>
           <li>
             Theme the whole app from{' '}
-            <Link to="/settings" className="font-semibold text-[var(--sea-ink)] underline">
+            <Link to="/settings" className="font-semibold text-(--sea-ink) underline">
               Settings → Appearance
             </Link>{' '}
             — 14 OKLCH presets, light or dark.

@@ -89,10 +89,10 @@ export function AlbumDetailView() {
   const data = Route.useLoaderData()
 
   return (
-    <main className="page-wrap px-4 py-12 pb-32">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
+    <main className="page-wrap app-main px-4">
+      <section className="panel panel-pad">
         {data.kind === 'error' && (
-          <p role="alert" className="text-base text-red-600 dark:text-red-400">
+          <p role="alert" className="error-card text-sm">
             {data.message}
           </p>
         )}
@@ -115,7 +115,7 @@ export function AlbumDetailView() {
                   profileId: String(data.profileId),
                   libraryId: String(data.libraryId),
                 }}
-                className="text-sm text-[var(--sea-ink-soft)] underline"
+                className="back-link"
               >
                 ← Back to albums
               </Link>
@@ -135,14 +135,10 @@ function AlbumHeader({ result }: { result: AlbumLookupResult }) {
   if (!result.ok || !result.album) {
     return (
       <div className="mb-6 flex flex-col gap-2">
-        <p className="island-kicker m-0">Album</p>
-        <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Album
-        </h1>
+        <p className="section-eyebrow m-0">Album</p>
+        <h1 className="display-title text-4xl font-bold text-(--sea-ink)">Album</h1>
         {!result.ok && (
-          <p className="text-xs text-[var(--sea-ink-soft)]">
-            Album details unavailable: {result.error}
-          </p>
+          <p className="text-xs text-(--sea-ink-soft)">Album details unavailable: {result.error}</p>
         )}
       </div>
     )
@@ -153,16 +149,14 @@ function AlbumHeader({ result }: { result: AlbumLookupResult }) {
     : (album.album_artist_name ?? 'Unknown artist')
   return (
     <div className="mb-6 flex flex-col gap-2">
-      <p className="island-kicker m-0">Album</p>
-      <h1 className="display-title text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-        {album.canonical_title}
-      </h1>
-      <p className="text-sm text-[var(--sea-ink-soft)]">
+      <p className="section-eyebrow m-0">Album</p>
+      <h1 className="display-title text-4xl font-bold text-(--sea-ink)">{album.canonical_title}</h1>
+      <p className="text-sm text-(--sea-ink-soft)">
         {subtitle}
         {album.year ? ` · ${album.year}` : ''}
         {album.is_compilation && (
           <span
-            className="ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+            className="ml-2 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
             style={{ backgroundColor: 'var(--accent-100)', color: 'var(--accent-700)' }}
           >
             Compilation

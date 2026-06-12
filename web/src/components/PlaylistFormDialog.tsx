@@ -156,14 +156,14 @@ export function PlaylistFormDialog({
         aria-modal="true"
         aria-labelledby={headingId}
         tabIndex={-1}
-        className="fixed inset-x-0 top-1/2 z-50 mx-auto -translate-y-1/2 w-full max-w-md px-4"
+        className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-md -translate-y-1/2 px-4"
       >
-        <div className="rounded-2xl border border-[var(--line)] bg-[var(--header-bg)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.2)] backdrop-blur-lg">
-          <h2 id={headingId} className="text-xl font-bold text-[var(--sea-ink)]">
+        <div className="panel panel-pad">
+          <h2 id={headingId} className="text-xl font-bold text-(--sea-ink)">
             {heading}
           </h2>
           <form onSubmit={onFormSubmit} noValidate className="mt-4 flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
+            <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
               Name
               <input
                 ref={nameInputRef}
@@ -174,27 +174,23 @@ export function PlaylistFormDialog({
                 maxLength={NAME_MAX}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-base text-[var(--sea-ink)] outline-none transition focus:border-[var(--sea-ink)] focus:ring-2 dark:bg-black/30"
-                style={{
-                  ['--tw-ring-color' as string]:
-                    'color-mix(in oklab, var(--accent-500) 30%, transparent)',
-                }}
+                className="input text-base"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-[var(--sea-ink)]">
-              Description <span className="font-normal text-[var(--sea-ink-soft)]">(optional)</span>
+            <label className="flex flex-col gap-1 text-sm font-medium text-(--sea-ink)">
+              Description <span className="font-normal text-(--sea-ink-soft)">(optional)</span>
               <textarea
                 name="description"
                 rows={3}
                 maxLength={DESCRIPTION_MAX}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="resize-none rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-sm text-[var(--sea-ink)] outline-none transition focus:border-[var(--sea-ink)] dark:bg-black/30"
+                className="textarea resize-none text-sm"
               />
             </label>
 
             {error && (
-              <p role="alert" className="text-sm font-medium text-red-600 dark:text-red-400">
+              <p role="alert" className="error-card text-sm font-medium">
                 {error}
               </p>
             )}
@@ -204,16 +200,11 @@ export function PlaylistFormDialog({
                 type="button"
                 onClick={onClose}
                 disabled={submitting}
-                className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-4 py-2 text-sm font-semibold text-[var(--sea-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="button button-ghost"
               >
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent-600)' }}
-              >
+              <button type="submit" disabled={submitting} className="button button-primary">
                 {submitting ? busyLabel : idleLabel}
               </button>
             </div>

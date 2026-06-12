@@ -111,47 +111,42 @@ export function PlayableTrackList({
   }
 
   if (tracks.length === 0) {
-    return <p className="text-base text-[var(--sea-ink-soft)]">{emptyMessage}</p>
+    return <div className="status-card">{emptyMessage}</div>
   }
 
   return (
     <>
       {error && (
-        <p
-          role="alert"
-          className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
-        >
+        <p role="alert" className="error-card mb-4 text-sm">
           {error}
         </p>
       )}
-      <ul aria-label={label} className="divide-y divide-[var(--line)]">
+      <ul aria-label={label} className="media-list">
         {tracks.map((track) => {
           const isCurrent = player.current?.trackId === track.id
           const isPending = pendingTrackId === track.id
           return (
-            <li key={track.id} className="flex items-center gap-3 py-2">
+            <li key={track.id} className="media-row">
               <button
                 type="button"
                 onClick={() => play(track)}
                 disabled={isPending}
                 aria-label={`Play ${track.title}`}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--chip-bg)] transition hover:opacity-90 disabled:opacity-50"
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-(--line) bg-(--chip-bg) text-xs font-bold transition hover:bg-(--link-bg-hover) disabled:opacity-50"
               >
                 {isPending ? '…' : '▶'}
               </button>
               <div className="min-w-0 flex-1">
                 <p
-                  className={`truncate text-sm ${
-                    isCurrent ? 'font-semibold text-[var(--sea-ink)]' : 'text-[var(--sea-ink)]'
-                  }`}
+                  className={`truncate text-sm ${isCurrent ? 'font-bold text-(--sea-ink)' : 'font-medium text-(--sea-ink)'}`}
                 >
                   {track.title}
                 </p>
                 {track.codec && (
-                  <p className="truncate text-xs text-[var(--sea-ink-soft)]">{track.codec}</p>
+                  <p className="truncate text-xs text-(--sea-ink-soft)">{track.codec}</p>
                 )}
               </div>
-              <span className="text-xs tabular-nums text-[var(--sea-ink-soft)]">
+              <span className="text-xs tabular-nums text-(--sea-ink-soft)">
                 {formatTime(track.duration_ms / 1000)}
               </span>
             </li>

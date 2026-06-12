@@ -111,14 +111,14 @@ export function OAuthButtons({ enabled, callbackURL }: Props) {
           type="button"
           onClick={() => onClick(provider.id)}
           disabled={pending !== null}
-          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-white/80 px-4 py-2.5 text-sm font-semibold text-[var(--sea-ink)] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:bg-black/30 dark:hover:bg-black/40"
+          className="button button-ghost w-full"
         >
           {provider.icon}
           <span>{pending === provider.id ? 'Redirecting…' : provider.label}</span>
         </button>
       ))}
       {error && (
-        <p role="alert" className="text-sm font-medium text-red-600 dark:text-red-400">
+        <p role="alert" className="error-card text-sm font-medium">
           {error}
         </p>
       )}
@@ -135,10 +135,10 @@ export function OAuthButtons({ enabled, callbackURL }: Props) {
  */
 export function OAuthDivider() {
   return (
-    <div className="my-2 flex items-center gap-3 text-xs uppercase tracking-wider text-[var(--sea-ink-soft)]">
-      <span className="h-px flex-1 bg-[var(--line)]" />
+    <div className="my-2 flex items-center gap-3 text-xs uppercase tracking-wider text-(--sea-ink-soft)">
+      <span className="h-px flex-1 bg-(--line)" />
       <span>or</span>
-      <span className="h-px flex-1 bg-[var(--line)]" />
+      <span className="h-px flex-1 bg-(--line)" />
     </div>
   )
 }
