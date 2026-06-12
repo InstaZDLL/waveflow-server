@@ -43,7 +43,7 @@ Once `waveflow-server`'s streaming config is on (`WAVEFLOW_MUSIC_ROOT` + `WAVEFL
 
 ### Wired to `waveflow-server`
 
-The `/profiles` route ([`src/routes/profiles.tsx`](src/routes/profiles.tsx)) calls `waveflow-server`'s `/api/v1/profiles` through a TanStack server function ([`src/server-fns/profiles.ts`](src/server-fns/profiles.ts)) that mints a fresh JWT off the active Better Auth session and forwards the request server-side. The browser never sees `WAVEFLOW_SERVER_URL` and never crosses an origin — sidesteps CORS plumbing on `waveflow-server`.
+The `/profiles` route ([`src/routes/_authed.profiles.tsx`](src/routes/_authed.profiles.tsx)) calls `waveflow-server`'s `/api/v1/profiles` through a TanStack server function ([`src/server-fns/profiles.ts`](src/server-fns/profiles.ts)) that mints a fresh JWT off the active Better Auth session and forwards the request server-side. The browser never sees `WAVEFLOW_SERVER_URL` and never crosses an origin — sidesteps CORS plumbing on `waveflow-server`.
 
 Run both servers locally:
 
