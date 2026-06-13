@@ -117,10 +117,24 @@ pub mod sync {
         // satisfied without touching callers, and means a v2 op
         // (`hlc_wall > 0`) strictly outranks every legacy-shape row
         // under the §2 total order once A.2 ships.
+        //
+        // `hlc_logical` is INTEGER (i32) per the RFC §2 definition of
+        // the logical counter. Validate the incoming `lamport_ts`
+        // before binding so a hypothetical >2^31 value surfaces as a
+        // typed error instead of Postgres's bare "integer out of
+        // range" SQLSTATE 22003 — A.2's dedicated v2 column gains its
+        // own narrower binding, but until then the legacy path needs
+        // the gate.
+        if !(0..=i64::from(i32::MAX)).contains(&lamport_ts) {
+            return Err(sqlx::Error::Protocol(format!(
+                "lamport_ts {lamport_ts} is out of range for hlc_logical (i32); widen the column or reset the device counter"
+            )));
+        }
+        let hlc_logical: i32 = lamport_ts as i32;
         sqlx::query(
             "INSERT INTO sync_op \
                 (user_id, device_id, operation_id, lamport_ts, hlc_wall, hlc_logical, entity, entity_id, field, op, payload, created_at, profile_canonical_id) \
-             VALUES ($1, $2, $3, $4, 0, $4, $5, $6, $7, $8, $9, $10, $11) \
+             VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, $11, $12) \
              ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
              RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id",
         )
@@ -128,6 +142,7 @@ pub mod sync {
         .bind(device_id)
         .bind(operation_id)
         .bind(lamport_ts)
+        .bind(hlc_logical)
         .bind(entity)
         .bind(entity_id)
         .bind(field)
