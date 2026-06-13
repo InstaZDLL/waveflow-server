@@ -40,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     db,
     middleware::UserId,
-    sync::{build_broadcast, SyncOp, SyncOpIn},
+    sync::{build_broadcast, Hlc, SyncOp, SyncOpIn},
     AppState,
 };
 
@@ -77,6 +77,19 @@ pub struct LamportRegression {
     pub device_id: String,
     pub stored_max: i64,
     pub offending_lamport_ts: i64,
+}
+
+/// 409 body when a v2 client pushes an `hlc` pair that collides on the
+/// `(user_id, device_id, hlc_wall, hlc_logical)` UNIQUE — RFC-003 §2
+/// requires per-device HLC monotonicity, so this is the v2 equivalent
+/// of the lamport-regression case. The offending pair is echoed so
+/// the client can resync its HLC instead of guessing how far the
+/// server has advanced.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HlcRegression {
+    pub error: &'static str,
+    pub device_id: String,
+    pub offending_hlc: Hlc,
 }
 
 #[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
@@ -140,9 +153,17 @@ pub fn router(state: AppState) -> OpenApiRouter {
     request_body = PushBatchRequest,
     responses(
         (status = 200, description = "Batch accepted (one entry per op, fresh or dup)", body = PushBatchResponse),
-        (status = 400, description = "Empty `device_id`, oversized batch, or malformed op"),
+        (status = 400, description = "Empty `device_id`, oversized batch, malformed op, or hlc.wall/logical < 0"),
         (status = 401, description = "Missing or invalid bearer token"),
-        (status = 409, description = "Lamport regression — stored max returned in body", body = LamportRegression),
+        // Two regression shapes can land on 409 — discriminated on the
+        // `error` field of the body. The legacy v1 path returns
+        // `LamportRegression { error: \"lamport_regression\", stored_max, offending_lamport_ts }`;
+        // the v2 path returns `HlcRegression { error: \"hlc_regression\", offending_hlc }`.
+        // utoipa 5 has no concise `oneOf` for response bodies, so we
+        // list both shapes as sibling 409 entries — clients pattern-
+        // match on `error` before reading the discriminating fields.
+        (status = 409, description = "Lamport regression (v1) — body discriminated by `error: \"lamport_regression\"`", body = LamportRegression),
+        (status = 409, description = "HLC collision (v2) — body discriminated by `error: \"hlc_regression\"`", body = HlcRegression),
         (status = 500, description = "Database or internal failure"),
     ),
 )]
@@ -193,6 +214,31 @@ async fn push_ops(
                 .into_response();
         }
 
+        // RFC-003 Phase A.2 — v2 wire shape carries an explicit
+        // `hlc` pair. Validate `wall >= 0` (logical is already i32
+        // by the type, so the only out-of-range a v2 client can hit
+        // is a negative wall — usually a clock-set bug). The §2
+        // tiebreaker `origin_device_id` rides through the existing
+        // `device_id` string per A.1.1's design. The server never
+        // tries to "fix up" a missing hlc by synthesising one — the
+        // v1 path's `(0, lamport_ts)` derivation owns that case.
+        if let Some(hlc) = op_in.hlc {
+            if hlc.wall < 0 {
+                tx.rollback().await.ok();
+                return (StatusCode::BAD_REQUEST, "hlc.wall must be >= 0").into_response();
+            }
+            // Symmetric with `wall`. `logical` is `i32` by the type so
+            // a negative is structurally legal but semantically wrong
+            // per RFC-003 §2 (unsigned-shaped counter). Catching it
+            // here returns 400 instead of letting the db helper's
+            // defence-in-depth guard surface as a 500.
+            if hlc.logical < 0 {
+                tx.rollback().await.ok();
+                return (StatusCode::BAD_REQUEST, "hlc.logical must be >= 0").into_response();
+            }
+        }
+        let hlc_pair = op_in.hlc.map(|h| (h.wall, h.logical));
+
         let insert_res = db::sync::insert_op_returning(
             &mut tx,
             user_id,
@@ -206,6 +252,7 @@ async fn push_ops(
             op_in.payload.as_ref(),
             now,
             op_in.profile_canonical_id.as_deref(),
+            hlc_pair,
         )
         .await;
 
@@ -253,33 +300,79 @@ async fn push_ops(
                 }
             }
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-                // Unique violation that wasn't on `operation_id`
-                // (that branch is absorbed by the ON CONFLICT) — so it
-                // can only be the `(user_id, device_id, lamport_ts)`
-                // constraint, i.e. a regression. Read the current max
-                // and return it so the client can resync its clock.
+                // After A.1.1 two UNIQUE constraints can fire 23505 on
+                // a regression. The third (`operation_id`) is absorbed
+                // upstream by `ON CONFLICT DO NOTHING`, so we never see
+                // it here. Discriminate on the constraint name so a v2
+                // HLC collision doesn't get reported as a misleading
+                // lamport regression (the stored lamport_max would be
+                // meaningless to a v2 client whose clock is the HLC
+                // pair, not lamport_ts).
                 tx.rollback().await.ok();
-                let stored_max = match db::sync::lamport_max(pool, user_id, device_id).await {
-                    Ok(n) => n,
-                    Err(err) => {
-                        // Surface the read failure rather than masking
-                        // it behind a `0` that would tell the client
-                        // "your clock is fine, retry" when it isn't.
-                        tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
-                        return (StatusCode::INTERNAL_SERVER_ERROR, "lamport_max read failed")
+                match db_err.constraint() {
+                    Some("sync_op_user_device_hlc_uniq") => {
+                        // V2 client pushed an HLC pair already taken
+                        // by this device. Echo the offending pair so
+                        // the client can resync; `op_in.hlc` is
+                        // guaranteed `Some` here because the v1 path
+                        // derives `(0, lamport_ts)` from a strictly-
+                        // increasing lamport_ts (per the legacy
+                        // `(user_id, device_id, lamport_ts)` UNIQUE
+                        // also fires on regression), so a v1 client
+                        // hitting THIS constraint exclusively would
+                        // mean lamport_ts moved forward but the
+                        // derived `(0, lamport_ts)` collided — only
+                        // possible after a manual DB reset, which is
+                        // out of scope. Default the pair anyway in
+                        // case a future code path bypasses the v2
+                        // gate.
+                        return (
+                            StatusCode::CONFLICT,
+                            Json(HlcRegression {
+                                error: "hlc_regression",
+                                device_id: device_id.to_string(),
+                                offending_hlc: op_in.hlc.unwrap_or(Hlc {
+                                    wall: 0,
+                                    logical: 0,
+                                }),
+                            }),
+                        )
                             .into_response();
                     }
-                };
-                return (
-                    StatusCode::CONFLICT,
-                    Json(LamportRegression {
-                        error: "lamport_regression",
-                        device_id: device_id.to_string(),
-                        stored_max,
-                        offending_lamport_ts: op_in.lamport_ts,
-                    }),
-                )
-                    .into_response();
+                    _ => {
+                        // Legacy `(user_id, device_id, lamport_ts)`
+                        // constraint (auto-named by Postgres). Read
+                        // the current max and return it so the v1
+                        // client can resync its clock.
+                        let stored_max =
+                            match db::sync::lamport_max(pool, user_id, device_id).await {
+                                Ok(n) => n,
+                                Err(err) => {
+                                    // Surface the read failure rather
+                                    // than masking it behind a `0`
+                                    // that would tell the client
+                                    // "your clock is fine, retry"
+                                    // when it isn't.
+                                    tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "lamport_max read failed",
+                                    )
+                                        .into_response();
+                                }
+                            };
+                        return (
+                            StatusCode::CONFLICT,
+                            Json(LamportRegression {
+                                error: "lamport_regression",
+                                device_id: device_id.to_string(),
+                                stored_max,
+                                offending_lamport_ts: op_in.lamport_ts,
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
             }
             Err(err) => {
                 tracing::error!(error = %err, user_id, device_id, "sync insert failed");
@@ -533,5 +626,9 @@ fn row_to_op(row: &PgRow) -> SyncOp {
         payload: row.get::<Option<serde_json::Value>, _>("payload"),
         created_at: row.get("created_at"),
         profile_canonical_id: row.get("profile_canonical_id"),
+        hlc: Hlc {
+            wall: row.get("hlc_wall"),
+            logical: row.get("hlc_logical"),
+        },
     }
 }
