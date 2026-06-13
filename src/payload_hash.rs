@@ -87,9 +87,9 @@ pub fn canonical_serialize(
     hlc: Hlc,
     origin_device_id: Option<Uuid>,
 ) -> Vec<u8> {
-    let canonical = Value::Object({
+    let wrapper = Value::Object({
         let mut wrapper = Map::new();
-        wrapper.insert("fields".to_string(), canonicalize(&Value::Object(fields.clone())));
+        wrapper.insert("fields".to_string(), Value::Object(fields.clone()));
         wrapper.insert(
             "hlc".to_string(),
             Value::Object({
@@ -108,12 +108,22 @@ pub fn canonical_serialize(
         );
         wrapper
     });
+    // Run the FULL tree (wrapper + nested entity fields) through
+    // canonicalize so the byte form is deterministic regardless of
+    // whether serde_json was compiled with `preserve_order`
+    // (IndexMap insertion order) or stays on the default BTreeMap.
+    // Without this top-level sort, the wrapper keys ("fields", "hlc",
+    // "origin_device_id") + the hlc sub-map keys ("logical", "wall")
+    // happened to land alphabetically by insertion-order accident —
+    // a future edit that reordered the inserts would silently flap
+    // every existing hash.
+    //
     // `serde_json::to_vec` over a deterministic `Value` tree gives a
     // deterministic byte stream. The fail case is "Value contained a
     // float NaN" which never happens here — every input either came
     // through `Map<String, Value>` constructed from typed Rust values
     // or is the literal HLC pair / uuid string we just inserted.
-    serde_json::to_vec(&canonical).expect("canonical wrapper serialises")
+    serde_json::to_vec(&canonicalize(&wrapper)).expect("canonical wrapper serialises")
 }
 
 /// BLAKE3-256 over the canonical form. Output sized for direct
@@ -247,6 +257,27 @@ mod tests {
             compute_payload_hash(&a, hlc(1, 0), None),
             compute_payload_hash(&b, hlc(1, 0), None),
         );
+    }
+
+    #[test]
+    fn canonical_serialize_top_level_keys_are_sorted() {
+        // The wrapper itself + the hlc sub-map MUST be sorted by
+        // canonicalize, not by insertion order. Verify by inspecting
+        // the raw byte form: keys must appear in lexicographic order
+        // regardless of how they were inserted in canonical_serialize.
+        let f = fields(json!({ "name": "A" }));
+        let bytes = canonical_serialize(&f, hlc(7, 3), None);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        // "fields" < "hlc" < "origin_device_id" lex-wise.
+        let p_fields = text.find("\"fields\"").unwrap();
+        let p_hlc = text.find("\"hlc\"").unwrap();
+        let p_origin = text.find("\"origin_device_id\"").unwrap();
+        assert!(p_fields < p_hlc);
+        assert!(p_hlc < p_origin);
+        // "logical" < "wall" lex-wise.
+        let p_logical = text.find("\"logical\"").unwrap();
+        let p_wall = text.find("\"wall\"").unwrap();
+        assert!(p_logical < p_wall);
     }
 
     #[test]
