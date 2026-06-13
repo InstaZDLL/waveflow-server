@@ -16,7 +16,12 @@
 -- Column shapes mirror `sync_op`'s A.1.1 migration
 -- (`20260612000000_sync_op_hlc.sql`):
 --   * `hlc_wall    BIGINT`     — epoch-millis wall component
---   * `hlc_logical INTEGER`    — u32-shaped per-tick counter
+--   * `hlc_logical INTEGER`    — i32-shaped per-tick counter (Postgres
+--     `INTEGER` is signed 32-bit; matches `src/db.rs`'s
+--     `0..=i32::MAX` validation on the `sync_op` path). HLC's logical
+--     counter resets every wall tick so the i32 ceiling is
+--     unreachable in practice; escalation path = widen BOTH this
+--     column AND `sync_op.hlc_logical` to BIGINT in lockstep.
 --   * `origin_device_id UUID`  — narrowed UUID at this layer because
 --     entity tables ARE the canonical identity (see A.1.1 header for
 --     the rationale on why `sync_op.device_id` stays TEXT).
