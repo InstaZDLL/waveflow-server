@@ -108,10 +108,19 @@ pub mod sync {
         created_at: i64,
         profile_canonical_id: Option<&str>,
     ) -> Result<Option<PgRow>, sqlx::Error> {
+        // Phase A.1 (RFC-003): every row also carries the HLC pair the
+        // §2 total order is defined on. Until A.2 lands the wire shape
+        // change that lets clients send their own `hlc`, we derive it
+        // from `lamport_ts` exactly the way the 20260612000000 backfill
+        // does — `(0, lamport_ts)`. That keeps the new
+        // `UNIQUE (user_id, device_id, hlc_wall, hlc_logical)` invariant
+        // satisfied without touching callers, and means a v2 op
+        // (`hlc_wall > 0`) strictly outranks every legacy-shape row
+        // under the §2 total order once A.2 ships.
         sqlx::query(
             "INSERT INTO sync_op \
-                (user_id, device_id, operation_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                (user_id, device_id, operation_id, lamport_ts, hlc_wall, hlc_logical, entity, entity_id, field, op, payload, created_at, profile_canonical_id) \
+             VALUES ($1, $2, $3, $4, 0, $4, $5, $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (user_id, device_id, operation_id) DO NOTHING \
              RETURNING id, operation_id, device_id, lamport_ts, entity, entity_id, field, op, payload, created_at, profile_canonical_id",
         )
