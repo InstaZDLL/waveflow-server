@@ -76,6 +76,25 @@ pub const DEFAULT_COMPACTION_INTERVAL: Duration = Duration::from_secs(24 * 60 * 
 /// permanently-lost device doesn't drag the log forever.
 pub const STALE_DEVICE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
+/// Hybrid Logical Clock pair carried by RFC-003 v2 ops on the wire.
+///
+/// `wall` is epoch-millis (BIGINT in Postgres). `logical` is the
+/// per-tick counter the HLC paper defines as `u32` — Postgres stores
+/// it as INTEGER (i32), and `src/db.rs::insert_op_returning` enforces
+/// `0..=i32::MAX` on bind. The narrowing is documented in the A.1.1
+/// migration header alongside the escalation path.
+///
+/// Carried on the v2 wire shape alongside `origin_device_id`; the
+/// (`hlc`, `origin_device_id`) tuple is the §2 total order the apply
+/// pipeline LWW reasoning runs on. Phase A.2 only ingests + echoes
+/// the pair; the apply-side propagation onto entity rows lands in
+/// Phase A.2.2.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema, PartialEq, Eq)]
+pub struct Hlc {
+    pub wall: i64,
+    pub logical: i32,
+}
+
 /// Wire format for a single op the client pushes. `payload` stays
 /// opaque to the server — it's stored as JSONB and replayed verbatim
 /// to other devices, so the schema can evolve client-side without a
@@ -108,6 +127,22 @@ pub struct SyncOpIn {
     /// ops still land in the durable log but skip the apply path.
     #[serde(default)]
     pub profile_canonical_id: Option<String>,
+    /// RFC-003 Phase A.2 — Hybrid Logical Clock carried by v2 desktop
+    /// clients. `None` from v1 clients; the server derives the pair
+    /// from `lamport_ts` (wall = 0, logical = lamport_ts) when this is
+    /// absent, exactly the way the A.1.1 backfill did. A v2 op with
+    /// `hlc.wall > 0` strictly outranks every v1-derived row under
+    /// the §2 total order.
+    ///
+    /// The §2 tiebreaker `origin_device_id` rides through the
+    /// existing [`PushBatchRequest::device_id`] string (per A.1.1's
+    /// header — UUID-shaped TEXT round-trips without loss). v2
+    /// clients format their `device_id` as a UUID; v1 clients keep
+    /// their free-form string. Either way the wire shape stays a
+    /// single string, and the apply pipeline (A.2.2) parses it as
+    /// UUID when writing `origin_device_id` onto the entity row.
+    #[serde(default)]
+    pub hlc: Option<Hlc>,
 }
 
 /// Wire format for an accepted op. Mirrors the row shape so the
@@ -134,6 +169,11 @@ pub struct SyncOp {
     /// so pulling devices can land the op in the right profile.
     #[serde(default)]
     pub profile_canonical_id: Option<String>,
+    /// RFC-003 Phase A.2 echo. Always populated on read — the server
+    /// stamps `(0, lamport_ts)` for v1-shape rows so a pulling v2
+    /// client sees a usable (if minimal) total-order tuple. v2-shape
+    /// rows echo the originator's pair verbatim.
+    pub hlc: Hlc,
 }
 
 /// Broadcast payload. We pre-serialise to JSON once at emit time so

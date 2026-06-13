@@ -40,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     db,
     middleware::UserId,
-    sync::{build_broadcast, SyncOp, SyncOpIn},
+    sync::{build_broadcast, Hlc, SyncOp, SyncOpIn},
     AppState,
 };
 
@@ -193,6 +193,22 @@ async fn push_ops(
                 .into_response();
         }
 
+        // RFC-003 Phase A.2 — v2 wire shape carries an explicit
+        // `hlc` pair. Validate `wall >= 0` (logical is already i32
+        // by the type, so the only out-of-range a v2 client can hit
+        // is a negative wall — usually a clock-set bug). The §2
+        // tiebreaker `origin_device_id` rides through the existing
+        // `device_id` string per A.1.1's design. The server never
+        // tries to "fix up" a missing hlc by synthesising one — the
+        // v1 path's `(0, lamport_ts)` derivation owns that case.
+        if let Some(hlc) = op_in.hlc {
+            if hlc.wall < 0 {
+                tx.rollback().await.ok();
+                return (StatusCode::BAD_REQUEST, "hlc.wall must be >= 0").into_response();
+            }
+        }
+        let hlc_pair = op_in.hlc.map(|h| (h.wall, h.logical));
+
         let insert_res = db::sync::insert_op_returning(
             &mut tx,
             user_id,
@@ -206,6 +222,7 @@ async fn push_ops(
             op_in.payload.as_ref(),
             now,
             op_in.profile_canonical_id.as_deref(),
+            hlc_pair,
         )
         .await;
 
@@ -533,5 +550,9 @@ fn row_to_op(row: &PgRow) -> SyncOp {
         payload: row.get::<Option<serde_json::Value>, _>("payload"),
         created_at: row.get("created_at"),
         profile_canonical_id: row.get("profile_canonical_id"),
+        hlc: Hlc {
+            wall: row.get("hlc_wall"),
+            logical: row.get("hlc_logical"),
+        },
     }
 }
