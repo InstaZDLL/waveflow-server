@@ -34,9 +34,34 @@ ALTER TABLE sync_op
     ADD COLUMN hlc_wall    BIGINT,
     ADD COLUMN hlc_logical INTEGER;
 
+-- Preflight: refuse to lossy-truncate `lamport_ts` into the
+-- 32-bit `hlc_logical`. Per RFC-003 §2 the logical counter is
+-- explicitly `u32` (the HLC paper's shape); the legacy
+-- `lamport_ts` is `BIGINT` so in principle it could have grown
+-- past 2^31-1 over a long-lived install. Any practical real-world
+-- install today is in the low thousands at most (the counter is
+-- reset every wall-clock tick under HLC; the legacy v1 Lamport
+-- is monotonic but small in absolute terms), so this check is
+-- expected to be a no-op — but if it ever fires, the operator
+-- needs to manually decide whether to widen the column or reset
+-- the affected device's counter rather than have the cast
+-- silently drop a digit.
+DO $$
+DECLARE oversized INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO oversized
+      FROM sync_op
+     WHERE lamport_ts > 2147483647 OR lamport_ts < 0;
+    IF oversized > 0 THEN
+        RAISE EXCEPTION
+            'sync_op.lamport_ts is out of range for hlc_logical (INTEGER) in % row(s). Migration aborted to avoid silent truncation. Widen hlc_logical to BIGINT or reset the affected device counters before retrying.',
+            oversized;
+    END IF;
+END $$;
+
 UPDATE sync_op
    SET hlc_wall    = 0,
-       hlc_logical = lamport_ts
+       hlc_logical = lamport_ts::INTEGER
  WHERE hlc_wall    IS NULL;
 
 ALTER TABLE sync_op
