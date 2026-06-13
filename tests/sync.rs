@@ -909,3 +909,30 @@ async fn push_v2_duplicate_hlc_returns_hlc_regression(pool: PgPool) {
     assert_eq!(body["offending_hlc"]["wall"], 1_700_000_000_000_i64);
     assert_eq!(body["offending_hlc"]["logical"], 7);
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_negative_logical_rejected(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-neg-logical").await;
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 1,
+                "entity": "playlist",
+                "entity_id": "pl-1",
+                "field": "name",
+                "op": "set",
+                "payload": { "value": "x" },
+                "hlc": { "wall": 1_700_000_000_000_i64, "logical": -1_i32 },
+            }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

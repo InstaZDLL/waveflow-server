@@ -219,6 +219,15 @@ async fn push_ops(
                 tx.rollback().await.ok();
                 return (StatusCode::BAD_REQUEST, "hlc.wall must be >= 0").into_response();
             }
+            // Symmetric with `wall`. `logical` is `i32` by the type so
+            // a negative is structurally legal but semantically wrong
+            // per RFC-003 §2 (unsigned-shaped counter). Catching it
+            // here returns 400 instead of letting the db helper's
+            // defence-in-depth guard surface as a 500.
+            if hlc.logical < 0 {
+                tx.rollback().await.ok();
+                return (StatusCode::BAD_REQUEST, "hlc.logical must be >= 0").into_response();
+            }
         }
         let hlc_pair = op_in.hlc.map(|h| (h.wall, h.logical));
 
