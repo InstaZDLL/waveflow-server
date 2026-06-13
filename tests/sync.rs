@@ -864,3 +864,48 @@ async fn push_v2_negative_wall_rejected(pool: PgPool) {
 
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_duplicate_hlc_returns_hlc_regression(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-dup").await;
+
+    let push = |op_id: Uuid, lamport: i64, hlc_logical: i32| {
+        let base = auth.base.clone();
+        let token = auth.token.clone();
+        async move {
+            reqwest::Client::new()
+                .post(format!("{base}/api/v1/sync/ops"))
+                .bearer_auth(&token)
+                .json(&json!({
+                    "device_id": "device-a",
+                    "ops": [{
+                        "operation_id": op_id,
+                        "lamport_ts": lamport,
+                        "entity": "playlist",
+                        "entity_id": "pl-1",
+                        "field": "name",
+                        "op": "set",
+                        "payload": { "value": "x" },
+                        "hlc": { "wall": 1_700_000_000_000_i64, "logical": hlc_logical },
+                    }],
+                }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    let first = push(Uuid::new_v4(), 1, 7).await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    // Different operation_id (so the ON CONFLICT short-circuit doesn't
+    // absorb it) + lamport advanced (so the legacy lamport UNIQUE
+    // can't fire) + SAME hlc pair → must hit the HLC UNIQUE.
+    let collide = push(Uuid::new_v4(), 2, 7).await;
+    assert_eq!(collide.status(), StatusCode::CONFLICT);
+    let body: Value = collide.json().await.unwrap();
+    assert_eq!(body["error"], "hlc_regression");
+    assert_eq!(body["device_id"], "device-a");
+    assert_eq!(body["offending_hlc"]["wall"], 1_700_000_000_000_i64);
+    assert_eq!(body["offending_hlc"]["logical"], 7);
+}

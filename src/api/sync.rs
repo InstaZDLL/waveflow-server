@@ -79,6 +79,19 @@ pub struct LamportRegression {
     pub offending_lamport_ts: i64,
 }
 
+/// 409 body when a v2 client pushes an `hlc` pair that collides on the
+/// `(user_id, device_id, hlc_wall, hlc_logical)` UNIQUE — RFC-003 §2
+/// requires per-device HLC monotonicity, so this is the v2 equivalent
+/// of the lamport-regression case. The offending pair is echoed so
+/// the client can resync its HLC instead of guessing how far the
+/// server has advanced.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HlcRegression {
+    pub error: &'static str,
+    pub device_id: String,
+    pub offending_hlc: Hlc,
+}
+
 #[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
 pub struct PullQuery {
     /// Last `sync_op.id` the client has confirmed seeing. `0` (or
@@ -270,33 +283,79 @@ async fn push_ops(
                 }
             }
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-                // Unique violation that wasn't on `operation_id`
-                // (that branch is absorbed by the ON CONFLICT) — so it
-                // can only be the `(user_id, device_id, lamport_ts)`
-                // constraint, i.e. a regression. Read the current max
-                // and return it so the client can resync its clock.
+                // After A.1.1 two UNIQUE constraints can fire 23505 on
+                // a regression. The third (`operation_id`) is absorbed
+                // upstream by `ON CONFLICT DO NOTHING`, so we never see
+                // it here. Discriminate on the constraint name so a v2
+                // HLC collision doesn't get reported as a misleading
+                // lamport regression (the stored lamport_max would be
+                // meaningless to a v2 client whose clock is the HLC
+                // pair, not lamport_ts).
                 tx.rollback().await.ok();
-                let stored_max = match db::sync::lamport_max(pool, user_id, device_id).await {
-                    Ok(n) => n,
-                    Err(err) => {
-                        // Surface the read failure rather than masking
-                        // it behind a `0` that would tell the client
-                        // "your clock is fine, retry" when it isn't.
-                        tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
-                        return (StatusCode::INTERNAL_SERVER_ERROR, "lamport_max read failed")
+                match db_err.constraint() {
+                    Some("sync_op_user_device_hlc_uniq") => {
+                        // V2 client pushed an HLC pair already taken
+                        // by this device. Echo the offending pair so
+                        // the client can resync; `op_in.hlc` is
+                        // guaranteed `Some` here because the v1 path
+                        // derives `(0, lamport_ts)` from a strictly-
+                        // increasing lamport_ts (per the legacy
+                        // `(user_id, device_id, lamport_ts)` UNIQUE
+                        // also fires on regression), so a v1 client
+                        // hitting THIS constraint exclusively would
+                        // mean lamport_ts moved forward but the
+                        // derived `(0, lamport_ts)` collided — only
+                        // possible after a manual DB reset, which is
+                        // out of scope. Default the pair anyway in
+                        // case a future code path bypasses the v2
+                        // gate.
+                        return (
+                            StatusCode::CONFLICT,
+                            Json(HlcRegression {
+                                error: "hlc_regression",
+                                device_id: device_id.to_string(),
+                                offending_hlc: op_in.hlc.unwrap_or(Hlc {
+                                    wall: 0,
+                                    logical: 0,
+                                }),
+                            }),
+                        )
                             .into_response();
                     }
-                };
-                return (
-                    StatusCode::CONFLICT,
-                    Json(LamportRegression {
-                        error: "lamport_regression",
-                        device_id: device_id.to_string(),
-                        stored_max,
-                        offending_lamport_ts: op_in.lamport_ts,
-                    }),
-                )
-                    .into_response();
+                    _ => {
+                        // Legacy `(user_id, device_id, lamport_ts)`
+                        // constraint (auto-named by Postgres). Read
+                        // the current max and return it so the v1
+                        // client can resync its clock.
+                        let stored_max =
+                            match db::sync::lamport_max(pool, user_id, device_id).await {
+                                Ok(n) => n,
+                                Err(err) => {
+                                    // Surface the read failure rather
+                                    // than masking it behind a `0`
+                                    // that would tell the client
+                                    // "your clock is fine, retry"
+                                    // when it isn't.
+                                    tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "lamport_max read failed",
+                                    )
+                                        .into_response();
+                                }
+                            };
+                        return (
+                            StatusCode::CONFLICT,
+                            Json(LamportRegression {
+                                error: "lamport_regression",
+                                device_id: device_id.to_string(),
+                                stored_max,
+                                offending_lamport_ts: op_in.lamport_ts,
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
             }
             Err(err) => {
                 tracing::error!(error = %err, user_id, device_id, "sync insert failed");

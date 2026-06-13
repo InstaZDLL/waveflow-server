@@ -131,7 +131,26 @@ pub mod sync {
         // the v1 path we still validate `lamport_ts` before narrowing —
         // a hypothetical >2^31 value would silently truncate otherwise.
         let (hlc_wall, hlc_logical) = match hlc {
-            Some((wall, logical)) => (wall, logical),
+            Some((wall, logical)) => {
+                // V2 path defence in depth — the API boundary already
+                // rejects `wall < 0`, but the helper is shared so a
+                // future caller bypassing the handler still gets a
+                // typed error instead of a row with an invalid §2
+                // total-order tuple. `logical < 0` cannot reach here
+                // through the wire shape (the type is i32 so a
+                // negative is structurally legal but semantically
+                // wrong — RFC-003 §2 defines the logical counter as
+                // u32) but is rejected for the same total-order
+                // invariant. Mirrors the v1 path's `Protocol` error
+                // shape so the push handler maps both to a 500 +
+                // structured log.
+                if wall < 0 || logical < 0 {
+                    return Err(sqlx::Error::Protocol(format!(
+                        "hlc ({wall}, {logical}) is out of range for the §2 total order (both components must be >= 0)"
+                    )));
+                }
+                (wall, logical)
+            }
             None => {
                 if !(0..=i64::from(i32::MAX)).contains(&lamport_ts) {
                     return Err(sqlx::Error::Protocol(format!(
