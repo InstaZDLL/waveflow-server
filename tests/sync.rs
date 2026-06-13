@@ -746,3 +746,193 @@ async fn websocket_isolates_other_tenants(pool: PgPool) {
     }
     socket.send(Message::Close(None)).await.ok();
 }
+
+// RFC-003 Phase A.2 — v2 wire shape round-trip. A v1 client sending
+// only `lamport_ts` should pull back `hlc: { wall: 0, logical:
+// lamport_ts }` (the A.1.1 backfill shape). A v2 client sending an
+// explicit `hlc` should pull it back verbatim. Mixing the two in one
+// batch lands each on its own path without cross-contamination.
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v1_only_pulls_derived_hlc(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-v1").await;
+
+    let _push: Value = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [op_payload(Uuid::new_v4(), 42, "pl-1", "Soirée")],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let pull: Value = reqwest::Client::new()
+        .get(format!("{}/api/v1/sync/ops?since=0", auth.base))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let row = &pull["ops"][0];
+    // Backfill derivation: (0, lamport_ts).
+    assert_eq!(row["hlc"]["wall"], 0);
+    assert_eq!(row["hlc"]["logical"], 42);
+    assert_eq!(row["lamport_ts"], 42);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_hlc_round_trips_verbatim(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-v2").await;
+
+    let _push: Value = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 1,
+                "entity": "playlist",
+                "entity_id": "pl-1",
+                "field": "name",
+                "op": "set",
+                "payload": { "value": "Live" },
+                "hlc": { "wall": 1_700_000_000_000_i64, "logical": 7 },
+            }],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let pull: Value = reqwest::Client::new()
+        .get(format!("{}/api/v1/sync/ops?since=0", auth.base))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let row = &pull["ops"][0];
+    assert_eq!(row["hlc"]["wall"], 1_700_000_000_000_i64);
+    assert_eq!(row["hlc"]["logical"], 7);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_negative_wall_rejected(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-neg-wall").await;
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 1,
+                "entity": "playlist",
+                "entity_id": "pl-1",
+                "field": "name",
+                "op": "set",
+                "payload": { "value": "x" },
+                "hlc": { "wall": -1_i64, "logical": 1 },
+            }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_duplicate_hlc_returns_hlc_regression(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-dup").await;
+
+    let push = |op_id: Uuid, lamport: i64, hlc_logical: i32| {
+        let base = auth.base.clone();
+        let token = auth.token.clone();
+        async move {
+            reqwest::Client::new()
+                .post(format!("{base}/api/v1/sync/ops"))
+                .bearer_auth(&token)
+                .json(&json!({
+                    "device_id": "device-a",
+                    "ops": [{
+                        "operation_id": op_id,
+                        "lamport_ts": lamport,
+                        "entity": "playlist",
+                        "entity_id": "pl-1",
+                        "field": "name",
+                        "op": "set",
+                        "payload": { "value": "x" },
+                        "hlc": { "wall": 1_700_000_000_000_i64, "logical": hlc_logical },
+                    }],
+                }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    let first = push(Uuid::new_v4(), 1, 7).await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    // Different operation_id (so the ON CONFLICT short-circuit doesn't
+    // absorb it) + lamport advanced (so the legacy lamport UNIQUE
+    // can't fire) + SAME hlc pair → must hit the HLC UNIQUE.
+    let collide = push(Uuid::new_v4(), 2, 7).await;
+    assert_eq!(collide.status(), StatusCode::CONFLICT);
+    let body: Value = collide.json().await.unwrap();
+    assert_eq!(body["error"], "hlc_regression");
+    assert_eq!(body["device_id"], "device-a");
+    assert_eq!(body["offending_hlc"]["wall"], 1_700_000_000_000_i64);
+    assert_eq!(body["offending_hlc"]["logical"], 7);
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn push_v2_negative_logical_rejected(pool: PgPool) {
+    let auth = spawn_authenticated(pool, "hlc-neg-logical").await;
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [{
+                "operation_id": Uuid::new_v4(),
+                "lamport_ts": 1,
+                "entity": "playlist",
+                "entity_id": "pl-1",
+                "field": "name",
+                "op": "set",
+                "payload": { "value": "x" },
+                "hlc": { "wall": 1_700_000_000_000_i64, "logical": -1_i32 },
+            }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
