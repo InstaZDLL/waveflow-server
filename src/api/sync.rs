@@ -153,9 +153,17 @@ pub fn router(state: AppState) -> OpenApiRouter {
     request_body = PushBatchRequest,
     responses(
         (status = 200, description = "Batch accepted (one entry per op, fresh or dup)", body = PushBatchResponse),
-        (status = 400, description = "Empty `device_id`, oversized batch, or malformed op"),
+        (status = 400, description = "Empty `device_id`, oversized batch, malformed op, or hlc.wall/logical < 0"),
         (status = 401, description = "Missing or invalid bearer token"),
-        (status = 409, description = "Lamport regression — stored max returned in body", body = LamportRegression),
+        // Two regression shapes can land on 409 — discriminated on the
+        // `error` field of the body. The legacy v1 path returns
+        // `LamportRegression { error: \"lamport_regression\", stored_max, offending_lamport_ts }`;
+        // the v2 path returns `HlcRegression { error: \"hlc_regression\", offending_hlc }`.
+        // utoipa 5 has no concise `oneOf` for response bodies, so we
+        // list both shapes as sibling 409 entries — clients pattern-
+        // match on `error` before reading the discriminating fields.
+        (status = 409, description = "Lamport regression (v1) — body discriminated by `error: \"lamport_regression\"`", body = LamportRegression),
+        (status = 409, description = "HLC collision (v2) — body discriminated by `error: \"hlc_regression\"`", body = HlcRegression),
         (status = 500, description = "Database or internal failure"),
     ),
 )]
