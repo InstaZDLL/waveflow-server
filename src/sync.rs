@@ -76,6 +76,46 @@ pub const DEFAULT_COMPACTION_INTERVAL: Duration = Duration::from_secs(24 * 60 * 
 /// permanently-lost device doesn't drag the log forever.
 pub const STALE_DEVICE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
+/// Digest member — the `(canonical_id, payload_hash)` pair the
+/// digest endpoint emits for every materialised row. Sorted by
+/// `canonical_id` in the response so two replicas computing the
+/// `set_hash` arrive at the same byte stream.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DigestMember {
+    pub canonical_id: String,
+    /// BLAKE3-256 hex of the row's canonical wire form.
+    pub payload_hash: String,
+}
+
+/// Per-(profile, entity) or per-(user, entity) digest snapshot
+/// per RFC-003 §4. The desktop compares this against its local
+/// state: equal `set_hash` ⇒ in sync; mismatch ⇒ recompute its
+/// own MerkleHash to discover which member rows diverged.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DigestResponse {
+    /// BLAKE3-256 hex over the sorted member set per RFC-003 §4.
+    pub set_hash: String,
+    /// Monotone counter from `metadata_digest_version` /
+    /// `user_metadata_digest_version`. `0` when no write has
+    /// landed yet (no row in the counter table).
+    pub version: i64,
+    /// Highest §2 total-order triple seen across the entity set.
+    /// `None` when the set is empty.
+    pub max_hlc: Option<MaxHlc>,
+    pub members: Vec<DigestMember>,
+}
+
+/// The `max_hlc` field of [`DigestResponse`]. The FULL §2 total-
+/// order triple per RFC-003 §4, so two devices on the same tick
+/// can be distinguished by the `origin_device_id` tiebreaker.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub struct MaxHlc {
+    pub wall: i64,
+    pub logical: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<Uuid>,
+}
+
 /// Hybrid Logical Clock pair carried by RFC-003 v2 ops on the wire.
 ///
 /// `wall` is epoch-millis (BIGINT in Postgres). `logical` is the

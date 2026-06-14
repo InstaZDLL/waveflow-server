@@ -181,6 +181,7 @@ blake3 = "1"
 # at visually identical quality for cover art (always opaque) — so
 # we don't need the WebP encoder feature.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+hex = "0.4.3"
 
 [dev-dependencies]
 # Activate `use_pem` for the JWT tests only. The harness in
