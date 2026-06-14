@@ -317,3 +317,82 @@ async fn digest_endpoint_user_scoped_liked_round_trip(pool: PgPool) {
     assert_eq!(digest["members"][0]["canonical_id"], "blake3-hash-zzz");
     assert_eq!(digest["version"], 1);
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn profile_set_name_updates_row_and_bumps_digest(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "digest-profile-set").await;
+
+    // Step 1: trigger auto-provision via any profile-scoped op.
+    // The first op auto-creates the profile row with hash over
+    // {name: "Synced profile", color_id: "violet"} and bumps the
+    // profile digest to 1.
+    assert!(push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            1,
+            "library",
+            "lib-1",
+            None,
+            "insert",
+            json!({ "name": "Whatever" }),
+            Some(PROFILE_CID),
+        )],
+    )
+    .await
+    .is_success());
+
+    let hash_after_provision: Vec<u8> =
+        sqlx::query_scalar("SELECT payload_hash FROM profile WHERE canonical_id = $1")
+            .bind(PROFILE_CID)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // Step 2: rename the profile via set_field.
+    assert!(push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            2,
+            "profile",
+            PROFILE_CID,
+            Some("name"),
+            "set",
+            json!({ "value": "Maxime" }),
+            Some(PROFILE_CID),
+        )],
+    )
+    .await
+    .is_success());
+
+    let row: (String, Vec<u8>) =
+        sqlx::query_as("SELECT name, payload_hash FROM profile WHERE canonical_id = $1")
+            .bind(PROFILE_CID)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "Maxime", "profile rename must persist server-side");
+    assert_ne!(
+        hash_after_provision, row.1,
+        "rename must recompute payload_hash"
+    );
+
+    // Profile digest counter must bump exactly twice (auto-provision
+    // + rename). >=2 would let a spurious bump slip through.
+    let profile_version: (i64,) = sqlx::query_as(
+        "SELECT version FROM metadata_digest_version
+          WHERE entity = $1 AND profile_id IN (SELECT id FROM profile WHERE canonical_id = $2)",
+    )
+    .bind("profile")
+    .bind(PROFILE_CID)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        profile_version.0, 2,
+        "profile digest must be exactly 2 after auto-provision + rename",
+    );
+}
