@@ -1154,22 +1154,35 @@ pub mod digest_read {
     /// Dispatches on `entity` to pick the right table + filter
     /// column. Unknown entities are filtered out at the API layer
     /// before reaching here.
+    ///
+    /// Snapshot atomicity: the two reads (`version` + members) run
+    /// inside a REPEATABLE READ transaction so a concurrent apply
+    /// tx that commits the row change + the digest bump between
+    /// them can't return a `version`/`members` pair from different
+    /// snapshots. Without the isolation upgrade, the default READ
+    /// COMMITTED could land us with a stale `version` next to fresh
+    /// members — the client would then cache the new state under
+    /// the old version and miss the next refresh.
     pub async fn build_profile_digest(
         pool: &PgPool,
         profile_id: i64,
         entity: &str,
     ) -> Result<DigestResponse, sqlx::Error> {
-        let mut conn = pool.acquire().await?;
-        let version = super::digest::read_profile(&mut conn, profile_id, entity)
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *tx)
+            .await?;
+        let version = super::digest::read_profile(&mut tx, profile_id, entity)
             .await?
             .unwrap_or(0);
         let (members, max_hlc) = match entity {
-            "profile" => profile_self_members(&mut conn, profile_id).await?,
-            "library" => members_library(&mut conn, profile_id).await?,
-            "playlist" => members_playlist(&mut conn, profile_id).await?,
-            "track" => track_members(&mut conn, profile_id).await?,
+            "profile" => profile_self_members(&mut tx, profile_id).await?,
+            "library" => members_library(&mut tx, profile_id).await?,
+            "playlist" => members_playlist(&mut tx, profile_id).await?,
+            "track" => track_members(&mut tx, profile_id).await?,
             _ => (Vec::new(), None),
         };
+        tx.commit().await?;
         let set_hash = compute_set_hash(&members);
         Ok(DigestResponse {
             set_hash,
@@ -1180,21 +1193,27 @@ pub mod digest_read {
     }
 
     /// Build the digest snapshot for a user-scoped entity
-    /// (`liked_track` / `track_rating`).
+    /// (`liked_track` / `track_rating`). Same REPEATABLE READ tx
+    /// shape as [`build_profile_digest`] — see that header for the
+    /// rationale.
     pub async fn build_user_digest(
         pool: &PgPool,
         user_id: i64,
         entity: &str,
     ) -> Result<DigestResponse, sqlx::Error> {
-        let mut conn = pool.acquire().await?;
-        let version = super::digest::read_user(&mut conn, user_id, entity)
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *tx)
+            .await?;
+        let version = super::digest::read_user(&mut tx, user_id, entity)
             .await?
             .unwrap_or(0);
         let (members, max_hlc) = match entity {
-            "liked_track" => members_user_liked(&mut conn, user_id).await?,
-            "track_rating" => members_user_rating(&mut conn, user_id).await?,
+            "liked_track" => members_user_liked(&mut tx, user_id).await?,
+            "track_rating" => members_user_rating(&mut tx, user_id).await?,
             _ => (Vec::new(), None),
         };
+        tx.commit().await?;
         let set_hash = compute_set_hash(&members);
         Ok(DigestResponse {
             set_hash,

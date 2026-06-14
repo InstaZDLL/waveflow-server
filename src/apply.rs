@@ -303,12 +303,20 @@ mod profile_resolve {
         canon::string(&mut fields, "color_id", color_id);
         let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
 
-        let profile_id = sqlx::query_scalar::<_, i64>(
+        // `RETURNING (xmax = 0) AS inserted` discriminates between a
+        // fresh INSERT (xmax = 0) and a race-window DO UPDATE
+        // (xmax > 0, the existing tx's id). The DO UPDATE branch
+        // here is a self-assignment of `canonical_id` — it doesn't
+        // materially change the row, so bumping the digest on that
+        // path would overcount the version and break the per-RFC
+        // §metadata_digest_version "bump iff payload_hash changes"
+        // invariant.
+        let row: (i64, bool) = sqlx::query_as(
             "INSERT INTO profile (user_id, canonical_id, name, color_id, data_dir, created_at, last_used_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
              VALUES ($1, $2, $3, $4, '', $5, $5, $6, $7, $8, $9) \
              ON CONFLICT (user_id, canonical_id) WHERE canonical_id IS NOT NULL \
                  DO UPDATE SET canonical_id = EXCLUDED.canonical_id \
-             RETURNING id",
+             RETURNING id, (xmax = 0) AS inserted",
         )
         .bind(user_id)
         .bind(canonical_id)
@@ -321,8 +329,11 @@ mod profile_resolve {
         .bind(&payload_hash[..])
         .fetch_one(&mut *conn)
         .await?;
+        let (profile_id, inserted) = row;
 
-        db::digest::bump_profile(conn, profile_id, "profile").await?;
+        if inserted {
+            db::digest::bump_profile(conn, profile_id, "profile").await?;
+        }
         Ok(profile_id)
     }
 }
@@ -787,18 +798,26 @@ mod playlist {
         stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         // Same 2-round-trip pattern as `library::set_field` —
-        // fetch the row's current canonical fields, substitute the
-        // one being set, recompute the hash over the full state,
-        // then UPDATE everything in one statement.
-        let current: Option<(String, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT name, description, color_id, icon_id FROM playlist \
-             WHERE profile_id = $1 AND canonical_id = $2",
+        // fetch the row's current canonical fields + payload_hash,
+        // substitute the one being set, recompute the hash over the
+        // full state, then UPDATE everything in one statement.
+        //
+        // The `payload_hash` round-trip lets us skip the UPDATE +
+        // digest bump when an idempotent re-emit lands the exact
+        // same row state — preserves the §metadata_digest_version
+        // invariant "bump iff payload_hash actually changes".
+        type CurrentRow = (String, Option<String>, String, String, Option<Vec<u8>>);
+        let current: Option<CurrentRow> = sqlx::query_as(
+            "SELECT name, description, color_id, icon_id, payload_hash FROM playlist \
+                 WHERE profile_id = $1 AND canonical_id = $2",
         )
         .bind(profile_id)
         .bind(canonical_id)
         .fetch_optional(&mut *conn)
         .await?;
-        let Some((cur_name, cur_description, cur_color_id, cur_icon_id)) = current else {
+        let Some((cur_name, cur_description, cur_color_id, cur_icon_id, cur_payload_hash)) =
+            current
+        else {
             return Ok(ApplyOutcome::Skipped);
         };
 
@@ -832,6 +851,13 @@ mod playlist {
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
         let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
+        // Skip the UPDATE + digest bump when the new hash equals the
+        // existing one — an idempotent re-emit. The bump-iff-change
+        // invariant matters once Phase B's digest cache ships.
+        if cur_payload_hash.as_deref() == Some(&payload_hash[..]) {
+            return Ok(ApplyOutcome::Applied);
+        }
 
         sqlx::query(
             "UPDATE playlist SET name = $1, description = $2, color_id = $3, icon_id = $4, \
@@ -988,20 +1014,24 @@ mod library {
         now: i64,
         stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
-        // Fetch the row's current canonical fields so the new
-        // payload_hash reflects the FULL row state, not just the
-        // field being set. The 2-round-trip cost is intentional —
-        // it preserves the §metadata_digest_version invariant
-        // (digest bumps iff payload_hash actually changes).
-        let current: Option<(String, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT name, description, color_id, icon_id FROM library \
-             WHERE profile_id = $1 AND canonical_id = $2",
+        // Fetch the row's current canonical fields + payload_hash so
+        // the new hash reflects the FULL row state, AND we can skip
+        // the write when an idempotent re-emit produces the same
+        // hash. The 2-round-trip cost is intentional — it preserves
+        // the §metadata_digest_version invariant ("bump iff
+        // payload_hash actually changes").
+        type CurrentRow = (String, Option<String>, String, String, Option<Vec<u8>>);
+        let current: Option<CurrentRow> = sqlx::query_as(
+            "SELECT name, description, color_id, icon_id, payload_hash FROM library \
+                 WHERE profile_id = $1 AND canonical_id = $2",
         )
         .bind(profile_id)
         .bind(canonical_id)
         .fetch_optional(&mut *conn)
         .await?;
-        let Some((cur_name, cur_description, cur_color_id, cur_icon_id)) = current else {
+        let Some((cur_name, cur_description, cur_color_id, cur_icon_id, cur_payload_hash)) =
+            current
+        else {
             // Row isn't materialised yet — same Skipped treatment
             // as the playlist track-list ops use when the parent
             // hasn't landed. Keeps the op in the durable log so a
@@ -1041,6 +1071,12 @@ mod library {
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
         let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
+        // Same idempotent-skip as `playlist::set_field`: bail before
+        // the write when an exact re-emit produces an unchanged hash.
+        if cur_payload_hash.as_deref() == Some(&payload_hash[..]) {
+            return Ok(ApplyOutcome::Applied);
+        }
 
         sqlx::query(
             "UPDATE library SET name = $1, description = $2, color_id = $3, icon_id = $4, \
