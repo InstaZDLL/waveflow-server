@@ -3798,6 +3798,7 @@ dependencies = [
  "dashmap",
  "dotenvy",
  "futures-util",
+ "hex",
  "hmac 0.13.0",
  "image",
  "jsonwebtoken",
