@@ -1611,6 +1611,111 @@ async fn track_insert_rejects_empty_album_title(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn track_insert_rejects_negative_numeric_field(pool: PgPool) {
+    // Audio metric fields (file_size, duration_ms, track_number,
+    // year, bitrate, sample_rate, channels, bit_depth) must be
+    // non-negative. The apply boundary rejects negative i64 values
+    // before they hit the upsert.
+    let auth = spawn_authenticated(pool.clone(), "apply-track-neg").await;
+    let library_cid = "lib-neg";
+    let file_path = "/music/song.mp3";
+    materialise_library(&auth.base, &auth.token, library_cid, "L").await;
+
+    let mut payload = track_insert_payload(
+        library_cid,
+        "Track",
+        "hash-1",
+        Some("Album"),
+        Some("Artist"),
+        false,
+        &["Artist"],
+    );
+    // Inject a negative bitrate — the wire type accepts it, the
+    // value-domain gate must reject.
+    payload["bitrate"] = json!(-1_i64);
+
+    let status = push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            2,
+            "track",
+            file_path,
+            None,
+            "insert",
+            payload,
+            Some(PROFILE_CID),
+        )],
+    )
+    .await;
+    assert!(
+        !status.is_success(),
+        "negative bitrate MUST fail the push (got {status})"
+    );
+
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE file_path = $1")
+        .bind(file_path)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count.0, 0,
+        "no track row may leak from a rejected negative-value push"
+    );
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn playlist_insert_tracks_rejects_malformed_snapshot_artist(pool: PgPool) {
+    // `snapshots[id].artist` must be string-or-null when present.
+    // A numeric `artist` is a structural payload bug — silently
+    // dropping it would persist a snapshot with missing display
+    // data that the share preview filter can't catch.
+    let auth = spawn_authenticated(pool.clone(), "apply-snap-artist").await;
+    let playlist_cid = "pl-1";
+    assert!(push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            1,
+            "playlist",
+            playlist_cid,
+            None,
+            "insert",
+            json!({ "name": "Soirée" }),
+            Some(PROFILE_CID),
+        )],
+    )
+    .await
+    .is_success());
+
+    let status = push(
+        &auth.base,
+        &auth.token,
+        &[op(
+            Uuid::new_v4(),
+            2,
+            "playlist",
+            playlist_cid,
+            Some("tracks"),
+            "insert",
+            json!({
+                "track_ids": [42],
+                "snapshots": {
+                    "42": { "title": "Song", "artist": 7, "duration_ms": 1000 }
+                }
+            }),
+            Some(PROFILE_CID),
+        )],
+    )
+    .await;
+    assert!(
+        !status.is_success(),
+        "non-string snapshot.artist MUST fail the push (got {status})"
+    );
+}
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn track_insert_set_op_is_unknown(pool: PgPool) {
     // `set` ops on the `track` entity are intentionally Unknown
     // — the desktop's tag-editor save path re-emits a full

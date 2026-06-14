@@ -916,14 +916,33 @@ mod playlist {
                     reason: format!("payload.snapshots[{key}].title missing or not a string"),
                 })?
                 .to_owned();
-            let artist = inner
-                .get("artist")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let duration_ms = inner
-                .get("duration_ms")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
+            // Reject malformed-but-present optional fields rather
+            // than silently dropping them. The module docstring
+            // promises the apply layer rejects corrupt batches up
+            // front; a non-string `artist` or non-integer
+            // `duration_ms` is a structurally broken payload, NOT
+            // an "absent field" we should default away.
+            let artist = match inner.get("artist") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(_) => {
+                    return Err(ApplyError::InvalidPayload {
+                        entity: ENTITY,
+                        op: "tracks",
+                        reason: format!("payload.snapshots[{key}].artist must be a string or null"),
+                    });
+                }
+            };
+            let duration_ms = match inner.get("duration_ms") {
+                None | Some(Value::Null) => 0,
+                Some(v) => v.as_i64().ok_or_else(|| ApplyError::InvalidPayload {
+                    entity: ENTITY,
+                    op: "tracks",
+                    reason: format!(
+                        "payload.snapshots[{key}].duration_ms must be an integer or null"
+                    ),
+                })?,
+            };
             out.insert(
                 track_id,
                 TrackSnapshot {
@@ -1558,6 +1577,21 @@ mod track {
         let sample_rate = payload_i64_optional(op, "sample_rate")?;
         let channels = payload_i64_optional(op, "channels")?;
         let bit_depth = payload_i64_optional(op, "bit_depth")?;
+
+        // Audio metric sanity — every numeric field above represents
+        // a count, size, rate, or year that must be >= 0. The wire
+        // shape allows negative i64 (no schema CHECK on these columns
+        // today) so the apply boundary is the right place to reject
+        // structurally-broken payloads BEFORE they reach the upsert.
+        require_nonneg("file_size", file_size)?;
+        require_nonneg("duration_ms", duration_ms)?;
+        require_nonneg_opt("track_number", track_number)?;
+        require_nonneg_opt("disc_number", disc_number)?;
+        require_nonneg_opt("year", year)?;
+        require_nonneg_opt("bitrate", bitrate)?;
+        require_nonneg_opt("sample_rate", sample_rate)?;
+        require_nonneg_opt("channels", channels)?;
+        require_nonneg_opt("bit_depth", bit_depth)?;
         let codec = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "codec")?;
         let musical_key =
             payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "musical_key")?;
@@ -1829,6 +1863,30 @@ mod track {
                 op: "insert",
                 reason: format!("payload.{key} must be an integer or null"),
             }),
+        }
+    }
+
+    /// Reject negative values on numeric audio-metric fields. The
+    /// helpers above already enforce the wire-shape type; this is
+    /// the value-domain gate. None of these fields make semantic
+    /// sense at `< 0` — a negative file_size, bitrate, duration, or
+    /// year is a structurally broken payload, not a borderline-but-
+    /// valid edge case.
+    fn require_nonneg(key: &'static str, value: i64) -> Result<(), ApplyError> {
+        if value < 0 {
+            return Err(ApplyError::InvalidPayload {
+                entity: ENTITY,
+                op: "insert",
+                reason: format!("payload.{key} must be >= 0, got {value}"),
+            });
+        }
+        Ok(())
+    }
+
+    fn require_nonneg_opt(key: &'static str, value: Option<i64>) -> Result<(), ApplyError> {
+        match value {
+            Some(n) => require_nonneg(key, n),
+            None => Ok(()),
         }
     }
 
