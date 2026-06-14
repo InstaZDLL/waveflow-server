@@ -344,23 +344,23 @@ async fn push_ops(
                         // constraint (auto-named by Postgres). Read
                         // the current max and return it so the v1
                         // client can resync its clock.
-                        let stored_max =
-                            match db::sync::lamport_max(pool, user_id, device_id).await {
-                                Ok(n) => n,
-                                Err(err) => {
-                                    // Surface the read failure rather
-                                    // than masking it behind a `0`
-                                    // that would tell the client
-                                    // "your clock is fine, retry"
-                                    // when it isn't.
-                                    tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        "lamport_max read failed",
-                                    )
-                                        .into_response();
-                                }
-                            };
+                        let stored_max = match db::sync::lamport_max(pool, user_id, device_id).await
+                        {
+                            Ok(n) => n,
+                            Err(err) => {
+                                // Surface the read failure rather
+                                // than masking it behind a `0`
+                                // that would tell the client
+                                // "your clock is fine, retry"
+                                // when it isn't.
+                                tracing::error!(error = %err, user_id, device_id, "lamport_max read failed");
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "lamport_max read failed",
+                                )
+                                    .into_response();
+                            }
+                        };
                         return (
                             StatusCode::CONFLICT,
                             Json(LamportRegression {
