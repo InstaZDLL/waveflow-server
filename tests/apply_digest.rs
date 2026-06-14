@@ -396,3 +396,50 @@ async fn profile_set_name_updates_row_and_bumps_digest(pool: PgPool) {
         "profile digest must be exactly 2 after auto-provision + rename",
     );
 }
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn profile_mismatched_entity_id_rejects_and_skips_provisioning(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "profile-mismatch").await;
+
+    // Op claims to target a profile entity_id that doesn't match
+    // profile_canonical_id. The dispatcher must reject BEFORE
+    // find_or_provision auto-creates a row + bumps the digest.
+    let res = reqwest::Client::new()
+        .post(format!("{}/api/v1/sync/ops", auth.base))
+        .bearer_auth(&auth.token)
+        .json(&json!({
+            "device_id": "device-a",
+            "ops": [op(
+                Uuid::new_v4(),
+                1,
+                "profile",
+                "prof-wrong-entity-id",
+                Some("name"),
+                "set",
+                json!({ "value": "X" }),
+                Some(PROFILE_CID),
+            )],
+        }))
+        .send()
+        .await
+        .unwrap();
+    // Apply pipeline returns 500 on InvalidPayload (caller rolls
+    // back the durable log). The contract for clients is: bad
+    // payload = whole batch rejected.
+    assert_eq!(
+        res.status(),
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        "mismatched entity_id must surface as InvalidPayload"
+    );
+
+    // No profile row was provisioned for PROFILE_CID.
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM profile WHERE canonical_id = $1")
+        .bind(PROFILE_CID)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count.0, 0,
+        "rejected profile op must NOT trigger auto-provisioning"
+    );
+}

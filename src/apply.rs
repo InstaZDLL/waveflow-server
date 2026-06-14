@@ -211,7 +211,7 @@ pub async fn apply_op(
     // missing canonical id surfaces as `Skipped` rather than a
     // silent partial apply.
     match entity {
-        "playlist" | "library" | "track" | "profile" => {
+        "playlist" | "library" | "track" => {
             let Some(profile_canonical) = op.profile_canonical_id.as_deref() else {
                 tracing::debug!(
                     entity = entity,
@@ -231,9 +231,48 @@ pub async fn apply_op(
                 "playlist" => playlist::apply(conn, profile_id, op, created_at, stamp).await,
                 "library" => library::apply(conn, profile_id, op, created_at, stamp).await,
                 "track" => track::apply(conn, profile_id, op, created_at, stamp).await,
-                "profile" => profile::apply(conn, profile_id, op, stamp).await,
                 _ => unreachable!(),
             }
+        }
+        "profile" => {
+            // Profile is unique among the profile-scoped entities:
+            // `entity_id` IS the profile's canonical_id, so we MUST
+            // validate the op shape AND verify entity_id matches
+            // profile_canonical_id BEFORE auto-provisioning. Without
+            // these gates, a malformed op would either (1) trigger
+            // a spurious `find_or_provision` + digest bump on a row
+            // we'd then reject as Unknown, or (2) silently resolve
+            // a profile_id from `profile_canonical_id` while the op
+            // claimed to target `entity_id` — the durable log + the
+            // mutation would diverge.
+            let Some(profile_canonical) = op.profile_canonical_id.as_deref() else {
+                tracing::debug!(
+                    entity = entity,
+                    "apply: missing profile_canonical_id, skipping"
+                );
+                return Ok(ApplyOutcome::Skipped);
+            };
+            match (op.op.as_str(), op.field.as_deref()) {
+                ("set", Some("name" | "color_id")) if op.entity_id == profile_canonical => {}
+                ("set", Some("name" | "color_id")) => {
+                    return Err(ApplyError::InvalidPayload {
+                        entity: "profile",
+                        op: "set",
+                        reason: "entity_id must match profile_canonical_id for profile ops"
+                            .to_owned(),
+                    });
+                }
+                _ => return Ok(ApplyOutcome::Unknown),
+            }
+            let profile_id = profile_resolve::find_or_provision(
+                conn,
+                user_id,
+                profile_canonical,
+                created_at,
+                stamp,
+            )
+            .await?;
+            profile::apply(conn, profile_id, op, stamp).await
         }
         "liked_track" => liked::apply(conn, user_id, op, created_at, stamp).await,
         "track_rating" => rating::apply(conn, user_id, op, created_at, stamp).await,
