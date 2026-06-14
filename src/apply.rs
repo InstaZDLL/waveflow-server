@@ -211,7 +211,7 @@ pub async fn apply_op(
     // missing canonical id surfaces as `Skipped` rather than a
     // silent partial apply.
     match entity {
-        "playlist" | "library" | "track" => {
+        "playlist" | "library" | "track" | "profile" => {
             let Some(profile_canonical) = op.profile_canonical_id.as_deref() else {
                 tracing::debug!(
                     entity = entity,
@@ -231,6 +231,7 @@ pub async fn apply_op(
                 "playlist" => playlist::apply(conn, profile_id, op, created_at, stamp).await,
                 "library" => library::apply(conn, profile_id, op, created_at, stamp).await,
                 "track" => track::apply(conn, profile_id, op, created_at, stamp).await,
+                "profile" => profile::apply(conn, profile_id, op, stamp).await,
                 _ => unreachable!(),
             }
         }
@@ -335,6 +336,114 @@ mod profile_resolve {
             db::digest::bump_profile(conn, profile_id, "profile").await?;
         }
         Ok(profile_id)
+    }
+}
+
+// ---------------------------------------------------------------
+// Profile handlers — set-field for the profile row itself (rename,
+// recolour). INSERT is implicit via `profile_resolve` auto-provision;
+// DELETE has no wire shape (profiles cascade on user delete).
+// ---------------------------------------------------------------
+
+mod profile {
+    use serde_json::Map;
+    use sqlx::PgConnection;
+
+    use crate::db;
+    use crate::payload_hash::compute_payload_hash;
+    use crate::sync::SyncOpIn;
+
+    use super::{canon, payload_string, ApplyError, ApplyOutcome, OpStamp};
+
+    const ENTITY: &str = "profile";
+
+    pub async fn apply(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        op: &SyncOpIn,
+        stamp: OpStamp,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        // `entity_id` IS the profile canonical_id — same value the
+        // dispatcher used to resolve `profile_id`. No second lookup
+        // needed; the resolved id is the only handle we use from
+        // here on.
+        match (op.op.as_str(), op.field.as_deref()) {
+            ("set", Some(field @ ("name" | "color_id"))) => {
+                set_field(conn, profile_id, field, op, stamp).await
+            }
+            _ => Ok(ApplyOutcome::Unknown),
+        }
+    }
+
+    /// Canonical-fields shape for a profile row. Mirrors the
+    /// `profile_resolve` auto-provisioning shape so a freshly-
+    /// provisioned row and a set-field UPDATE hash identically when
+    /// the values are the same.
+    fn canonical_fields(name: &str, color_id: &str) -> Map<String, serde_json::Value> {
+        let mut m = Map::new();
+        canon::string(&mut m, "name", name);
+        canon::string(&mut m, "color_id", color_id);
+        m
+    }
+
+    async fn set_field(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        field: &str,
+        op: &SyncOpIn,
+        stamp: OpStamp,
+    ) -> Result<ApplyOutcome, ApplyError> {
+        // Same SELECT-first / hash-compare / race-window-guarded
+        // pattern as `library::set_field`. See the headers there
+        // for the §metadata_digest_version rationale.
+        type CurrentRow = (String, String, Option<Vec<u8>>);
+        let current: Option<CurrentRow> =
+            sqlx::query_as("SELECT name, color_id, payload_hash FROM profile WHERE id = $1")
+                .bind(profile_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        let Some((cur_name, cur_color_id, cur_payload_hash)) = current else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+
+        let new_value = payload_string(ENTITY, "set", op.payload.as_ref(), "value")?;
+        let (name, color_id) = match field {
+            "name" => (new_value, cur_color_id),
+            "color_id" => (cur_name, new_value),
+            _ => unreachable!("set_field caller already narrowed the field"),
+        };
+
+        let fields = canonical_fields(&name, &color_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
+        if cur_payload_hash.as_deref() == Some(&payload_hash[..]) {
+            return Ok(ApplyOutcome::Applied);
+        }
+
+        // No `updated_at` on the profile schema — `last_used_at`
+        // tracks playback recency, NOT sync writes, so we leave
+        // both timestamp columns alone. The HLC pair carries the
+        // §2 ordering authority instead.
+        let res = sqlx::query(
+            "UPDATE profile SET name = $1, color_id = $2, hlc_wall = $3, hlc_logical = $4, \
+                                origin_device_id = $5, payload_hash = $6 \
+             WHERE id = $7",
+        )
+        .bind(name)
+        .bind(color_id)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
+        .bind(profile_id)
+        .execute(&mut *conn)
+        .await?;
+
+        if res.rows_affected() == 0 {
+            return Ok(ApplyOutcome::Skipped);
+        }
+        db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        Ok(ApplyOutcome::Applied)
     }
 }
 
