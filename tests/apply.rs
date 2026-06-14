@@ -1714,6 +1714,23 @@ async fn playlist_insert_tracks_rejects_malformed_snapshot_artist(pool: PgPool) 
         !status.is_success(),
         "non-string snapshot.artist MUST fail the push (got {status})"
     );
+
+    // Atomicity check: no playlist_track row may leak from a
+    // rejected malformed-snapshot push. Mirrors the COUNT(*) = 0
+    // pattern from `track_insert_rejects_negative_numeric_field`.
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM playlist_track pt
+           JOIN playlist p ON p.id = pt.playlist_id
+          WHERE p.canonical_id = $1",
+    )
+    .bind(playlist_cid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count.0, 0,
+        "no playlist_track row may leak from a rejected malformed-snapshot push"
+    );
 }
 #[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
 async fn track_insert_set_op_is_unknown(pool: PgPool) {
