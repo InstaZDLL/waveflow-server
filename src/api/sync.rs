@@ -267,7 +267,7 @@ async fn push_ops(
                 // can't honour. Skipped / Unknown are NOT errors:
                 // the durable log keeps them so a future server
                 // release can replay during compaction.
-                match crate::apply::apply_op(&mut tx, user_id, op_in, now).await {
+                match crate::apply::apply_op(&mut tx, user_id, device_id, op_in, now).await {
                     Ok(_outcome) => {}
                     Err(err) => {
                         tracing::error!(error = %err, user_id, entity = %op.entity, op = %op.op, "apply failed");

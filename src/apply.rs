@@ -42,8 +42,9 @@
 use serde_json::Value;
 use sqlx::PgConnection;
 use thiserror::Error;
+use uuid::Uuid;
 
-use crate::sync::SyncOpIn;
+use crate::sync::{Hlc, SyncOpIn};
 
 /// Errors the apply pipeline can return. Surfaced to the push
 /// handler so a malformed payload rolls back the durable insert
@@ -58,6 +59,61 @@ pub enum ApplyError {
         op: &'static str,
         reason: String,
     },
+}
+
+/// RFC-003 Phase A.2.2 — every entity write stamp.
+///
+/// Bundles the §2 total-order components the apply handlers stamp
+/// onto entity rows: the effective HLC pair (v2 verbatim or v1-
+/// derived `(0, lamport_ts)`) plus the originator UUID parsed from
+/// the push handler's `device_id`. Both are computed once per op
+/// in `apply_op` so every downstream handler binds the same values.
+///
+/// `origin_device_id` stays `None` when the push handler's
+/// `device_id` is not UUID-shaped — legacy v1 desktops use free-form
+/// strings there. A legacy NULL on the entity row is documented in
+/// the A.1.2 migration header; the HlcTriple comparator
+/// (`payload_hash::HlcTriple`) treats `None < Some(any)` so legacy
+/// rows lose to v2 ops on the tiebreaker.
+///
+/// `Copy` so each handler can pass it by value without lifetime
+/// gymnastics.
+#[derive(Debug, Clone, Copy)]
+pub struct OpStamp {
+    pub hlc: Hlc,
+    pub origin_device_id: Option<Uuid>,
+}
+
+/// Compute the effective HLC pair for an inbound op.
+///
+/// V2 ops carry an explicit `hlc` (validated `wall >= 0`,
+/// `logical >= 0` at the API boundary). V1 ops are derived from
+/// `lamport_ts` exactly the way A.1.1's `sync_op` backfill
+/// does — `(0, lamport_ts)` — so the §2 total order treats any v2
+/// op (`wall > 0`) as strictly newer than every legacy-derived row.
+///
+/// V1 path narrowing safety: the push handler's `db::sync::insert_op_returning`
+/// already validated `lamport_ts in 0..=i32::MAX` upstream before
+/// calling apply, so the `as i32` here can't truncate. Saturating to
+/// i32::MAX on the apply side as a defence-in-depth keeps a future
+/// refactor that bypasses the gate from silently flapping bytes.
+pub fn effective_hlc(op: &SyncOpIn) -> Hlc {
+    match op.hlc {
+        Some(h) => h,
+        None => Hlc {
+            wall: 0,
+            logical: op.lamport_ts.clamp(0, i64::from(i32::MAX)) as i32,
+        },
+    }
+}
+
+/// Parse the push handler's `device_id` string as a UUID. Returns
+/// `None` when the string isn't UUID-shaped — that's the legacy v1
+/// case (desktops emit free-form device names). The apply handlers
+/// then stamp `origin_device_id = NULL` onto the row; A.1.2's
+/// migration header documents this as the v1-legacy backfill shape.
+pub fn parse_origin_device_id(device_id: &str) -> Option<Uuid> {
+    Uuid::parse_str(device_id).ok()
 }
 
 /// Discriminates between "applied", "recognised but skipped", and
@@ -82,13 +138,23 @@ pub enum ApplyOutcome {
 /// in the caller's transaction, the `(user_id, device_id, lamport_ts)`
 /// UNIQUE has passed, and the caller holds an open `PgConnection`
 /// that the entity write will share.
+///
+/// `device_id` is the push handler's `PushBatchRequest::device_id` —
+/// the wire-shape carrier for the §2 originator. The apply pipeline
+/// parses it as a UUID for entity-row `origin_device_id` stamping;
+/// non-UUID strings (legacy v1 desktops) stamp NULL.
 pub async fn apply_op(
     conn: &mut PgConnection,
     user_id: i64,
+    device_id: &str,
     op: &SyncOpIn,
     created_at: i64,
 ) -> Result<ApplyOutcome, ApplyError> {
     let entity = op.entity.as_str();
+    let stamp = OpStamp {
+        hlc: effective_hlc(op),
+        origin_device_id: parse_origin_device_id(device_id),
+    };
 
     // Profile routing prerequisite — every entity below is profile-
     // scoped except `liked_track` / `track_rating`, which key on
@@ -105,18 +171,23 @@ pub async fn apply_op(
                 );
                 return Ok(ApplyOutcome::Skipped);
             };
-            let profile_id =
-                profile_resolve::find_or_provision(conn, user_id, profile_canonical, created_at)
-                    .await?;
+            let profile_id = profile_resolve::find_or_provision(
+                conn,
+                user_id,
+                profile_canonical,
+                created_at,
+                stamp,
+            )
+            .await?;
             match entity {
-                "playlist" => playlist::apply(conn, profile_id, op, created_at).await,
-                "library" => library::apply(conn, profile_id, op, created_at).await,
-                "track" => track::apply(conn, profile_id, op, created_at).await,
+                "playlist" => playlist::apply(conn, profile_id, op, created_at, stamp).await,
+                "library" => library::apply(conn, profile_id, op, created_at, stamp).await,
+                "track" => track::apply(conn, profile_id, op, created_at, stamp).await,
                 _ => unreachable!(),
             }
         }
-        "liked_track" => liked::apply(conn, user_id, op, created_at).await,
-        "track_rating" => rating::apply(conn, user_id, op, created_at).await,
+        "liked_track" => liked::apply(conn, user_id, op, created_at, stamp).await,
+        "track_rating" => rating::apply(conn, user_id, op, created_at, stamp).await,
         // Forward-compatibility: unknown entities are logged but
         // never error. The durable log keeps the row so a future
         // server release can replay through compaction.
@@ -134,7 +205,7 @@ pub async fn apply_op(
 mod profile_resolve {
     use sqlx::PgConnection;
 
-    use super::ApplyError;
+    use super::{ApplyError, OpStamp};
 
     /// Resolve a profile canonical id to a server `profile.id`.
     /// Auto-provisions the row if it's the first op for that
@@ -145,11 +216,17 @@ mod profile_resolve {
     /// Read-first / write-on-miss, same shape as
     /// `users::find_or_provision_by_external_id` — the common path
     /// (every op for an already-synced profile) is a single SELECT.
+    ///
+    /// RFC-003 Phase A.2.2 — the auto-provisioned row carries the
+    /// originating op's `(hlc_wall, hlc_logical, origin_device_id)`
+    /// so any future `profile + set name` op can be totally ordered
+    /// against the row's current state under §2.
     pub async fn find_or_provision(
         conn: &mut PgConnection,
         user_id: i64,
         canonical_id: &str,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<i64, ApplyError> {
         if let Some(id) = sqlx::query_scalar::<_, i64>(
             "SELECT id FROM profile WHERE user_id = $1 AND canonical_id = $2",
@@ -168,8 +245,8 @@ mod profile_resolve {
         // keeps RETURNING firing so the loser of the race still
         // gets the winner's id.
         sqlx::query_scalar::<_, i64>(
-            "INSERT INTO profile (user_id, canonical_id, name, color_id, data_dir, created_at, last_used_at) \
-             VALUES ($1, $2, $3, $4, '', $5, $5) \
+            "INSERT INTO profile (user_id, canonical_id, name, color_id, data_dir, created_at, last_used_at, hlc_wall, hlc_logical, origin_device_id) \
+             VALUES ($1, $2, $3, $4, '', $5, $5, $6, $7, $8) \
              ON CONFLICT (user_id, canonical_id) WHERE canonical_id IS NOT NULL \
                  DO UPDATE SET canonical_id = EXCLUDED.canonical_id \
              RETURNING id",
@@ -179,6 +256,9 @@ mod profile_resolve {
         .bind("Synced profile")
         .bind("violet")
         .bind(now)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
         .fetch_one(&mut *conn)
         .await
         .map_err(Into::into)
@@ -280,7 +360,7 @@ mod playlist {
     use crate::db::playlist_track::TrackSnapshot;
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
+    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
 
     const ENTITY: &str = "playlist";
 
@@ -289,17 +369,18 @@ mod playlist {
         profile_id: i64,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         let canonical_id = op.entity_id.as_str();
 
         match (op.op.as_str(), op.field.as_deref()) {
             // Whole-entity create.
-            ("insert", None) => insert(conn, profile_id, canonical_id, op, now).await,
+            ("insert", None) => insert(conn, profile_id, canonical_id, op, now, stamp).await,
             // Whole-entity delete.
             ("delete", None) => delete(conn, profile_id, canonical_id).await,
             // Partial scalar update (name / description / color_id / icon_id).
             ("set", Some(field @ ("name" | "description" | "color_id" | "icon_id"))) => {
-                set_field(conn, profile_id, canonical_id, field, op, now).await
+                set_field(conn, profile_id, canonical_id, field, op, now, stamp).await
             }
             // Track-list mutations (Phase 1.j.a). Desktop emits:
             // - `insert tracks` with `payload.track_ids: [N, …]`
@@ -331,6 +412,7 @@ mod playlist {
         canonical_id: &str,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         let name = payload_string(ENTITY, "insert", op.payload.as_ref(), "name")?;
         let description =
@@ -345,8 +427,8 @@ mod playlist {
         // retry of the same insert is a no-op rather than an error.
         sqlx::query(
             "INSERT INTO playlist \
-                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $7) \
+                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10) \
              ON CONFLICT (profile_id, canonical_id) WHERE canonical_id IS NOT NULL DO NOTHING",
         )
         .bind(profile_id)
@@ -356,6 +438,9 @@ mod playlist {
         .bind(color_id)
         .bind(icon_id)
         .bind(now)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
         .execute(&mut *conn)
         .await?;
 
@@ -605,16 +690,21 @@ mod playlist {
         field: &str,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         // `description` is the only nullable column among the
         // four — distinguish so a `{ "value": null }` payload
         // explicitly clears it rather than failing the string
         // extraction.
+        //
+        // SET each scalar field alongside hlc + origin_device_id so
+        // the row's §2 total-order tuple stays in sync with whatever
+        // wrote the field.
         let sql_with_value = match field {
-            "name" => "UPDATE playlist SET name = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "color_id" => "UPDATE playlist SET color_id = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "icon_id" => "UPDATE playlist SET icon_id = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "description" => "UPDATE playlist SET description = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
+            "name" => "UPDATE playlist SET name = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "color_id" => "UPDATE playlist SET color_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "icon_id" => "UPDATE playlist SET icon_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "description" => "UPDATE playlist SET description = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
             _ => unreachable!("set_field caller already narrowed the field"),
         };
 
@@ -625,6 +715,9 @@ mod playlist {
                 .bind(now)
                 .bind(profile_id)
                 .bind(canonical_id)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
         } else {
@@ -634,6 +727,9 @@ mod playlist {
                 .bind(now)
                 .bind(profile_id)
                 .bind(canonical_id)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
         }
@@ -651,7 +747,7 @@ mod library {
 
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
+    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
 
     const ENTITY: &str = "library";
 
@@ -660,14 +756,15 @@ mod library {
         profile_id: i64,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         let canonical_id = op.entity_id.as_str();
 
         match (op.op.as_str(), op.field.as_deref()) {
-            ("insert", None) => insert(conn, profile_id, canonical_id, op, now).await,
+            ("insert", None) => insert(conn, profile_id, canonical_id, op, now, stamp).await,
             ("delete", None) => delete(conn, profile_id, canonical_id).await,
             ("set", Some(field @ ("name" | "description" | "color_id" | "icon_id"))) => {
-                set_field(conn, profile_id, canonical_id, field, op, now).await
+                set_field(conn, profile_id, canonical_id, field, op, now, stamp).await
             }
             _ => Ok(ApplyOutcome::Unknown),
         }
@@ -679,6 +776,7 @@ mod library {
         canonical_id: &str,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         let name = payload_string(ENTITY, "insert", op.payload.as_ref(), "name")?;
         let description =
@@ -690,8 +788,8 @@ mod library {
 
         sqlx::query(
             "INSERT INTO library \
-                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $7) \
+                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10) \
              ON CONFLICT (profile_id, canonical_id) WHERE canonical_id IS NOT NULL DO NOTHING",
         )
         .bind(profile_id)
@@ -701,6 +799,9 @@ mod library {
         .bind(color_id)
         .bind(icon_id)
         .bind(now)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
         .execute(&mut *conn)
         .await?;
 
@@ -727,12 +828,18 @@ mod library {
         field: &str,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
+        // SET each scalar field alongside hlc + origin_device_id so
+        // the row's §2 total-order tuple stays in sync with whatever
+        // wrote the field. payload_hash + metadata_digest_version
+        // bump are deferred to A.2.3 (the digest endpoint that
+        // actually consumes them).
         let sql = match field {
-            "name" => "UPDATE library SET name = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "color_id" => "UPDATE library SET color_id = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "icon_id" => "UPDATE library SET icon_id = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
-            "description" => "UPDATE library SET description = $1, updated_at = $2 WHERE profile_id = $3 AND canonical_id = $4",
+            "name" => "UPDATE library SET name = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "color_id" => "UPDATE library SET color_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "icon_id" => "UPDATE library SET icon_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+            "description" => "UPDATE library SET description = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
             _ => unreachable!("set_field caller already narrowed the field"),
         };
 
@@ -743,6 +850,9 @@ mod library {
                 .bind(now)
                 .bind(profile_id)
                 .bind(canonical_id)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
         } else {
@@ -752,6 +862,9 @@ mod library {
                 .bind(now)
                 .bind(profile_id)
                 .bind(canonical_id)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
         }
@@ -769,13 +882,14 @@ mod liked {
 
     use crate::sync::SyncOpIn;
 
-    use super::{ApplyError, ApplyOutcome};
+    use super::{ApplyError, ApplyOutcome, OpStamp};
 
     pub async fn apply(
         conn: &mut PgConnection,
         user_id: i64,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         // `entity_id` IS the file_hash for like / rating ops —
         // tracks have no canonical_id because the audio content
@@ -785,13 +899,17 @@ mod liked {
         match (op.op.as_str(), op.field.as_deref()) {
             ("insert", None) => {
                 sqlx::query(
-                    "INSERT INTO user_liked_track (user_id, file_hash, liked_at) \
-                     VALUES ($1, $2, $3) \
+                    "INSERT INTO user_liked_track \
+                        (user_id, file_hash, liked_at, hlc_wall, hlc_logical, origin_device_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6) \
                      ON CONFLICT (user_id, file_hash) DO NOTHING",
                 )
                 .bind(user_id)
                 .bind(file_hash)
                 .bind(now)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
                 Ok(ApplyOutcome::Applied)
@@ -818,7 +936,7 @@ mod rating {
 
     use crate::sync::SyncOpIn;
 
-    use super::{payload_i64, ApplyError, ApplyOutcome};
+    use super::{payload_i64, ApplyError, ApplyOutcome, OpStamp};
 
     const ENTITY: &str = "track_rating";
 
@@ -827,6 +945,7 @@ mod rating {
         user_id: i64,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         let file_hash = op.entity_id.as_str();
 
@@ -842,16 +961,27 @@ mod rating {
                 }
                 // UPSERT so a later op for the same file replaces
                 // the rating instead of inserting a duplicate row.
+                // SET hlc + origin_device_id on the UPDATE path too
+                // so the row's §2 total-order tuple reflects the
+                // latest op, not the first one that landed.
                 sqlx::query(
-                    "INSERT INTO user_track_rating (user_id, file_hash, rating, updated_at) \
-                     VALUES ($1, $2, $3, $4) \
+                    "INSERT INTO user_track_rating \
+                        (user_id, file_hash, rating, updated_at, hlc_wall, hlc_logical, origin_device_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7) \
                      ON CONFLICT (user_id, file_hash) DO UPDATE \
-                         SET rating = EXCLUDED.rating, updated_at = EXCLUDED.updated_at",
+                         SET rating = EXCLUDED.rating, \
+                             updated_at = EXCLUDED.updated_at, \
+                             hlc_wall = EXCLUDED.hlc_wall, \
+                             hlc_logical = EXCLUDED.hlc_logical, \
+                             origin_device_id = EXCLUDED.origin_device_id",
                 )
                 .bind(user_id)
                 .bind(file_hash)
                 .bind(value)
                 .bind(now)
+                .bind(stamp.hlc.wall)
+                .bind(stamp.hlc.logical)
+                .bind(stamp.origin_device_id)
                 .execute(&mut *conn)
                 .await?;
                 Ok(ApplyOutcome::Applied)
@@ -913,7 +1043,7 @@ mod track {
     };
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome};
+    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
 
     const ENTITY: &str = "track";
 
@@ -922,12 +1052,13 @@ mod track {
         profile_id: i64,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         // entity_id IS the file_path for tracks — see module
         // banner for the design rationale.
         let file_path = op.entity_id.as_str();
         match (op.op.as_str(), op.field.as_deref()) {
-            ("insert", None) => insert(conn, profile_id, file_path, op, now).await,
+            ("insert", None) => insert(conn, profile_id, file_path, op, now, stamp).await,
             ("delete", None) => delete(conn, profile_id, file_path, op).await,
             // `set` is reserved for a future incremental-edit flow.
             // The desktop's current tag-editor saves rewrite the
@@ -944,6 +1075,7 @@ mod track {
         file_path: &str,
         op: &SyncOpIn,
         now: i64,
+        stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
         // Library is the tenant scope for the track. A missing
         // library canonical id means the desktop bug-emitted an
@@ -1077,6 +1209,9 @@ mod track {
             musical_key: musical_key.as_deref(),
             added_at,
             album_id,
+            hlc_wall: stamp.hlc.wall,
+            hlc_logical: stamp.hlc.logical,
+            origin_device_id: stamp.origin_device_id,
         };
         let track_id = upsert_track(conn, &input).await?;
 

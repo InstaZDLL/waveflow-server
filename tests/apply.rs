@@ -1747,3 +1747,217 @@ async fn track_insert_cross_tenant_library_canonical_skips(pool: PgPool) {
     .unwrap();
     assert_eq!(alice_track_count.0, 0, "Alice's library must remain empty");
 }
+
+// RFC-003 Phase A.2.2 — entity rows must carry the HLC + origin_device_id
+// triple stamped by the apply pipeline. Three cases: v1 op (no `hlc`)
+// derives `(0, lamport_ts)`, v2 op echoes the pair verbatim, and a
+// non-UUID device_id stamps `origin_device_id = NULL`.
+
+const DEVICE_UUID: &str = "11111111-1111-4111-8111-111111111111";
+
+async fn push_with_device(
+    base: &str,
+    token: &str,
+    device_id: &str,
+    op_value: Value,
+) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .post(format!("{base}/api/v1/sync/ops"))
+        .bearer_auth(token)
+        .json(&json!({ "device_id": device_id, "ops": [op_value] }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn library_insert_v1_stamps_derived_hlc_and_uuid_origin(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "stamp-v1").await;
+
+    let status = push_with_device(
+        &auth.base,
+        &auth.token,
+        DEVICE_UUID,
+        op(
+            Uuid::new_v4(),
+            42,
+            "library",
+            "lib-1",
+            None,
+            "insert",
+            json!({ "name": "Bandes-son" }),
+            Some(PROFILE_CID),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "v1 push failed: {status}");
+
+    let row: (i64, i32, Option<Uuid>) = sqlx::query_as(
+        "SELECT hlc_wall, hlc_logical, origin_device_id
+           FROM library
+          WHERE canonical_id = $1",
+    )
+    .bind("lib-1")
+    .fetch_one(&pool)
+    .await
+    .expect("library row not materialised");
+
+    // V1 derivation: (0, lamport_ts).
+    assert_eq!(row.0, 0);
+    assert_eq!(row.1, 42);
+    // Device id is UUID-shaped → parsed as origin_device_id.
+    assert_eq!(row.2, Some(Uuid::parse_str(DEVICE_UUID).unwrap()));
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn library_insert_v2_stamps_verbatim_hlc(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "stamp-v2").await;
+
+    let mut op_value = op(
+        Uuid::new_v4(),
+        1,
+        "library",
+        "lib-1",
+        None,
+        "insert",
+        json!({ "name": "Live" }),
+        Some(PROFILE_CID),
+    );
+    op_value["hlc"] = json!({ "wall": 1_700_000_000_000_i64, "logical": 7 });
+
+    let status = push_with_device(&auth.base, &auth.token, DEVICE_UUID, op_value).await;
+    assert!(status.is_success(), "v2 push failed: {status}");
+
+    let row: (i64, i32, Option<Uuid>) = sqlx::query_as(
+        "SELECT hlc_wall, hlc_logical, origin_device_id
+           FROM library
+          WHERE canonical_id = $1",
+    )
+    .bind("lib-1")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, 1_700_000_000_000_i64);
+    assert_eq!(row.1, 7);
+    assert_eq!(row.2, Some(Uuid::parse_str(DEVICE_UUID).unwrap()));
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn library_insert_non_uuid_device_id_stamps_null_origin(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "stamp-legacy").await;
+
+    let status = push_with_device(
+        &auth.base,
+        &auth.token,
+        "legacy-mac-pro",
+        op(
+            Uuid::new_v4(),
+            1,
+            "library",
+            "lib-1",
+            None,
+            "insert",
+            json!({ "name": "Démos" }),
+            Some(PROFILE_CID),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "legacy push failed: {status}");
+
+    let origin: Option<Uuid> =
+        sqlx::query_scalar("SELECT origin_device_id FROM library WHERE canonical_id = $1")
+            .bind("lib-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(origin, None, "non-UUID device_id must stamp NULL");
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn liked_insert_stamps_hlc_on_user_scoped_row(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "stamp-liked").await;
+
+    let mut op_value = op(
+        Uuid::new_v4(),
+        1,
+        "liked_track",
+        "blake3-hash-aabbcc",
+        None,
+        "insert",
+        json!({}),
+        Some(PROFILE_CID),
+    );
+    op_value["hlc"] = json!({ "wall": 1_700_000_000_500_i64, "logical": 3 });
+
+    let status = push_with_device(&auth.base, &auth.token, DEVICE_UUID, op_value).await;
+    assert!(status.is_success());
+
+    let row: (i64, i32, Option<Uuid>) = sqlx::query_as(
+        "SELECT hlc_wall, hlc_logical, origin_device_id
+           FROM user_liked_track
+          WHERE file_hash = $1",
+    )
+    .bind("blake3-hash-aabbcc")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, 1_700_000_000_500_i64);
+    assert_eq!(row.1, 3);
+    assert_eq!(row.2, Some(Uuid::parse_str(DEVICE_UUID).unwrap()));
+}
+
+#[sqlx::test(migrator = "waveflow_server::db::MIGRATOR")]
+async fn rating_upsert_refreshes_hlc_on_overwrite(pool: PgPool) {
+    let auth = spawn_authenticated(pool.clone(), "stamp-rating").await;
+
+    // First push at hlc (1700.., 1).
+    let mut first = op(
+        Uuid::new_v4(),
+        1,
+        "track_rating",
+        "blake3-rating",
+        None,
+        "set",
+        json!({ "value": 200 }),
+        Some(PROFILE_CID),
+    );
+    first["hlc"] = json!({ "wall": 1_700_000_000_000_i64, "logical": 1 });
+    assert!(push_with_device(&auth.base, &auth.token, DEVICE_UUID, first)
+        .await
+        .is_success());
+
+    // Second push at hlc (1700.., 9) — UPSERT overwrites.
+    let mut second = op(
+        Uuid::new_v4(),
+        2,
+        "track_rating",
+        "blake3-rating",
+        None,
+        "set",
+        json!({ "value": 100 }),
+        Some(PROFILE_CID),
+    );
+    second["hlc"] = json!({ "wall": 1_700_000_000_000_i64, "logical": 9 });
+    assert!(push_with_device(&auth.base, &auth.token, DEVICE_UUID, second)
+        .await
+        .is_success());
+
+    let row: (i64, i32, i64) = sqlx::query_as(
+        "SELECT hlc_wall, hlc_logical, rating
+           FROM user_track_rating
+          WHERE file_hash = $1",
+    )
+    .bind("blake3-rating")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // UPSERT path stamps the latest op's hlc (Phase A still LWW
+    // implicit via sync_op.id order; true LWW gate lands in Phase C).
+    assert_eq!(row.0, 1_700_000_000_000_i64);
+    assert_eq!(row.1, 9);
+    assert_eq!(row.2, 100);
+}
