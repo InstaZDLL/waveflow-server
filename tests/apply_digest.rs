@@ -178,10 +178,9 @@ async fn library_set_field_recomputes_hash_and_bumps_digest(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(
-        library_version.0 >= 2,
-        "library digest must bump on set_field (was {})",
-        library_version.0
+    assert_eq!(
+        library_version.0, 2,
+        "library digest must be exactly 2 after insert + set_field — any other value would mean a spurious bump (e.g. set_field bumping twice, or library handler accidentally bumping the profile counter)",
     );
 }
 
