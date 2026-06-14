@@ -40,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     db,
     middleware::UserId,
-    sync::{build_broadcast, Hlc, SyncOp, SyncOpIn},
+    sync::{build_broadcast, DigestResponse, Hlc, SyncOp, SyncOpIn},
     AppState,
 };
 
@@ -126,10 +126,23 @@ struct WsQuery {
     device_id: String,
 }
 
+/// Query parameters for `GET /api/v1/sync/digest`. `entity` is
+/// required; `profile_canonical_id` is required for profile-scoped
+/// entities (`profile` / `library` / `playlist` / `track`) and
+/// MUST be omitted for user-scoped entities (`liked_track` /
+/// `track_rating`). The endpoint returns 400 on a mismatched pair.
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub struct DigestQuery {
+    pub entity: String,
+    #[serde(default)]
+    pub profile_canonical_id: Option<String>,
+}
+
 pub fn router(state: AppState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(push_ops, pull_ops))
         .routes(routes!(ack_ops))
+        .routes(routes!(get_digest))
         .route("/api/v1/sync/ws", axum::routing::get(ws_upgrade))
         .with_state(state)
 }
@@ -512,6 +525,98 @@ async fn ack_ops(
         Utc::now().timestamp_millis(),
     );
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// RFC-003 §4 digest snapshot. The desktop's per-(profile, entity)
+/// or per-(user, entity) cursor calls this to find out whether its
+/// local materialised state agrees with the server's. Equal
+/// `set_hash` ⇒ in sync; mismatch ⇒ recompute member-level hashes
+/// and pull the divergent rows.
+///
+/// `entity` is required. Profile-scoped entities (`profile` /
+/// `library` / `playlist` / `track`) require `profile_canonical_id`
+/// — the per-tenant scope. User-scoped ones (`liked_track` /
+/// `track_rating`) reject it (these tables are keyed on user_id,
+/// not profile). The endpoint returns 400 on a mismatched pair.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sync/digest",
+    tag = "sync",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        DigestQuery,
+    ),
+    responses(
+        (status = 200, description = "Per-(scope, entity) digest snapshot", body = DigestResponse),
+        (status = 400, description = "Missing/empty `entity`, or profile_canonical_id mismatched against entity scope"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 404, description = "profile_canonical_id is not visible to this user"),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn get_digest(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Query(query): Query<DigestQuery>,
+) -> impl IntoResponse {
+    let entity = query.entity.trim();
+    if entity.is_empty() {
+        return (StatusCode::BAD_REQUEST, "entity is required").into_response();
+    }
+
+    enum Scope {
+        Profile(i64),
+        User,
+    }
+
+    let scope = match entity {
+        "profile" | "library" | "playlist" | "track" => {
+            let Some(canonical) = query.profile_canonical_id.as_deref() else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "profile_canonical_id is required for profile-scoped entities",
+                )
+                    .into_response();
+            };
+            match db::digest_read::resolve_profile_id(state.sync.pool(), user_id, canonical).await {
+                Ok(Some(id)) => Scope::Profile(id),
+                Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                Err(err) => {
+                    tracing::error!(error = %err, user_id, "digest profile resolve failed");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "profile resolve failed")
+                        .into_response();
+                }
+            }
+        }
+        "liked_track" | "track_rating" => {
+            if query.profile_canonical_id.is_some() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "profile_canonical_id must be omitted for user-scoped entities",
+                )
+                    .into_response();
+            }
+            Scope::User
+        }
+        _ => {
+            return (StatusCode::BAD_REQUEST, "unknown entity").into_response();
+        }
+    };
+
+    let pool = state.sync.pool();
+    let snapshot = match scope {
+        Scope::Profile(profile_id) => {
+            db::digest_read::build_profile_digest(pool, profile_id, entity).await
+        }
+        Scope::User => db::digest_read::build_user_digest(pool, user_id, entity).await,
+    };
+    match snapshot {
+        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
+        Err(err) => {
+            tracing::error!(error = %err, entity, "digest read failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "digest read failed").into_response()
+        }
+    }
 }
 
 /// WebSocket upgrade. The `device_id` rides in the query string so the

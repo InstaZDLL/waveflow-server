@@ -789,6 +789,7 @@ pub mod track_sync {
         pub hlc_wall: i64,
         pub hlc_logical: i32,
         pub origin_device_id: Option<uuid::Uuid>,
+        pub payload_hash: &'a [u8],
     }
 
     /// Insert or update the artist row keyed on `(library_id,
@@ -873,11 +874,11 @@ pub mod track_sync {
                 duration_ms, track_number, disc_number, year,
                 bitrate, sample_rate, channels, bit_depth, codec,
                 musical_key, added_at, album_id,
-                hlc_wall, hlc_logical, origin_device_id
+                hlc_wall, hlc_logical, origin_device_id, payload_hash
              )
              VALUES (
                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16, $17, $18, $19, $20
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
              )
              ON CONFLICT (library_id, file_path) DO UPDATE
                  SET title = EXCLUDED.title,
@@ -896,7 +897,8 @@ pub mod track_sync {
                      album_id = EXCLUDED.album_id,
                      hlc_wall = EXCLUDED.hlc_wall,
                      hlc_logical = EXCLUDED.hlc_logical,
-                     origin_device_id = EXCLUDED.origin_device_id
+                     origin_device_id = EXCLUDED.origin_device_id,
+                     payload_hash = EXCLUDED.payload_hash
              RETURNING id",
         )
         .bind(input.library_id)
@@ -919,6 +921,7 @@ pub mod track_sync {
         .bind(input.hlc_wall)
         .bind(input.hlc_logical)
         .bind(input.origin_device_id)
+        .bind(input.payload_hash)
         .fetch_one(&mut *conn)
         .await
     }
@@ -1005,6 +1008,455 @@ pub mod track_sync {
         .bind(library_canonical_id)
         .fetch_optional(&mut *conn)
         .await
+    }
+}
+
+/// RFC-003 §metadata_digest_version helpers.
+///
+/// Two monotone counters live behind the digest endpoint: one keyed
+/// `(profile_id, entity)` for profile-scoped entities (profile /
+/// library / playlist / track / playlist_track), and one keyed
+/// `(user_id, entity)` for user-scoped ones (liked_track /
+/// track_rating). Every apply handler that writes a row whose
+/// `payload_hash` would change calls the appropriate bump within the
+/// same transaction — the digest endpoint then reads the version on
+/// entry and compares to its cached snapshot to decide whether to
+/// rebuild.
+///
+/// `version` defaults to `1` on first bump. A bump is `INSERT … ON
+/// CONFLICT DO UPDATE SET version = + 1` so two concurrent writes
+/// on the same key serialise atomically through the unique-row
+/// lock instead of racing to read-modify-write.
+pub mod digest {
+    use sqlx::PgConnection;
+
+    /// Bump the profile-scoped digest counter for `(profile_id,
+    /// entity)`. Idempotent at the per-tx level — calling twice in
+    /// the same transaction increments twice (one per logical
+    /// write), which is what the per-handler bump-on-write rule
+    /// asks for.
+    pub async fn bump_profile(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        entity: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO metadata_digest_version (profile_id, entity, version) \
+             VALUES ($1, $2, 1) \
+             ON CONFLICT (profile_id, entity) DO UPDATE \
+                 SET version = metadata_digest_version.version + 1",
+        )
+        .bind(profile_id)
+        .bind(entity)
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Bump the user-scoped digest counter for `(user_id, entity)`.
+    /// Same shape as [`bump_profile`] but targets
+    /// `user_metadata_digest_version` (A.2.2.0).
+    pub async fn bump_user(
+        conn: &mut PgConnection,
+        user_id: i64,
+        entity: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO user_metadata_digest_version (user_id, entity, version) \
+             VALUES ($1, $2, 1) \
+             ON CONFLICT (user_id, entity) DO UPDATE \
+                 SET version = user_metadata_digest_version.version + 1",
+        )
+        .bind(user_id)
+        .bind(entity)
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Read the profile-scoped counter. `None` when no write has
+    /// landed yet — the digest endpoint treats that as version `0`
+    /// + empty set.
+    pub async fn read_profile(
+        conn: &mut PgConnection,
+        profile_id: i64,
+        entity: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT version FROM metadata_digest_version \
+             WHERE profile_id = $1 AND entity = $2",
+        )
+        .bind(profile_id)
+        .bind(entity)
+        .fetch_optional(&mut *conn)
+        .await
+    }
+
+    /// Read the user-scoped counter. Same `None`-on-no-rows
+    /// semantics as [`read_profile`].
+    pub async fn read_user(
+        conn: &mut PgConnection,
+        user_id: i64,
+        entity: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT version FROM user_metadata_digest_version \
+             WHERE user_id = $1 AND entity = $2",
+        )
+        .bind(user_id)
+        .bind(entity)
+        .fetch_optional(&mut *conn)
+        .await
+    }
+}
+
+/// `GET /api/v1/sync/digest` read path (RFC-003 §4 / §metadata_digest_version).
+///
+/// Three SELECTs per request:
+///   1. The monotone counter (`metadata_digest_version` or
+///      `user_metadata_digest_version`).
+///   2. Every materialised row's `(canonical_id_or_file_hash,
+///      payload_hash)` filtered on `payload_hash IS NOT NULL`.
+///      Rows that haven't been re-emitted by an A.2.3 desktop yet
+///      stay NULL and are excluded — the digest can't say
+///      "in sync" about a row it can't hash.
+///   3. The highest `(hlc_wall, hlc_logical, origin_device_id)`
+///      triple across the same row set (LIMIT 1, ordered desc).
+///
+/// `set_hash` is computed inside this module so the wire shape stays
+/// owned by one boundary. Members are sorted by canonical_id before
+/// hashing per RFC-003 §4 so two replicas computing the same set
+/// arrive at the same `[u8; 32]`.
+pub mod digest_read {
+    use blake3::Hasher;
+    use sqlx::{PgConnection, PgPool, Row};
+    use uuid::Uuid;
+
+    use crate::sync::{DigestMember, DigestResponse, MaxHlc};
+
+    /// Resolve `(user_id, profile_canonical_id)` to the server's
+    /// `profile.id`. `None` covers the cross-tenant case — the
+    /// caller maps that to 404 so the response never leaks "this
+    /// canonical id exists on another user".
+    pub async fn resolve_profile_id(
+        pool: &PgPool,
+        user_id: i64,
+        canonical_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT id FROM profile WHERE user_id = $1 AND canonical_id = $2")
+            .bind(user_id)
+            .bind(canonical_id)
+            .fetch_optional(pool)
+            .await
+    }
+
+    /// Build the digest snapshot for a profile-scoped entity.
+    /// Dispatches on `entity` to pick the right table + filter
+    /// column. Unknown entities are filtered out at the API layer
+    /// before reaching here.
+    pub async fn build_profile_digest(
+        pool: &PgPool,
+        profile_id: i64,
+        entity: &str,
+    ) -> Result<DigestResponse, sqlx::Error> {
+        let mut conn = pool.acquire().await?;
+        let version = super::digest::read_profile(&mut conn, profile_id, entity)
+            .await?
+            .unwrap_or(0);
+        let (members, max_hlc) = match entity {
+            "profile" => profile_self_members(&mut conn, profile_id).await?,
+            "library" => members_library(&mut conn, profile_id).await?,
+            "playlist" => members_playlist(&mut conn, profile_id).await?,
+            "track" => track_members(&mut conn, profile_id).await?,
+            _ => (Vec::new(), None),
+        };
+        let set_hash = compute_set_hash(&members);
+        Ok(DigestResponse {
+            set_hash,
+            version,
+            max_hlc,
+            members,
+        })
+    }
+
+    /// Build the digest snapshot for a user-scoped entity
+    /// (`liked_track` / `track_rating`).
+    pub async fn build_user_digest(
+        pool: &PgPool,
+        user_id: i64,
+        entity: &str,
+    ) -> Result<DigestResponse, sqlx::Error> {
+        let mut conn = pool.acquire().await?;
+        let version = super::digest::read_user(&mut conn, user_id, entity)
+            .await?
+            .unwrap_or(0);
+        let (members, max_hlc) = match entity {
+            "liked_track" => members_user_liked(&mut conn, user_id).await?,
+            "track_rating" => members_user_rating(&mut conn, user_id).await?,
+            _ => (Vec::new(), None),
+        };
+        let set_hash = compute_set_hash(&members);
+        Ok(DigestResponse {
+            set_hash,
+            version,
+            max_hlc,
+            members,
+        })
+    }
+
+    /// For the `profile` entity the digest set is just the row
+    /// itself — the user's `profile` rows that match the canonical
+    /// id we resolved upstream. The "canonical_id" in the member
+    /// list is the profile's canonical_id so it round-trips through
+    /// the desktop's by-canonical-id map.
+    async fn profile_self_members(
+        conn: &mut PgConnection,
+        profile_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT canonical_id, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+             FROM profile WHERE id = $1 AND payload_hash IS NOT NULL",
+        )
+        .bind(profile_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let Some(row) = row else {
+            return Ok((Vec::new(), None));
+        };
+        let canonical_id: Option<String> = row.get("canonical_id");
+        let payload_hash: Vec<u8> = row.get("payload_hash");
+        let wall: i64 = row.get("hlc_wall");
+        let logical: i32 = row.get("hlc_logical");
+        let origin: Option<Uuid> = row.get("origin_device_id");
+        let Some(canonical_id) = canonical_id else {
+            return Ok((Vec::new(), None));
+        };
+        let member = DigestMember {
+            canonical_id,
+            payload_hash: hex::encode(&payload_hash),
+        };
+        let max = Some(MaxHlc {
+            wall,
+            logical,
+            origin_device_id: origin,
+        });
+        Ok((vec![member], max))
+    }
+
+    /// Profile-scoped members for the simple `(canonical_id,
+    /// payload_hash)` shape (`library` / `playlist`).
+    ///
+    /// sqlx 0.9's `SqlSafeStr` refuses to bind a `&String` to
+    /// `sqlx::query` (the "audit dynamic SQL" rule the
+    /// Phase 1.b.5 memory captured), so we keep two distinct
+    /// literal queries per table rather than building one
+    /// at runtime — the `entity` discriminant is already a
+    /// whitelisted literal from the API layer.
+    async fn members_library(
+        conn: &mut PgConnection,
+        profile_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT canonical_id, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+             FROM library \
+             WHERE profile_id = $1 AND canonical_id IS NOT NULL AND payload_hash IS NOT NULL \
+             ORDER BY canonical_id",
+        )
+        .bind(profile_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(collect_canonical_members(&rows))
+    }
+
+    async fn members_playlist(
+        conn: &mut PgConnection,
+        profile_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT canonical_id, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+             FROM playlist \
+             WHERE profile_id = $1 AND canonical_id IS NOT NULL AND payload_hash IS NOT NULL \
+             ORDER BY canonical_id",
+        )
+        .bind(profile_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(collect_canonical_members(&rows))
+    }
+
+    fn collect_canonical_members(
+        rows: &[sqlx::postgres::PgRow],
+    ) -> (Vec<DigestMember>, Option<MaxHlc>) {
+        let mut members = Vec::with_capacity(rows.len());
+        let mut max: Option<(i64, i32, Option<Uuid>)> = None;
+        for row in rows {
+            let canonical_id: String = row.get("canonical_id");
+            let payload_hash: Vec<u8> = row.get("payload_hash");
+            let wall: i64 = row.get("hlc_wall");
+            let logical: i32 = row.get("hlc_logical");
+            let origin: Option<Uuid> = row.get("origin_device_id");
+            members.push(DigestMember {
+                canonical_id,
+                payload_hash: hex::encode(&payload_hash),
+            });
+            update_max(&mut max, wall, logical, origin);
+        }
+        (members, max.map(into_max_hlc))
+    }
+
+    /// Track members — keyed on `(library_canonical_id, file_path)`
+    /// rather than a single canonical_id because tracks don't have
+    /// a canonical_id of their own (the file_path under a library
+    /// is the per-tenant identity). The desktop's digest comparator
+    /// keys on the same composite — see the apply pipeline's
+    /// `track::insert` header.
+    async fn track_members(
+        conn: &mut PgConnection,
+        profile_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT l.canonical_id AS lib_canonical, t.file_path, \
+                    t.payload_hash, t.hlc_wall, t.hlc_logical, t.origin_device_id \
+             FROM track t \
+             JOIN library l ON l.id = t.library_id \
+             WHERE l.profile_id = $1 \
+               AND l.canonical_id IS NOT NULL \
+               AND t.payload_hash IS NOT NULL \
+             ORDER BY l.canonical_id, t.file_path",
+        )
+        .bind(profile_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut members = Vec::with_capacity(rows.len());
+        let mut max: Option<(i64, i32, Option<Uuid>)> = None;
+        for row in &rows {
+            let lib_canonical: String = row.get("lib_canonical");
+            let file_path: String = row.get("file_path");
+            let payload_hash: Vec<u8> = row.get("payload_hash");
+            let wall: i64 = row.get("hlc_wall");
+            let logical: i32 = row.get("hlc_logical");
+            let origin: Option<Uuid> = row.get("origin_device_id");
+            // `\u{1f}` (ASCII Unit Separator) is a safe joiner —
+            // file paths can contain almost anything, but the
+            // unit-separator byte (0x1F) is illegal in real
+            // filesystem paths. Keeps the composite key trivially
+            // splittable on the desktop side.
+            let composite = format!("{lib_canonical}\u{1f}{file_path}");
+            members.push(DigestMember {
+                canonical_id: composite,
+                payload_hash: hex::encode(&payload_hash),
+            });
+            update_max(&mut max, wall, logical, origin);
+        }
+        Ok((members, max.map(into_max_hlc)))
+    }
+
+    /// User-scoped liked members. `file_hash` is the canonical id
+    /// at this layer (audio content's BLAKE3 per the apply pipeline
+    /// design). Hardcoded SQL per entity for sqlx 0.9's
+    /// `SqlSafeStr` rule.
+    async fn members_user_liked(
+        conn: &mut PgConnection,
+        user_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT file_hash, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+             FROM user_liked_track \
+             WHERE user_id = $1 AND payload_hash IS NOT NULL \
+             ORDER BY file_hash",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(collect_file_hash_members(&rows))
+    }
+
+    async fn members_user_rating(
+        conn: &mut PgConnection,
+        user_id: i64,
+    ) -> Result<(Vec<DigestMember>, Option<MaxHlc>), sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT file_hash, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+             FROM user_track_rating \
+             WHERE user_id = $1 AND payload_hash IS NOT NULL \
+             ORDER BY file_hash",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(collect_file_hash_members(&rows))
+    }
+
+    fn collect_file_hash_members(
+        rows: &[sqlx::postgres::PgRow],
+    ) -> (Vec<DigestMember>, Option<MaxHlc>) {
+        let mut members = Vec::with_capacity(rows.len());
+        let mut max: Option<(i64, i32, Option<Uuid>)> = None;
+        for row in rows {
+            let file_hash: String = row.get("file_hash");
+            let payload_hash: Vec<u8> = row.get("payload_hash");
+            let wall: i64 = row.get("hlc_wall");
+            let logical: i32 = row.get("hlc_logical");
+            let origin: Option<Uuid> = row.get("origin_device_id");
+            members.push(DigestMember {
+                canonical_id: file_hash,
+                payload_hash: hex::encode(&payload_hash),
+            });
+            update_max(&mut max, wall, logical, origin);
+        }
+        (members, max.map(into_max_hlc))
+    }
+
+    fn update_max(
+        current: &mut Option<(i64, i32, Option<Uuid>)>,
+        wall: i64,
+        logical: i32,
+        origin: Option<Uuid>,
+    ) {
+        let candidate = (wall, logical, origin);
+        match current {
+            Some(curr) if *curr >= candidate => {}
+            _ => *current = Some(candidate),
+        }
+    }
+
+    fn into_max_hlc((wall, logical, origin_device_id): (i64, i32, Option<Uuid>)) -> MaxHlc {
+        MaxHlc {
+            wall,
+            logical,
+            origin_device_id,
+        }
+    }
+
+    /// Members are already sorted by canonical_id before being
+    /// handed here. The hash feeds in `(canonical_id_len_le_u32,
+    /// canonical_id_bytes, payload_hash_bytes)` per member so two
+    /// distinct canonical ids with payload hashes that, when
+    /// concatenated, would alias, can't collide on the set hash.
+    fn compute_set_hash(members: &[DigestMember]) -> String {
+        let mut hasher = Hasher::new();
+        for m in members {
+            let id_bytes = m.canonical_id.as_bytes();
+            hasher.update(&(id_bytes.len() as u32).to_le_bytes());
+            hasher.update(id_bytes);
+            // payload_hash is hex-encoded on the wire but we hash
+            // the bytes here for compactness — decode once.
+            match hex::decode(&m.payload_hash) {
+                Ok(bytes) => {
+                    hasher.update(&(bytes.len() as u32).to_le_bytes());
+                    hasher.update(&bytes);
+                }
+                Err(_) => {
+                    // Corrupt hex in the DB — hash the empty payload
+                    // for that member. The digest endpoint then
+                    // returns a set_hash that diverges from any
+                    // replica with valid hex, which surfaces the
+                    // corruption at the next sync.
+                    hasher.update(&0u32.to_le_bytes());
+                }
+            }
+        }
+        hex::encode(hasher.finalize().as_bytes())
     }
 }
 

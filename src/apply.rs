@@ -116,6 +116,54 @@ pub fn parse_origin_device_id(device_id: &str) -> Option<Uuid> {
     Uuid::parse_str(device_id).ok()
 }
 
+/// Helper — build a `Map<String, Value>` of the canonical synced
+/// fields for an entity row. Used at INSERT / UPSERT / SET_FIELD
+/// sites to compute the row's `payload_hash`.
+///
+/// `Option<String>` collapses to `Value::Null` so the canonical form
+/// distinguishes "field cleared" from "field set to empty string".
+/// `i64` / `bool` / `Vec<String>` map to their JSON equivalents
+/// directly.
+#[allow(dead_code)]
+mod canon {
+    use serde_json::{Map, Value};
+
+    pub fn opt_string(map: &mut Map<String, Value>, key: &str, value: Option<&str>) {
+        map.insert(
+            key.to_string(),
+            value
+                .map(|s| Value::String(s.to_string()))
+                .unwrap_or(Value::Null),
+        );
+    }
+
+    pub fn string(map: &mut Map<String, Value>, key: &str, value: &str) {
+        map.insert(key.to_string(), Value::String(value.to_string()));
+    }
+
+    pub fn opt_i64(map: &mut Map<String, Value>, key: &str, value: Option<i64>) {
+        map.insert(
+            key.to_string(),
+            value.map(Value::from).unwrap_or(Value::Null),
+        );
+    }
+
+    pub fn i64(map: &mut Map<String, Value>, key: &str, value: i64) {
+        map.insert(key.to_string(), Value::from(value));
+    }
+
+    pub fn bool(map: &mut Map<String, Value>, key: &str, value: bool) {
+        map.insert(key.to_string(), Value::Bool(value));
+    }
+
+    pub fn strings(map: &mut Map<String, Value>, key: &str, values: &[String]) {
+        map.insert(
+            key.to_string(),
+            Value::Array(values.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+}
+
 /// Discriminates between "applied", "recognised but skipped", and
 /// "unknown". Telemetry-only — the push handler always commits the
 /// durable log row regardless of the outcome.
@@ -203,9 +251,13 @@ pub async fn apply_op(
 // ---------------------------------------------------------------
 
 mod profile_resolve {
+    use serde_json::Map;
     use sqlx::PgConnection;
 
-    use super::{ApplyError, OpStamp};
+    use crate::db;
+    use crate::payload_hash::compute_payload_hash;
+
+    use super::{canon, ApplyError, OpStamp};
 
     /// Resolve a profile canonical id to a server `profile.id`.
     /// Auto-provisions the row if it's the first op for that
@@ -244,24 +296,34 @@ mod profile_resolve {
         // landed between our SELECT and INSERT. The no-op DO UPDATE
         // keeps RETURNING firing so the loser of the race still
         // gets the winner's id.
-        sqlx::query_scalar::<_, i64>(
-            "INSERT INTO profile (user_id, canonical_id, name, color_id, data_dir, created_at, last_used_at, hlc_wall, hlc_logical, origin_device_id) \
-             VALUES ($1, $2, $3, $4, '', $5, $5, $6, $7, $8) \
+        let name = "Synced profile";
+        let color_id = "violet";
+        let mut fields = Map::new();
+        canon::string(&mut fields, "name", name);
+        canon::string(&mut fields, "color_id", color_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
+        let profile_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO profile (user_id, canonical_id, name, color_id, data_dir, created_at, last_used_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
+             VALUES ($1, $2, $3, $4, '', $5, $5, $6, $7, $8, $9) \
              ON CONFLICT (user_id, canonical_id) WHERE canonical_id IS NOT NULL \
                  DO UPDATE SET canonical_id = EXCLUDED.canonical_id \
              RETURNING id",
         )
         .bind(user_id)
         .bind(canonical_id)
-        .bind("Synced profile")
-        .bind("violet")
+        .bind(name)
+        .bind(color_id)
         .bind(now)
         .bind(stamp.hlc.wall)
         .bind(stamp.hlc.logical)
         .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
         .fetch_one(&mut *conn)
-        .await
-        .map_err(Into::into)
+        .await?;
+
+        db::digest::bump_profile(conn, profile_id, "profile").await?;
+        Ok(profile_id)
     }
 }
 
@@ -357,12 +419,33 @@ mod playlist {
     use serde_json::Value;
     use sqlx::PgConnection;
 
-    use crate::db::playlist_track::TrackSnapshot;
+    use serde_json::Map;
+
+    use crate::db::{self, playlist_track::TrackSnapshot};
+    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
+    use super::{
+        canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
+    };
 
     const ENTITY: &str = "playlist";
+
+    /// Canonical-fields shape for a playlist row. Mirrors `library`
+    /// since both share the same 4-scalar wire shape.
+    fn canonical_fields(
+        name: &str,
+        description: Option<&str>,
+        color_id: &str,
+        icon_id: &str,
+    ) -> Map<String, serde_json::Value> {
+        let mut m = Map::new();
+        canon::string(&mut m, "name", name);
+        canon::opt_string(&mut m, "description", description);
+        canon::string(&mut m, "color_id", color_id);
+        canon::string(&mut m, "icon_id", icon_id);
+        m
+    }
 
     pub async fn apply(
         conn: &mut PgConnection,
@@ -422,13 +505,16 @@ mod playlist {
         let icon_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "icon_id")?
             .unwrap_or_else(|| "music".to_owned());
 
+        let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
         // ON CONFLICT (profile_id, canonical_id) DO NOTHING — the
         // partial unique index from the migration covers this. A
         // retry of the same insert is a no-op rather than an error.
-        sqlx::query(
+        let res = sqlx::query(
             "INSERT INTO playlist \
-                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10) \
+                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11) \
              ON CONFLICT (profile_id, canonical_id) WHERE canonical_id IS NOT NULL DO NOTHING",
         )
         .bind(profile_id)
@@ -441,8 +527,13 @@ mod playlist {
         .bind(stamp.hlc.wall)
         .bind(stamp.hlc.logical)
         .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
         .execute(&mut *conn)
         .await?;
+
+        if res.rows_affected() > 0 {
+            db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        }
 
         Ok(ApplyOutcome::Applied)
     }
@@ -452,11 +543,14 @@ mod playlist {
         profile_id: i64,
         canonical_id: &str,
     ) -> Result<ApplyOutcome, ApplyError> {
-        sqlx::query("DELETE FROM playlist WHERE profile_id = $1 AND canonical_id = $2")
+        let res = sqlx::query("DELETE FROM playlist WHERE profile_id = $1 AND canonical_id = $2")
             .bind(profile_id)
             .bind(canonical_id)
             .execute(&mut *conn)
             .await?;
+        if res.rows_affected() > 0 {
+            db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        }
         Ok(ApplyOutcome::Applied)
     }
 
@@ -692,48 +786,74 @@ mod playlist {
         now: i64,
         stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
-        // `description` is the only nullable column among the
-        // four — distinguish so a `{ "value": null }` payload
-        // explicitly clears it rather than failing the string
-        // extraction.
-        //
-        // SET each scalar field alongside hlc + origin_device_id so
-        // the row's §2 total-order tuple stays in sync with whatever
-        // wrote the field.
-        let sql_with_value = match field {
-            "name" => "UPDATE playlist SET name = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "color_id" => "UPDATE playlist SET color_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "icon_id" => "UPDATE playlist SET icon_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "description" => "UPDATE playlist SET description = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+        // Same 2-round-trip pattern as `library::set_field` —
+        // fetch the row's current canonical fields, substitute the
+        // one being set, recompute the hash over the full state,
+        // then UPDATE everything in one statement.
+        let current: Option<(String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT name, description, color_id, icon_id FROM playlist \
+             WHERE profile_id = $1 AND canonical_id = $2",
+        )
+        .bind(profile_id)
+        .bind(canonical_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let Some((cur_name, cur_description, cur_color_id, cur_icon_id)) = current else {
+            return Ok(ApplyOutcome::Skipped);
+        };
+
+        let (name, description, color_id, icon_id) = match field {
+            "name" => (
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_description,
+                cur_color_id,
+                cur_icon_id,
+            ),
+            "description" => (
+                cur_name,
+                payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_color_id,
+                cur_icon_id,
+            ),
+            "color_id" => (
+                cur_name,
+                cur_description,
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_icon_id,
+            ),
+            "icon_id" => (
+                cur_name,
+                cur_description,
+                cur_color_id,
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+            ),
             _ => unreachable!("set_field caller already narrowed the field"),
         };
 
-        if field == "description" {
-            let value = payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?;
-            sqlx::query(sql_with_value)
-                .bind(value)
-                .bind(now)
-                .bind(profile_id)
-                .bind(canonical_id)
-                .bind(stamp.hlc.wall)
-                .bind(stamp.hlc.logical)
-                .bind(stamp.origin_device_id)
-                .execute(&mut *conn)
-                .await?;
-        } else {
-            let value = payload_string(ENTITY, "set", op.payload.as_ref(), "value")?;
-            sqlx::query(sql_with_value)
-                .bind(value)
-                .bind(now)
-                .bind(profile_id)
-                .bind(canonical_id)
-                .bind(stamp.hlc.wall)
-                .bind(stamp.hlc.logical)
-                .bind(stamp.origin_device_id)
-                .execute(&mut *conn)
-                .await?;
-        }
+        let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
 
+        sqlx::query(
+            "UPDATE playlist SET name = $1, description = $2, color_id = $3, icon_id = $4, \
+                                 updated_at = $5, hlc_wall = $6, hlc_logical = $7, \
+                                 origin_device_id = $8, payload_hash = $9 \
+             WHERE profile_id = $10 AND canonical_id = $11",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(color_id)
+        .bind(icon_id)
+        .bind(now)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
+        .bind(profile_id)
+        .bind(canonical_id)
+        .execute(&mut *conn)
+        .await?;
+
+        db::digest::bump_profile(conn, profile_id, ENTITY).await?;
         Ok(ApplyOutcome::Applied)
     }
 }
@@ -743,11 +863,16 @@ mod playlist {
 // ---------------------------------------------------------------
 
 mod library {
+    use serde_json::Map;
     use sqlx::PgConnection;
 
+    use crate::db;
+    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
+    use super::{
+        canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
+    };
 
     const ENTITY: &str = "library";
 
@@ -770,6 +895,24 @@ mod library {
         }
     }
 
+    /// Build the canonical-fields map (alphabetical via the BTreeMap
+    /// sort in `payload_hash::canonical_serialize`) for the library
+    /// row. Used at every write site so all paths hash the same
+    /// shape.
+    fn canonical_fields(
+        name: &str,
+        description: Option<&str>,
+        color_id: &str,
+        icon_id: &str,
+    ) -> Map<String, serde_json::Value> {
+        let mut m = Map::new();
+        canon::string(&mut m, "name", name);
+        canon::opt_string(&mut m, "description", description);
+        canon::string(&mut m, "color_id", color_id);
+        canon::string(&mut m, "icon_id", icon_id);
+        m
+    }
+
     async fn insert(
         conn: &mut PgConnection,
         profile_id: i64,
@@ -786,10 +929,13 @@ mod library {
         let icon_id = payload_optional_string(ENTITY, "insert", op.payload.as_ref(), "icon_id")?
             .unwrap_or_else(|| "library".to_owned());
 
-        sqlx::query(
+        let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
+        let res = sqlx::query(
             "INSERT INTO library \
-                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10) \
+                (profile_id, canonical_id, name, description, color_id, icon_id, created_at, updated_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11) \
              ON CONFLICT (profile_id, canonical_id) WHERE canonical_id IS NOT NULL DO NOTHING",
         )
         .bind(profile_id)
@@ -802,8 +948,15 @@ mod library {
         .bind(stamp.hlc.wall)
         .bind(stamp.hlc.logical)
         .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
         .execute(&mut *conn)
         .await?;
+
+        // ON CONFLICT DO NOTHING absorbs duplicate inserts — only
+        // bump the digest counter when a fresh row actually landed.
+        if res.rows_affected() > 0 {
+            db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        }
 
         Ok(ApplyOutcome::Applied)
     }
@@ -813,11 +966,16 @@ mod library {
         profile_id: i64,
         canonical_id: &str,
     ) -> Result<ApplyOutcome, ApplyError> {
-        sqlx::query("DELETE FROM library WHERE profile_id = $1 AND canonical_id = $2")
+        let res = sqlx::query("DELETE FROM library WHERE profile_id = $1 AND canonical_id = $2")
             .bind(profile_id)
             .bind(canonical_id)
             .execute(&mut *conn)
             .await?;
+        // Deleting a row removes it from the digest set — bump only
+        // when something actually disappeared.
+        if res.rows_affected() > 0 {
+            db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        }
         Ok(ApplyOutcome::Applied)
     }
 
@@ -830,45 +988,81 @@ mod library {
         now: i64,
         stamp: OpStamp,
     ) -> Result<ApplyOutcome, ApplyError> {
-        // SET each scalar field alongside hlc + origin_device_id so
-        // the row's §2 total-order tuple stays in sync with whatever
-        // wrote the field. payload_hash + metadata_digest_version
-        // bump are deferred to A.2.3 (the digest endpoint that
-        // actually consumes them).
-        let sql = match field {
-            "name" => "UPDATE library SET name = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "color_id" => "UPDATE library SET color_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "icon_id" => "UPDATE library SET icon_id = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
-            "description" => "UPDATE library SET description = $1, updated_at = $2, hlc_wall = $5, hlc_logical = $6, origin_device_id = $7 WHERE profile_id = $3 AND canonical_id = $4",
+        // Fetch the row's current canonical fields so the new
+        // payload_hash reflects the FULL row state, not just the
+        // field being set. The 2-round-trip cost is intentional —
+        // it preserves the §metadata_digest_version invariant
+        // (digest bumps iff payload_hash actually changes).
+        let current: Option<(String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT name, description, color_id, icon_id FROM library \
+             WHERE profile_id = $1 AND canonical_id = $2",
+        )
+        .bind(profile_id)
+        .bind(canonical_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let Some((cur_name, cur_description, cur_color_id, cur_icon_id)) = current else {
+            // Row isn't materialised yet — same Skipped treatment
+            // as the playlist track-list ops use when the parent
+            // hasn't landed. Keeps the op in the durable log so a
+            // later replay (after the insert lands) can apply it.
+            return Ok(ApplyOutcome::Skipped);
+        };
+
+        // Substitute the one field being set; other three stay as
+        // fetched.
+        let (name, description, color_id, icon_id) = match field {
+            "name" => (
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_description,
+                cur_color_id,
+                cur_icon_id,
+            ),
+            "description" => (
+                cur_name,
+                payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_color_id,
+                cur_icon_id,
+            ),
+            "color_id" => (
+                cur_name,
+                cur_description,
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+                cur_icon_id,
+            ),
+            "icon_id" => (
+                cur_name,
+                cur_description,
+                cur_color_id,
+                payload_string(ENTITY, "set", op.payload.as_ref(), "value")?,
+            ),
             _ => unreachable!("set_field caller already narrowed the field"),
         };
 
-        if field == "description" {
-            let value = payload_optional_string(ENTITY, "set", op.payload.as_ref(), "value")?;
-            sqlx::query(sql)
-                .bind(value)
-                .bind(now)
-                .bind(profile_id)
-                .bind(canonical_id)
-                .bind(stamp.hlc.wall)
-                .bind(stamp.hlc.logical)
-                .bind(stamp.origin_device_id)
-                .execute(&mut *conn)
-                .await?;
-        } else {
-            let value = payload_string(ENTITY, "set", op.payload.as_ref(), "value")?;
-            sqlx::query(sql)
-                .bind(value)
-                .bind(now)
-                .bind(profile_id)
-                .bind(canonical_id)
-                .bind(stamp.hlc.wall)
-                .bind(stamp.hlc.logical)
-                .bind(stamp.origin_device_id)
-                .execute(&mut *conn)
-                .await?;
-        }
+        let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
 
+        sqlx::query(
+            "UPDATE library SET name = $1, description = $2, color_id = $3, icon_id = $4, \
+                                updated_at = $5, hlc_wall = $6, hlc_logical = $7, \
+                                origin_device_id = $8, payload_hash = $9 \
+             WHERE profile_id = $10 AND canonical_id = $11",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(color_id)
+        .bind(icon_id)
+        .bind(now)
+        .bind(stamp.hlc.wall)
+        .bind(stamp.hlc.logical)
+        .bind(stamp.origin_device_id)
+        .bind(&payload_hash[..])
+        .bind(profile_id)
+        .bind(canonical_id)
+        .execute(&mut *conn)
+        .await?;
+
+        db::digest::bump_profile(conn, profile_id, ENTITY).await?;
         Ok(ApplyOutcome::Applied)
     }
 }
@@ -878,11 +1072,16 @@ mod library {
 // ---------------------------------------------------------------
 
 mod liked {
+    use serde_json::Map;
     use sqlx::PgConnection;
 
+    use crate::db;
+    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
 
     use super::{ApplyError, ApplyOutcome, OpStamp};
+
+    const ENTITY: &str = "liked_track";
 
     pub async fn apply(
         conn: &mut PgConnection,
@@ -898,23 +1097,28 @@ mod liked {
 
         match (op.op.as_str(), op.field.as_deref()) {
             ("insert", None) => {
+                // Liked is a binary state — no payload fields
+                // beyond the row identity itself. The canonical
+                // form is just `{}` so payload_hash distinguishes
+                // rows purely by HLC + origin under the §2 tuple.
+                let fields = Map::new();
+                let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
                 // UPSERT path mirrors `rating::set` — on conflict
                 // refresh the row's §2 total-order tuple AND the
                 // `liked_at` timestamp so the materialised row
                 // reflects the latest winning op, not the first one
-                // that landed. Without this the digest endpoint
-                // (A.2.3) would see two replicas converge on
-                // different HLCs whenever both devices like the
-                // same file.
+                // that landed.
                 sqlx::query(
                     "INSERT INTO user_liked_track \
-                        (user_id, file_hash, liked_at, hlc_wall, hlc_logical, origin_device_id) \
-                     VALUES ($1, $2, $3, $4, $5, $6) \
+                        (user_id, file_hash, liked_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7) \
                      ON CONFLICT (user_id, file_hash) DO UPDATE \
                          SET liked_at = EXCLUDED.liked_at, \
                              hlc_wall = EXCLUDED.hlc_wall, \
                              hlc_logical = EXCLUDED.hlc_logical, \
-                             origin_device_id = EXCLUDED.origin_device_id",
+                             origin_device_id = EXCLUDED.origin_device_id, \
+                             payload_hash = EXCLUDED.payload_hash",
                 )
                 .bind(user_id)
                 .bind(file_hash)
@@ -922,16 +1126,24 @@ mod liked {
                 .bind(stamp.hlc.wall)
                 .bind(stamp.hlc.logical)
                 .bind(stamp.origin_device_id)
+                .bind(&payload_hash[..])
                 .execute(&mut *conn)
                 .await?;
+
+                db::digest::bump_user(conn, user_id, ENTITY).await?;
                 Ok(ApplyOutcome::Applied)
             }
             ("delete", None) => {
-                sqlx::query("DELETE FROM user_liked_track WHERE user_id = $1 AND file_hash = $2")
-                    .bind(user_id)
-                    .bind(file_hash)
-                    .execute(&mut *conn)
-                    .await?;
+                let res = sqlx::query(
+                    "DELETE FROM user_liked_track WHERE user_id = $1 AND file_hash = $2",
+                )
+                .bind(user_id)
+                .bind(file_hash)
+                .execute(&mut *conn)
+                .await?;
+                if res.rows_affected() > 0 {
+                    db::digest::bump_user(conn, user_id, ENTITY).await?;
+                }
                 Ok(ApplyOutcome::Applied)
             }
             _ => Ok(ApplyOutcome::Unknown),
@@ -946,9 +1158,13 @@ mod liked {
 mod rating {
     use sqlx::PgConnection;
 
+    use serde_json::Map;
+
+    use crate::db;
+    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
 
-    use super::{payload_i64, ApplyError, ApplyOutcome, OpStamp};
+    use super::{canon, payload_i64, ApplyError, ApplyOutcome, OpStamp};
 
     const ENTITY: &str = "track_rating";
 
@@ -971,6 +1187,11 @@ mod rating {
                         reason: format!("rating {value} out of 0..=255 POPM range"),
                     });
                 }
+
+                let mut fields = Map::new();
+                canon::i64(&mut fields, "rating", value);
+                let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+
                 // UPSERT so a later op for the same file replaces
                 // the rating instead of inserting a duplicate row.
                 // SET hlc + origin_device_id on the UPDATE path too
@@ -978,14 +1199,15 @@ mod rating {
                 // latest op, not the first one that landed.
                 sqlx::query(
                     "INSERT INTO user_track_rating \
-                        (user_id, file_hash, rating, updated_at, hlc_wall, hlc_logical, origin_device_id) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                        (user_id, file_hash, rating, updated_at, hlc_wall, hlc_logical, origin_device_id, payload_hash) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                      ON CONFLICT (user_id, file_hash) DO UPDATE \
                          SET rating = EXCLUDED.rating, \
                              updated_at = EXCLUDED.updated_at, \
                              hlc_wall = EXCLUDED.hlc_wall, \
                              hlc_logical = EXCLUDED.hlc_logical, \
-                             origin_device_id = EXCLUDED.origin_device_id",
+                             origin_device_id = EXCLUDED.origin_device_id, \
+                             payload_hash = EXCLUDED.payload_hash",
                 )
                 .bind(user_id)
                 .bind(file_hash)
@@ -994,16 +1216,24 @@ mod rating {
                 .bind(stamp.hlc.wall)
                 .bind(stamp.hlc.logical)
                 .bind(stamp.origin_device_id)
+                .bind(&payload_hash[..])
                 .execute(&mut *conn)
                 .await?;
+
+                db::digest::bump_user(conn, user_id, ENTITY).await?;
                 Ok(ApplyOutcome::Applied)
             }
             ("delete", None) => {
-                sqlx::query("DELETE FROM user_track_rating WHERE user_id = $1 AND file_hash = $2")
-                    .bind(user_id)
-                    .bind(file_hash)
-                    .execute(&mut *conn)
-                    .await?;
+                let res = sqlx::query(
+                    "DELETE FROM user_track_rating WHERE user_id = $1 AND file_hash = $2",
+                )
+                .bind(user_id)
+                .bind(file_hash)
+                .execute(&mut *conn)
+                .await?;
+                if res.rows_affected() > 0 {
+                    db::digest::bump_user(conn, user_id, ENTITY).await?;
+                }
                 Ok(ApplyOutcome::Applied)
             }
             _ => Ok(ApplyOutcome::Unknown),
@@ -1049,13 +1279,21 @@ mod track {
     use serde_json::Value;
     use sqlx::PgConnection;
 
-    use crate::db::track_sync::{
-        delete_track, lookup_library_id, replace_track_artists, upsert_album, upsert_artist,
-        upsert_track, ArtistLinkInput, TrackInput,
+    use serde_json::Map;
+
+    use crate::db::{
+        self,
+        track_sync::{
+            delete_track, lookup_library_id, replace_track_artists, upsert_album, upsert_artist,
+            upsert_track, ArtistLinkInput, TrackInput,
+        },
     };
+    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
 
-    use super::{payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp};
+    use super::{
+        canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
+    };
 
     const ENTITY: &str = "track";
 
@@ -1202,7 +1440,35 @@ mod track {
             None => None,
         };
 
-        // 4. Upsert the track row.
+        // 4. Build the canonical-fields map for payload_hash. Album
+        // / artist names ride along so a re-emit with corrected
+        // metadata changes the hash and bumps the digest.
+        let mut canonical = Map::new();
+        canon::string(&mut canonical, "title", &title);
+        canon::string(&mut canonical, "file_hash", &file_hash);
+        canon::i64(&mut canonical, "file_size", file_size);
+        canon::i64(&mut canonical, "duration_ms", duration_ms);
+        canon::opt_i64(&mut canonical, "track_number", track_number);
+        canon::opt_i64(&mut canonical, "disc_number", disc_number);
+        canon::opt_i64(&mut canonical, "year", year);
+        canon::opt_i64(&mut canonical, "bitrate", bitrate);
+        canon::opt_i64(&mut canonical, "sample_rate", sample_rate);
+        canon::opt_i64(&mut canonical, "channels", channels);
+        canon::opt_i64(&mut canonical, "bit_depth", bit_depth);
+        canon::opt_string(&mut canonical, "codec", codec.as_deref());
+        canon::opt_string(&mut canonical, "musical_key", musical_key.as_deref());
+        canon::i64(&mut canonical, "added_at", added_at);
+        canon::opt_string(&mut canonical, "album_title", album_title.as_deref());
+        canon::opt_string(
+            &mut canonical,
+            "album_artist_name",
+            album_artist_name.as_deref(),
+        );
+        canon::bool(&mut canonical, "is_compilation", is_compilation);
+        canon::strings(&mut canonical, "artists", &artists);
+        let payload_hash = compute_payload_hash(&canonical, stamp.hlc, stamp.origin_device_id);
+
+        // 5. Upsert the track row.
         let input = TrackInput {
             library_id,
             file_hash: &file_hash,
@@ -1224,11 +1490,16 @@ mod track {
             hlc_wall: stamp.hlc.wall,
             hlc_logical: stamp.hlc.logical,
             origin_device_id: stamp.origin_device_id,
+            payload_hash: &payload_hash[..],
         };
         let track_id = upsert_track(conn, &input).await?;
 
-        // 5. Replace the multi-artist link rows for this track.
+        // 6. Replace the multi-artist link rows for this track.
         replace_track_artists(conn, track_id, library_id, &link_ids).await?;
+
+        // 7. Bump the per-profile track digest counter — every
+        // insert/upsert changes the row's payload_hash.
+        db::digest::bump_profile(conn, profile_id, ENTITY).await?;
 
         Ok(ApplyOutcome::Applied)
     }
@@ -1249,7 +1520,10 @@ mod track {
         else {
             return Ok(ApplyOutcome::Skipped);
         };
-        delete_track(conn, library_id, file_path).await?;
+        let removed = delete_track(conn, library_id, file_path).await?;
+        if removed > 0 {
+            db::digest::bump_profile(conn, profile_id, ENTITY).await?;
+        }
         Ok(ApplyOutcome::Applied)
     }
 
