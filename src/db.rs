@@ -761,6 +761,12 @@ pub mod track_sync {
     /// pipeline resolves the album first, then passes the id here).
     /// All optional audio specs default to NULL when absent — the
     /// desktop omits them for codecs that don't expose the value.
+    ///
+    /// RFC-003 Phase A.2.2 — `hlc_wall` / `hlc_logical` /
+    /// `origin_device_id` carry the originating op's §2 total-order
+    /// tuple onto the row. Both INSERT and ON CONFLICT DO UPDATE
+    /// paths overwrite, so a tag-edit re-emit refreshes the tuple
+    /// alongside the rest of the columns.
     #[derive(Debug, Clone)]
     pub struct TrackInput<'a> {
         pub library_id: i64,
@@ -780,6 +786,9 @@ pub mod track_sync {
         pub musical_key: Option<&'a str>,
         pub added_at: i64,
         pub album_id: Option<i64>,
+        pub hlc_wall: i64,
+        pub hlc_logical: i32,
+        pub origin_device_id: Option<uuid::Uuid>,
     }
 
     /// Insert or update the artist row keyed on `(library_id,
@@ -863,11 +872,12 @@ pub mod track_sync {
                 library_id, file_hash, title, file_path, file_size,
                 duration_ms, track_number, disc_number, year,
                 bitrate, sample_rate, channels, bit_depth, codec,
-                musical_key, added_at, album_id
+                musical_key, added_at, album_id,
+                hlc_wall, hlc_logical, origin_device_id
              )
              VALUES (
                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16, $17
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20
              )
              ON CONFLICT (library_id, file_path) DO UPDATE
                  SET title = EXCLUDED.title,
@@ -883,7 +893,10 @@ pub mod track_sync {
                      bit_depth = EXCLUDED.bit_depth,
                      codec = EXCLUDED.codec,
                      musical_key = EXCLUDED.musical_key,
-                     album_id = EXCLUDED.album_id
+                     album_id = EXCLUDED.album_id,
+                     hlc_wall = EXCLUDED.hlc_wall,
+                     hlc_logical = EXCLUDED.hlc_logical,
+                     origin_device_id = EXCLUDED.origin_device_id
              RETURNING id",
         )
         .bind(input.library_id)
@@ -903,6 +916,9 @@ pub mod track_sync {
         .bind(input.musical_key)
         .bind(input.added_at)
         .bind(input.album_id)
+        .bind(input.hlc_wall)
+        .bind(input.hlc_logical)
+        .bind(input.origin_device_id)
         .fetch_one(&mut *conn)
         .await
     }
