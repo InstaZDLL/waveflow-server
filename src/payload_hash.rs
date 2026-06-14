@@ -190,7 +190,10 @@ mod tests {
         let bytes_b = canonical_serialize(&b, hlc(1, 0), None);
 
         assert_eq!(bytes_a, bytes_b);
-        assert_eq!(compute_payload_hash(&a, hlc(1, 0), None), compute_payload_hash(&b, hlc(1, 0), None));
+        assert_eq!(
+            compute_payload_hash(&a, hlc(1, 0), None),
+            compute_payload_hash(&b, hlc(1, 0), None)
+        );
     }
 
     #[test]

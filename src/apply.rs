@@ -898,11 +898,23 @@ mod liked {
 
         match (op.op.as_str(), op.field.as_deref()) {
             ("insert", None) => {
+                // UPSERT path mirrors `rating::set` — on conflict
+                // refresh the row's §2 total-order tuple AND the
+                // `liked_at` timestamp so the materialised row
+                // reflects the latest winning op, not the first one
+                // that landed. Without this the digest endpoint
+                // (A.2.3) would see two replicas converge on
+                // different HLCs whenever both devices like the
+                // same file.
                 sqlx::query(
                     "INSERT INTO user_liked_track \
                         (user_id, file_hash, liked_at, hlc_wall, hlc_logical, origin_device_id) \
                      VALUES ($1, $2, $3, $4, $5, $6) \
-                     ON CONFLICT (user_id, file_hash) DO NOTHING",
+                     ON CONFLICT (user_id, file_hash) DO UPDATE \
+                         SET liked_at = EXCLUDED.liked_at, \
+                             hlc_wall = EXCLUDED.hlc_wall, \
+                             hlc_logical = EXCLUDED.hlc_logical, \
+                             origin_device_id = EXCLUDED.origin_device_id",
                 )
                 .bind(user_id)
                 .bind(file_hash)

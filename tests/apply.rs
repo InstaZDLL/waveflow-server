@@ -1925,9 +1925,11 @@ async fn rating_upsert_refreshes_hlc_on_overwrite(pool: PgPool) {
         Some(PROFILE_CID),
     );
     first["hlc"] = json!({ "wall": 1_700_000_000_000_i64, "logical": 1 });
-    assert!(push_with_device(&auth.base, &auth.token, DEVICE_UUID, first)
-        .await
-        .is_success());
+    assert!(
+        push_with_device(&auth.base, &auth.token, DEVICE_UUID, first)
+            .await
+            .is_success()
+    );
 
     // Second push at hlc (1700.., 9) — UPSERT overwrites.
     let mut second = op(
@@ -1941,9 +1943,11 @@ async fn rating_upsert_refreshes_hlc_on_overwrite(pool: PgPool) {
         Some(PROFILE_CID),
     );
     second["hlc"] = json!({ "wall": 1_700_000_000_000_i64, "logical": 9 });
-    assert!(push_with_device(&auth.base, &auth.token, DEVICE_UUID, second)
-        .await
-        .is_success());
+    assert!(
+        push_with_device(&auth.base, &auth.token, DEVICE_UUID, second)
+            .await
+            .is_success()
+    );
 
     let row: (i64, i32, i64) = sqlx::query_as(
         "SELECT hlc_wall, hlc_logical, rating
