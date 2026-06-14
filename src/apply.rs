@@ -859,7 +859,7 @@ mod playlist {
             return Ok(ApplyOutcome::Applied);
         }
 
-        sqlx::query(
+        let res = sqlx::query(
             "UPDATE playlist SET name = $1, description = $2, color_id = $3, icon_id = $4, \
                                  updated_at = $5, hlc_wall = $6, hlc_logical = $7, \
                                  origin_device_id = $8, payload_hash = $9 \
@@ -879,6 +879,13 @@ mod playlist {
         .execute(&mut *conn)
         .await?;
 
+        // Race-window guard: a concurrent DELETE can fire between
+        // the SELECT-first preread and this UPDATE. The UPDATE then
+        // matches 0 rows; bumping the digest with no row mutation
+        // would break the §metadata_digest_version invariant.
+        if res.rows_affected() == 0 {
+            return Ok(ApplyOutcome::Skipped);
+        }
         db::digest::bump_profile(conn, profile_id, ENTITY).await?;
         Ok(ApplyOutcome::Applied)
     }
@@ -1078,7 +1085,7 @@ mod library {
             return Ok(ApplyOutcome::Applied);
         }
 
-        sqlx::query(
+        let res = sqlx::query(
             "UPDATE library SET name = $1, description = $2, color_id = $3, icon_id = $4, \
                                 updated_at = $5, hlc_wall = $6, hlc_logical = $7, \
                                 origin_device_id = $8, payload_hash = $9 \
@@ -1098,6 +1105,14 @@ mod library {
         .execute(&mut *conn)
         .await?;
 
+        // Race-window guard — same as `playlist::set_field`. A
+        // concurrent DELETE between the preread and this UPDATE
+        // would otherwise let bump_profile fire without a real
+        // mutation, breaking the §metadata_digest_version
+        // invariant.
+        if res.rows_affected() == 0 {
+            return Ok(ApplyOutcome::Skipped);
+        }
         db::digest::bump_profile(conn, profile_id, ENTITY).await?;
         Ok(ApplyOutcome::Applied)
     }
