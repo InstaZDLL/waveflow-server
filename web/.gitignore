@@ -3,9 +3,14 @@ node_modules
 dist
 dist-ssr
 *.local
+# Env exclusion that catches `.env`, `.env.local`, `.env.production`,
+# `.env.staging`, etc. without silently swallowing `.envrc` (a
+# standard direnv file that a future contributor might add). The
+# `!.env.example` negation keeps the committed template (used by
+# `.env.example → .env` bootstrap) reachable.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 .nitro
 .tanstack
 .wrangler
