@@ -1,6 +1,24 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { listProfiles, type Profile } from '@/server-fns/profiles'
 
+interface ProfileWithFormatted extends Profile {
+  last_used_at_formatted: string
+}
+
+// Pre-format dates server-side with a fixed locale + timezone so
+// the SSR output matches what the client would render. `new
+// Date(...).toLocaleDateString()` defaults to the runtime locale
+// + timezone, which diverges between Node (server) and the
+// browser (client) — React then logs a hydration mismatch and
+// briefly flickers the wrong format. `en-US` + `UTC` is a stable
+// choice we can revisit when we wire user-locale selection.
+const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+})
+
 // Auth gating lives in the `_authed` parent layout — every route
 // in this folder inherits the session check, no per-route
 // `beforeLoad` to duplicate. The loader only handles data.
@@ -8,18 +26,28 @@ export const Route = createFileRoute('/_authed/profiles')({
   loader: async (): Promise<LoaderData> => {
     try {
       const profiles = await listProfiles()
-      return { kind: 'ready', profiles }
+      const formatted: ProfileWithFormatted[] = profiles.map((p) => ({
+        ...p,
+        last_used_at_formatted: DATE_FORMATTER.format(new Date(p.last_used_at)),
+      }))
+      return { kind: 'ready', profiles: formatted }
     } catch (err) {
+      // Log the raw error server-side; surface a stable generic
+      // message to the UI (see `artists.tsx` loader for the
+      // rationale).
+      console.error('[profiles.loader] listProfiles failed', err)
       return {
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load profiles.',
+        message: 'Failed to load profiles.',
       }
     }
   },
   component: ProfilesView,
 })
 
-type LoaderData = { kind: 'ready'; profiles: Profile[] } | { kind: 'error'; message: string }
+type LoaderData =
+  | { kind: 'ready'; profiles: ProfileWithFormatted[] }
+  | { kind: 'error'; message: string }
 
 function ProfilesView() {
   const data = Route.useLoaderData()
@@ -62,7 +90,7 @@ function ProfilesView() {
                   </div>
                   <p className="text-base font-bold text-(--sea-ink)">{p.name}</p>
                   <p className="mt-1 text-xs text-(--sea-ink-soft)">
-                    Last used {new Date(p.last_used_at).toLocaleDateString()}
+                    Last used {p.last_used_at_formatted}
                   </p>
                 </Link>
               </li>

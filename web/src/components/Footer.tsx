@@ -20,7 +20,7 @@ export default function Footer() {
             >
               InstaZDLL
             </a>
-            . Open source under AGPL-3.0.
+            . Open source under AGPL-3.0-only.
           </p>
         </div>
         <p className="m-0 text-xs font-semibold tracking-[0.08em] uppercase">

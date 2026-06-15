@@ -67,8 +67,21 @@ export function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElemen
       if (items.length === 0) {
         // Nothing focusable inside — keep focus pinned to the
         // container itself so it doesn't leak to the page behind.
+        // `HTMLElement.focus()` silently no-ops when the target
+        // has no `tabindex`, which would let Tab fall through to
+        // the page underneath. Stamp a transient `tabindex="-1"`
+        // (programmatic-only, not Tab-reachable), focus, then
+        // restore the prior tabindex state so the DOM contract
+        // stays intact for next renders.
         event.preventDefault()
+        const priorTabIndex = container.getAttribute('tabindex')
+        if (priorTabIndex === null) {
+          container.setAttribute('tabindex', '-1')
+        }
         container.focus()
+        if (priorTabIndex === null) {
+          container.removeAttribute('tabindex')
+        }
         return
       }
       const first = items[0]
