@@ -225,7 +225,18 @@ export function PlayerBar() {
               setSeekScrub(null)
             }
           }}
-          onPointerCancel={() => setSeekScrub(null)}
+          // `pointercancel` fires when the input loses pointer
+          // capture mid-drag (system-initiated cancel, e.g. the OS
+          // pulls focus to a notification, or the gesture promotes
+          // to scroll). Mirror `pointerup`: commit the pending
+          // scrub position rather than dropping it silently — the
+          // user already expressed intent by dragging.
+          onPointerCancel={() => {
+            if (seekScrub !== null) {
+              player.seek(seekScrub)
+              setSeekScrub(null)
+            }
+          }}
           onKeyUp={(e) => {
             if (
               seekScrub !== null &&
