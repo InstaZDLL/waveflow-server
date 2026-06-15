@@ -30,7 +30,6 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod middleware;
-pub mod payload_hash;
 pub mod storage;
 pub mod stream_token;
 pub mod sync;

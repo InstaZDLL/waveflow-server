@@ -295,7 +295,7 @@ mod profile_resolve {
     use sqlx::PgConnection;
 
     use crate::db;
-    use crate::payload_hash::compute_payload_hash;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{canon, ApplyError, OpStamp};
 
@@ -341,7 +341,7 @@ mod profile_resolve {
         let mut fields = Map::new();
         canon::string(&mut fields, "name", name);
         canon::string(&mut fields, "color_id", color_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         // `RETURNING (xmax = 0) AS inserted` discriminates between a
         // fresh INSERT (xmax = 0) and a race-window DO UPDATE
@@ -389,8 +389,8 @@ mod profile {
     use sqlx::PgConnection;
 
     use crate::db;
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{canon, payload_string, ApplyError, ApplyOutcome, OpStamp};
 
@@ -453,7 +453,7 @@ mod profile {
         };
 
         let fields = canonical_fields(&name, &color_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         if cur_payload_hash.as_deref() == Some(&payload_hash[..]) {
             return Ok(ApplyOutcome::Applied);
@@ -581,8 +581,8 @@ mod playlist {
     use serde_json::Map;
 
     use crate::db::{self, playlist_track::TrackSnapshot};
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -665,7 +665,7 @@ mod playlist {
             .unwrap_or_else(|| "music".to_owned());
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         // ON CONFLICT (profile_id, canonical_id) DO NOTHING — the
         // partial unique index from the migration covers this. A
@@ -1017,7 +1017,7 @@ mod playlist {
         };
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         // Skip the UPDATE + digest bump when the new hash equals the
         // existing one — an idempotent re-emit. The bump-iff-change
@@ -1067,8 +1067,8 @@ mod library {
     use sqlx::PgConnection;
 
     use crate::db;
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -1130,7 +1130,7 @@ mod library {
             .unwrap_or_else(|| "library".to_owned());
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         let res = sqlx::query(
             "INSERT INTO library \
@@ -1244,7 +1244,7 @@ mod library {
         };
 
         let fields = canonical_fields(&name, description.as_deref(), &color_id, &icon_id);
-        let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+        let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
         // Same idempotent-skip as `playlist::set_field`: bail before
         // the write when an exact re-emit produces an unchanged hash.
@@ -1294,8 +1294,8 @@ mod liked {
     use sqlx::PgConnection;
 
     use crate::db;
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{ApplyError, ApplyOutcome, OpStamp};
 
@@ -1320,7 +1320,8 @@ mod liked {
                 // form is just `{}` so payload_hash distinguishes
                 // rows purely by HLC + origin under the §2 tuple.
                 let fields = Map::new();
-                let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+                let payload_hash =
+                    compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
                 // UPSERT path mirrors `rating::set` — on conflict
                 // refresh the row's §2 total-order tuple AND the
@@ -1379,8 +1380,8 @@ mod rating {
     use serde_json::Map;
 
     use crate::db;
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{canon, payload_i64, ApplyError, ApplyOutcome, OpStamp};
 
@@ -1408,7 +1409,8 @@ mod rating {
 
                 let mut fields = Map::new();
                 canon::i64(&mut fields, "rating", value);
-                let payload_hash = compute_payload_hash(&fields, stamp.hlc, stamp.origin_device_id);
+                let payload_hash =
+                    compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
                 // UPSERT so a later op for the same file replaces
                 // the rating instead of inserting a duplicate row.
@@ -1506,8 +1508,8 @@ mod track {
             upsert_track, ArtistLinkInput, TrackInput,
         },
     };
-    use crate::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -1699,7 +1701,8 @@ mod track {
         );
         canon::bool(&mut canonical, "is_compilation", is_compilation);
         canon::strings(&mut canonical, "artists", &artists);
-        let payload_hash = compute_payload_hash(&canonical, stamp.hlc, stamp.origin_device_id);
+        let payload_hash =
+            compute_payload_hash(&canonical, stamp.hlc.into(), stamp.origin_device_id);
 
         // 5. Upsert the track row.
         let input = TrackInput {
