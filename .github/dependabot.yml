@@ -11,9 +11,8 @@ updates:
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
     labels:
-      - dependencies
+      - "scope: deps"
       - "scope: server"
-      - cargo
     commit-message:
       prefix: chore
     groups:
@@ -41,7 +40,7 @@ updates:
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
     labels:
-      - dependencies
+      - "scope: deps"
       - "scope: web"
     commit-message:
       prefix: chore
@@ -83,9 +82,8 @@ updates:
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
     labels:
-      - dependencies
+      - "scope: deps"
       - "scope: tooling"
-      - github-actions
     commit-message:
       prefix: chore
     groups:
