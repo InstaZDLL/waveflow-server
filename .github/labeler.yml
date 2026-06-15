@@ -52,8 +52,13 @@
           - 'web/src/auth/**'
           - 'web/src/lib/auth.ts'
           - 'web/src/lib/auth-client.ts'
-          - 'web/src/routes/sign-in/**'
-          - 'web/src/routes/sign-up/**'
+          # `sign-in.tsx` / `sign-up.tsx` are FILES at the root of
+          # `web/src/routes/`, not directories. The `{,/**}` brace
+          # matches both shapes so a future `sign-in/` subtree (e.g.
+          # adding `sign-in.callback.tsx`) still lights up the same
+          # label without a config edit.
+          - 'web/src/routes/sign-in{,/**}'
+          - 'web/src/routes/sign-up{,/**}'
           - 'web/src/routes/api/auth/**'
 
 'scope: sync':
