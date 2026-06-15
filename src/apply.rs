@@ -389,8 +389,8 @@ mod profile {
     use sqlx::PgConnection;
 
     use crate::db;
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{canon, payload_string, ApplyError, ApplyOutcome, OpStamp};
 
@@ -581,8 +581,8 @@ mod playlist {
     use serde_json::Map;
 
     use crate::db::{self, playlist_track::TrackSnapshot};
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -1067,8 +1067,8 @@ mod library {
     use sqlx::PgConnection;
 
     use crate::db;
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -1294,8 +1294,8 @@ mod liked {
     use sqlx::PgConnection;
 
     use crate::db;
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{ApplyError, ApplyOutcome, OpStamp};
 
@@ -1320,7 +1320,8 @@ mod liked {
                 // form is just `{}` so payload_hash distinguishes
                 // rows purely by HLC + origin under the §2 tuple.
                 let fields = Map::new();
-                let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
+                let payload_hash =
+                    compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
                 // UPSERT path mirrors `rating::set` — on conflict
                 // refresh the row's §2 total-order tuple AND the
@@ -1379,8 +1380,8 @@ mod rating {
     use serde_json::Map;
 
     use crate::db;
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{canon, payload_i64, ApplyError, ApplyOutcome, OpStamp};
 
@@ -1408,7 +1409,8 @@ mod rating {
 
                 let mut fields = Map::new();
                 canon::i64(&mut fields, "rating", value);
-                let payload_hash = compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
+                let payload_hash =
+                    compute_payload_hash(&fields, stamp.hlc.into(), stamp.origin_device_id);
 
                 // UPSERT so a later op for the same file replaces
                 // the rating instead of inserting a duplicate row.
@@ -1506,8 +1508,8 @@ mod track {
             upsert_track, ArtistLinkInput, TrackInput,
         },
     };
-    use waveflow_core::sync::payload_hash::compute_payload_hash;
     use crate::sync::SyncOpIn;
+    use waveflow_core::sync::payload_hash::compute_payload_hash;
 
     use super::{
         canon, payload_optional_string, payload_string, ApplyError, ApplyOutcome, OpStamp,
@@ -1699,7 +1701,8 @@ mod track {
         );
         canon::bool(&mut canonical, "is_compilation", is_compilation);
         canon::strings(&mut canonical, "artists", &artists);
-        let payload_hash = compute_payload_hash(&canonical, stamp.hlc.into(), stamp.origin_device_id);
+        let payload_hash =
+            compute_payload_hash(&canonical, stamp.hlc.into(), stamp.origin_device_id);
 
         // 5. Upsert the track row.
         let input = TrackInput {
