@@ -16,9 +16,12 @@ export const Route = createFileRoute('/_authed/profiles/$profileId/playlists')({
       const playlists = await listPlaylists({ data: profileId })
       return { kind: 'ready', profileId, playlists }
     } catch (err) {
+      // Don't echo the server-side error message back to the UI —
+      // see `artists.tsx` loader for the rationale.
+      console.error('[playlists.loader] listPlaylists failed', err)
       return {
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load playlists.',
+        message: 'Failed to load playlists.',
       }
     }
   },

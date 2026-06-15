@@ -15,9 +15,15 @@ export const Route = createFileRoute('/_authed/profiles/$profileId/libraries/$li
       const artists = await listArtists({ data: { profileId, libraryId } })
       return { kind: 'ready', profileId, libraryId, artists }
     } catch (err) {
+      // Don't echo the server-side error message back to the UI —
+      // it can leak internal details (DB error strings, stack
+      // fragments, host names) that the operator never intended to
+      // expose. Log the raw `err` for diagnostics, surface a stable
+      // generic message to the client.
+      console.error('[artists.loader] listArtists failed', err)
       return {
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load artists.',
+        message: 'Failed to load artists.',
       }
     }
   },

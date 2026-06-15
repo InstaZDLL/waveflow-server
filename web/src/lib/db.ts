@@ -22,12 +22,17 @@ if (!process.env.DATABASE_URL) {
   )
 }
 
-const max = Number.parseInt(process.env.BETTER_AUTH_DB_MAX ?? '10', 10)
-if (!Number.isFinite(max) || max <= 0) {
+// `Number.parseInt('10foo', 10)` returns `10` — the trailing garbage
+// is silently dropped. Tighten with a regex match so a malformed env
+// value (`'10foo'`, `'1e3'`, `' 5 '`) fails loud at boot instead of
+// quietly running with a pool size the operator didn't ask for.
+const rawMax = process.env.BETTER_AUTH_DB_MAX ?? '10'
+if (!/^[1-9]\d*$/.test(rawMax)) {
   throw new Error(
-    `BETTER_AUTH_DB_MAX must be a positive integer, got ${process.env.BETTER_AUTH_DB_MAX}`,
+    `BETTER_AUTH_DB_MAX must be a positive integer (digits only), got ${JSON.stringify(rawMax)}`,
   )
 }
+const max = Number.parseInt(rawMax, 10)
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
