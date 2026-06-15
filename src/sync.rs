@@ -135,6 +135,25 @@ pub struct Hlc {
     pub logical: i32,
 }
 
+/// Bridge to `waveflow_core::sync::Hlc` for callers that consume the
+/// shared canonical-serialisation helpers (`compute_payload_hash`,
+/// `canonical_serialize`, `HlcTriple::new`). The two types are
+/// structurally identical — the server-side `Hlc` only diverges by
+/// carrying `utoipa::ToSchema` for the OpenAPI surface — so the
+/// conversion is a literal field copy. Phase A.4.3 introduced this
+/// after `waveflow_server::payload_hash` retired in favour of
+/// `waveflow_core::sync::payload_hash`; this `From` impl keeps the
+/// apply pipeline ergonomic without a thin newtype-rewrap at every
+/// call site.
+impl From<Hlc> for waveflow_core::sync::Hlc {
+    fn from(value: Hlc) -> Self {
+        Self {
+            wall: value.wall,
+            logical: value.logical,
+        }
+    }
+}
+
 /// Wire format for a single op the client pushes. `payload` stays
 /// opaque to the server — it's stored as JSONB and replayed verbatim
 /// to other devices, so the schema can evolve client-side without a
