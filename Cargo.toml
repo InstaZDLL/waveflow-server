@@ -23,7 +23,7 @@ homepage = "https://waveflow.app"
 # build is reproducible — bump the rev in tree when picking up a new
 # core release. `default-features = false` because core's
 # default-feature set is empty; we only want the `postgres` feature.
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "ca0819dd5d6a044cea0c3855a3b80b5785ce6c99", default-features = false, features = ["postgres"] }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "afb6aaf9af0ad092eab9bc8a3528ea85d94e7141", default-features = false, features = ["postgres"] }
 
 # Database. `runtime-tokio` matches our `#[tokio::main]` runtime;
 # `postgres` is the driver; `macros` enables `query_as!`; `migrate`
