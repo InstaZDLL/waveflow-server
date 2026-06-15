@@ -3,6 +3,7 @@
 // loader branches; the player-side tests live in
 // `PlayableTrackList.test.tsx`.
 
+import type { PropsWithChildren } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 
@@ -13,7 +14,7 @@ vi.mock('@tanstack/react-router', () => ({
     ...(config as Record<string, unknown>),
     useLoaderData: () => loaderData,
   }),
-  Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
+  Link: ({ children, ...rest }: PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
   ),
 }))

@@ -1,6 +1,7 @@
 // PlaylistDetailView render tests. Mocks the file-route so we
 // can mount the component without spinning up the router.
 
+import type { PropsWithChildren } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -24,7 +25,7 @@ vi.mock('@tanstack/react-router', () => ({
   }),
   useRouter: () => ({ invalidate }),
   useNavigate: () => navigate,
-  Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
+  Link: ({ children, ...rest }: PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
   ),
 }))

@@ -32,10 +32,19 @@
 // migrations should run from the deploy pipeline, not from here.
 
 import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Client } from 'pg'
 
-const MIGRATIONS_DIR = join(process.cwd(), 'db', 'migrations')
+// Resolve `db/migrations/` relative to THIS file rather than the
+// caller's CWD. After the monorepo merge the script can be invoked
+// from the repo root (`bun --cwd=web run db:migrate`) — the
+// previous `process.cwd()` anchor broke silently there because the
+// path resolves to `<repo>/db/migrations` which doesn't exist.
+// `fileURLToPath(import.meta.url)` gives us a stable anchor regardless
+// of the caller's CWD.
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
+const MIGRATIONS_DIR = join(SCRIPT_DIR, '..', 'db', 'migrations')
 const DRY_RUN = process.argv.includes('--dry-run')
 // Opt-out marker for migrations that can't run in a transaction
 // (e.g. `CREATE INDEX CONCURRENTLY`). Looked for on any of the first
