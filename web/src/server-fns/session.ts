@@ -5,6 +5,7 @@
 // so the wire payload is minimal — and the rest of `auth.api.getSession`
 // (raw session row, expiresAt, etc.) stays server-side.
 
+import { APIError } from 'better-auth/api'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequestHeaders } from '@tanstack/react-start/server'
 import { auth } from '@/lib/auth'
@@ -18,9 +19,23 @@ export interface SessionSummary {
 export const getCurrentSession = createServerFn({ method: 'GET' }).handler(
   async (): Promise<SessionSummary | null> => {
     const headers = getRequestHeaders()
-    const session = await auth.api.getSession({
-      headers: new Headers(headers as HeadersInit),
-    })
+    let session: Awaited<ReturnType<typeof auth.api.getSession>>
+    try {
+      session = await auth.api.getSession({
+        headers: new Headers(headers as HeadersInit),
+      })
+    } catch (err) {
+      // Better Auth throws `APIError` for protocol-level failures.
+      // UNAUTHORIZED (expired / missing cookie) is a normal "not
+      // logged in" state — the `beforeLoad` consumer treats `null`
+      // and a thrown error differently, and the latter would surface
+      // as a 500 in the UI. Everything else (network, DB outage, mis-
+      // configuration) IS exceptional and should bubble.
+      if (err instanceof APIError && err.status === 'UNAUTHORIZED') {
+        return null
+      }
+      throw err
+    }
     if (!session?.user) return null
     return {
       id: session.user.id,

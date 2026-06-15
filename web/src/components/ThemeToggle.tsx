@@ -7,9 +7,18 @@ function getInitialMode(): ThemeMode {
     return 'auto'
   }
 
-  const stored = window.localStorage.getItem('theme')
-  if (stored === 'light' || stored === 'dark' || stored === 'auto') {
-    return stored
+  // `localStorage.getItem` throws in private browsing on Safari
+  // (quota-exhausted) and in some embedded WebView contexts that
+  // disable storage entirely. Swallowing the error lets the toggle
+  // still render — the user just falls back to the system
+  // preference until they reload with storage available.
+  try {
+    const stored = window.localStorage.getItem('theme')
+    if (stored === 'light' || stored === 'dark' || stored === 'auto') {
+      return stored
+    }
+  } catch {
+    // Intentionally ignored — fall through to `'auto'`.
   }
 
   return 'auto'
@@ -71,7 +80,16 @@ export default function ThemeToggle() {
     // No direct `applyThemeMode` call — the useLayoutEffect above
     // owns theme application and fires synchronously on the state
     // change before the next paint.
-    window.localStorage.setItem('theme', nextMode)
+    //
+    // Same try/catch rationale as `getInitialMode`: persistence is
+    // a best-effort optimisation, not a correctness invariant. If
+    // storage refuses the write, the toggle still works for the
+    // current session.
+    try {
+      window.localStorage.setItem('theme', nextMode)
+    } catch {
+      // Intentionally ignored.
+    }
   }
 
   const label =
