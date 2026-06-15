@@ -40,6 +40,13 @@ jobs:
           # `actions/checkout` shallow-clones by default; fine for
           # this job — we don't grep git history.
           fetch-depth: 1
+          # Drop the GITHUB_TOKEN from .git/config after checkout —
+          # nothing else in this job pushes or makes authenticated
+          # git calls, so leaving the token attached would just be
+          # extra blast radius for a compromised step. Matches the
+          # rest of the repo's checkout posture (rust matrix +
+          # codeql).
+          persist-credentials: false
 
       - name: Install Bun
         # Pinned to the v2.2.0 commit SHA. `pull_request` runs with a

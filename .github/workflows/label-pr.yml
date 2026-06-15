@@ -4,15 +4,29 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, edited]
 
+# Default workflow permissions are the minimal read-only set; each job
+# escalates only what it needs. Without per-job overrides every step
+# in the workflow would inherit `pull-requests: write` even though
+# only the labeler actions use it.
 permissions:
   contents: read
-  pull-requests: write
+
+# Re-run on a fresh push collapses to one run per PR. Without this, a
+# busy contributor rebasing five times in a minute would queue five
+# overlapping labeler runs that race against the same PR — the last
+# write wins anyway, so the prior four are wasted Actions minutes.
+concurrency:
+  group: label-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   scope:
     name: Apply scope labels from changed paths
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Apply scope:* labels
         # Pinned to the v6.1.0 commit SHA. `pull_request_target` runs
@@ -29,6 +43,9 @@ jobs:
     name: Apply type:* labels from the PR title
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Parse Conventional Commits prefix
         uses: bcoe/conventional-release-labels@886f696738527c7be444262c327c89436dfb95a8 # v1.3.1
@@ -56,6 +73,9 @@ jobs:
     name: Apply size:* labels from diff line count
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Apply size:xs/s/m/l/xl
         uses: codelytv/pr-size-labeler@095a41fca88b8764fd9e008ad269bcdb82bb38b9 # v1.10.4

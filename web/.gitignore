@@ -3,9 +3,12 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
-.env.local
-.env.*.local
+# Broad env exclusion so `.env.production`, `.env.staging`, etc.
+# don't slip through the prior `.env` / `.env.local` / `.env.*.local`
+# trio. The `!.env.example` negation keeps the committed template
+# (used by `.env.example → .env` bootstrap) reachable.
+*.env*
+!.env.example
 .nitro
 .tanstack
 .wrangler
