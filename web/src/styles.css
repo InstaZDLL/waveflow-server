@@ -76,8 +76,14 @@
      A Crimson preset's `--color-surface-dark: #19090c` thus drives
      `--surface`, `--chip-bg`, `--header-bg`, … with crimson-tinted
      translucence — closes the gap issue #63 documented. */
-  --canonical-surface: var(--color-surface-light);
-  --canonical-surface-elevated: var(--color-surface-light-elevated);
+  /* Fallbacks on `var(...)` cover the edge case where design-tokens
+     hasn't injected yet (SSR fail mid-stream, isolated component
+     test) — without them, every overlay below would fall to
+     `transparent` and the layout would render unstyled until the
+     scripts catch up. The values mirror the design-tokens defaults
+     so SSR + late-injection produce identical pixels. */
+  --canonical-surface: var(--color-surface-light, #ffffff);
+  --canonical-surface-elevated: var(--color-surface-light-elevated, #fafafa);
 
   /* ── Translucent overlay family (derived) ────────────────────────
      `color-mix(in oklab, X 72%, transparent)` is `X at 72% opacity`
@@ -116,12 +122,19 @@
   --danger: #ffb4a8;
   --danger-bg: rgba(180, 35, 24, 0.16);
   --success: #9ad5ca;
-  --canonical-surface: var(--color-surface-dark);
-  --canonical-surface-elevated: var(--color-surface-dark-elevated);
+  --canonical-surface: var(--color-surface-dark, #121212);
+  --canonical-surface-elevated: var(--color-surface-dark-elevated, #181818);
   /* `--inset-glint` in dark mode loses most of its punch — drop the
      white mix to 10% so the highlight reads as a subtle sheen rather
      than a hard rim. */
   --inset-glint: color-mix(in oklab, white 10%, transparent);
+  /* Link-hover stays a 7% white shimmer in dark mode rather than
+     inheriting the 90% canonical-surface tint from `:root` — the
+     light-mode value (90% near-white) is essentially what the
+     pre-refactor literal already was, but a 90% dark-surface tint
+     would render as a near-opaque rectangle around the hovered
+     row, not the gentle highlight the design wanted. */
+  --link-bg-hover: color-mix(in oklab, white 7%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -146,9 +159,10 @@
     --danger: #ffb4a8;
     --danger-bg: rgba(180, 35, 24, 0.16);
     --success: #9ad5ca;
-    --canonical-surface: var(--color-surface-dark);
-    --canonical-surface-elevated: var(--color-surface-dark-elevated);
+    --canonical-surface: var(--color-surface-dark, #121212);
+    --canonical-surface-elevated: var(--color-surface-dark-elevated, #181818);
     --inset-glint: color-mix(in oklab, white 10%, transparent);
+    --link-bg-hover: color-mix(in oklab, white 7%, transparent);
   }
 }
 
