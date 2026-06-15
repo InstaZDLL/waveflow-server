@@ -5,9 +5,12 @@
 // through the React plugin lets Vitest see the JSX modules in their
 // transformed form.
 //
-// `passWithNoTests` keeps the CI green during the bootstrap window
-// where we haven't authored any tests yet — once `src/**/*.test.tsx`
-// files start landing this flag becomes a no-op.
+// `passWithNoTests: false` makes Vitest fail when no tests match the
+// `include` globs. The previous `true` was useful during the
+// bootstrap window where the suite was empty, but now that 230+
+// tests are landing it's a footgun — a typo in the include pattern
+// (or an accidental file move that breaks discovery) would pass CI
+// silently. CI failing loud is the right signal.
 
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
@@ -27,7 +30,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    passWithNoTests: true,
+    passWithNoTests: false,
     // Pick up tests from the web app AND every workspace package.
     // Workspace packages (`packages/*`) ship their own suites and
     // run against the same jsdom env so a DOM helper like

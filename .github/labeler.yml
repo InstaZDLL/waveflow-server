@@ -52,8 +52,16 @@
           - 'web/src/auth/**'
           - 'web/src/lib/auth.ts'
           - 'web/src/lib/auth-client.ts'
-          - 'web/src/routes/sign-in/**'
-          - 'web/src/routes/sign-up/**'
+          # `sign-in.tsx` / `sign-up.tsx` are FILES at the root of
+          # `web/src/routes/`, not directories. minimatch's
+          # `{a,b}` brace expansion gives us a clean union of the
+          # two real shapes: the literal `.tsx` file today and a
+          # future `sign-in/` subtree (e.g. `sign-in.callback.tsx`,
+          # `sign-in/index.tsx`). The earlier `{,/**}` shape only
+          # produced `sign-in` (no extension, doesn't exist) and
+          # `sign-in/**`, missing the actual `.tsx` file.
+          - 'web/src/routes/sign-in{.tsx,/**}'
+          - 'web/src/routes/sign-up{.tsx,/**}'
           - 'web/src/routes/api/auth/**'
 
 'scope: sync':

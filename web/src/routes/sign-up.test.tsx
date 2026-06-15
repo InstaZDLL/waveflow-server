@@ -8,6 +8,7 @@
 // We mock `@tanstack/react-router` rather than rendering inside the
 // real router so the test stays a unit test on the form behavior.
 
+import type { PropsWithChildren } from 'react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
@@ -34,7 +35,7 @@ vi.mock('@tanstack/react-router', () => ({
     useLoaderData: () => ({ email: true, google: false, apple: false }),
   }),
   useNavigate: () => navigate,
-  Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
+  Link: ({ children, ...rest }: PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
   ),
 }))
@@ -94,6 +95,58 @@ describe('sign-up form', () => {
     fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: '/' }))
+    expect(signUpEmail).toHaveBeenCalledWith({
+      email: 'daisy@example.com',
+      password: 'correct-horse-battery',
+      name: 'Daisy',
+    })
+  })
+
+  it('blocks submit when the display name is empty', async () => {
+    // The `name` validation gate runs BEFORE the email regex
+    // gate; whitespace-only names must trip "Display name is
+    // required." rather than slipping through with a trimmed
+    // empty string.
+    render(<SignUp />)
+    fillForm({ name: '   ', email: 'daisy@example.com', password: 'correct-horse-battery' })
+    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/display name is required/i)
+    expect(signUpEmail).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit when the password is at the upper-bound + 1', async () => {
+    // MAX_PASSWORD = 128. 129 chars must trip the upper bound
+    // message; 128 itself passes (covered by the success-path
+    // test below via mock).
+    render(<SignUp />)
+    fillForm({
+      name: 'Daisy',
+      email: 'daisy@example.com',
+      password: 'a'.repeat(129),
+    })
+    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/at most 128 characters/i)
+    expect(signUpEmail).not.toHaveBeenCalled()
+  })
+
+  it('trims surrounding whitespace from name + email before submit', async () => {
+    // The component strips whitespace before handing values to
+    // Better Auth; the wire payload must show the trimmed
+    // strings, not the user's raw input.
+    signUpEmail.mockResolvedValueOnce({ data: { user: { id: 'u_2' } }, error: null })
+    render(<SignUp />)
+    fillForm({
+      name: '  Daisy  ',
+      email: '  daisy@example.com  ',
+      password: 'correct-horse-battery',
+    })
+    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
+
+    await waitFor(() => expect(signUpEmail).toHaveBeenCalled())
     expect(signUpEmail).toHaveBeenCalledWith({
       email: 'daisy@example.com',
       password: 'correct-horse-battery',

@@ -3,6 +3,7 @@
 // shape (`{ kind: 'ready' | 'error' }`) is what useLoaderData
 // returns, which we feed directly.
 
+import type { PropsWithChildren } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 
@@ -22,7 +23,7 @@ vi.mock('@tanstack/react-router', () => ({
   }),
   useRouter: () => ({ invalidate }),
   useNavigate: () => navigate,
-  Link: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
+  Link: ({ children, ...rest }: PropsWithChildren<Record<string, unknown>>) => (
     <a {...rest}>{children}</a>
   ),
 }))
