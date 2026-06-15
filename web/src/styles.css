@@ -25,10 +25,15 @@
 }
 
 :root {
-  /* Fallback only: canonical theme tokens come from @waveflow/design-tokens.
-     ThemeStyle emits DEFAULT_THEME_ID via themeCssDeclarations during SSR,
-     then ThemeProvider applies runtime changes through applyTheme. Keep these
-     defaults in sync with the design-tokens DEFAULT_THEME_ID palette/surfaces. */
+  /* ── Theme tokens (fallback only — design-tokens owns these) ────
+     `ThemeStyle` emits `DEFAULT_THEME_ID` via `themeCssDeclarations`
+     during SSR, then `ThemeProvider` applies runtime changes through
+     `applyTheme`. Keep these defaults in sync with the design-tokens
+     `DEFAULT_THEME_ID` palette / surfaces. The accent + canonical
+     surface fields are the ONLY ones the preset picker re-writes;
+     everything below derives from them via `color-mix` so a Crimson
+     preset re-tints chips, panels, header background, etc. without
+     a per-overlay override. */
   --accent-50: oklch(0.979 0.021 166.113);
   --accent-100: oklch(0.95 0.052 163.051);
   --accent-200: oklch(0.905 0.093 164.15);
@@ -52,25 +57,50 @@
   --palm: #304f45;
   --sand: #e9ede6;
   --foam: #f7f8f2;
-  --surface: rgba(255, 255, 250, 0.72);
-  --surface-strong: rgba(255, 255, 250, 0.94);
-  --line: rgba(25, 32, 31, 0.13);
-  --line-strong: rgba(25, 32, 31, 0.22);
-  --inset-glint: rgba(255, 255, 255, 0.9);
   --kicker: rgba(74, 92, 86, 0.96);
   --bg-base: #ecefe8;
-  --header-bg: rgba(247, 248, 242, 0.86);
-  --chip-bg: rgba(255, 255, 250, 0.76);
-  --chip-line: rgba(25, 32, 31, 0.14);
-  --link-bg-hover: rgba(255, 255, 250, 0.9);
+  /* Hero gradient is brand-fixed (teal + sunset) regardless of preset
+     accent — the WaveFlow brand sweep stays consistent across themes.
+     A future design call could derive these from `--accent-*` to
+     tie the hero to the active preset; logged for separate review. */
   --hero-a: rgba(75, 143, 130, 0.22);
   --hero-b: rgba(196, 119, 84, 0.15);
   --danger: #b42318;
   --danger-bg: #fff1ee;
   --success: #2f6f68;
+
+  /* ── Canonical sources for the translucent overlay layer ─────────
+     Switching to dark mode swaps these two, and every overlay below
+     follows automatically. `--color-surface-light` / `-dark` come from
+     design-tokens (per-preset); `--sea-ink` already swaps per mode.
+     A Crimson preset's `--color-surface-dark: #19090c` thus drives
+     `--surface`, `--chip-bg`, `--header-bg`, … with crimson-tinted
+     translucence — closes the gap issue #63 documented. */
+  --canonical-surface: var(--color-surface-light);
+  --canonical-surface-elevated: var(--color-surface-light-elevated);
+
+  /* ── Translucent overlay family (derived) ────────────────────────
+     `color-mix(in oklab, X 72%, transparent)` is `X at 72% opacity`
+     in a way that matches the OKLAB perceptual interpolation the
+     `body` gradient (line 150 below) already uses. Browser baseline:
+     Chrome 111+ / Firefox 113+ / Safari 16.2+ — well under the
+     project's target floor. */
+  --surface: color-mix(in oklab, var(--canonical-surface) 72%, transparent);
+  --surface-strong: color-mix(in oklab, var(--canonical-surface) 94%, transparent);
+  --line: color-mix(in oklab, var(--sea-ink) 13%, transparent);
+  --line-strong: color-mix(in oklab, var(--sea-ink) 22%, transparent);
+  --inset-glint: color-mix(in oklab, white 90%, transparent);
+  --header-bg: color-mix(in oklab, var(--canonical-surface-elevated) 86%, transparent);
+  --chip-bg: color-mix(in oklab, var(--canonical-surface) 76%, transparent);
+  --chip-line: color-mix(in oklab, var(--sea-ink) 14%, transparent);
+  --link-bg-hover: color-mix(in oklab, var(--canonical-surface) 90%, transparent);
 }
 
 :root[data-theme='dark'] {
+  /* Dark mode swaps the canonical sources + the foreground / surface
+     hue family. Every overlay above inherits the swap automatically
+     via `color-mix` — no duplicate `--surface` / `--chip-bg` / … list
+     to keep in sync. */
   --ambient-bg: #121212;
   --sea-ink: #f0f4ee;
   --sea-ink-soft: #a5b1ad;
@@ -79,26 +109,28 @@
   --palm: #9bbfaf;
   --sand: #101513;
   --foam: #131816;
-  --surface: rgba(24, 31, 28, 0.76);
-  --surface-strong: rgba(21, 27, 25, 0.96);
-  --line: rgba(240, 244, 238, 0.12);
-  --line-strong: rgba(240, 244, 238, 0.2);
-  --inset-glint: rgba(255, 255, 255, 0.1);
   --kicker: #bcc9c4;
   --bg-base: #0d1210;
-  --header-bg: rgba(13, 18, 16, 0.82);
-  --chip-bg: rgba(31, 39, 36, 0.78);
-  --chip-line: rgba(240, 244, 238, 0.13);
-  --link-bg-hover: rgba(255, 255, 255, 0.07);
   --hero-a: rgba(114, 184, 169, 0.15);
   --hero-b: rgba(196, 119, 84, 0.1);
   --danger: #ffb4a8;
   --danger-bg: rgba(180, 35, 24, 0.16);
   --success: #9ad5ca;
+  --canonical-surface: var(--color-surface-dark);
+  --canonical-surface-elevated: var(--color-surface-dark-elevated);
+  /* `--inset-glint` in dark mode loses most of its punch — drop the
+     white mix to 10% so the highlight reads as a subtle sheen rather
+     than a hard rim. */
+  --inset-glint: color-mix(in oklab, white 10%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
+    /* System dark applies the SAME swap the `data-theme='dark'` block
+       does. The duplication is unavoidable — CSS doesn't compose
+       selectors across rules — but the body is now identical to the
+       block above, so a future edit can grep both sites with
+       confidence. */
     --ambient-bg: #121212;
     --sea-ink: #f0f4ee;
     --sea-ink-soft: #a5b1ad;
@@ -107,22 +139,16 @@
     --palm: #9bbfaf;
     --sand: #101513;
     --foam: #131816;
-    --surface: rgba(24, 31, 28, 0.76);
-    --surface-strong: rgba(21, 27, 25, 0.96);
-    --line: rgba(240, 244, 238, 0.12);
-    --line-strong: rgba(240, 244, 238, 0.2);
-    --inset-glint: rgba(255, 255, 255, 0.1);
     --kicker: #bcc9c4;
     --bg-base: #0d1210;
-    --header-bg: rgba(13, 18, 16, 0.82);
-    --chip-bg: rgba(31, 39, 36, 0.78);
-    --chip-line: rgba(240, 244, 238, 0.13);
-    --link-bg-hover: rgba(255, 255, 255, 0.07);
     --hero-a: rgba(114, 184, 169, 0.15);
     --hero-b: rgba(196, 119, 84, 0.1);
     --danger: #ffb4a8;
     --danger-bg: rgba(180, 35, 24, 0.16);
     --success: #9ad5ca;
+    --canonical-surface: var(--color-surface-dark);
+    --canonical-surface-elevated: var(--color-surface-dark-elevated);
+    --inset-glint: color-mix(in oklab, white 10%, transparent);
   }
 }
 
