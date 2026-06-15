@@ -31,7 +31,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@better-auth/core": "1.6.16",
+    "@better-auth/core": "1.6.18",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
@@ -40,7 +40,7 @@
     "@tanstack/react-start": "latest",
     "@tanstack/router-plugin": "^1.132.0",
     "@waveflow/design-tokens": "workspace:*",
-    "better-auth": "1.6.16",
+    "better-auth": "1.6.18",
     "kysely": "~0.28.17",
     "lucide-react": "^1.17.0",
     "nitro": "npm:nitro-nightly@latest",
