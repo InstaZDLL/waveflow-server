@@ -1,4 +1,4 @@
-## Summary
+# Summary
 
 _One or two sentences on what changed and why. Link related issues / PRs._
 
