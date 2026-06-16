@@ -644,13 +644,29 @@ async fn get_digest(
 /// digest diff (`missing_locally` → apply this row locally;
 /// `divergent` → compare HLC tuples under §2 LWW and merge).
 ///
-/// Same scope discipline as [`get_digest`]: `library` / `playlist` /
-/// `track` require `profile_canonical_id`, `liked_track` /
-/// `track_rating` reject it. Unknown entities and shape mismatches
-/// return 400; an absent row (or a row whose `payload_hash` is still
-/// NULL) returns 404 so the caller can distinguish "you don't have
-/// permission" / "we have it but it predates B.0 stamping" from
-/// "we'd serve it but it's gone".
+/// ## Supported entities (5)
+///
+/// - Profile-scoped (require `profile_canonical_id`): `library`,
+///   `playlist`, `track`.
+/// - User-scoped (reject `profile_canonical_id`): `liked_track`,
+///   `track_rating`.
+///
+/// **Intentionally excluded**: `profile` itself. Unlike
+/// [`get_digest`] — which serves a `profile` member so the desktop
+/// can verify the auto-provisioned row's canonical fields —
+/// `/entity` has no `profile` reader because the canonical id used
+/// to address it (`profile_canonical_id`) is ALREADY the per-tenant
+/// scope identifier. A `GET /entity?entity=profile&canonical_id=X
+/// &profile_canonical_id=X` would just round-trip the same id;
+/// the row's HLC + payload_hash are observable from the digest
+/// endpoint instead. Asking for it here returns 400 ("unknown
+/// entity").
+///
+/// Unknown entities and shape mismatches return 400; an absent row
+/// (or a row whose `payload_hash` is still NULL) returns 404 so the
+/// caller can distinguish "you don't have permission" / "we have it
+/// but it predates B.0 stamping" from "we'd serve it but it's
+/// gone".
 #[utoipa::path(
     get,
     path = "/api/v1/sync/entity",

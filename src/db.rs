@@ -1528,7 +1528,8 @@ pub mod entity_read {
     fn copt_str(m: &mut Map<String, Value>, k: &str, v: Option<&str>) {
         m.insert(
             k.to_owned(),
-            v.map(|s| Value::String(s.to_owned())).unwrap_or(Value::Null),
+            v.map(|s| Value::String(s.to_owned()))
+                .unwrap_or(Value::Null),
         );
     }
     fn ci64(m: &mut Map<String, Value>, k: &str, v: i64) {
@@ -1722,7 +1723,11 @@ pub mod entity_read {
         copt_str(&mut fields, "musical_key", musical_key.as_deref());
         ci64(&mut fields, "added_at", added_at);
         copt_str(&mut fields, "album_title", album_title.as_deref());
-        copt_str(&mut fields, "album_artist_name", album_artist_name.as_deref());
+        copt_str(
+            &mut fields,
+            "album_artist_name",
+            album_artist_name.as_deref(),
+        );
         cbool(&mut fields, "is_compilation", is_compilation);
         cstrings(&mut fields, "artists", &artists);
 
