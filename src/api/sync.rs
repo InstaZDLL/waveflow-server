@@ -40,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     db,
     middleware::UserId,
-    sync::{build_broadcast, DigestResponse, Hlc, SyncOp, SyncOpIn},
+    sync::{build_broadcast, DigestResponse, EntityFetchResponse, Hlc, SyncOp, SyncOpIn},
     AppState,
 };
 
@@ -138,11 +138,31 @@ pub struct DigestQuery {
     pub profile_canonical_id: Option<String>,
 }
 
+/// Query parameters for `GET /api/v1/sync/entity` (RFC-003 Phase
+/// B.2). Same scope discipline as [`DigestQuery`]: profile-scoped
+/// entities (`library` / `playlist` / `track`) require
+/// `profile_canonical_id`, user-scoped ones (`liked_track` /
+/// `track_rating`) MUST omit it.
+///
+/// `canonical_id` is the desktop's per-entity key:
+/// - `library` / `playlist`: UUID stringified.
+/// - `track`: composite `<library_canonical_id>\u{1F}<file_path>`
+///   (`%1F` URL-encoded). The server splits on the first U+001F.
+/// - `liked_track` / `track_rating`: the BLAKE3 file hash.
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub struct EntityFetchQuery {
+    pub entity: String,
+    pub canonical_id: String,
+    #[serde(default)]
+    pub profile_canonical_id: Option<String>,
+}
+
 pub fn router(state: AppState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(push_ops, pull_ops))
         .routes(routes!(ack_ops))
         .routes(routes!(get_digest))
+        .routes(routes!(get_entity))
         .route("/api/v1/sync/ws", axum::routing::get(ws_upgrade))
         .with_state(state)
 }
@@ -615,6 +635,147 @@ async fn get_digest(
         Err(err) => {
             tracing::error!(error = %err, entity, "digest read failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "digest read failed").into_response()
+        }
+    }
+}
+
+/// RFC-003 §4 / Phase B.2 — fetch one materialised entity row by
+/// canonical id so the desktop's backfill orchestrator can resolve a
+/// digest diff (`missing_locally` → apply this row locally;
+/// `divergent` → compare HLC tuples under §2 LWW and merge).
+///
+/// Same scope discipline as [`get_digest`]: `library` / `playlist` /
+/// `track` require `profile_canonical_id`, `liked_track` /
+/// `track_rating` reject it. Unknown entities and shape mismatches
+/// return 400; an absent row (or a row whose `payload_hash` is still
+/// NULL) returns 404 so the caller can distinguish "you don't have
+/// permission" / "we have it but it predates B.0 stamping" from
+/// "we'd serve it but it's gone".
+#[utoipa::path(
+    get,
+    path = "/api/v1/sync/entity",
+    tag = "sync",
+    params(
+        ("authorization" = String, Header, description = "Bearer JWT issued by Better Auth"),
+        EntityFetchQuery,
+    ),
+    responses(
+        (status = 200, description = "Full row state for the (entity, canonical_id) pair", body = EntityFetchResponse),
+        (status = 400, description = "Missing/empty fields, scope mismatch, or malformed track composite"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 404, description = "profile_canonical_id not visible to this user, or no row matches the canonical_id"),
+        (status = 500, description = "Database or internal failure"),
+    ),
+)]
+async fn get_entity(
+    State(state): State<AppState>,
+    Extension(UserId(user_id)): Extension<UserId>,
+    Query(query): Query<EntityFetchQuery>,
+) -> impl IntoResponse {
+    let entity = query.entity.trim();
+    let canonical_id = query.canonical_id.trim();
+    if entity.is_empty() {
+        return (StatusCode::BAD_REQUEST, "entity is required").into_response();
+    }
+    if canonical_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "canonical_id is required").into_response();
+    }
+
+    // Structural validation of the track composite key BEFORE the
+    // tenancy resolve. A missing `\u{1F}` separator is a payload
+    // bug independent of which user is asking — surfacing it as
+    // 400 is more useful than letting it fall through to the
+    // profile resolve and surface as 404 ("we just don't have
+    // that row" — which would be misleading since the key shape
+    // itself is broken).
+    let track_split: Option<(&str, &str)> = if entity == "track" {
+        let Some((lib_canonical, file_path)) = canonical_id.split_once('\u{001F}') else {
+            return (
+                StatusCode::BAD_REQUEST,
+                "track canonical_id must be `<library_canonical_id>\\u{001F}<file_path>`",
+            )
+                .into_response();
+        };
+        if lib_canonical.is_empty() || file_path.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                "track canonical_id halves must be non-empty",
+            )
+                .into_response();
+        }
+        Some((lib_canonical, file_path))
+    } else {
+        None
+    };
+
+    enum Scope {
+        Profile(i64),
+        User,
+    }
+
+    let scope = match entity {
+        "library" | "playlist" | "track" => {
+            let Some(canonical) = query.profile_canonical_id.as_deref() else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "profile_canonical_id is required for profile-scoped entities",
+                )
+                    .into_response();
+            };
+            match db::entity_read::resolve_profile_id(state.sync.pool(), user_id, canonical).await {
+                Ok(Some(id)) => Scope::Profile(id),
+                Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                Err(err) => {
+                    tracing::error!(error = %err, user_id, "entity profile resolve failed");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "profile resolve failed")
+                        .into_response();
+                }
+            }
+        }
+        "liked_track" | "track_rating" => {
+            if query.profile_canonical_id.is_some() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "profile_canonical_id must be omitted for user-scoped entities",
+                )
+                    .into_response();
+            }
+            Scope::User
+        }
+        _ => return (StatusCode::BAD_REQUEST, "unknown entity").into_response(),
+    };
+
+    let pool = state.sync.pool();
+    let fetched = match (entity, scope) {
+        ("library", Scope::Profile(profile_id)) => {
+            db::entity_read::fetch_library(pool, profile_id, canonical_id).await
+        }
+        ("playlist", Scope::Profile(profile_id)) => {
+            db::entity_read::fetch_playlist(pool, profile_id, canonical_id).await
+        }
+        ("track", Scope::Profile(profile_id)) => {
+            // `track_split` is `Some` here per the pre-resolve
+            // validation above; the `unwrap_or` is defensive only.
+            let (library_canonical_id, file_path) = track_split.unwrap_or(("", ""));
+            db::entity_read::fetch_track(pool, profile_id, library_canonical_id, file_path).await
+        }
+        ("liked_track", Scope::User) => {
+            db::entity_read::fetch_liked(pool, user_id, canonical_id).await
+        }
+        ("track_rating", Scope::User) => {
+            db::entity_read::fetch_rating(pool, user_id, canonical_id).await
+        }
+        // Reached only on a scope/entity mismatch the dispatch above
+        // already rejected; kept as a defensive fallback.
+        _ => return (StatusCode::BAD_REQUEST, "entity / scope mismatch").into_response(),
+    };
+
+    match fetched {
+        Ok(Some(row)) => (StatusCode::OK, Json(row)).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(error = %err, entity, "entity read failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "entity read failed").into_response()
         }
     }
 }

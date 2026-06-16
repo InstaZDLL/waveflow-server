@@ -116,6 +116,52 @@ pub struct MaxHlc {
     pub origin_device_id: Option<Uuid>,
 }
 
+/// Snapshot of a materialised entity row, returned by
+/// `GET /api/v1/sync/entity`. The desktop's backfill orchestrator
+/// (RFC-003 Phase B.2) hits this endpoint to resolve `missing_locally`
+/// and `divergent` diff outcomes — for each canonical_id the digest
+/// pass flagged, fetch the server's row state, then apply or merge
+/// locally under §2 LWW.
+///
+/// Two design notes:
+///
+/// - `fields` is the canonical-fields form `compute_payload_hash`
+///   was fed when this row's `payload_hash` got stamped. The desktop
+///   can recompute the hash against `(fields, hlc, origin_device_id)`
+///   and assert it matches `payload_hash` — defensive check that the
+///   server's read path didn't drift from its own write path.
+/// - For the `track` entity the `canonical_id` query param + response
+///   field are composite (`<library_canonical_id>\u{1F}<file_path>`),
+///   mirroring the digest member shape. The library + file_path get
+///   echoed as separate top-level fields here so the desktop's apply
+///   pipeline doesn't have to split the composite a second time.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EntityFetchResponse {
+    pub entity: String,
+    pub canonical_id: String,
+    /// BLAKE3-256 hex of the row's canonical wire form, same shape
+    /// as `DigestMember.payload_hash`.
+    pub payload_hash: String,
+    pub hlc: Hlc,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<Uuid>,
+    /// Map of canonical-form fields, one entry per key the matching
+    /// `apply::*::canonical_fields` helper produced when the row got
+    /// stamped. Strictly the input to `compute_payload_hash` — no
+    /// auxiliary metadata.
+    #[schema(value_type = serde_json::Value)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
+    /// Library canonical id for `track` entity responses (the desktop
+    /// uses this to attach the row to its own local `library` rowid).
+    /// Always `None` for non-track entities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_canonical_id: Option<String>,
+    /// File path for `track` entity responses (the second half of the
+    /// composite canonical id). Always `None` for non-track entities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+}
+
 /// Hybrid Logical Clock pair carried by RFC-003 v2 ops on the wire.
 ///
 /// `wall` is epoch-millis (BIGINT in Postgres). `logical` is the
