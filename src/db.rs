@@ -1479,6 +1479,355 @@ pub mod digest_read {
     }
 }
 
+/// `GET /api/v1/sync/entity` read path (RFC-003 Phase B.2).
+///
+/// Counterpart of [`digest_read`]: where the digest endpoint hands
+/// back a hashed snapshot of an entity set, this one fetches the
+/// FULL canonical-fields state of a single materialised row, so a
+/// desktop's backfill orchestrator can apply or merge it under §2
+/// LWW.
+///
+/// Per-entity contracts:
+///
+/// - `library` / `playlist` — keyed on `canonical_id` (UUID
+///   stringified). `fields` carries the 4-key shape produced by
+///   `apply::library::canonical_fields` (mirror byte-exact).
+/// - `track` — keyed on the composite
+///   `<library_canonical_id>\u{1F}<file_path>`. Server splits on the
+///   `U+001F` (ASCII Unit Separator); the file path can't contain it
+///   because the desktop scanner never emits one (per the digest
+///   protocol's invariant). `fields` carries the 18-key shape from
+///   `apply::track::canonical_fields`; `library_canonical_id` +
+///   `file_path` ride alongside on the response so the desktop
+///   doesn't have to split the composite twice.
+/// - `liked_track` — keyed on `file_hash`. `fields` is the empty
+///   map (the entity is a binary state).
+/// - `track_rating` — keyed on `file_hash`. `fields` carries the
+///   single-key `{rating: i64}` shape.
+///
+/// Every read filters `payload_hash IS NOT NULL` — rows whose hash
+/// hasn't been stamped yet stay invisible to the backfill protocol,
+/// matching the digest endpoint's set membership.
+pub mod entity_read {
+    use serde_json::{Map, Value};
+    use sqlx::{PgPool, Row};
+    use uuid::Uuid;
+
+    use crate::sync::{EntityFetchResponse, Hlc};
+
+    // Local canonical-field inserters. Mirror byte-exact of
+    // `apply::canon::*` (and of the desktop's
+    // `waveflow_core::sync::canon` module). Inlined here to avoid
+    // bumping the `waveflow-core` git pin just to import the same 5
+    // 1-liner helpers — once a future PR bumps the pin past B.0a
+    // these can switch to `waveflow_core::sync::canon::*` without
+    // changing semantics.
+    fn cstr(m: &mut Map<String, Value>, k: &str, v: &str) {
+        m.insert(k.to_owned(), Value::String(v.to_owned()));
+    }
+    fn copt_str(m: &mut Map<String, Value>, k: &str, v: Option<&str>) {
+        m.insert(
+            k.to_owned(),
+            v.map(|s| Value::String(s.to_owned()))
+                .unwrap_or(Value::Null),
+        );
+    }
+    fn ci64(m: &mut Map<String, Value>, k: &str, v: i64) {
+        m.insert(k.to_owned(), Value::from(v));
+    }
+    fn copt_i64(m: &mut Map<String, Value>, k: &str, v: Option<i64>) {
+        m.insert(k.to_owned(), v.map(Value::from).unwrap_or(Value::Null));
+    }
+    fn cbool(m: &mut Map<String, Value>, k: &str, v: bool) {
+        m.insert(k.to_owned(), Value::Bool(v));
+    }
+    fn cstrings(m: &mut Map<String, Value>, k: &str, vs: &[String]) {
+        m.insert(
+            k.to_owned(),
+            Value::Array(vs.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+
+    /// Re-export of the profile-id resolver, mirroring
+    /// [`super::digest_read::resolve_profile_id`] (identical
+    /// SELECT). Kept here so the API layer's dispatcher doesn't
+    /// have to depend on the digest module just for tenancy
+    /// resolution.
+    pub async fn resolve_profile_id(
+        pool: &PgPool,
+        user_id: i64,
+        canonical_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        super::digest_read::resolve_profile_id(pool, user_id, canonical_id).await
+    }
+
+    /// Fetch the `library` row matching `canonical_id` under
+    /// `profile_id`. Returns `None` when the row doesn't exist or
+    /// its `payload_hash` is still NULL (pre-B.0 row that hasn't
+    /// been re-stamped yet — invisible to backfill).
+    pub async fn fetch_library(
+        pool: &PgPool,
+        profile_id: i64,
+        canonical_id: &str,
+    ) -> Result<Option<EntityFetchResponse>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT name, description, color_id, icon_id, \
+                    payload_hash, hlc_wall, hlc_logical, origin_device_id \
+               FROM library \
+              WHERE profile_id = $1 AND canonical_id = $2 \
+                AND payload_hash IS NOT NULL",
+        )
+        .bind(profile_id)
+        .bind(canonical_id)
+        .fetch_optional(pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let name: String = row.get("name");
+        let description: Option<String> = row.get("description");
+        let color_id: String = row.get("color_id");
+        let icon_id: String = row.get("icon_id");
+        let mut fields = Map::new();
+        cstr(&mut fields, "name", &name);
+        copt_str(&mut fields, "description", description.as_deref());
+        cstr(&mut fields, "color_id", &color_id);
+        cstr(&mut fields, "icon_id", &icon_id);
+        Ok(Some(build_response(
+            "library",
+            canonical_id.to_owned(),
+            &row,
+            fields,
+            None,
+            None,
+        )))
+    }
+
+    /// Fetch the `playlist` row matching `canonical_id` under
+    /// `profile_id`. Same shape as [`fetch_library`].
+    pub async fn fetch_playlist(
+        pool: &PgPool,
+        profile_id: i64,
+        canonical_id: &str,
+    ) -> Result<Option<EntityFetchResponse>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT name, description, color_id, icon_id, \
+                    payload_hash, hlc_wall, hlc_logical, origin_device_id \
+               FROM playlist \
+              WHERE profile_id = $1 AND canonical_id = $2 \
+                AND payload_hash IS NOT NULL",
+        )
+        .bind(profile_id)
+        .bind(canonical_id)
+        .fetch_optional(pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let name: String = row.get("name");
+        let description: Option<String> = row.get("description");
+        let color_id: String = row.get("color_id");
+        let icon_id: String = row.get("icon_id");
+        let mut fields = Map::new();
+        cstr(&mut fields, "name", &name);
+        copt_str(&mut fields, "description", description.as_deref());
+        cstr(&mut fields, "color_id", &color_id);
+        cstr(&mut fields, "icon_id", &icon_id);
+        Ok(Some(build_response(
+            "playlist",
+            canonical_id.to_owned(),
+            &row,
+            fields,
+            None,
+            None,
+        )))
+    }
+
+    /// Fetch the `track` row matching `(library_canonical_id,
+    /// file_path)` under `profile_id`. The composite canonical is
+    /// already split by the caller — the API layer parses the
+    /// `\u{1F}` separator off the query param before calling this.
+    /// Returns `None` when no track matches.
+    ///
+    /// The 18-key canonical fields require joining `album` (for the
+    /// title + sticky `is_compilation`), `artist` (via `album_artist_id`
+    /// for the album artist name), and the `track_artist` ordered
+    /// list (for the multi-artist array). The query does it in one
+    /// round-trip via aggregate sub-selects.
+    pub async fn fetch_track(
+        pool: &PgPool,
+        profile_id: i64,
+        library_canonical_id: &str,
+        file_path: &str,
+    ) -> Result<Option<EntityFetchResponse>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT \
+                t.title, t.file_hash, t.file_size, t.duration_ms, \
+                t.track_number, t.disc_number, t.year, t.bitrate, \
+                t.sample_rate, t.channels, t.bit_depth, t.codec, \
+                t.musical_key, t.added_at, \
+                a.canonical_title AS album_title, \
+                aa.name AS album_artist_name, \
+                COALESCE(a.is_compilation, false) AS is_compilation, \
+                ( \
+                  SELECT COALESCE(ARRAY_AGG(ar.name ORDER BY ta.position), '{}'::text[]) \
+                    FROM track_artist ta \
+                    JOIN artist ar ON ar.id = ta.artist_id \
+                   WHERE ta.track_id = t.id \
+                ) AS artists, \
+                t.payload_hash, t.hlc_wall, t.hlc_logical, t.origin_device_id \
+              FROM track t \
+              JOIN library l ON l.id = t.library_id \
+         LEFT JOIN album a ON a.id = t.album_id \
+         LEFT JOIN artist aa ON aa.id = a.album_artist_id \
+             WHERE l.profile_id = $1 \
+               AND l.canonical_id = $2 \
+               AND t.file_path = $3 \
+               AND t.payload_hash IS NOT NULL",
+        )
+        .bind(profile_id)
+        .bind(library_canonical_id)
+        .bind(file_path)
+        .fetch_optional(pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+
+        let title: String = row.get("title");
+        let file_hash: String = row.get("file_hash");
+        let file_size: i64 = row.get("file_size");
+        let duration_ms: i64 = row.get("duration_ms");
+        let track_number: Option<i64> = row.get("track_number");
+        let disc_number: Option<i64> = row.get("disc_number");
+        let year: Option<i64> = row.get("year");
+        let bitrate: Option<i64> = row.get("bitrate");
+        let sample_rate: Option<i64> = row.get("sample_rate");
+        let channels: Option<i64> = row.get("channels");
+        let bit_depth: Option<i64> = row.get("bit_depth");
+        let codec: Option<String> = row.get("codec");
+        let musical_key: Option<String> = row.get("musical_key");
+        let added_at: i64 = row.get("added_at");
+        let album_title: Option<String> = row.get("album_title");
+        let album_artist_name: Option<String> = row.get("album_artist_name");
+        let is_compilation: bool = row.get("is_compilation");
+        let artists: Vec<String> = row.get("artists");
+
+        let mut fields = Map::new();
+        cstr(&mut fields, "title", &title);
+        cstr(&mut fields, "file_hash", &file_hash);
+        ci64(&mut fields, "file_size", file_size);
+        ci64(&mut fields, "duration_ms", duration_ms);
+        copt_i64(&mut fields, "track_number", track_number);
+        copt_i64(&mut fields, "disc_number", disc_number);
+        copt_i64(&mut fields, "year", year);
+        copt_i64(&mut fields, "bitrate", bitrate);
+        copt_i64(&mut fields, "sample_rate", sample_rate);
+        copt_i64(&mut fields, "channels", channels);
+        copt_i64(&mut fields, "bit_depth", bit_depth);
+        copt_str(&mut fields, "codec", codec.as_deref());
+        copt_str(&mut fields, "musical_key", musical_key.as_deref());
+        ci64(&mut fields, "added_at", added_at);
+        copt_str(&mut fields, "album_title", album_title.as_deref());
+        copt_str(
+            &mut fields,
+            "album_artist_name",
+            album_artist_name.as_deref(),
+        );
+        cbool(&mut fields, "is_compilation", is_compilation);
+        cstrings(&mut fields, "artists", &artists);
+
+        let composite = format!("{library_canonical_id}\u{001F}{file_path}");
+        Ok(Some(build_response(
+            "track",
+            composite,
+            &row,
+            fields,
+            Some(library_canonical_id.to_owned()),
+            Some(file_path.to_owned()),
+        )))
+    }
+
+    /// Fetch the `user_liked_track` row for `file_hash` under
+    /// `user_id`. The canonical wire form is the empty map.
+    pub async fn fetch_liked(
+        pool: &PgPool,
+        user_id: i64,
+        file_hash: &str,
+    ) -> Result<Option<EntityFetchResponse>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT payload_hash, hlc_wall, hlc_logical, origin_device_id \
+               FROM user_liked_track \
+              WHERE user_id = $1 AND file_hash = $2 \
+                AND payload_hash IS NOT NULL",
+        )
+        .bind(user_id)
+        .bind(file_hash)
+        .fetch_optional(pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        Ok(Some(build_response(
+            "liked_track",
+            file_hash.to_owned(),
+            &row,
+            Map::new(),
+            None,
+            None,
+        )))
+    }
+
+    /// Fetch the `user_track_rating` row for `file_hash` under
+    /// `user_id`. `fields` carries the single `{rating: i64}` key.
+    pub async fn fetch_rating(
+        pool: &PgPool,
+        user_id: i64,
+        file_hash: &str,
+    ) -> Result<Option<EntityFetchResponse>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT rating, payload_hash, hlc_wall, hlc_logical, origin_device_id \
+               FROM user_track_rating \
+              WHERE user_id = $1 AND file_hash = $2 \
+                AND payload_hash IS NOT NULL",
+        )
+        .bind(user_id)
+        .bind(file_hash)
+        .fetch_optional(pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let rating: i64 = row.get("rating");
+        let mut fields = Map::new();
+        ci64(&mut fields, "rating", rating);
+        Ok(Some(build_response(
+            "track_rating",
+            file_hash.to_owned(),
+            &row,
+            fields,
+            None,
+            None,
+        )))
+    }
+
+    /// Common assembly from a Postgres row + computed `fields` map.
+    /// Used by every per-entity fetcher above.
+    fn build_response(
+        entity: &str,
+        canonical_id: String,
+        row: &sqlx::postgres::PgRow,
+        fields: Map<String, Value>,
+        library_canonical_id: Option<String>,
+        file_path: Option<String>,
+    ) -> EntityFetchResponse {
+        let payload_hash: Vec<u8> = row.get("payload_hash");
+        let wall: i64 = row.get("hlc_wall");
+        let logical: i32 = row.get("hlc_logical");
+        let origin: Option<Uuid> = row.get("origin_device_id");
+        EntityFetchResponse {
+            entity: entity.to_owned(),
+            canonical_id,
+            payload_hash: hex::encode(&payload_hash),
+            hlc: Hlc { wall, logical },
+            origin_device_id: origin,
+            fields,
+            library_canonical_id,
+            file_path,
+        }
+    }
+}
+
 /// Album browse helpers (Phase 4.d.0.4). Reads against the `album`
 /// table for the `GET /api/v1/profiles/{p}/libraries/{l}/albums`
 /// surface plus the per-album drill-down. Writes still go through
