@@ -64,11 +64,7 @@ async fn push(base: &str, token: &str, ops: &[Value]) -> reqwest::StatusCode {
         .status()
 }
 
-async fn fetch(
-    base: &str,
-    token: &str,
-    params: &[(&str, &str)],
-) -> reqwest::Response {
+async fn fetch(base: &str, token: &str, params: &[(&str, &str)]) -> reqwest::Response {
     reqwest::Client::new()
         .get(format!("{base}/api/v1/sync/entity"))
         .bearer_auth(token)
