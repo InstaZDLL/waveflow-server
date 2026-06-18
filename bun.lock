@@ -5,7 +5,7 @@
     "": {
       "name": "waveflow-platform",
       "devDependencies": {
-        "concurrently": "latest",
+        "concurrently": "^10.0.3",
       },
     },
   },
