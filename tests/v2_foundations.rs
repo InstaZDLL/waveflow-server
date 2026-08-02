@@ -1,0 +1,2080 @@
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use http_body_util::BodyExt;
+use sqlx::Row;
+use tempfile::TempDir;
+use tower::ServiceExt;
+use uuid::Uuid;
+use waveflow_server::{
+    authentication::now_ms,
+    catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
+    database::{AccountRole, LibraryRole, LibraryVisibility},
+    security, Config,
+};
+
+async fn test_app() -> (TempDir, Config, waveflow_server::AppState) {
+    let temp = tempfile::tempdir().unwrap();
+    let config = Config::for_data_dir(temp.path().join("data"));
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    (temp, config, state)
+}
+
+#[tokio::test]
+async fn fresh_instance_bootstraps_accounts_library_and_encrypted_credential() {
+    let (_temp, config, state) = test_app().await;
+    let now = now_ms();
+    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    let admin_id = state
+        .db
+        .create_account("admin", &password_hash, AccountRole::Admin, now)
+        .await
+        .unwrap();
+
+    let music = config.data_dir.join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            admin_id,
+            "Main library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now,
+        )
+        .await
+        .unwrap();
+
+    let encrypted = state
+        .secret_box
+        .encrypt(b"dedicated-subsonic-secret")
+        .unwrap();
+    let api_key_hash = security::token_hash("wfsk_test-key");
+    state
+        .db
+        .set_subsonic_credential(admin_id, admin_id, &encrypted, &api_key_hash, now)
+        .await
+        .unwrap();
+
+    let member_role: String =
+        sqlx::query_scalar("SELECT role FROM library_member WHERE library_id = ? AND user_id = ?")
+            .bind(library_id.to_string())
+            .bind(admin_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(member_role, "owner");
+    let listener_id = state
+        .db
+        .create_account("member", &password_hash, AccountRole::User, now)
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(
+            admin_id,
+            library_id,
+            listener_id,
+            LibraryRole::Listener,
+            now,
+        )
+        .await
+        .unwrap();
+    assert!(state
+        .db
+        .remove_library_member(admin_id, library_id, listener_id, now)
+        .await
+        .unwrap());
+    assert!(!state
+        .db
+        .remove_library_member(admin_id, library_id, admin_id, now)
+        .await
+        .unwrap());
+
+    let row = sqlx::query(
+        "SELECT password_nonce, password_ciphertext, api_key_hash \
+         FROM subsonic_credential WHERE user_id = ?",
+    )
+    .bind(admin_id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    let nonce: Vec<u8> = row.get("password_nonce");
+    let ciphertext: Vec<u8> = row.get("password_ciphertext");
+    assert_eq!(row.get::<Vec<u8>, _>("api_key_hash").len(), 32);
+    assert_eq!(
+        state.secret_box.decrypt(&nonce, &ciphertext).unwrap(),
+        b"dedicated-subsonic-secret"
+    );
+    assert!(!ciphertext
+        .windows(b"dedicated-subsonic-secret".len())
+        .any(|window| window == b"dedicated-subsonic-secret"));
+    assert_eq!(std::fs::read(&config.instance_key_path).unwrap().len(), 32);
+
+    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(journal_mode, "wal");
+    assert_eq!(foreign_keys, 1);
+    assert!(state.db.integrity_check().await.unwrap());
+}
+
+#[tokio::test]
+async fn login_refresh_rotation_and_logout_work() {
+    let (_temp, config, state) = test_app().await;
+    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("listener", &password_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+
+    let login = json_request(
+        "/api/v2/auth/login",
+        serde_json::json!({
+            "username": "listener",
+            "password": "correct horse battery staple",
+            "device_name": "Integration browser"
+        }),
+    );
+    let response = router.clone().oneshot(login).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let login_body = json_body(response).await;
+    let access = login_body["access_token"].as_str().unwrap().to_owned();
+    let refresh = login_body["refresh_token"].as_str().unwrap().to_owned();
+    assert!(access.starts_with("wfa_"));
+    assert!(refresh.starts_with("wfr_"));
+
+    let response = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/refresh",
+            serde_json::json!({ "refresh_token": refresh }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed = json_body(response).await;
+    let new_access = refreshed["access_token"].as_str().unwrap();
+    let new_refresh = refreshed["refresh_token"].as_str().unwrap();
+    assert_ne!(new_access, access);
+
+    let reused = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/refresh",
+            serde_json::json!({ "refresh_token": refresh }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(reused.status(), StatusCode::UNAUTHORIZED);
+
+    let logout = Request::post("/api/v2/auth/logout")
+        .header("authorization", format!("Bearer {new_access}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router.oneshot(logout).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(new_refresh.starts_with("wfr_"));
+}
+
+#[tokio::test]
+async fn probes_and_openapi_are_available_without_scan_readiness() {
+    let (_temp, mut config, state) = test_app().await;
+    config.allowed_origins = vec!["http://127.0.0.1:9180".parse().unwrap()];
+    let router = waveflow_server::app(&config, state);
+
+    let health = router
+        .clone()
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    assert_eq!(json_body(health).await["schema"], 2);
+
+    let ready = router
+        .clone()
+        .oneshot(Request::get("/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), StatusCode::OK);
+    assert_eq!(json_body(ready).await["database"], "ok");
+
+    let cors = router
+        .clone()
+        .oneshot(
+            Request::get("/health")
+                .header("origin", "http://127.0.0.1:9180")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        cors.headers()["access-control-allow-origin"],
+        "http://127.0.0.1:9180"
+    );
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::get("/health")
+                .header("origin", "https://untrusted.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(rejected
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+
+    let openapi = router
+        .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(openapi.status(), StatusCode::OK);
+    let document = json_body(openapi).await;
+    assert!(document["paths"]["/api/v2/auth/login"].is_object());
+}
+
+#[tokio::test]
+async fn scanner_indexes_moves_and_marks_tracks_unavailable() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("scanner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("scan-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("First Track.wav"));
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Scanner library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Scanner library".into(),
+        root_path: std::fs::canonicalize(&music).unwrap(),
+    };
+
+    run_scan(&state, owner, library.clone()).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].title, "First Track");
+    assert!(tracks[0].available);
+    let stable_id = tracks[0].id;
+    let found = state
+        .db
+        .search_tracks_for_user(owner, library_id, "First")
+        .await
+        .unwrap();
+    assert_eq!(found[0].id, stable_id);
+
+    std::fs::create_dir_all(music.join("Moved")).unwrap();
+    std::fs::rename(
+        music.join("First Track.wav"),
+        music.join("Moved").join("Renamed.wav"),
+    )
+    .unwrap();
+    run_scan(&state, owner, library.clone()).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id, stable_id);
+    assert_eq!(tracks[0].relative_path, "Moved/Renamed.wav");
+
+    std::fs::remove_file(music.join("Moved").join("Renamed.wav")).unwrap();
+    run_scan(&state, owner, library).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert!(!tracks[0].available);
+}
+
+#[tokio::test]
+async fn scanner_batches_more_than_one_write_group_without_deduplicating_copies() {
+    let (_temp, config, state) = test_app().await;
+    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account(
+            "batch-scanner",
+            &password_hash,
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("batch-scan");
+    std::fs::create_dir_all(&music).unwrap();
+    for index in 0..30 {
+        write_test_wav(&music.join(format!("Track {index:02}.wav")));
+    }
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Batch scanner",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Batch scanner".into(),
+            root_path: root,
+        },
+    )
+    .await;
+
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 30);
+    assert!(tracks.iter().all(|track| track.available));
+    assert_eq!(
+        state
+            .db
+            .search_tracks_for_user(owner, library_id, "Track")
+            .await
+            .unwrap()
+            .len(),
+        30
+    );
+}
+
+#[tokio::test]
+async fn scanner_indexes_dsd64_and_deduplicates_folder_artwork() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("formats", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("formats");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("One.wav"));
+    write_test_wav(&music.join("Two.wav"));
+    write_test_dsf(&music.join("Native DSD.dsf"));
+    write_test_png(&music.join("cover.png"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Formats",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Formats".into(),
+            root_path: root,
+        },
+    )
+    .await;
+
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 3);
+    let dsd = tracks
+        .iter()
+        .find(|track| track.title == "Native DSD")
+        .unwrap();
+    assert_eq!(dsd.codec.as_deref(), Some("DSD64"));
+    let dsd_depth: i64 = sqlx::query_scalar("SELECT bit_depth FROM track WHERE id = ?")
+        .bind(dsd.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(dsd_depth, 1);
+
+    let artwork_hashes: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT artwork_hash FROM track WHERE library_id = ? AND artwork_hash IS NOT NULL",
+    )
+    .bind(library_id.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(artwork_hashes.len(), 1);
+    let artwork_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(artwork_rows, 1);
+}
+
+#[tokio::test]
+async fn compilation_and_multi_artist_materialization_is_deterministic() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("metadata", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("metadata");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Metadata",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2).await.unwrap();
+
+    for (index, artist) in ["Alpha; Beta", "Gamma"].into_iter().enumerate() {
+        let outcome = state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &catalog_input(index, artist),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ApplyOutcome::Added);
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let albums: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM album WHERE library_id = ? AND title = 'Shared compilation'",
+    )
+    .bind(library_id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(albums, 1);
+    let album_row =
+        sqlx::query("SELECT album_artist_name, is_compilation FROM album WHERE library_id = ?")
+            .bind(library_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        album_row.get::<String, _>("album_artist_name"),
+        "Various Artists"
+    );
+    assert_eq!(album_row.get::<i64, _>("is_compilation"), 1);
+
+    let first_track_artists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM track_artist ta JOIN track t ON t.id = ta.track_id \
+         WHERE t.library_id = ? AND t.relative_path = 'track-0.flac'",
+    )
+    .bind(library_id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(first_track_artists, 2);
+    let genres: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM genre WHERE library_id = ?")
+        .bind(library_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(genres, 2);
+    assert_eq!(
+        state
+            .db
+            .search_tracks_for_user(owner, library_id, "Beta")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn ffmpeg_generated_catalog_format_matrix_is_indexed() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("matrix", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("format-matrix");
+    std::fs::create_dir_all(&music).unwrap();
+    for (extension, codec) in [
+        ("mp3", "libmp3lame"),
+        ("flac", "flac"),
+        ("m4a", "aac"),
+        ("ogg", "libvorbis"),
+        ("wav", "pcm_s16le"),
+    ] {
+        generate_audio_fixture(&music.join(format!("matrix.{extension}")), codec, extension);
+    }
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "Matrix", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Matrix".into(),
+            root_path: root,
+        },
+    )
+    .await;
+
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 5);
+    for extension in ["mp3", "flac", "m4a", "ogg", "wav"] {
+        let track = tracks
+            .iter()
+            .find(|track| track.relative_path == format!("matrix.{extension}"))
+            .unwrap_or_else(|| panic!("missing {extension} from matrix"));
+        assert_eq!(track.title, format!("Matrix {extension}"));
+        assert_eq!(track.album.as_deref(), Some("WaveFlow format matrix"));
+        assert_eq!(track.artist.as_deref(), Some("Alpha; Beta"));
+        assert!(track.duration_ms > 0);
+    }
+}
+
+#[tokio::test]
+async fn catalog_and_scan_routes_blur_foreign_libraries() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("route-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("route-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("route-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Private.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Private library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Private library".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "route-owner", password).await;
+    let intruder_token = login_token(&router, "route-intruder", password).await;
+
+    let owner_response = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/libraries/{library_id}/tracks"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(owner_response.status(), StatusCode::OK);
+    assert_eq!(json_body(owner_response).await.as_array().unwrap().len(), 1);
+
+    for method in ["GET", "POST"] {
+        let uri = if method == "GET" {
+            format!("/api/v2/libraries/{library_id}/tracks")
+        } else {
+            format!("/api/v2/libraries/{library_id}/scans")
+        };
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {intruder_token}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
+async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("media-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("media-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("media-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Range.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Media library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Media library".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let media = state.media.clone();
+    let router = waveflow_server::app(&config, state.clone());
+    let owner_token = login_token(&router, "media-owner", password).await;
+    let intruder_token = login_token(&router, "media-intruder", password).await;
+    let uri = format!("/api/v2/tracks/{}/stream", track.id);
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(&uri)
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-9")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()["content-range"], "bytes 0-9/1644");
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..4], b"RIFF");
+    assert_eq!(bytes.len(), 10);
+
+    let unsatisfiable = router
+        .clone()
+        .oneshot(
+            Request::get(&uri)
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=99999-")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsatisfiable.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+
+    let hidden = router
+        .clone()
+        .oneshot(
+            Request::get(&uri)
+                .header("authorization", format!("Bearer {intruder_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+
+    let transcode_uri = format!("{uri}?format=mp3&bitrate=96");
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(&transcode_uri)
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["accept-ranges"], "none");
+    assert_eq!(response.headers()["content-type"], "audio/mpeg");
+    assert!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len()
+            > 100
+    );
+
+    let cache_file = wait_for_cache_file(&config.transcode_cache_dir, "mp3").await;
+    assert!(cache_file.metadata().unwrap().len() > 100);
+    let cached_range = router
+        .clone()
+        .oneshot(
+            Request::get(&transcode_uri)
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-31")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cached_range.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        cached_range
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len(),
+        32
+    );
+
+    // Two consumers of the same missing cache key converge on one FFmpeg job:
+    // the second waits for the per-key guard, then reads the committed file.
+    let concurrent_uri = format!("{uri}?format=mp3&bitrate=112");
+    let first_router = router.clone();
+    let second_router = router.clone();
+    let first_token = owner_token.clone();
+    let second_token = owner_token.clone();
+    let first_uri = concurrent_uri.clone();
+    let first = async move {
+        let response = first_router
+            .oneshot(
+                Request::get(first_uri)
+                    .header("authorization", format!("Bearer {first_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response.into_body().collect().await.unwrap().to_bytes()
+    };
+    let second = async move {
+        let response = second_router
+            .oneshot(
+                Request::get(concurrent_uri)
+                    .header("authorization", format!("Bearer {second_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response.into_body().collect().await.unwrap().to_bytes()
+    };
+    let (first_bytes, second_bytes) = tokio::join!(first, second);
+    assert_eq!(first_bytes, second_bytes);
+    assert_eq!(
+        std::fs::read_dir(&config.transcode_cache_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(
+                |entry| entry.path().extension().and_then(std::ffi::OsStr::to_str) == Some("mp3")
+            )
+            .count(),
+        2,
+        "duplicate consumers must create only one file per cache key"
+    );
+
+    let live_seek = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=opus&bitrate=64&offsetMs=25"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(live_seek.status(), StatusCode::OK);
+    assert_eq!(live_seek.headers()["accept-ranges"], "none");
+    drop(live_seek);
+    for _ in 0..100 {
+        if media.active_transcodes() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        media.active_transcodes(),
+        0,
+        "abandoned FFmpeg was not cancelled"
+    );
+    assert!(!std::fs::read_dir(&config.transcode_cache_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().contains(".part-")));
+
+    sqlx::query("UPDATE track SET relative_path = '../outside.wav' WHERE id = ?")
+        .bind(track.id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let escaped = router
+        .oneshot(
+            Request::get(&uri)
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(escaped.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn startup_reports_missing_ffmpeg() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = Config::for_data_dir(temp.path().join("data"));
+    config.ffmpeg_path = temp.path().join("missing-ffmpeg");
+    let error = match waveflow_server::initialize(&config).await {
+        Ok(_) => panic!("initialization unexpectedly accepted a missing FFmpeg"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("ffmpeg is required"));
+}
+
+#[tokio::test]
+async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
+    use md5::{Digest, Md5};
+
+    let (_temp, config, state) = test_app().await;
+    let web_password = "correct horse battery staple";
+    let subsonic_password = "subsonic-secret-123";
+    let api_key = "wfsk_golden-api-key";
+    let admin = state
+        .db
+        .create_account(
+            "sub-admin",
+            &security::hash_password(web_password).unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(subsonic_password.as_bytes())
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            admin,
+            admin,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("subsonic-music");
+    std::fs::create_dir_all(&music).unwrap();
+    generate_audio_fixture(&music.join("Golden.wav"), "pcm_s16le", "wav");
+    write_test_png(&music.join("cover.png"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            admin,
+            "Subsonic library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        admin,
+        LibraryRecord {
+            id: library,
+            name: "Subsonic library".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let secondary_music = config.data_dir.join("subsonic-secondary");
+    std::fs::create_dir_all(&secondary_music).unwrap();
+    let secondary_root = std::fs::canonicalize(&secondary_music).unwrap();
+    let secondary_library = state
+        .db
+        .create_library(
+            admin,
+            "Secondary Subsonic library",
+            &secondary_root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let snapshot = state.services.catalog_snapshot(admin, &[]).await.unwrap();
+    let song = snapshot.songs.first().unwrap().id;
+    let artist = snapshot.artists.first().unwrap().id;
+    let album = snapshot.albums.first().unwrap().id;
+    let artwork = snapshot
+        .songs
+        .first()
+        .unwrap()
+        .artwork_hash
+        .clone()
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let plain_auth = format!("u=sub-admin&p={subsonic_password}&v=1.16.1&c=golden");
+
+    let ping = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/rest/ping.view?{plain_auth}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+    let ping_xml = body_text(ping).await;
+    assert!(ping_xml.starts_with("<subsonic-response"));
+    assert!(ping_xml.contains("status=\"ok\""));
+    assert!(!ping_xml.contains("<ping"));
+
+    let salt = "golden-salt";
+    let mut digest = Md5::new();
+    digest.update(subsonic_password.as_bytes());
+    digest.update(salt.as_bytes());
+    let token_auth = format!(
+        "u=sub-admin&t={}&s={salt}&v=1.16.1&c=golden&f=json",
+        hex::encode(digest.finalize())
+    );
+    let token_ping = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/rest/ping?{token_auth}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(token_ping.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(token_ping).await["subsonic-response"]["status"],
+        "ok"
+    );
+
+    let post_body = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json");
+    let folders = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/getMusicFolders.view")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(post_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(folders.status(), StatusCode::OK);
+    let folders = json_body(folders).await;
+    let folder_ids = folders["subsonic-response"]["musicFolders"]["musicFolder"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|folder| folder["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(folder_ids.contains(&library.to_string()));
+    assert!(folder_ids.contains(&secondary_library.to_string()));
+
+    let cases = [
+        ("getLicense", String::new()),
+        ("getOpenSubsonicExtensions", String::new()),
+        ("getIndexes", format!("&musicFolderId={library}")),
+        ("getArtists", format!("&musicFolderId={library}")),
+        ("getArtist", format!("&id={artist}")),
+        ("getAlbum", format!("&id={album}")),
+        ("getSong", format!("&id={song}")),
+        ("getGenres", String::new()),
+        ("getMusicDirectory", format!("&id={album}")),
+        ("getAlbumList", "&type=newest&size=10".into()),
+        ("getAlbumList2", "&type=alphabeticalByName&size=10".into()),
+        ("getRandomSongs", "&size=10".into()),
+        ("getSongsByGenre", "&genre=Electronic&count=10".into()),
+        ("search3", "&query=Matrix&songCount=10".into()),
+    ];
+    for (method, extra) in cases {
+        let response = subsonic_json(&router, method, api_key, &extra).await;
+        assert_eq!(response["subsonic-response"]["status"], "ok", "{method}");
+        if method == "getAlbumList" {
+            assert!(response["subsonic-response"]["albumList"].is_object());
+            assert!(response["subsonic-response"]["albumList"]["album"].is_array());
+            assert!(response["subsonic-response"].get("albumList2").is_none());
+        }
+    }
+    let exhausted_search = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Matrix&artistCount=0&albumCount=0&songCount=1&songOffset=1",
+    )
+    .await;
+    assert!(exhausted_search["subsonic-response"]["searchResult3"]
+        .get("song")
+        .is_none());
+    let repeated_folder_search = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        &format!(
+            "&query=Matrix&artistCount=0&albumCount=0&songCount=10&musicFolderId={secondary_library}&musicFolderId={library}"
+        ),
+    )
+    .await;
+    assert_eq!(
+        repeated_folder_search["subsonic-response"]["searchResult3"]["song"][0]["id"],
+        song.to_string()
+    );
+    let secondary_only_search = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        &format!(
+            "&query=Matrix&artistCount=0&albumCount=0&songCount=10&musicFolderId={secondary_library}"
+        ),
+    )
+    .await;
+    assert!(secondary_only_search["subsonic-response"]["searchResult3"]
+        .get("song")
+        .is_none());
+
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        api_key,
+        &format!("&name=Golden&songId={song}"),
+    )
+    .await;
+    let playlist = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (method, extra) in [
+        ("getPlaylists", String::new()),
+        ("getPlaylist", format!("&id={playlist}")),
+        (
+            "updatePlaylist",
+            format!("&playlistId={playlist}&comment=Updated"),
+        ),
+        (
+            "star",
+            format!("&id={song}&albumId={album}&artistId={artist}"),
+        ),
+        ("getStarred2", String::new()),
+        ("setRating", format!("&id={song}&rating=5")),
+        ("scrobble", format!("&id={song}&submission=false")),
+        ("getNowPlaying", String::new()),
+        (
+            "savePlayQueue",
+            format!("&id={song}&current={song}&position=25"),
+        ),
+        ("getPlayQueue", String::new()),
+    ] {
+        let response = subsonic_json(&router, method, api_key, &extra).await;
+        assert_eq!(response["subsonic-response"]["status"], "ok", "{method}");
+    }
+
+    let decorated_song = subsonic_json(&router, "getSong", api_key, &format!("&id={song}")).await;
+    assert_eq!(decorated_song["subsonic-response"]["song"]["userRating"], 5);
+    assert!(decorated_song["subsonic-response"]["song"]["starred"]
+        .as_str()
+        .is_some());
+    let decorated_search = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Matrix&artistCount=0&albumCount=0&songCount=10",
+    )
+    .await;
+    assert_eq!(
+        decorated_search["subsonic-response"]["searchResult3"]["song"][0]["userRating"],
+        5
+    );
+    assert!(
+        decorated_search["subsonic-response"]["searchResult3"]["song"][0]["starred"]
+            .as_str()
+            .is_some()
+    );
+
+    // DSub 5.5.3 sends albums and artists through the generic `id`
+    // parameter instead of the newer albumId/artistId parameters.
+    for id in [album, artist] {
+        assert_eq!(
+            subsonic_json(&router, "unstar", api_key, &format!("&id={id}")).await
+                ["subsonic-response"]["status"],
+            "ok"
+        );
+        assert_eq!(
+            subsonic_json(&router, "star", api_key, &format!("&id={id}")).await
+                ["subsonic-response"]["status"],
+            "ok"
+        );
+    }
+    assert_eq!(
+        subsonic_json(
+            &router,
+            "setRating",
+            api_key,
+            &format!("&id={album}&rating=4")
+        )
+        .await["subsonic-response"]["status"],
+        "ok"
+    );
+    assert_eq!(
+        subsonic_json(
+            &router,
+            "scrobble",
+            api_key,
+            &format!("&id={song}&submission=true")
+        )
+        .await["subsonic-response"]["status"],
+        "ok"
+    );
+    for (kind, extra) in [
+        ("highest", String::new()),
+        ("frequent", String::new()),
+        ("recent", String::new()),
+        ("starred", String::new()),
+        ("byGenre", "&genre=Electronic".to_owned()),
+    ] {
+        let response = subsonic_json(
+            &router,
+            "getAlbumList2",
+            api_key,
+            &format!("&type={kind}{extra}"),
+        )
+        .await;
+        assert_eq!(
+            response["subsonic-response"]["albumList2"]["album"][0]["id"],
+            album.to_string(),
+            "album list type {kind}"
+        );
+    }
+
+    let share = subsonic_json(
+        &router,
+        "createShare",
+        api_key,
+        &format!("&id={song}&description=Golden"),
+    )
+    .await;
+    let share_id = share["subsonic-response"]["shares"]["share"][0]["id"]
+        .as_str()
+        .unwrap();
+    let share_url = share["subsonic-response"]["shares"]["share"][0]["url"]
+        .as_str()
+        .unwrap();
+    assert!(share_url.starts_with("http://waveflow.test/share/"));
+    let public = router
+        .clone()
+        .oneshot(Request::get(share_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(public.status(), StatusCode::OK);
+    assert_eq!(public.headers()["cache-control"], "no-store");
+    let public = json_body(public).await;
+    assert_eq!(public["tracks"][0]["id"], song.to_string());
+    let public_stream_url = public["tracks"][0]["streamUrl"].as_str().unwrap();
+    let public_stream = router
+        .clone()
+        .oneshot(
+            Request::get(public_stream_url)
+                .header("range", "bytes=0-3")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(public_stream.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        public_stream
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+        "RIFF"
+    );
+    let foreign_public_stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{share_url}/tracks/{}/stream", Uuid::new_v4(),))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign_public_stream.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        subsonic_json(&router, "getShares", api_key, "").await["subsonic-response"]["status"],
+        "ok"
+    );
+    assert_eq!(
+        subsonic_json(
+            &router,
+            "updateShare",
+            api_key,
+            &format!("&id={share_id}&description=Changed")
+        )
+        .await["subsonic-response"]["status"],
+        "ok"
+    );
+
+    let default_user = subsonic_json(
+        &router,
+        "createUser",
+        api_key,
+        "&username=sub-default&password=default-secret&email=default@example.invalid",
+    )
+    .await;
+    assert!(default_user["subsonic-response"].get("user").is_none());
+    let default_user = subsonic_json(&router, "getUser", api_key, "&username=sub-default").await;
+    let default_folders = default_user["subsonic-response"]["user"]["folder"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(default_folders.contains(&library.to_string()));
+    assert!(default_folders.contains(&secondary_library.to_string()));
+    assert_eq!(
+        subsonic_json(&router, "deleteUser", api_key, "&username=sub-default").await
+            ["subsonic-response"]["status"],
+        "ok"
+    );
+
+    assert_eq!(
+        subsonic_json(&router, "getUsers", api_key, "").await["subsonic-response"]["status"],
+        "ok"
+    );
+    let encoded_listener_password = hex::encode("listener-secret");
+    let created_user = subsonic_json(
+        &router,
+        "createUser",
+        api_key,
+        &format!(
+            "&username=sub-listener&password=enc:{encoded_listener_password}&email=listener@example.invalid&adminRole=false&musicFolderId={library}"
+        ),
+    )
+    .await;
+    assert!(created_user["subsonic-response"].get("user").is_none());
+
+    let user = subsonic_json(&router, "getUser", api_key, "&username=sub-listener").await;
+    assert_eq!(
+        user["subsonic-response"]["user"]["folder"],
+        serde_json::json!([library.to_string()])
+    );
+    let listener_before = state
+        .db
+        .account_by_username("sub-listener")
+        .await
+        .unwrap()
+        .unwrap();
+    let listener_folders = router
+        .clone()
+        .oneshot(
+            Request::get(
+                "/rest/getMusicFolders?u=sub-listener&p=listener-secret&v=1.16.1&c=golden&f=json",
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listener_folders.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(listener_folders).await["subsonic-response"]["musicFolders"]["musicFolder"][0]
+            ["id"],
+        library.to_string()
+    );
+    let listener_now_playing = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/scrobble?u=sub-listener&p=listener-secret&v=1.16.1&c=golden&f=json&id={song}&submission=false"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listener_now_playing.status(), StatusCode::OK);
+    let all_now_playing = subsonic_json(&router, "getNowPlaying", api_key, "").await;
+    assert!(all_now_playing["subsonic-response"]["nowPlaying"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["username"] == "sub-listener"));
+
+    let updated_password = hex::encode("updated-secret");
+    let updated_user = subsonic_json(
+        &router,
+        "updateUser",
+        api_key,
+        &format!(
+            "&username=sub-listener&locked=false&password=enc:{updated_password}&musicFolderId={secondary_library}"
+        ),
+    )
+    .await;
+    assert!(updated_user["subsonic-response"].get("user").is_none());
+    let listener_folders = router
+        .clone()
+        .oneshot(
+            Request::get(
+                "/rest/getMusicFolders?u=sub-listener&p=updated-secret&v=1.16.1&c=golden&f=json",
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listener_folders.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(listener_folders).await["subsonic-response"]["musicFolders"]["musicFolder"][0]
+            ["id"],
+        secondary_library.to_string()
+    );
+
+    let denied_admin = router
+        .clone()
+        .oneshot(
+            Request::get("/rest/getUsers?u=sub-listener&p=updated-secret&v=1.16.1&c=golden&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_admin.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(denied_admin).await["subsonic-response"]["error"]["code"],
+        50
+    );
+
+    let changed_password = hex::encode("changed-secret");
+    assert_eq!(
+        subsonic_json(
+            &router,
+            "changePassword",
+            api_key,
+            &format!("&username=sub-listener&password=enc:{changed_password}")
+        )
+        .await["subsonic-response"]["status"],
+        "ok"
+    );
+    let listener_after = state
+        .db
+        .account_by_username("sub-listener")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(listener_before.password_hash, listener_after.password_hash);
+    assert_eq!(
+        subsonic_json(&router, "deleteUser", api_key, "&username=sub-listener").await
+            ["subsonic-response"]["status"],
+        "ok"
+    );
+
+    let cover = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getCoverArt?apiKey={api_key}&id={artwork}&v=1.16.1&c=golden"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cover.status(), StatusCode::OK);
+    assert!(cover.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("image/"));
+
+    let download = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/download?apiKey={api_key}&id={song}&v=1.16.1&c=golden"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(download.headers()["content-disposition"], "attachment");
+    assert!(
+        download
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len()
+            > 44
+    );
+
+    let source_bitrate = snapshot.songs.first().unwrap().bitrate.unwrap() as u32;
+    let unlimited_stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/stream.view?apiKey={api_key}&id={song}&maxBitRate=0&v=1.16.1&c=golden"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unlimited_stream.status(), StatusCode::OK);
+    assert_eq!(unlimited_stream.headers()["content-type"], "audio/wav");
+    let ranged_stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/stream.view?apiKey={api_key}&id={song}&maxBitRate={source_bitrate}&v=1.16.1&c=golden"
+            ))
+            .header("range", "bytes=0-3")
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ranged_stream.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(ranged_stream.headers()["content-range"]
+        .to_str()
+        .unwrap()
+        .starts_with("bytes 0-3/"));
+    assert_eq!(
+        ranged_stream
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+        "RIFF"
+    );
+
+    let invalid_range = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/download.view?apiKey={api_key}&id={song}&v=1.16.1&c=golden"
+            ))
+            .header("range", "bytes=999999-")
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_range.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert!(invalid_range.headers()["content-range"]
+        .to_str()
+        .unwrap()
+        .starts_with("bytes */"));
+
+    let direct_stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/stream.view?apiKey={api_key}&id={song}&maxBitRate={source_bitrate}&v=1.16.1&c=DSub"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(direct_stream.status(), StatusCode::OK);
+    assert_eq!(direct_stream.headers()["content-type"], "audio/wav");
+    assert!(direct_stream
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .starts_with(b"RIFF"));
+
+    let transcoded_stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/stream.view?apiKey={api_key}&id={song}&maxBitRate=32&v=1.16.1&c=DSub"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcoded_stream.status(), StatusCode::OK);
+    assert_eq!(transcoded_stream.headers()["content-type"], "audio/mpeg");
+    assert!(
+        transcoded_stream
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len()
+            > 32
+    );
+
+    for (method, extra) in [
+        ("deleteShare", format!("&id={share_id}")),
+        ("deletePlaylist", format!("&id={playlist}")),
+    ] {
+        assert_eq!(
+            subsonic_json(&router, method, api_key, &extra).await["subsonic-response"]["status"],
+            "ok"
+        );
+    }
+
+    let wrong = router
+        .oneshot(
+            Request::get("/rest/ping?u=sub-admin&p=wrong&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_body(wrong).await["subsonic-response"]["error"]["code"],
+        40
+    );
+}
+
+#[tokio::test]
+async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
+    let (_temp, config, state) = test_app().await;
+    let password = "backup-web-password";
+    let user = state
+        .db
+        .create_account(
+            "backup-admin",
+            &security::hash_password(password).unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state.secret_box.encrypt(b"backup-subsonic-secret").unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            user,
+            user,
+            &encrypted,
+            &security::token_hash("wfsk_backup"),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let bundle = config.data_dir.with_file_name("backup-bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    state
+        .db
+        .backup_to(&bundle.join("waveflow.db"))
+        .await
+        .unwrap();
+    std::fs::copy(&config.instance_key_path, bundle.join("instance.key")).unwrap();
+    assert!(
+        waveflow_server::database::Database::check_file(&bundle.join("waveflow.db"))
+            .await
+            .unwrap()
+    );
+    state.db.pool().close().await;
+    drop(state);
+
+    let mismatched_bundle = config.data_dir.with_file_name("mismatched-backup-bundle");
+    std::fs::create_dir_all(&mismatched_bundle).unwrap();
+    std::fs::copy(
+        bundle.join("waveflow.db"),
+        mismatched_bundle.join("waveflow.db"),
+    )
+    .unwrap();
+    std::fs::write(mismatched_bundle.join("instance.key"), [9u8; 32]).unwrap();
+    let database_before = std::fs::read(&config.database_path).unwrap();
+    let key_before = std::fs::read(&config.instance_key_path).unwrap();
+    let error = waveflow_server::cli::restore(
+        &config,
+        waveflow_server::cli::RestoreArgs {
+            input: mismatched_bundle,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("do not match"));
+    assert_eq!(
+        std::fs::read(&config.database_path).unwrap(),
+        database_before
+    );
+    assert_eq!(
+        std::fs::read(&config.instance_key_path).unwrap(),
+        key_before
+    );
+
+    waveflow_server::cli::restore(
+        &config,
+        waveflow_server::cli::RestoreArgs {
+            input: bundle.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let restored = waveflow_server::initialize(&config).await.unwrap();
+    let credential = restored
+        .services
+        .credential_by_username("backup-admin")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        restored
+            .services
+            .decrypt_subsonic_password(&credential)
+            .unwrap(),
+        b"backup-subsonic-secret"
+    );
+    assert!(restored.db.integrity_check().await.unwrap());
+}
+
+#[tokio::test]
+async fn subsonic_blurs_foreign_catalog_and_rate_limits_failed_authentication() {
+    let (_temp, config, state) = test_app().await;
+    let web_hash = security::hash_password("web-password-for-test").unwrap();
+    let owner = state
+        .db
+        .create_account("sub-owner", &web_hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let outsider = state
+        .db
+        .create_account("sub-outsider", &web_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    for (actor, user, password, key) in [
+        (owner, owner, "owner-sub-password", "wfsk_owner"),
+        (owner, outsider, "outsider-sub-password", "wfsk_outsider"),
+    ] {
+        state
+            .db
+            .set_subsonic_credential(
+                actor,
+                user,
+                &state.secret_box.encrypt(password.as_bytes()).unwrap(),
+                &security::token_hash(key),
+                now_ms(),
+            )
+            .await
+            .unwrap();
+    }
+    let music = config.data_dir.join("isolated-subsonic");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Private.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Private Subsonic",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library,
+            name: "Private Subsonic".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let song = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+    let router = waveflow_server::app(&config, state);
+    let foreign = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getSong?apiKey=wfsk_outsider&id={song}&f=json"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(foreign).await["subsonic-response"]["error"]["code"],
+        70
+    );
+
+    let foreign_star = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/rest/star?apiKey=wfsk_outsider&id={song}&f=json"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign_star.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(foreign_star).await["subsonic-response"]["error"]["code"],
+        70
+    );
+
+    let mut last = StatusCode::OK;
+    for _ in 0..=20 {
+        last = router
+            .clone()
+            .oneshot(
+                Request::get("/rest/ping?u=rate-limited-user&p=wrong&f=json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status();
+    }
+    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+
+    let unknown = router
+        .clone()
+        .oneshot(
+            Request::get("/rest/ping?u=unknown-enum&p=wrong&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let wrong = router
+        .oneshot(
+            Request::get("/rest/ping?u=sub-outsider&p=wrong&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), wrong.status());
+    assert_eq!(body_text(unknown).await, body_text(wrong).await);
+}
+
+fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
+    CatalogTrackInput {
+        relative_path: format!("track-{index}.flac"),
+        file_size: 1024 + index as i64,
+        modified_at: 1_700_000_000_000 + index as i64,
+        quick_hash: format!("{:064x}", index + 1),
+        full_hash: format!("{:064x}", index + 101),
+        title: format!("Compilation track {index}"),
+        artist: Some(artist.into()),
+        album: Some("Shared compilation".into()),
+        album_artist: None,
+        is_compilation: true,
+        genre: Some("Rock; Pop".into()),
+        year: Some(2026),
+        track_number: Some(index as i64 + 1),
+        disc_number: Some(1),
+        duration_ms: 180_000,
+        bitrate: Some(1_000),
+        sample_rate: Some(48_000),
+        channels: Some(2),
+        bit_depth: Some(24),
+        codec: Some("FLAC".into()),
+        musical_key: None,
+        tag_rating: None,
+        artwork: None,
+    }
+}
+
+async fn run_scan(state: &waveflow_server::AppState, owner: uuid::Uuid, library: LibraryRecord) {
+    let id = state
+        .scanner
+        .trigger(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        let job = state
+            .db
+            .scan_job_for_user(owner, id)
+            .await
+            .unwrap()
+            .unwrap();
+        if job.status == "completed" {
+            return;
+        }
+        if job.status == "failed" {
+            panic!("scan failed: {:?}", job.message);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("scan timed out");
+}
+
+fn write_test_wav(path: &std::path::Path) {
+    let sample_rate = 8_000u32;
+    let samples = vec![0i16; 800];
+    let data_len = (samples.len() * 2) as u32;
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+fn write_test_dsf(path: &std::path::Path) {
+    let samples_per_channel = 32_768u64;
+    let channels = 2u32;
+    let rate = 2_822_400u32;
+    let payload_bytes = (samples_per_channel / 8) * channels as u64;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DSD ");
+    bytes.extend_from_slice(&28u64.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(b"fmt ");
+    bytes.extend_from_slice(&52u64.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&rate.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&samples_per_channel.to_le_bytes());
+    bytes.extend_from_slice(&4096u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&(payload_bytes + 12).to_le_bytes());
+    bytes.extend(std::iter::repeat_n(0xAA, payload_bytes as usize));
+    std::fs::write(path, bytes).unwrap();
+}
+
+fn write_test_png(path: &std::path::Path) {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4m8AAAAASUVORK5CYII=")
+        .unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+async fn wait_for_cache_file(dir: &std::path::Path, extension: &str) -> std::path::PathBuf {
+    for _ in 0..100 {
+        if let Some(path) = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some(extension))
+        {
+            return path;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("transcode cache file was not committed")
+}
+
+fn generate_audio_fixture(path: &std::path::Path, codec: &str, extension: &str) {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=0.15",
+            "-metadata",
+            &format!("title=Matrix {extension}"),
+            "-metadata",
+            "artist=Alpha; Beta",
+            "-metadata",
+            "album=WaveFlow format matrix",
+            "-metadata",
+            "album_artist=Matrix Artist",
+            "-metadata",
+            "genre=Electronic; Test",
+            "-c:a",
+            codec,
+        ])
+        .arg(path)
+        .output()
+        .unwrap_or_else(|error| panic!("FFmpeg is required for the format matrix: {error}"));
+    assert!(
+        output.status.success(),
+        "FFmpeg failed for {extension}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn json_request(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::post(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn json_body(response: axum::response::Response) -> serde_json::Value {
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn body_text(response: axum::response::Response) -> String {
+    String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+async fn subsonic_json(
+    router: &axum::Router,
+    method: &str,
+    api_key: &str,
+    extra: &str,
+) -> serde_json::Value {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/{method}.view?apiKey={api_key}&v=1.16.1&c=golden&f=json{extra}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = json_body(response).await;
+    assert!(status.is_success(), "{method} returned {status}: {body}");
+    body
+}
+
+async fn login_token(router: &axum::Router, username: &str, password: &str) -> String {
+    let response = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": username,
+                "password": password,
+                "device_name": "Route test"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}

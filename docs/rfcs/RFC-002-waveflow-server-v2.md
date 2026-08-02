@@ -1,0 +1,85 @@
+# RFC-002: WaveFlow Server v2
+
+- **Status:** Accepted
+- **Date:** 2026-08-02
+- **Supersedes:** the server product model in WaveFlow RFC-001
+
+## Context
+
+The first server architecture treated PostgreSQL, an external Better Auth process and desktop-emitted catalogue operations as the centre of the product. That made self-hosting heavier, duplicated catalogue authority and delayed Subsonic compatibility behind a bespoke web client.
+
+WaveFlow Server v2 is a new self-hosted music server. It scans folders itself, owns the catalogue, streams audio to browsers and compatible clients, and synchronizes only user-owned state with WaveFlow Desktop.
+
+## Decisions
+
+### Process and storage
+
+One Rust/axum binary owns the API, background jobs and eventually the embedded static React application. SQLite is the sole initial database and runs with WAL, foreign keys, a busy timeout and one global mutation coordinator. Parallel extraction is allowed; SQLite commits are serialized and batched.
+
+The v2 schema is fresh. There is no PostgreSQL migration. Operators rescan audio into a new data directory.
+
+### Identity and catalogue authority
+
+The server scanner is authoritative for libraries, folders, tracks, albums, artists, genres and artwork. A track has a stable UUID. Its relative path is a mutable locator, a quick fingerprint narrows relocation candidates, and a full byte hash confirms deduplication or relocation. Tag changes must update the same row. Missing files become unavailable rather than being immediately deleted.
+
+Libraries are private or shared through explicit owner, manager and listener memberships. Repository queries enforce membership before returning catalogue or media rows.
+
+### Authentication and secrets
+
+WaveFlow accounts are local. Web passwords use Argon2id. Access, refresh and API tokens are random opaque values stored only as SHA-256 hashes. Refresh tokens rotate on use and sessions belong to revocable devices.
+
+Every user may have a separate Subsonic app password. It is never the web password. Compatibility with token-and-salt authentication requires reversible verification, so the app password is encrypted with ChaCha20-Poly1305 under a random local instance key. The database and key must be backed up together. SQLite stores only a SHA-256 fingerprint of that key; boot, backup verification and restore reject mismatched pairs before exposing or replacing data.
+
+### Playback
+
+FFmpeg and ffprobe become mandatory at M2. Original files support HTTP Range. Finished cached transcodes support Range. Live transcodes use a temporal seek and chunked response instead of pretending arbitrary output-byte ranges are stable.
+
+Audio files are always read-only. Canonical-path and symlink checks apply before metadata extraction or streaming.
+
+### Protocols and convergence
+
+The M3 beta exposes a tested Subsonic/OpenSubsonic façade. GET, form POST, XML and JSON share the same services. Only implemented extensions are advertised. Credentials in query parameters are removed from request logging.
+
+M4 adds `/api/v2`, Authorization Code with PKCE for WaveFlow Desktop, rotating native tokens and user-data-only synchronization. The server catalogue appears in Desktop as a separate remote source. Existing local and server catalogues are not automatically merged.
+
+All web, native and Subsonic writes pass through common services so playlists, favorites, ratings, queue and history converge independent of the calling protocol.
+
+### Frozen Subsonic v2.0-beta contract
+
+Both `/rest/<method>` and `/rest/<method>.view` accept GET query parameters and `application/x-www-form-urlencoded` POST bodies. `f=json` selects JSON; XML is the default. Repeated parameters preserve wire order. Public IDs and `musicFolderId` are UUID strings. Authentication accepts a dedicated per-user Subsonic password through `u/p` (including `enc:` hexadecimal form), `u/t/s`, or `apiKey`; web passwords are never accepted. Administrative password parameters accept the same plain/`enc:` representation and change only the dedicated Subsonic credential. Authentication failures always use error code 40 and do not distinguish unknown, disabled or incorrectly authenticated users.
+
+The response root freezes `status`, `version=1.16.1`, `type=waveflow`, `serverVersion` and `openSubsonic=true`. XML uses the Subsonic namespace. JSON collection fields are arrays even when they contain one item. Media items freeze the common fields `id`, `parent`, `isDir`, `title`, optional `album`/`artist`/`genre`/`year`/disc-track numbers, seconds-based `duration`, `bitRate`, `size`, `suffix`, `contentType`, `type=music`, optional `coverArt`/`albumId`, and ISO-8601 `created`. Album and artist records include UUID, display name, counts and available artwork/year metadata. Unknown optional metadata is omitted rather than emitted as an empty sentinel.
+
+Pagination is capped at 500 items per page. `offset` is zero-based; `search3` applies its independent `artistOffset`, `albumOffset` and `songOffset` after tenant filtering. Repeated `songId`, `songIdToAdd`, `songIndexToRemove`, scrobble `id`/`time`, queue `id`, star IDs, share IDs and `musicFolderId` values retain request order. Catalogue endpoints accept the union of repeated authorized `musicFolderId` values and return no foreign data for inaccessible IDs. `createUser` grants every current library when the parameter is absent or exactly the repeated selection when present; `updateUser` replaces Subsonic-managed listener memberships only, preserving owner/manager roles. `getUser` and `getUsers` expose the effective UUID list as `folder[]`. Default catalogue order is Unicode case-insensitive display name; indexes group by uppercase ASCII initial with `#` fallback. Album lists implement `random`, `newest`, `highest`, `frequent`, `recent`, `starred`, both alphabetical modes, `byYear` (including reversed ranges) and `byGenre`; non-random ties use stable title/UUID ordering. Random-song year and genre filters are applied after repository authorization. Playlist positions are contiguous and removals are applied from highest index downward before additions. The legacy `getAlbumList` method remains an alias for older clients and uses the `albumList` response container; `getAlbumList2` uses `albumList2`. `star` and `unstar` accept the generic `id` form for tracks, albums and artists in addition to the typed album/artist parameters; resolution remains tenant-scoped and rejects ambiguous or invisible entities.
+
+Mutation methods whose Subsonic result is empty (`updatePlaylist`, `deletePlaylist`, stars, ratings, scrobbles, queue save, share deletion and user-management writes) return only the successful protocol envelope. They do not add implementation-specific child elements.
+
+`getOpenSubsonicExtensions` intentionally returns an empty tested extension list for the beta. No extension is advertised merely because a similarly named endpoint exists.
+
+Cross-origin access is disabled unless the operator supplies an exact comma-separated allow-list through `WAVEFLOW_ALLOWED_ORIGINS`. Allowed origins may use GET, form POST and OPTIONS and may read the byte-range response headers needed for web playback; wildcard origins are not accepted.
+
+Original downloads and streams use repository authorization and the M2 path guard. They forward valid byte ranges to originals and completed cache entries, including 206/416 response semantics; live transcodes still require temporal `timeOffset` seeking. Requested MP3/Opus transcodes use the same FFmpeg/cache service as `/api/v2`. Without an explicit output format, `maxBitRate` is a ceiling: WaveFlow serves the original when its known bitrate is at or below the ceiling and otherwise transcodes to MP3; unknown source bitrate is conservatively transcoded. `getCoverArt` accepts an authorized track, album, artist or content hash. Public share URLs contain a high-entropy token; its lookup hash and encrypted recoverable form are stored separately so `getShares` can reproduce the URL without storing the token in plaintext. `WAVEFLOW_PUBLIC_URL` supplies the external HTTP(S) origin; otherwise relative URLs are returned. The public metadata response supplies token-scoped per-track stream URLs with the same Range/transcode service, and a share cannot stream a track outside its persisted membership. Share tokens are redacted from request trace paths.
+
+### Reconciliation
+
+Reconciliation is an isolated M5 RFC. A unique verified full hash may link automatically. MBIDs create candidates but require confirmation where editions or copies are ambiguous. Metadata-only fuzzy matching never links automatically.
+
+## Delivery and release gates
+
+- **M0 foundations:** empty-directory boot, local admin, registered library, encrypted Subsonic credential, health/readiness/OpenAPI and hermetic tests.
+- **M1 catalogue:** deterministic scan and search across MP3, FLAC, AAC, OGG, WAV and DSD; relocation, disappearance, compilations and multi-artists tested.
+- **M2 playback:** native playback, transcode, seek, cache concurrency, cancellation and path security tested.
+- **M3 v2.0-beta:** OpenSubsonic golden fixtures, backup/restore and a release matrix for Symfonium, Feishin, Substreamer and DSub.
+- **M4 v2.0 stable:** web, Subsonic and WaveFlow Desktop convergence; `/api/v1` and the legacy track apply pipeline removed.
+- **M5:** conservative local/server linking.
+- **M6 v2.1:** complete studio-nocturne web experience, bilingual UI, WCAG AA and Playwright coverage.
+
+Each gate requires formatting, clippy with warnings denied, all-target compilation and tests before the next milestone begins.
+
+## Explicit non-goals for v2.0
+
+- PostgreSQL support or migration from v1.
+- Writing tags or modifying audio files.
+- Streaming from Spotify, Deezer or other commercial services.
+- Fuzzy automatic merging of desktop and server catalogues.
+- Full Navidrome endpoint parity beyond the published and tested M3 method matrix.

@@ -1,213 +1,271 @@
-//! waveflow-server library entrypoint.
-//!
-//! The public API is intentionally tight: callers (the binary in
-//! `main.rs` + integration tests) construct a [`Config`] and obtain a
-//! ready-to-serve axum router via [`app`]. Internal modules stay
-//! private until something outside this crate needs them.
-//!
-//! The full architectural intent lives in [RFC-001][rfc] — read that
-//! before opening a PR that adds a new module.
-//!
-//! [rfc]: https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md
+//! WaveFlow Server v2 library surface.
 
-use axum::{extract::Request, response::IntoResponse, Router};
-use sqlx::PgPool;
-use std::time::Duration;
+pub mod authentication;
+pub mod catalog;
+pub mod cli;
+pub mod config;
+pub mod database;
+pub mod http;
+pub mod media;
+pub mod scanner;
+pub mod security;
+pub mod services;
+pub mod subsonic;
+
+use std::{sync::Arc, time::Duration};
+
+use axum::{
+    extract::DefaultBodyLimit,
+    http::Request,
+    response::{IntoResponse, Response},
+    Router,
+};
 use tower::ServiceBuilder;
 use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
-use tracing::field::Empty;
 use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
 
-pub mod api;
-pub mod apply;
-pub mod artwork_jobs;
-pub mod artwork_pipeline;
-pub mod auth;
-pub mod config;
-pub mod db;
-pub mod middleware;
-pub mod storage;
-pub mod stream_token;
-pub mod sync;
-
 pub use config::Config;
 
-/// OpenAPI document shell. Tagged endpoints come from each module via
-/// `OpenApiRouter::routes(routes!(handler))`, so this struct only
-/// declares the shared metadata (title, version, description, tags).
-/// The actual `paths(...)` list is filled by [`utoipa_axum`] at router-
-/// build time — no parallel list to keep in sync when adding handlers.
+pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
+pub const SCALAR_PATH: &str = "/reference";
+const REQUEST_ID_HEADER: &str = "x-request-id";
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: database::Database,
+    pub auth: authentication::AuthService,
+    pub secret_box: Arc<security::SecretBox>,
+    pub scanner: scanner::ScanManager,
+    pub media: media::MediaService,
+    pub services: services::DomainServices,
+    pub artwork_dir: std::path::PathBuf,
+    pub instance_key_path: std::path::PathBuf,
+    pub public_url: Option<String>,
+}
+
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "waveflow-server",
-        description = "Self-hosted backend for WaveFlow. \
-            See https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md \
-            for the architectural intent.",
-        license(
-            name = "AGPL-3.0-only",
-            url = "https://www.gnu.org/licenses/agpl-3.0.html",
-        ),
+        title = "WaveFlow Server API",
+        version = "2.0.0-beta.0",
+        description = "Self-hosted WaveFlow music server v2.",
+        license(name = "AGPL-3.0-only")
     ),
+    paths(
+        http::health,
+        http::ready,
+        http::login,
+        http::refresh,
+        http::logout,
+        http::start_scan,
+        http::scan_status,
+        http::scan_events,
+        http::list_tracks
+        ,media::stream_track
+    ),
+    components(schemas(
+        http::ProbeResponse,
+        http::ReadyResponse,
+        http::LoginRequest,
+        http::RefreshRequest,
+        http::ErrorResponse,
+        authentication::AuthTokens,
+        authentication::AuthUser,
+        database::AccountRole,
+        http::ScanQueuedResponse,
+        catalog::ScanJobRecord,
+        catalog::TrackRecord,
+        scanner::ScanProgress
+    )),
     tags(
-        (name = "probes", description = "Liveness / readiness endpoints for orchestrators."),
-    ),
+        (name = "probes", description = "Process and SQLite health"),
+        (name = "authentication", description = "Local WaveFlow sessions")
+        ,(name = "catalog", description = "Authoritative library scans and catalogue reads")
+    )
 )]
 pub struct ApiDoc;
 
-/// State threaded through the axum router. Holds the singletons
-/// every handler / middleware needs. Cheap to clone — the pool is
-/// `Arc`-backed and the verifier sits behind an `Arc`.
-///
-/// `Debug` is deliberately NOT derived: `JwtVerifier` opts out of
-/// `Debug` to keep raw key bytes off log sinks (see the rationale in
-/// `auth.rs`), so the parent state inherits the same restriction.
-#[derive(Clone)]
-pub struct AppState {
-    pub db: PgPool,
-    /// Verifier built at boot from the required `WAVEFLOW_JWT_*`
-    /// triple. Phase 1.d.2 made this non-optional — the dev
-    /// `X-User-Id` shim retired, so the JWT path is the only auth
-    /// channel and a missing verifier means the server shouldn't
-    /// have booted in the first place.
-    pub jwt_verifier: std::sync::Arc<auth::JwtVerifier>,
-    /// Streaming configuration. `Some` when both
-    /// `WAVEFLOW_MUSIC_ROOT` and `WAVEFLOW_STREAM_SECRET` are set at
-    /// boot; `None` disables both the mint and the stream endpoints
-    /// (they answer 503).
-    pub stream_ctx: Option<std::sync::Arc<StreamCtx>>,
-    /// Multi-device sync hub (Phase 1.f). Owns the broadcast channel
-    /// every WebSocket subscribes to, the in-memory ACK buffer the
-    /// 5 s flusher drains, and the daily compaction task. Cheap to
-    /// clone — every inner field is `Arc`-backed.
-    pub sync: sync::SyncHub,
-    /// Artwork storage handle (Phase 1.h.1). `Some` when
-    /// `WAVEFLOW_ARTWORK_LOCAL_DIR` is set at boot; `None` disables
-    /// both the upload and the public-read endpoint (they answer
-    /// 503). Cheap to clone — the inner `ObjectStore` is `Arc`-backed.
-    pub artwork: Option<storage::ArtworkStorage>,
+pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
+    let db = database::Database::open(config).await?;
+    db.migrate().await?;
+    let secret_box = Arc::new(security::SecretBox::load_or_create(
+        &config.instance_key_path,
+    )?);
+    let instance_key = std::fs::read(&config.instance_key_path)?;
+    let fingerprint = security::bytes_hash(&instance_key);
+    if !db
+        .bind_instance_key(&fingerprint, authentication::now_ms())
+        .await?
+    {
+        anyhow::bail!(
+            "instance.key does not match waveflow.db; restore the database and key from the same backup bundle"
+        );
+    }
+    let auth = authentication::AuthService::new(db.clone(), config);
+    let scanner = scanner::ScanManager::new(
+        db.clone(),
+        config.artwork_dir.clone(),
+        config.scan_parallelism,
+    );
+    let media = media::MediaService::initialize(config).await?;
+    let services = services::DomainServices::new(db.clone(), Arc::clone(&secret_box));
+    Ok(AppState {
+        db,
+        auth,
+        secret_box,
+        scanner,
+        media,
+        services,
+        artwork_dir: config.artwork_dir.clone(),
+        instance_key_path: config.instance_key_path.clone(),
+        public_url: config.public_url.clone(),
+    })
 }
 
-/// Per-process streaming context built once at boot. Wraps the HMAC
-/// key and canonicalised music root behind an `Arc` so the
-/// per-request hot path stays a pointer copy.
-///
-/// `Debug` is deliberately NOT derived: a derived impl would dump the
-/// `secret` bytes into any `tracing` field or panic message that
-/// happens to print the state, and that's exactly the leak this
-/// type is supposed to prevent.
-pub struct StreamCtx {
-    pub music_root: std::path::PathBuf,
-    pub secret: Vec<u8>,
-}
+pub fn app(config: &Config, state: AppState) -> Router {
+    let openapi = ApiDoc::openapi();
+    let openapi_for_route = openapi.clone();
+    let request_id_header = axum::http::HeaderName::from_static(REQUEST_ID_HEADER);
+    let middleware = ServiceBuilder::new()
+        .layer(SetRequestIdLayer::new(
+            request_id_header.clone(),
+            MakeRequestUuid,
+        ))
+        // Query strings may contain Subsonic credentials and public-share
+        // paths contain bearer tokens. Neither may reach a trace sink.
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                let request_id = request
+                    .headers()
+                    .get(REQUEST_ID_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("");
+                let path = trace_path(request.uri().path());
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    path = path,
+                    request_id = %request_id
+                )
+            }),
+        )
+        .layer(PropagateRequestIdLayer::new(request_id_header));
 
-impl std::fmt::Debug for StreamCtx {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StreamCtx")
-            .field("music_root", &self.music_root)
-            .field("secret", &"<redacted>")
-            .finish()
+    let ordinary = Router::new()
+        .merge(http::router(state.clone()))
+        .merge(Router::from(Scalar::with_url(SCALAR_PATH, openapi)))
+        .route(
+            OPENAPI_JSON_PATH,
+            axum::routing::get(move || openapi_response(openapi_for_route.clone())),
+        )
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            config.request_timeout,
+        ));
+
+    let router = Router::new()
+        .merge(ordinary)
+        // Media bodies can outlive the ordinary API timeout. FFmpeg and
+        // disconnected consumers are bounded by MediaService itself.
+        .merge(media::router(state.clone()))
+        .merge(subsonic::router(state))
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(middleware);
+
+    if config.allowed_origins.is_empty() {
+        router
+    } else {
+        router.layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(config.allowed_origins.clone()))
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::RANGE,
+                ])
+                .expose_headers([
+                    axum::http::header::ACCEPT_RANGES,
+                    axum::http::header::CONTENT_LENGTH,
+                    axum::http::header::CONTENT_RANGE,
+                ]),
+        )
     }
 }
 
-/// Header used for inbound + propagated request IDs. UUIDv4 by default
-/// (via `MakeRequestUuid`), but a client / upstream proxy can supply
-/// its own — useful for stitching traces across multiple services.
-const REQUEST_ID_HEADER: &str = "x-request-id";
+fn trace_path(path: &str) -> &str {
+    if path.starts_with("/share/") {
+        "/share/{redacted}"
+    } else {
+        path
+    }
+}
 
-/// Path the generated OpenAPI 3.1 document is served at.
-pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
-
-/// Path the Scalar UI (`utoipa-scalar`) is mounted at.
-pub const SCALAR_PATH: &str = "/reference";
-
-/// Build the axum router. Wired with:
-/// - per-request UUID via `x-request-id` (generated if absent, echoed back).
-/// - structured access logging keyed on the request id.
-/// - configurable timeout (default 30 s, set via `WAVEFLOW_REQUEST_TIMEOUT_SECS`).
-/// - shared [`AppState`] (Postgres pool) attached via `with_state`.
-/// - OpenAPI doc at [`OPENAPI_JSON_PATH`] and Scalar UI at [`SCALAR_PATH`].
-///
-/// `Config` is consumed at build time for the middleware bounds;
-/// runtime singletons live in the [`AppState`] threaded through the
-/// router.
-pub fn app(config: Config, state: AppState) -> Router {
-    let middleware = ServiceBuilder::new()
-        .layer(SetRequestIdLayer::new(
-            axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
-            MakeRequestUuid,
-        ))
-        // Custom span builder so every emitted trace carries the
-        // request id as a structured field. The default `MakeSpan`
-        // doesn't include headers at all; `include_headers(true)` would
-        // dump *every* header (incl. Authorization / Cookie) into log
-        // sinks, which is the opposite of what we want. Extract just
-        // the one field we care about.
-        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
-            let request_id = req
-                .headers()
-                .get(REQUEST_ID_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            tracing::info_span!(
-                "http_request",
-                method = %req.method(),
-                uri = %req.uri(),
-                version = ?req.version(),
-                request_id = %request_id,
-                status = Empty,
-            )
-        }))
-        .layer(PropagateRequestIdLayer::new(
-            axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
-        ))
-        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(config.request_timeout_secs),
-        ));
-
-    // Seed the API router with the ApiDoc shell so every module's
-    // `#[utoipa::path]` declarations merge into it, then split into
-    // `(Router, OpenApi)` for axum + spec consumption. The doc is
-    // serialised under `/openapi.json` and rendered by Scalar at
-    // `/reference`; both stay outside the `/api/v1/*` namespace so a
-    // future Better-Auth middleware (1.d) gates only the data routes.
-    let (api_router, openapi) = utoipa_axum::router::OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .merge(api::router(state))
-        .split_for_parts();
-
-    Router::new()
-        .merge(api_router)
-        .merge(Router::from(Scalar::with_url(SCALAR_PATH, openapi.clone())))
-        .route(
-            OPENAPI_JSON_PATH,
-            axum::routing::get(move || {
-                // `serde_json::to_string` could fail in theory; in
-                // practice utoipa-built specs always serialise (every
-                // type comes from a derive macro). Surface the error
-                // as a 500 if it ever happens so an integration test
-                // catches a regression.
-                let openapi = openapi.clone();
-                async move {
-                    serde_json::to_string(&openapi)
-                        .map(|s| {
-                            ([(axum::http::header::CONTENT_TYPE, "application/json")], s)
-                                .into_response()
-                        })
-                        .unwrap_or_else(|err| {
-                            tracing::error!(error = %err, "openapi serialize failed");
-                            (
-                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                                "openapi serialize failed",
-                            )
-                                .into_response()
-                        })
-                }
-            }),
+async fn openapi_response(openapi: utoipa::openapi::OpenApi) -> Response {
+    match serde_json::to_string(&openapi) {
+        Ok(body) => (
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body,
         )
-        .layer(middleware)
+            .into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "OpenAPI serialization failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "OpenAPI serialization failed",
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %error, "failed to install Ctrl-C handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => tracing::error!(error = %error, "failed to install terminate handler"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trace_path;
+
+    #[test]
+    fn trace_paths_redact_public_share_bearer_tokens() {
+        assert_eq!(trace_path("/share/wfs_secret"), "/share/{redacted}");
+        assert_eq!(
+            trace_path("/share/wfs_secret/tracks/id/stream"),
+            "/share/{redacted}"
+        );
+        assert_eq!(trace_path("/rest/ping.view"), "/rest/ping.view");
+    }
 }
