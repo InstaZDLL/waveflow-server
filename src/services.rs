@@ -1,0 +1,1240 @@
+//! Shared v2 domain services and tenant-filtered read models.
+
+use std::{path::PathBuf, str::FromStr, sync::Arc};
+
+use serde::Serialize;
+use sqlx::Row;
+use uuid::Uuid;
+
+use crate::{
+    authentication::now_ms,
+    database::{AccountRecord, AccountRole, Database},
+    security::{self, EncryptedSecret, SecretBox},
+};
+
+pub struct SubsonicCredentialRecord {
+    pub account: AccountRecord,
+    pub encrypted_password: EncryptedSecret,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MusicFolderItem {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArtistItem {
+    pub id: Uuid,
+    pub library_id: Uuid,
+    pub name: String,
+    pub artwork_hash: Option<String>,
+    pub starred_at: Option<i64>,
+    pub user_rating: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlbumItem {
+    pub id: Uuid,
+    pub library_id: Uuid,
+    pub title: String,
+    pub artist: Option<String>,
+    pub artist_id: Option<Uuid>,
+    pub artwork_hash: Option<String>,
+    pub year: Option<i64>,
+    pub created_at: i64,
+    pub starred_at: Option<i64>,
+    pub user_rating: Option<i64>,
+    pub play_count: i64,
+    pub last_played_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SongItem {
+    pub id: Uuid,
+    pub library_id: Uuid,
+    pub album_id: Option<Uuid>,
+    pub title: String,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+    pub genre: Option<String>,
+    pub year: Option<i64>,
+    pub track: Option<i64>,
+    pub disc: Option<i64>,
+    pub duration_ms: i64,
+    pub bitrate: Option<i64>,
+    pub codec: Option<String>,
+    pub suffix: String,
+    pub size: i64,
+    pub artwork_hash: Option<String>,
+    pub created_at: i64,
+    pub starred_at: Option<i64>,
+    pub user_rating: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CatalogSnapshot {
+    pub folders: Vec<MusicFolderItem>,
+    pub artists: Vec<ArtistItem>,
+    pub albums: Vec<AlbumItem>,
+    pub songs: Vec<SongItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaylistItem {
+    pub id: Uuid,
+    pub name: String,
+    pub comment: Option<String>,
+    pub public: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub songs: Vec<SongItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueueItem {
+    pub current: Option<Uuid>,
+    pub position_ms: i64,
+    pub changed_by: Option<String>,
+    pub updated_at: i64,
+    pub songs: Vec<SongItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShareItem {
+    pub id: Uuid,
+    pub owner_id: Uuid,
+    pub url_token: String,
+    pub description: Option<String>,
+    pub expires_at: Option<i64>,
+    pub created_at: i64,
+    pub visit_count: i64,
+    pub songs: Vec<SongItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserItem {
+    pub id: Uuid,
+    pub username: String,
+    pub role: AccountRole,
+    pub disabled: bool,
+    pub has_subsonic_credential: bool,
+    pub folder_ids: Vec<Uuid>,
+}
+
+#[derive(Clone)]
+pub struct DomainServices {
+    db: Database,
+    secret_box: Arc<SecretBox>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ServiceError {
+    #[error("resource not found")]
+    NotFound,
+    #[error("operation is forbidden")]
+    Forbidden,
+    #[error("invalid input")]
+    Invalid,
+    #[error("conflict")]
+    Conflict,
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error(transparent)]
+    Security(#[from] security::SecurityError),
+}
+
+impl DomainServices {
+    pub fn new(db: Database, secret_box: Arc<SecretBox>) -> Self {
+        Self { db, secret_box }
+    }
+
+    pub async fn credential_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<SubsonicCredentialRecord>, ServiceError> {
+        let row = sqlx::query(
+            "SELECT a.id, a.username, a.password_hash, a.role, a.disabled, \
+                    c.password_nonce, c.password_ciphertext \
+             FROM account a JOIN subsonic_credential c ON c.user_id=a.id \
+             WHERE a.username=? COLLATE NOCASE AND a.disabled=0",
+        )
+        .bind(username)
+        .fetch_optional(self.db.pool())
+        .await?;
+        row.map(credential_from_row).transpose().map_err(Into::into)
+    }
+
+    pub async fn credential_by_api_key(
+        &self,
+        api_key: &str,
+    ) -> Result<Option<SubsonicCredentialRecord>, ServiceError> {
+        let hash = security::token_hash(api_key);
+        let row = sqlx::query(
+            "SELECT a.id, a.username, a.password_hash, a.role, a.disabled, \
+                    c.password_nonce, c.password_ciphertext \
+             FROM account a JOIN subsonic_credential c ON c.user_id=a.id \
+             WHERE c.api_key_hash=? AND a.disabled=0",
+        )
+        .bind(hash.as_slice())
+        .fetch_optional(self.db.pool())
+        .await?;
+        row.map(credential_from_row).transpose().map_err(Into::into)
+    }
+
+    pub fn decrypt_subsonic_password(
+        &self,
+        credential: &SubsonicCredentialRecord,
+    ) -> Result<Vec<u8>, ServiceError> {
+        self.secret_box
+            .decrypt(
+                &credential.encrypted_password.nonce,
+                &credential.encrypted_password.ciphertext,
+            )
+            .map_err(Into::into)
+    }
+
+    pub async fn catalog_snapshot(
+        &self,
+        user_id: Uuid,
+        folder_ids: &[Uuid],
+    ) -> Result<CatalogSnapshot, ServiceError> {
+        let folder_filter = (!folder_ids.is_empty()).then(|| {
+            serde_json::to_string(folder_ids).expect("UUID list serialization cannot fail")
+        });
+        let folders = sqlx::query(
+            "SELECT l.id, l.name FROM library l JOIN library_member m ON m.library_id=l.id \
+             WHERE m.user_id=? AND (? IS NULL OR l.id IN (SELECT value FROM json_each(?))) \
+             ORDER BY l.name COLLATE NOCASE",
+        )
+        .bind(user_id.to_string())
+        .bind(folder_filter.as_deref())
+        .bind(folder_filter.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(MusicFolderItem {
+                id: parse_uuid(row.try_get("id")?)?,
+                name: row.try_get("name")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let artists = sqlx::query(
+            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, \
+                    us.starred_at, ur.rating AS user_rating FROM artist ar \
+             JOIN library_member m ON m.library_id=ar.library_id \
+             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
+             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
+             WHERE m.user_id=? AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+             ORDER BY ar.name COLLATE NOCASE",
+        )
+        .bind(user_id.to_string())
+        .bind(folder_filter.as_deref())
+        .bind(folder_filter.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let albums = sqlx::query(
+            "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
+                    al.artwork_hash, al.year, al.created_at, us.starred_at, ur.rating AS user_rating, \
+                    (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
+                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
+                    (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
+                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at \
+             FROM album al \
+             JOIN library_member m ON m.library_id=al.library_id \
+             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
+             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='album' AND ur.entity_id=al.id \
+             WHERE m.user_id=? AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+             ORDER BY al.title COLLATE NOCASE",
+        )
+        .bind(user_id.to_string())
+        .bind(folder_filter.as_deref())
+        .bind(folder_filter.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let songs = fetch_songs(&self.db, user_id, folder_filter.as_deref(), None).await?;
+        Ok(CatalogSnapshot {
+            folders,
+            artists,
+            albums,
+            songs,
+        })
+    }
+
+    pub async fn songs_by_ids(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        let mut songs = Vec::new();
+        for id in ids {
+            if let Some(song) = fetch_songs(&self.db, user_id, None, Some(*id))
+                .await?
+                .into_iter()
+                .next()
+            {
+                songs.push(song);
+            } else {
+                return Err(ServiceError::NotFound);
+            }
+        }
+        Ok(songs)
+    }
+
+    pub async fn artwork_for_user(
+        &self,
+        user_id: Uuid,
+        id: &str,
+    ) -> Result<Option<(String, String)>, ServiceError> {
+        let row = sqlx::query(
+            "SELECT a.hash, a.format FROM artwork a WHERE a.hash=? AND EXISTS ( \
+               SELECT 1 FROM track t JOIN library_member m ON m.library_id=t.library_id WHERE t.artwork_hash=a.hash AND m.user_id=? \
+               UNION SELECT 1 FROM album al JOIN library_member m ON m.library_id=al.library_id WHERE al.artwork_hash=a.hash AND m.user_id=? \
+               UNION SELECT 1 FROM artist ar JOIN library_member m ON m.library_id=ar.library_id WHERE ar.artwork_hash=a.hash AND m.user_id=? \
+             ) UNION ALL SELECT a.hash, a.format FROM track t JOIN library_member m ON m.library_id=t.library_id JOIN artwork a ON a.hash=t.artwork_hash WHERE t.id=? AND m.user_id=? \
+             UNION ALL SELECT a.hash, a.format FROM album al JOIN library_member m ON m.library_id=al.library_id JOIN artwork a ON a.hash=al.artwork_hash WHERE al.id=? AND m.user_id=? \
+             UNION ALL SELECT a.hash, a.format FROM artist ar JOIN library_member m ON m.library_id=ar.library_id JOIN artwork a ON a.hash=ar.artwork_hash WHERE ar.id=? AND m.user_id=? LIMIT 1",
+        )
+        .bind(id).bind(user_id.to_string()).bind(user_id.to_string()).bind(user_id.to_string())
+        .bind(id).bind(user_id.to_string()).bind(id).bind(user_id.to_string()).bind(id).bind(user_id.to_string())
+        .fetch_optional(self.db.pool()).await?;
+        row.map(|row| Ok::<_, sqlx::Error>((row.try_get("hash")?, row.try_get("format")?)))
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    pub async fn playlists(&self, user_id: Uuid) -> Result<Vec<PlaylistItem>, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT id, name, comment, public, created_at, updated_at FROM playlist \
+             WHERE owner_user_id=? ORDER BY updated_at DESC, id",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id = parse_uuid(row.try_get("id")?)?;
+            result.push(PlaylistItem {
+                id,
+                name: row.try_get("name")?,
+                comment: row.try_get("comment")?,
+                public: row.try_get::<i64, _>("public")? != 0,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                songs: self.playlist_songs(user_id, id).await?,
+            });
+        }
+        Ok(result)
+    }
+
+    pub async fn playlist(&self, user_id: Uuid, id: Uuid) -> Result<PlaylistItem, ServiceError> {
+        self.playlists(user_id)
+            .await?
+            .into_iter()
+            .find(|playlist| playlist.id == id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    async fn playlist_songs(
+        &self,
+        user_id: Uuid,
+        playlist_id: Uuid,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT pt.track_id FROM playlist_track pt JOIN playlist p ON p.id=pt.playlist_id \
+             WHERE p.id=? AND p.owner_user_id=? ORDER BY pt.position",
+        )
+        .bind(playlist_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(parse_uuid)
+        .collect::<Result<Vec<_>, _>>()?;
+        self.songs_by_ids(user_id, &ids).await
+    }
+
+    pub async fn create_playlist(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        track_ids: &[Uuid],
+    ) -> Result<PlaylistItem, ServiceError> {
+        validate_name(name)?;
+        self.songs_by_ids(user_id, track_ids).await?;
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        let id = Uuid::new_v4();
+        let now = now_ms();
+        sqlx::query("INSERT INTO playlist (id, owner_user_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(id.to_string()).bind(user_id.to_string()).bind(name.trim()).bind(now).bind(now)
+            .execute(&mut *tx).await?;
+        replace_playlist_tracks(&mut tx, id, track_ids, now).await?;
+        tx.commit().await?;
+        self.playlist(user_id, id).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_playlist(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        name: Option<&str>,
+        comment: Option<&str>,
+        public: Option<bool>,
+        add: &[Uuid],
+        remove_indexes: &[usize],
+    ) -> Result<PlaylistItem, ServiceError> {
+        let current = self.playlist(user_id, id).await?;
+        if let Some(name) = name {
+            validate_name(name)?;
+        }
+        self.songs_by_ids(user_id, add).await?;
+        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
+        let mut removes = remove_indexes.to_vec();
+        removes.sort_unstable_by(|a, b| b.cmp(a));
+        removes.dedup();
+        for index in removes {
+            if index >= ids.len() {
+                return Err(ServiceError::Invalid);
+            }
+            ids.remove(index);
+        }
+        ids.extend_from_slice(add);
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "UPDATE playlist SET name=COALESCE(?, name), comment=COALESCE(?, comment), \
+             public=COALESCE(?, public), updated_at=? WHERE id=? AND owner_user_id=?",
+        )
+        .bind(name.map(str::trim))
+        .bind(comment)
+        .bind(public.map(i64::from))
+        .bind(now_ms())
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM playlist_track WHERE playlist_id=?")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        replace_playlist_tracks(&mut tx, id, &ids, now_ms()).await?;
+        tx.commit().await?;
+        self.playlist(user_id, id).await
+    }
+
+    pub async fn delete_playlist(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let changed = sqlx::query("DELETE FROM playlist WHERE id=? AND owner_user_id=?")
+            .bind(id.to_string())
+            .bind(user_id.to_string())
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        if changed == 0 {
+            Err(ServiceError::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn set_star(
+        &self,
+        user_id: Uuid,
+        entity_type: &str,
+        entity_id: Uuid,
+        starred: bool,
+    ) -> Result<(), ServiceError> {
+        self.authorize_entity(user_id, entity_type, entity_id)
+            .await?;
+        let _writer = self.db.writer_guard().await;
+        if starred {
+            sqlx::query("INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET starred_at=excluded.starred_at")
+                .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(now_ms())
+                .execute(self.db.pool()).await?;
+        } else {
+            sqlx::query("DELETE FROM user_star WHERE user_id=? AND entity_type=? AND entity_id=?")
+                .bind(user_id.to_string())
+                .bind(entity_type)
+                .bind(entity_id.to_string())
+                .execute(self.db.pool())
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn entity_kind(
+        &self,
+        user_id: Uuid,
+        entity_id: Uuid,
+    ) -> Result<Option<&'static str>, ServiceError> {
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT entity_type FROM (\
+               SELECT 'track' AS entity_type FROM track t \
+                 JOIN library_member m ON m.library_id=t.library_id \
+                 WHERE t.id=? AND m.user_id=? \
+               UNION ALL \
+               SELECT 'album' FROM album a \
+                 JOIN library_member m ON m.library_id=a.library_id \
+                 WHERE a.id=? AND m.user_id=? \
+               UNION ALL \
+               SELECT 'artist' FROM artist ar \
+                 JOIN library_member m ON m.library_id=ar.library_id \
+                 WHERE ar.id=? AND m.user_id=? \
+             )",
+        )
+        .bind(entity_id.to_string())
+        .bind(user_id.to_string())
+        .bind(entity_id.to_string())
+        .bind(user_id.to_string())
+        .bind(entity_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        if kinds.len() != 1 {
+            return Ok(None);
+        }
+        Ok(match kinds[0].as_str() {
+            "track" => Some("track"),
+            "album" => Some("album"),
+            "artist" => Some("artist"),
+            _ => None,
+        })
+    }
+
+    pub async fn starred_ids(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(String, Uuid, i64)>, ServiceError> {
+        sqlx::query("SELECT entity_type, entity_id, starred_at FROM user_star WHERE user_id=? ORDER BY starred_at DESC")
+            .bind(user_id.to_string()).fetch_all(self.db.pool()).await?
+            .into_iter().map(|row| Ok((row.try_get("entity_type")?, parse_uuid(row.try_get("entity_id")?)?, row.try_get("starred_at")?)))
+            .collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
+    }
+
+    pub async fn set_rating(
+        &self,
+        user_id: Uuid,
+        entity_type: &str,
+        entity_id: Uuid,
+        rating: i64,
+    ) -> Result<(), ServiceError> {
+        if !(0..=5).contains(&rating) {
+            return Err(ServiceError::Invalid);
+        }
+        self.authorize_entity(user_id, entity_type, entity_id)
+            .await?;
+        let _writer = self.db.writer_guard().await;
+        if rating == 0 {
+            sqlx::query(
+                "DELETE FROM user_rating WHERE user_id=? AND entity_type=? AND entity_id=?",
+            )
+            .bind(user_id.to_string())
+            .bind(entity_type)
+            .bind(entity_id.to_string())
+            .execute(self.db.pool())
+            .await?;
+        } else {
+            sqlx::query("INSERT INTO user_rating (user_id, entity_type, entity_id, rating, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET rating=excluded.rating, updated_at=excluded.updated_at")
+                .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(rating).bind(now_ms()).execute(self.db.pool()).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn scrobble(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+        submission: bool,
+        time: Option<i64>,
+    ) -> Result<(), ServiceError> {
+        self.authorize_entity(user_id, "track", track_id).await?;
+        let now = time.unwrap_or_else(now_ms);
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(track_id.to_string())
+        .bind(i64::from(submission))
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        if submission {
+            sqlx::query("DELETE FROM now_playing WHERE user_id=?")
+                .bind(user_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query("INSERT INTO now_playing (user_id, track_id, started_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET track_id=excluded.track_id, started_at=excluded.started_at, updated_at=excluded.updated_at")
+                .bind(user_id.to_string()).bind(track_id.to_string()).bind(now).bind(now_ms()).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn now_playing(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(String, SongItem, i64)>, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT a.username, n.track_id, n.started_at FROM now_playing n \
+             JOIN account a ON a.id=n.user_id WHERE a.disabled=0 ORDER BY n.started_at DESC",
+        )
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut result = Vec::new();
+        for row in rows {
+            let id = parse_uuid(row.try_get("track_id")?)?;
+            match self.songs_by_ids(user_id, &[id]).await {
+                Ok(mut songs) => {
+                    if let Some(song) = songs.pop() {
+                        result.push((row.try_get("username")?, song, row.try_get("started_at")?));
+                    }
+                }
+                Err(ServiceError::NotFound) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(result)
+    }
+
+    pub async fn save_queue(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        current: Option<Uuid>,
+        position_ms: i64,
+        client: Option<&str>,
+    ) -> Result<(), ServiceError> {
+        if position_ms < 0 {
+            return Err(ServiceError::Invalid);
+        }
+        self.songs_by_ids(user_id, ids).await?;
+        if let Some(current) = current {
+            self.songs_by_ids(user_id, &[current]).await?;
+        }
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
+            .bind(user_id.to_string()).bind(current.map(|id| id.to_string())).bind(position_ms).bind(client).bind(now_ms()).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM play_queue_track WHERE user_id=?")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        for (position, id) in ids.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO play_queue_track (user_id, track_id, position) VALUES (?, ?, ?)",
+            )
+            .bind(user_id.to_string())
+            .bind(id.to_string())
+            .bind(position as i64)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn queue(&self, user_id: Uuid) -> Result<Option<QueueItem>, ServiceError> {
+        let row = sqlx::query("SELECT current_track_id, position_ms, changed_by, updated_at FROM play_queue WHERE user_id=?")
+            .bind(user_id.to_string()).fetch_optional(self.db.pool()).await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT track_id FROM play_queue_track WHERE user_id=? ORDER BY position",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(parse_uuid)
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(QueueItem {
+            current: row
+                .try_get::<Option<String>, _>("current_track_id")?
+                .map(parse_uuid)
+                .transpose()?,
+            position_ms: row.try_get("position_ms")?,
+            changed_by: row.try_get("changed_by")?,
+            updated_at: row.try_get("updated_at")?,
+            songs: self.songs_by_ids(user_id, &ids).await?,
+        }))
+    }
+
+    pub async fn shares(&self, user_id: Uuid) -> Result<Vec<ShareItem>, ServiceError> {
+        let rows = sqlx::query("SELECT id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE owner_user_id=? ORDER BY created_at DESC")
+            .bind(user_id.to_string()).fetch_all(self.db.pool()).await?;
+        let mut shares = Vec::new();
+        for row in rows {
+            let id = parse_uuid(row.try_get("id")?)?;
+            let nonce: Vec<u8> = row.try_get("token_nonce")?;
+            let ciphertext: Vec<u8> = row.try_get("token_ciphertext")?;
+            let token = String::from_utf8(self.secret_box.decrypt(&nonce, &ciphertext)?)
+                .map_err(|_| ServiceError::Invalid)?;
+            let track_ids = sqlx::query_scalar::<_, String>(
+                "SELECT track_id FROM share_track WHERE share_id=? ORDER BY position",
+            )
+            .bind(id.to_string())
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(parse_uuid)
+            .collect::<Result<Vec<_>, _>>()?;
+            shares.push(ShareItem {
+                id,
+                owner_id: user_id,
+                url_token: token,
+                description: row.try_get("description")?,
+                expires_at: row.try_get("expires_at")?,
+                created_at: row.try_get("created_at")?,
+                visit_count: row.try_get("visit_count")?,
+                songs: self.songs_by_ids(user_id, &track_ids).await?,
+            });
+        }
+        Ok(shares)
+    }
+
+    pub async fn create_share(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        description: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<ShareItem, ServiceError> {
+        if ids.is_empty() {
+            return Err(ServiceError::Invalid);
+        }
+        self.songs_by_ids(user_id, ids).await?;
+        let token = security::generate_token("wfs_");
+        let token_hash = security::token_hash(&token);
+        let encrypted = self.secret_box.encrypt(token.as_bytes())?;
+        let id = Uuid::new_v4();
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, token_nonce, token_ciphertext, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;
+        for (position, track) in ids.iter().enumerate() {
+            sqlx::query("INSERT INTO share_track (share_id, track_id, position) VALUES (?, ?, ?)")
+                .bind(id.to_string())
+                .bind(track.to_string())
+                .bind(position as i64)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        self.shares(user_id)
+            .await?
+            .into_iter()
+            .find(|share| share.id == id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    pub async fn public_share(&self, token: &str) -> Result<ShareItem, ServiceError> {
+        let hash = security::token_hash(token);
+        let row = sqlx::query("SELECT id, owner_user_id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE token_hash=? AND (expires_at IS NULL OR expires_at>?)")
+            .bind(hash.as_slice()).bind(now_ms()).fetch_optional(self.db.pool()).await?.ok_or(ServiceError::NotFound)?;
+        let id = parse_uuid(row.try_get("id")?)?;
+        let owner = parse_uuid(row.try_get("owner_user_id")?)?;
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT track_id FROM share_track WHERE share_id=? ORDER BY position",
+        )
+        .bind(id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(parse_uuid)
+        .collect::<Result<Vec<_>, _>>()?;
+        let nonce: Vec<u8> = row.try_get("token_nonce")?;
+        let ciphertext: Vec<u8> = row.try_get("token_ciphertext")?;
+        let stored = String::from_utf8(self.secret_box.decrypt(&nonce, &ciphertext)?)
+            .map_err(|_| ServiceError::Invalid)?;
+        if !security::constant_time_bytes_eq(stored.as_bytes(), token.as_bytes()) {
+            return Err(ServiceError::NotFound);
+        }
+        let _writer = self.db.writer_guard().await;
+        sqlx::query("UPDATE share SET visit_count=visit_count+1, last_visited_at=? WHERE id=?")
+            .bind(now_ms())
+            .bind(id.to_string())
+            .execute(self.db.pool())
+            .await?;
+        Ok(ShareItem {
+            id,
+            owner_id: owner,
+            url_token: stored,
+            description: row.try_get("description")?,
+            expires_at: row.try_get("expires_at")?,
+            created_at: row.try_get("created_at")?,
+            visit_count: row.try_get::<i64, _>("visit_count")? + 1,
+            songs: self.songs_by_ids(owner, &ids).await?,
+        })
+    }
+
+    pub async fn update_share(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        description: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<ShareItem, ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let changed = sqlx::query("UPDATE share SET description=COALESCE(?, description), expires_at=COALESCE(?, expires_at), updated_at=? WHERE id=? AND owner_user_id=?")
+            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).execute(self.db.pool()).await?.rows_affected();
+        if changed == 0 {
+            return Err(ServiceError::NotFound);
+        }
+        self.shares(user_id)
+            .await?
+            .into_iter()
+            .find(|share| share.id == id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    pub async fn delete_share(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let changed = sqlx::query("DELETE FROM share WHERE id=? AND owner_user_id=?")
+            .bind(id.to_string())
+            .bind(user_id.to_string())
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        if changed == 0 {
+            Err(ServiceError::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn users(&self, actor_id: Uuid) -> Result<Vec<UserItem>, ServiceError> {
+        self.require_admin(actor_id).await?;
+        let mut users = sqlx::query("SELECT a.id, a.username, a.role, a.disabled, c.user_id IS NOT NULL AS has_credential FROM account a LEFT JOIN subsonic_credential c ON c.user_id=a.id ORDER BY a.username COLLATE NOCASE")
+            .fetch_all(self.db.pool()).await?.into_iter().map(|row| Ok(UserItem { id: parse_uuid(row.try_get("id")?)?, username: row.try_get("username")?, role: AccountRole::from_str(row.try_get::<&str, _>("role")?).map_err(|error| sqlx::Error::Decode(error.into()))?, disabled: row.try_get::<i64, _>("disabled")? != 0, has_subsonic_credential: row.try_get::<i64, _>("has_credential")? != 0, folder_ids: Vec::new() })).collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let memberships = sqlx::query(
+            "SELECT user_id, library_id FROM library_member ORDER BY user_id, library_id",
+        )
+        .fetch_all(self.db.pool())
+        .await?;
+        for row in memberships {
+            let user_id = parse_uuid(row.try_get("user_id")?)?;
+            let library_id = parse_uuid(row.try_get("library_id")?)?;
+            if let Some(user) = users.iter_mut().find(|user| user.id == user_id) {
+                user.folder_ids.push(library_id);
+            }
+        }
+        Ok(users)
+    }
+
+    pub async fn create_subsonic_user(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        password: &str,
+        admin: bool,
+        folder_ids: Option<&[Uuid]>,
+    ) -> Result<UserItem, ServiceError> {
+        self.require_admin(actor_id).await?;
+        validate_name(username)?;
+        if password.is_empty() {
+            return Err(ServiceError::Invalid);
+        }
+        let placeholder = security::generate_token("web-disabled-");
+        let password_hash = security::hash_password(&placeholder)?;
+        let encrypted = self.secret_box.encrypt(password.as_bytes())?;
+        let api_key = security::generate_token("wfsk_");
+        let api_key_hash = security::token_hash(&api_key);
+        let requested_folders = self.resolve_library_ids(folder_ids).await?;
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        let user_id = Uuid::new_v4();
+        let now = now_ms();
+        let insert = sqlx::query(
+            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(username.trim())
+        .bind(password_hash)
+        .bind(if admin { "admin" } else { "user" })
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+        if let Err(error) = insert {
+            return Err(
+                if matches!(error, sqlx::Error::Database(ref db) if db.is_unique_violation()) {
+                    ServiceError::Conflict
+                } else {
+                    ServiceError::Database(error)
+                },
+            );
+        }
+        sqlx::query(
+            "INSERT INTO subsonic_credential \
+             (user_id, password_nonce, password_ciphertext, api_key_hash, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(encrypted.nonce.as_slice())
+        .bind(encrypted.ciphertext)
+        .bind(api_key_hash.as_slice())
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        for library_id in requested_folders {
+            sqlx::query(
+                "INSERT INTO library_member (library_id, user_id, role, created_at) \
+                 VALUES (?, ?, 'listener', ?)",
+            )
+            .bind(library_id.to_string())
+            .bind(user_id.to_string())
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(
+            "INSERT INTO audit_event (actor_user_id, kind, subject_id, occurred_at) \
+             VALUES (?, 'subsonic.user_created', ?, ?)",
+        )
+        .bind(actor_id.to_string())
+        .bind(user_id.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        self.users(actor_id)
+            .await?
+            .into_iter()
+            .find(|user| user.id == user_id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    pub async fn update_user(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        admin: Option<bool>,
+        disabled: Option<bool>,
+        folder_ids: Option<&[Uuid]>,
+        password: Option<&str>,
+    ) -> Result<UserItem, ServiceError> {
+        self.require_admin(actor_id).await?;
+        if password.is_some_and(str::is_empty) {
+            return Err(ServiceError::Invalid);
+        }
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        let requested_folders = match folder_ids {
+            Some(ids) => Some(self.resolve_library_ids(Some(ids)).await?),
+            None => None,
+        };
+        let encrypted = password
+            .map(|password| self.secret_box.encrypt(password.as_bytes()))
+            .transpose()?;
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("UPDATE account SET role=COALESCE(?, role), disabled=COALESCE(?, disabled), updated_at=? WHERE id=?")
+            .bind(admin.map(|value| if value { "admin" } else { "user" })).bind(disabled.map(i64::from)).bind(now_ms()).bind(account.id.to_string()).execute(&mut *tx).await?;
+        if let Some(encrypted) = encrypted {
+            let changed = sqlx::query(
+                "UPDATE subsonic_credential SET password_nonce=?, password_ciphertext=?, updated_at=? WHERE user_id=?",
+            )
+            .bind(encrypted.nonce.as_slice())
+            .bind(encrypted.ciphertext)
+            .bind(now_ms())
+            .bind(account.id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if changed == 0 {
+                return Err(ServiceError::NotFound);
+            }
+        }
+        if let Some(folder_ids) = requested_folders {
+            sqlx::query("DELETE FROM library_member WHERE user_id=? AND role='listener'")
+                .bind(account.id.to_string())
+                .execute(&mut *tx)
+                .await?;
+            for library_id in folder_ids {
+                sqlx::query(
+                    "INSERT INTO library_member (library_id, user_id, role, created_at) \
+                     VALUES (?, ?, 'listener', ?) \
+                     ON CONFLICT (library_id, user_id) DO NOTHING",
+                )
+                .bind(library_id.to_string())
+                .bind(account.id.to_string())
+                .bind(now_ms())
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        self.users(actor_id)
+            .await?
+            .into_iter()
+            .find(|user| user.id == account.id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    pub async fn delete_user(&self, actor_id: Uuid, username: &str) -> Result<(), ServiceError> {
+        self.require_admin(actor_id).await?;
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        if account.id == actor_id {
+            return Err(ServiceError::Forbidden);
+        }
+        let _writer = self.db.writer_guard().await;
+        sqlx::query("DELETE FROM account WHERE id=?")
+            .bind(account.id.to_string())
+            .execute(self.db.pool())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn change_subsonic_password(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        password: &str,
+    ) -> Result<(), ServiceError> {
+        self.require_admin(actor_id).await?;
+        if password.is_empty() {
+            return Err(ServiceError::Invalid);
+        }
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        let encrypted = self.secret_box.encrypt(password.as_bytes())?;
+        let _writer = self.db.writer_guard().await;
+        let changed = sqlx::query("UPDATE subsonic_credential SET password_nonce=?, password_ciphertext=?, updated_at=? WHERE user_id=?")
+            .bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(now_ms()).bind(account.id.to_string()).execute(self.db.pool()).await?.rows_affected();
+        if changed == 0 {
+            Err(ServiceError::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn require_admin(&self, actor_id: Uuid) -> Result<(), ServiceError> {
+        let account = self
+            .db
+            .account_by_id(actor_id)
+            .await?
+            .ok_or(ServiceError::Forbidden)?;
+        if account.role == AccountRole::Admin && !account.disabled {
+            Ok(())
+        } else {
+            Err(ServiceError::Forbidden)
+        }
+    }
+
+    async fn resolve_library_ids(
+        &self,
+        requested: Option<&[Uuid]>,
+    ) -> Result<Vec<Uuid>, ServiceError> {
+        let available = sqlx::query_scalar::<_, String>("SELECT id FROM library ORDER BY id")
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(parse_uuid)
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(requested) = requested else {
+            return Ok(available);
+        };
+        let mut unique = Vec::new();
+        for id in requested {
+            if !available.contains(id) {
+                return Err(ServiceError::NotFound);
+            }
+            if !unique.contains(id) {
+                unique.push(*id);
+            }
+        }
+        Ok(unique)
+    }
+
+    async fn authorize_entity(
+        &self,
+        user_id: Uuid,
+        kind: &str,
+        id: Uuid,
+    ) -> Result<(), ServiceError> {
+        let query = match kind {
+            "track" => "SELECT 1 FROM track e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
+            "album" => "SELECT 1 FROM album e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
+            "artist" => "SELECT 1 FROM artist e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
+            _ => return Err(ServiceError::Invalid),
+        };
+        let exists = sqlx::query_scalar::<_, i64>(query)
+            .bind(id.to_string())
+            .bind(user_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?;
+        if exists.is_some() {
+            Ok(())
+        } else {
+            Err(ServiceError::NotFound)
+        }
+    }
+}
+
+async fn fetch_songs(
+    db: &Database,
+    user_id: Uuid,
+    folder_filter: Option<&str>,
+    id: Option<Uuid>,
+) -> Result<Vec<SongItem>, sqlx::Error> {
+    let id = id.map(|id| id.to_string());
+    sqlx::query(
+        "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
+                t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
+                t.codec, t.relative_path, t.file_size, t.artwork_hash, t.created_at, \
+                us.starred_at, ur.rating AS user_rating \
+         FROM track t JOIN library_member m ON m.library_id=t.library_id \
+         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
+         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
+         WHERE m.user_id=? AND t.is_available=1 \
+           AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
+           AND (? IS NULL OR t.id=?) ORDER BY t.title COLLATE NOCASE",
+    )
+    .bind(user_id.to_string())
+    .bind(folder_filter)
+    .bind(folder_filter)
+    .bind(id.as_deref())
+    .bind(id.as_deref())
+    .fetch_all(db.pool())
+    .await?
+    .into_iter()
+    .map(song_from_row)
+    .collect()
+}
+
+fn credential_from_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<SubsonicCredentialRecord, sqlx::Error> {
+    let nonce = row.try_get::<Vec<u8>, _>("password_nonce")?;
+    let nonce: [u8; 12] = nonce.try_into().map_err(|value: Vec<u8>| {
+        sqlx::Error::Decode(format!("invalid credential nonce length: {}", value.len()).into())
+    })?;
+    Ok(SubsonicCredentialRecord {
+        account: AccountRecord {
+            id: parse_uuid(row.try_get("id")?)?,
+            username: row.try_get("username")?,
+            password_hash: row.try_get("password_hash")?,
+            role: AccountRole::from_str(row.try_get::<&str, _>("role")?)
+                .map_err(|error| sqlx::Error::Decode(error.into()))?,
+            disabled: row.try_get::<i64, _>("disabled")? != 0,
+        },
+        encrypted_password: EncryptedSecret {
+            nonce,
+            ciphertext: row.try_get("password_ciphertext")?,
+        },
+    })
+}
+
+fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Error> {
+    Ok(ArtistItem {
+        id: parse_uuid(row.try_get("id")?)?,
+        library_id: parse_uuid(row.try_get("library_id")?)?,
+        name: row.try_get("name")?,
+        artwork_hash: row.try_get("artwork_hash")?,
+        starred_at: row.try_get("starred_at")?,
+        user_rating: row.try_get("user_rating")?,
+    })
+}
+
+fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error> {
+    Ok(AlbumItem {
+        id: parse_uuid(row.try_get("id")?)?,
+        library_id: parse_uuid(row.try_get("library_id")?)?,
+        title: row.try_get("title")?,
+        artist: row.try_get("album_artist_name")?,
+        artist_id: row
+            .try_get::<Option<String>, _>("album_artist_id")?
+            .map(parse_uuid)
+            .transpose()?,
+        artwork_hash: row.try_get("artwork_hash")?,
+        year: row.try_get("year")?,
+        created_at: row.try_get("created_at")?,
+        starred_at: row.try_get("starred_at")?,
+        user_rating: row.try_get("user_rating")?,
+        play_count: row.try_get("play_count")?,
+        last_played_at: row.try_get("last_played_at")?,
+    })
+}
+
+fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> {
+    let relative: String = row.try_get("relative_path")?;
+    Ok(SongItem {
+        id: parse_uuid(row.try_get("id")?)?,
+        library_id: parse_uuid(row.try_get("library_id")?)?,
+        album_id: row
+            .try_get::<Option<String>, _>("album_id")?
+            .map(parse_uuid)
+            .transpose()?,
+        title: row.try_get("title")?,
+        album: row.try_get("album_title")?,
+        artist: row.try_get("artist_display")?,
+        genre: row.try_get("genre_display")?,
+        year: row.try_get("year")?,
+        track: row.try_get("track_number")?,
+        disc: row.try_get("disc_number")?,
+        duration_ms: row.try_get("duration_ms")?,
+        bitrate: row.try_get("bitrate")?,
+        codec: row.try_get("codec")?,
+        suffix: PathBuf::from(relative)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase(),
+        size: row.try_get("file_size")?,
+        artwork_hash: row.try_get("artwork_hash")?,
+        created_at: row.try_get("created_at")?,
+        starred_at: row.try_get("starred_at")?,
+        user_rating: row.try_get("user_rating")?,
+    })
+}
+
+async fn replace_playlist_tracks(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    playlist: Uuid,
+    ids: &[Uuid],
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    for (position, id) in ids.iter().enumerate() {
+        sqlx::query("INSERT INTO playlist_track (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)")
+            .bind(playlist.to_string()).bind(id.to_string()).bind(position as i64).bind(now).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+fn validate_name(name: &str) -> Result<(), ServiceError> {
+    if (1..=200).contains(&name.trim().chars().count()) {
+        Ok(())
+    } else {
+        Err(ServiceError::Invalid)
+    }
+}
+
+fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
+    Uuid::from_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}

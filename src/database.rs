@@ -1,0 +1,705 @@
+//! SQLite v2 connection, migrations and tenant-safe foundation repositories.
+
+use std::{path::Path, str::FromStr, sync::Arc};
+
+use serde::{Deserialize, Serialize};
+use sqlx::{
+    migrate::Migrator,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    Row, SqlitePool,
+};
+use tokio::sync::{Mutex, OwnedMutexGuard};
+use utoipa::ToSchema;
+use uuid::Uuid;
+
+use crate::{config::Config, security::EncryptedSecret};
+
+pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations-v2");
+
+#[derive(Clone)]
+pub struct Database {
+    pool: SqlitePool,
+    writer: Arc<Mutex<()>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountRole {
+    Admin,
+    User,
+}
+
+impl AccountRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::User => "user",
+        }
+    }
+}
+
+impl FromStr for AccountRole {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "admin" => Ok(Self::Admin),
+            "user" => Ok(Self::User),
+            _ => anyhow::bail!("unknown account role: {value}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryVisibility {
+    Private,
+    Shared,
+}
+
+impl LibraryVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Shared => "shared",
+        }
+    }
+}
+
+impl FromStr for LibraryVisibility {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "private" => Ok(Self::Private),
+            "shared" => Ok(Self::Shared),
+            _ => anyhow::bail!("visibility must be private or shared"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryRole {
+    Owner,
+    Manager,
+    Listener,
+}
+
+impl LibraryRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Manager => "manager",
+            Self::Listener => "listener",
+        }
+    }
+}
+
+impl FromStr for LibraryRole {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "owner" => Ok(Self::Owner),
+            "manager" => Ok(Self::Manager),
+            "listener" => Ok(Self::Listener),
+            _ => anyhow::bail!("library role must be owner, manager or listener"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AccountRecord {
+    pub id: Uuid,
+    pub username: String,
+    pub password_hash: String,
+    pub role: AccountRole,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionRecord {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub username: String,
+    pub role: AccountRole,
+    pub refresh_expires_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccessRecord {
+    pub user_id: Uuid,
+    pub username: String,
+    pub role: AccountRole,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewSession<'a> {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub access_token_hash: &'a [u8],
+    pub refresh_token_hash: &'a [u8],
+    pub access_expires_at: i64,
+    pub refresh_expires_at: i64,
+    pub now_ms: i64,
+}
+
+impl Database {
+    pub async fn open(config: &Config) -> anyhow::Result<Self> {
+        tokio::fs::create_dir_all(&config.data_dir).await?;
+        let options = SqliteConnectOptions::new()
+            .filename(&config.database_path)
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(config.sqlite_busy_timeout);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(config.db_max_connections)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .connect_with(options)
+            .await
+            .map_err(|error| anyhow::anyhow!("sqlite connect failed: {error}"))?;
+
+        Ok(Self {
+            pool,
+            writer: Arc::new(Mutex::new(())),
+        })
+    }
+
+    pub async fn migrate(&self) -> anyhow::Result<()> {
+        let _writer = self.writer_guard().await;
+        MIGRATOR
+            .run(&self.pool)
+            .await
+            .map_err(|error| anyhow::anyhow!("v2 migration failed: {error}"))
+    }
+
+    pub async fn ping(&self) -> Result<(), sqlx::Error> {
+        sqlx::query_scalar::<_, i64>("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn integrity_check(&self) -> Result<bool, sqlx::Error> {
+        let result: String = sqlx::query_scalar("PRAGMA quick_check")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(result == "ok")
+    }
+
+    pub async fn bind_instance_key(
+        &self,
+        fingerprint: &[u8],
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO instance_metadata (singleton, key_fingerprint, created_at) \
+             VALUES (1, ?, ?) ON CONFLICT (singleton) DO NOTHING",
+        )
+        .bind(fingerprint)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        let stored: Vec<u8> =
+            sqlx::query_scalar("SELECT key_fingerprint FROM instance_metadata WHERE singleton=1")
+                .fetch_one(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(stored == fingerprint)
+    }
+
+    pub async fn backup_to(&self, destination: &Path) -> anyhow::Result<()> {
+        if destination.exists() {
+            anyhow::bail!("backup database already exists: {}", destination.display());
+        }
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let destination = destination
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("backup path is not valid UTF-8"))?;
+        let _writer = self.writer_guard().await;
+        sqlx::query("VACUUM INTO ?")
+            .bind(destination)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| anyhow::anyhow!("SQLite backup failed: {error}"))?;
+        Ok(())
+    }
+
+    pub async fn check_file(path: &Path) -> anyhow::Result<bool> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await?;
+        let result: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await?;
+        pool.close().await;
+        Ok(result == "ok")
+    }
+
+    pub async fn check_file_instance_key(path: &Path, fingerprint: &[u8]) -> anyhow::Result<bool> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await?;
+        let stored = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT key_fingerprint FROM instance_metadata WHERE singleton=1",
+        )
+        .fetch_optional(&pool)
+        .await?;
+        pool.close().await;
+        Ok(stored.is_some_and(|stored| stored == fingerprint))
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub(crate) async fn writer_guard(&self) -> OwnedMutexGuard<()> {
+        Arc::clone(&self.writer).lock_owned().await
+    }
+
+    pub async fn create_account(
+        &self,
+        username: &str,
+        password_hash: &str,
+        role: AccountRole,
+        now_ms: i64,
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(username.trim())
+        .bind(password_hash)
+        .bind(role.as_str())
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        insert_audit(&mut tx, Some(id), "account.created", Some(id), now_ms).await?;
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    pub async fn account_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<AccountRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT id, username, password_hash, role, disabled \
+             FROM account WHERE username = ? COLLATE NOCASE",
+        )
+        .bind(username.trim())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(account_from_row).transpose()
+    }
+
+    pub async fn account_by_id(&self, id: Uuid) -> Result<Option<AccountRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT id, username, password_hash, role, disabled FROM account WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(account_from_row).transpose()
+    }
+
+    pub async fn create_device(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        now_ms: i64,
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO device (id, user_id, name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(name.trim())
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    pub async fn create_session(&self, session: NewSession<'_>) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        sqlx::query(
+            "INSERT INTO session \
+             (id, user_id, device_id, access_token_hash, refresh_token_hash, access_expires_at, \
+              refresh_expires_at, created_at, last_used_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(session.id.to_string())
+        .bind(session.user_id.to_string())
+        .bind(session.device_id.to_string())
+        .bind(session.access_token_hash)
+        .bind(session.refresh_token_hash)
+        .bind(session.access_expires_at)
+        .bind(session.refresh_expires_at)
+        .bind(session.now_ms)
+        .bind(session.now_ms)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn session_by_refresh_hash(
+        &self,
+        refresh_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<Option<SessionRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT s.id, s.user_id, s.device_id, a.username, a.role, s.refresh_expires_at \
+             FROM session s JOIN account a ON a.id = s.user_id \
+             WHERE s.refresh_token_hash = ? AND s.revoked_at IS NULL \
+               AND s.refresh_expires_at > ? AND a.disabled = 0",
+        )
+        .bind(refresh_hash)
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(session_from_row).transpose()
+    }
+
+    pub async fn account_by_access_hash(
+        &self,
+        access_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<Option<AccessRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT a.id, a.username, a.role FROM session s \
+             JOIN account a ON a.id = s.user_id \
+             JOIN device d ON d.id = s.device_id \
+             WHERE s.access_token_hash = ? AND s.revoked_at IS NULL \
+               AND s.access_expires_at > ? AND a.disabled = 0 AND d.revoked_at IS NULL",
+        )
+        .bind(access_hash)
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| {
+            Ok(AccessRecord {
+                user_id: parse_uuid(row.try_get("id")?)?,
+                username: row.try_get("username")?,
+                role: parse_role(row.try_get("role")?)?,
+            })
+        })
+        .transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn rotate_session(
+        &self,
+        session_id: Uuid,
+        expected_refresh_hash: &[u8],
+        access_hash: &[u8],
+        refresh_hash: &[u8],
+        access_expires_at: i64,
+        refresh_expires_at: i64,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE session SET access_token_hash = ?, refresh_token_hash = ?, \
+                access_expires_at = ?, refresh_expires_at = ?, last_used_at = ? \
+             WHERE id = ? AND refresh_token_hash = ? AND revoked_at IS NULL \
+               AND refresh_expires_at > ?",
+        )
+        .bind(access_hash)
+        .bind(refresh_hash)
+        .bind(access_expires_at)
+        .bind(refresh_expires_at)
+        .bind(now_ms)
+        .bind(session_id.to_string())
+        .bind(expected_refresh_hash)
+        .bind(now_ms)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn revoke_session_by_access_hash(
+        &self,
+        access_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE session SET revoked_at = ? \
+             WHERE access_token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(now_ms)
+        .bind(access_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn create_api_token(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        token_hash: &[u8],
+        scopes: &[String],
+        now_ms: i64,
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO api_token (id, user_id, name, token_hash, scopes_json, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(name.trim())
+        .bind(token_hash)
+        .bind(serde_json::to_string(scopes).expect("string list serializes"))
+        .bind(now_ms)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    pub async fn create_library(
+        &self,
+        owner_id: Uuid,
+        name: &str,
+        root_path: &Path,
+        visibility: LibraryVisibility,
+        now_ms: i64,
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let id = Uuid::new_v4();
+        let root_path = root_path.to_string_lossy();
+        sqlx::query(
+            "INSERT INTO library \
+             (id, owner_user_id, name, root_path, visibility, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(owner_id.to_string())
+        .bind(name.trim())
+        .bind(root_path.as_ref())
+        .bind(visibility.as_str())
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO library_member (library_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)",
+        )
+        .bind(id.to_string())
+        .bind(owner_id.to_string())
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        insert_audit(&mut tx, Some(owner_id), "library.created", Some(id), now_ms).await?;
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    pub async fn add_library_member(
+        &self,
+        actor_id: Uuid,
+        library_id: Uuid,
+        user_id: Uuid,
+        role: LibraryRole,
+        now_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO library_member (library_id, user_id, role, created_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT (library_id, user_id) DO UPDATE SET role = excluded.role",
+        )
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .bind(role.as_str())
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        insert_audit(
+            &mut tx,
+            Some(actor_id),
+            "library.member_set",
+            Some(library_id),
+            now_ms,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn remove_library_member(
+        &self,
+        actor_id: Uuid,
+        library_id: Uuid,
+        user_id: Uuid,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let removed = sqlx::query(
+            "DELETE FROM library_member \
+             WHERE library_id=? AND user_id=? AND role!='owner'",
+        )
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if removed {
+            insert_audit(
+                &mut tx,
+                Some(actor_id),
+                "library.member_removed",
+                Some(library_id),
+                now_ms,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(removed)
+    }
+
+    pub async fn set_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+        user_id: Uuid,
+        secret: &EncryptedSecret,
+        api_key_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO subsonic_credential \
+             (user_id, password_nonce, password_ciphertext, api_key_hash, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT (user_id) DO UPDATE SET \
+               password_nonce = excluded.password_nonce, \
+               password_ciphertext = excluded.password_ciphertext, \
+               api_key_hash = excluded.api_key_hash, updated_at = excluded.updated_at",
+        )
+        .bind(user_id.to_string())
+        .bind(secret.nonce.as_slice())
+        .bind(&secret.ciphertext)
+        .bind(api_key_hash)
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+        insert_audit(
+            &mut tx,
+            Some(actor_id),
+            "subsonic.credential_set",
+            Some(user_id),
+            now_ms,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn revoke_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+        user_id: Uuid,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let result = sqlx::query("DELETE FROM subsonic_credential WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        insert_audit(
+            &mut tx,
+            Some(actor_id),
+            "subsonic.credential_revoked",
+            Some(user_id),
+            now_ms,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(result.rows_affected() == 1)
+    }
+}
+
+fn account_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AccountRecord, sqlx::Error> {
+    Ok(AccountRecord {
+        id: parse_uuid(row.try_get("id")?)?,
+        username: row.try_get("username")?,
+        password_hash: row.try_get("password_hash")?,
+        role: parse_role(row.try_get("role")?)?,
+        disabled: row.try_get::<i64, _>("disabled")? != 0,
+    })
+}
+
+fn session_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SessionRecord, sqlx::Error> {
+    Ok(SessionRecord {
+        id: parse_uuid(row.try_get("id")?)?,
+        user_id: parse_uuid(row.try_get("user_id")?)?,
+        device_id: parse_uuid(row.try_get("device_id")?)?,
+        username: row.try_get("username")?,
+        role: parse_role(row.try_get("role")?)?,
+        refresh_expires_at: row.try_get("refresh_expires_at")?,
+    })
+}
+
+fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
+    Uuid::parse_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}
+
+fn parse_role(value: String) -> Result<AccountRole, sqlx::Error> {
+    AccountRole::from_str(&value).map_err(|error| sqlx::Error::Decode(error.into_boxed_dyn_error()))
+}
+
+async fn insert_audit(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor_id: Option<Uuid>,
+    kind: &str,
+    subject_id: Option<Uuid>,
+    now_ms: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO audit_event (actor_user_id, kind, subject_id, occurred_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(actor_id.map(|id| id.to_string()))
+    .bind(kind)
+    .bind(subject_id.map(|id| id.to_string()))
+    .bind(now_ms)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}

@@ -1,0 +1,11 @@
+.git
+.env
+.agents
+data
+target
+node_modules
+web/node_modules
+web/.output
+*.db
+*.db-wal
+*.db-shm

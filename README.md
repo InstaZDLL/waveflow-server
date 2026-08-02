@@ -1,138 +1,87 @@
-# waveflow-server
+# WaveFlow Server
 
-Self-hosted backend + web client for [WaveFlow](https://github.com/InstaZDLL/WaveFlow). Powers multi-device library sync, browser playback, public shareable playlists, and (later) the mobile app.
+WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the catalogue and user data; FFmpeg streaming, OpenSubsonic compatibility, WaveFlow Desktop sync and the embedded web player land through independently verified milestones.
 
-This repository is a monorepo:
+> **Status:** M0, M1 and M2 pass their release gates. M3 is implemented and its automated protocol suite passes. Feishin 1.15.1, Substreamer 8.0.91 and DSub 5.5.3 have completed the real-client matrix; Symfonium still needs a publicly trusted HTTPS test endpoint before the beta can be tagged.
 
-| Path  | Purpose                                                                                                  |
-| ----- | -------------------------------------------------------------------------------------------------------- |
-| `/`   | `waveflow-server` — axum (Rust) + PostgreSQL service exposing the auth + sync + streaming + share API.   |
-| `web/` | `waveflow-web` — React + TanStack Start frontend + Better Auth instance. Hosts the JWKS the server reads. |
+The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The PostgreSQL/JWKS implementation remains in-tree as transition evidence but is no longer mounted or compiled by default.
 
-The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) is shipped from its own repository on a different release cadence (local-only software, GPL-3.0) and consumes this monorepo's API.
+## Current quick start
 
-> **Status:** Server is at Phase 4.d (track + album + artist browse), web is at Sprint 4 (player + playlists). Phase milestone tracking lives on the main repo's [Phase 1 milestone](https://github.com/InstaZDLL/WaveFlow/milestone/1).
+Requirements: Rust 1.94 or newer plus `ffmpeg` and `ffprobe` on `PATH`. No external database or authentication service is required.
 
-## Architecture
+```powershell
+Copy-Item .env.example .env
+$env:WAVEFLOW_ACCOUNT_PASSWORD = "replace-with-at-least-12-characters"
+cargo run -- account create-admin --username admin
 
-The architectural decisions — server stack, web stack, auth boundary, sync protocol, streaming, delivery plan — live in [`docs/rfcs/RFC-001-waveflow-server.md`](https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-001-waveflow-server.md) on the main repo. Read that before opening a substantive PR here.
+cargo run -- library add --owner admin --name "Music" --path "D:\Music"
 
-TL;DR:
+# Optional shared-library membership management.
+cargo run -- library set-member --actor admin --library-id "LIBRARY_UUID" --username listener --role listener
+cargo run -- library remove-member --actor admin --library-id "LIBRARY_UUID" --username listener
 
-- **Server stack:** axum (Rust) + PostgreSQL + sqlx + utoipa (OpenAPI) + tokio-tungstenite (WebSocket).
-- **Web stack:** React 19 + TanStack Start (Vite + Nitro) + Better Auth + Tailwind v4 + `@waveflow/design-tokens`.
-- **Reuses `waveflow-core`** from the main `waveflow` repo as a git dependency for the first months, switching to a crates.io release once the public API stabilises.
-- **Auth boundary:** Better Auth (hosted by `web/`) issues an ES256 JWT. The server verifies it against the JWKS endpoint and lazy-provisions the `users` row on first request. The server never touches credentials.
-- **Sync:** append-only ops log with a server-assigned monotonic sequence + tombstones. WebSocket fan-out via tokio `broadcast`.
+$env:WAVEFLOW_SUBSONIC_PASSWORD = "a-different-app-password"
+cargo run -- credential set --actor admin --username admin
 
-## Local development
-
-For visual end-to-end QA there's a sibling [`waveflow-dev-stack`](https://github.com/InstaZDLL/waveflow-dev-stack) repo (Postgres + .env templates + step-by-step) so you don't have to hand-stitch the wiring every time.
-
-### One-shot from the repo root
-
-A small root `package.json` ships with `concurrently` so you can run both halves at once without `cd`-ing into `web/`:
-
-```bash
-bun install                                     # installs concurrently + each side's deps
-bun --cwd=web install                           # one-time, until web's deps are workspace-hoisted
-
-bun run dev                                     # cargo run + bun --cwd=web run dev, prefixed output
-bun run build                                   # release Rust + Vite/Nitro production build
-bun run test                                    # cargo test + vitest run
-bun run lint                                    # cargo clippy + eslint
-bun run fmt                                     # cargo fmt + prettier --write
-bun run fmt:check                               # CI-shape: read-only check on both sides
-bun run typecheck                               # tsc on web/ (server gets its own check via cargo)
-bun run check                                   # cargo check --all-targets --all-features
-bun run db:migrate                              # Better Auth migrations on web/ Postgres
+cargo run
 ```
 
-Each composite script delegates to the side-specific scripts (`dev:server` / `dev:web`, etc.) so a contributor working on one half only can target it directly. `--cwd=web` makes `bun` resolve the package + lockfile relative to `web/` without changing the shell's cwd.
+The credential command prints a generated Subsonic API key exactly once. Back up `data/waveflow.db` and `data/instance.key` together; encrypted credentials cannot be recovered with only one of them. The database stores a non-secret key fingerprint so startup and restore reject mismatched pairs before serving or replacing data.
 
-### Single-side workflows
+The server listens on `127.0.0.1:4533` by default and exposes:
 
-You can still run one half on its own if you only care about that side.
+- `GET /health`: process liveness;
+- `GET /ready`: SQLite readiness, independent of scan progress;
+- `GET /openapi.json` and `GET /reference`: API contract;
+- `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating local sessions.
+- `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
+- `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
+- `GET /api/v2/libraries/{id}/tracks?q=...`: tenant-scoped catalogue/FTS search.
+- `GET /api/v2/tracks/{id}/stream?format=raw|mp3|opus&bitrate=...&offsetMs=...`: authorized playback. Byte ranges apply to originals and completed cache entries; live transcodes use temporal seek and chunked transfer.
+- `/rest/<method>` and `/rest/<method>.view`: Subsonic/OpenSubsonic XML or `f=json`, via GET or form POST.
+- `/share/{token}`: public metadata plus token-scoped stream URLs for an unexpired share.
 
-#### Server (`/`)
+For browser-hosted clients such as Feishin, list every trusted origin explicitly, for example `WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com`. Wildcards are rejected so credential-bearing Subsonic requests cannot be opened to arbitrary sites.
+
+Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind the reverse proxy so `createShare` returns absolute, externally usable URLs. When it is omitted, share URLs remain relative to the server origin.
+
+Create or restore a coherent database/key bundle:
+
+```powershell
+cargo run -- database backup --output D:\Backups\waveflow-2026-08-02
+cargo run -- database restore --input D:\Backups\waveflow-2026-08-02
+```
+
+The restore command runs before SQLite is opened and moves the previous database/key into a timestamped recovery directory.
+
+The repository ships a multi-stage `Dockerfile` with FFmpeg and a Compose file. Set `WAVEFLOW_MUSIC_PATH` to the host music directory; it is mounted read-only.
+
+## Development
 
 ```bash
-# Postgres ≥ 15 reachable on DATABASE_URL.
-cp .env.example .env
-cargo run                                       # listens on WAVEFLOW_BIND (default 127.0.0.1:3000)
-cargo test --all-features                       # integration suite — needs a real Postgres
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
+cargo check --all-targets --all-features
+cargo test --all-features
 ```
 
-The boot sequence connects to Postgres, applies pending migrations, and serves:
+Tests use temporary SQLite databases and need no service container. The React/TanStack application under `web/` is the legacy v1 surface until the M4 embedded web vertical replaces its Better Auth/PostgreSQL boundary.
 
-- `GET /health` — liveness, always `200 {status, version}`.
-- `GET /ready` — readiness, `200` once `SELECT 1` round-trips.
-- `GET /openapi.json` + `GET /reference` — Scalar-rendered API reference of every handler with a `routes!()` registration.
-- `/api/v1/profiles/*` — full CRUD scoped to the calling user via `Authorization: Bearer <jwt>`. Tenant isolation enforced at the storage layer (`PostgresProfileRepository::*_for_user`).
-- `/api/v1/profiles/{profile_id}/libraries/*`, `/.../tracks/*`, `/.../playlists/*` — same auth + tenant-scoping pattern.
+## Data and security posture
 
-> 🔒 **Auth: JWT-only.** Every `/api/v1/*` request must carry an `Authorization: Bearer <jwt>` header signed by the configured Better Auth issuer (`web/`'s instance). Boot requires the full `WAVEFLOW_JWT_JWKS_URL` / `WAVEFLOW_JWT_ISSUER` / `WAVEFLOW_JWT_AUDIENCE` triple.
+- SQLite runs with WAL, foreign keys, `busy_timeout` and one process-wide write coordinator.
+- Public/domain identifiers are UUIDs; timestamps are Unix epoch milliseconds.
+- Web passwords use Argon2id. Access, refresh and API tokens are stored only as SHA-256 hashes.
+- The dedicated Subsonic password is encrypted with ChaCha20-Poly1305 under the local 32-byte instance key.
+- Library access is represented by explicit owner/manager/listener membership.
+- Request traces record sanitized paths, never query strings, authorization headers or public-share bearer tokens.
+- Every media lookup verifies membership before resolving the canonical path or cache key; parent components and symlinks are rejected.
 
-#### Web (`web/`)
+## Repository references
 
-```bash
-cd web
-bun install
-cp .env.example .env                             # set BETTER_AUTH_SECRET + DATABASE_URL + WAVEFLOW_SERVER_URL
-bun run db:migrate                               # apply Better Auth migrations
-bun run dev                                      # Vite dev server on :3000
-```
+- `E:\Workspace\WaveFlow`: desktop client and `waveflow-core` source reference;
+- `E:\Workspace\navidrome`: Subsonic and self-hosting behaviour reference;
+- `E:\Workspace\waveflow-server-replit-example`: information-architecture reference only.
 
-When pairing with a local server, point both at the same Postgres (different databases — `waveflow` vs `waveflow_auth`) and at each other:
-
-```text
-web :3000 ──┐
-            ├── Better Auth issues JWT ──┐
-            │                            ▼
-server :4000 ◄── verifies JWT against web's /api/auth/jwks
-```
-
-## Repository layout
-
-```text
-.
-├── Cargo.toml              # single binary crate, name = `waveflow-server`
-├── src/                    # server source
-│   ├── main.rs             # entrypoint — connect pool, run migrations, serve
-│   ├── lib.rs              # router + AppState (PgPool, JwtVerifier, SyncHub, ...)
-│   ├── config.rs           # `Config::from_env` — single env-reading entrypoint
-│   ├── db.rs / db/         # PgPool wiring + embedded migration runner + per-domain helpers
-│   ├── api/                # one file per resource (/health, /ready, sync, share, …)
-│   ├── apply.rs            # sync apply pipeline (Phase 1.g.0+)
-│   └── storage.rs          # object_store-backed artwork cache
-├── migrations/             # Postgres sqlx migrations (immutable once merged)
-├── tests/                  # integration tests (real Postgres via sqlx::test)
-├── web/                    # TanStack Start app — react routes, server-fns, design tokens
-│   ├── src/                # routes, components, server-fns
-│   ├── packages/           # @waveflow/design-tokens (workspace)
-│   ├── db/migrations/      # Better Auth schema (hand-written, applied by scripts/db-migrate.ts)
-│   └── package.json
-├── .github/                # CI workflows (rust + web), labeler, dependabot, issue+PR templates
-├── CLAUDE.md               # contributor onboarding (this repo)
-├── CONTRIBUTING.md         # DCO sign-off + conventional commits
-├── LICENSE                 # AGPL-3.0
-└── README.md               # this file
-```
-
-The `src/` layout intentionally mirrors `waveflow`'s `src-tauri/crates/app/src/` so contributors who know one side can read the other without re-orienting. Sync (`src/sync/`), streaming (`src/stream/`), auth middleware live as siblings of `src/api/`.
-
-## License
-
-[AGPL-3.0-only](LICENSE). The server-side network clause keeps the ecosystem healthy — anyone running a modified version of this server as a network service has to publish their changes under the same terms. The web client lives under the same licence for the same reason.
-
-The desktop app and `waveflow-core` stay [GPL-3.0-only](https://github.com/InstaZDLL/WaveFlow/blob/main/LICENSE) — locally-run software doesn't need the AGPL network clause. GPL-3.0 code can be combined into this AGPL-3.0 work without issue.
-
-Plugins authored against the [plugin SDK](https://github.com/InstaZDLL/WaveFlow/blob/main/docs/rfcs/RFC-002-plugin-sdk.md) can pick any OSI-compatible license they want, since they run inside a WASM sandbox.
-
-## Contributing
-
-The main repo's [CONTRIBUTING.md](https://github.com/InstaZDLL/WaveFlow/blob/main/CONTRIBUTING.md) and [conventional commits](https://www.conventionalcommits.org/) rules apply here. Open issues against the desktop repo's [Phase 1 milestone](https://github.com/InstaZDLL/WaveFlow/milestone/1) for cross-cutting design discussions; bug reports and feature requests scoped to the server or web client land on this repo's issue tracker.
-
-**Contributions are accepted under a [DCO](CONTRIBUTING.md#developer-certificate-of-origin)** — every commit needs a `Signed-off-by:` trailer (`git commit -s`).
+WaveFlow Server is licensed under [AGPL-3.0-only](LICENSE). Commits require DCO sign-off and Conventional Commit messages.

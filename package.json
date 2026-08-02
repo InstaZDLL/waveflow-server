@@ -29,6 +29,6 @@
     "db:migrate": "bun --cwd=web run db:migrate"
   },
   "devDependencies": {
-    "concurrently": "^10.0.3"
+    "concurrently": "^10.0.4"
   }
 }

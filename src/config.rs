@@ -1,281 +1,239 @@
-//! Server configuration loaded once at boot from environment variables
-//! (with a `.env` fallback in dev, see `main.rs`).
+//! WaveFlow v2 process configuration.
 //!
-//! Each field carries the env var name in its doc comment so a reader
-//! browsing this struct sees the full configuration surface in one
-//! place. Add new entries here when introducing a tunable; don't read
-//! from `std::env` in module code.
+//! Environment access is centralised here so domain and repository code stay
+//! deterministic and testable.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-/// Process-wide configuration. Construct once at boot via [`Config::from_env`]
-/// and pass into [`crate::app`].
-///
-/// `Debug` is hand-written so the HMAC `stream_secret` is rendered as
-/// `<redacted>` — a derived `Debug` would print the raw bytes any
-/// time the config landed in a `tracing` field or a `Config::from_env`
-/// failure message.
 #[derive(Clone)]
 pub struct Config {
-    /// `WAVEFLOW_BIND` — `host:port` the server binds to.
-    /// Default: `127.0.0.1:3000`.
-    ///
-    /// Bind to `0.0.0.0:3000` in container / systemd deploys; the
-    /// loopback default avoids exposing a dev instance to the LAN by
-    /// accident.
     pub bind_addr: SocketAddr,
-
-    /// `WAVEFLOW_REQUEST_TIMEOUT_SECS` — per-request timeout enforced
-    /// by the tower-http TimeoutLayer. Default: 30 seconds.
-    ///
-    /// 30 s is comfortable for the CRUD endpoints planned in 1.b.2.
-    /// The streaming endpoint (1.e) will live behind a separate router
-    /// without this layer so range requests can run for the full
-    /// duration of a track.
-    pub request_timeout_secs: u64,
-
-    /// `DATABASE_URL` — Postgres connection string consumed by sqlx
-    /// (`postgres://user:pass@host:port/dbname`). Required — there's
-    /// no sensible default for a server's main database, and silently
-    /// falling back would let a misconfigured deploy boot and then
-    /// 5xx every request.
-    pub database_url: String,
-
-    /// `WAVEFLOW_DB_MAX_CONNECTIONS` — upper bound on the sqlx pool.
-    /// Default: 20. Postgres can easily serve that many active
-    /// connections per `pgbouncer`-less deploy; bump if you front the
-    /// server behind a pooler that demands a smaller pool here.
+    pub public_url: Option<String>,
+    pub request_timeout: Duration,
+    pub data_dir: PathBuf,
+    pub database_path: PathBuf,
+    pub instance_key_path: PathBuf,
+    pub artwork_dir: PathBuf,
     pub db_max_connections: u32,
-
-    /// `WAVEFLOW_JWT_JWKS_URL` — URL of the upstream JWKS document
-    /// (e.g. `https://auth.waveflow.app/api/auth/jwks`). Required at
-    /// boot — the legacy `X-User-Id` dev shim retired in Phase 1.d.2,
-    /// so JWT verification is the only auth path the server offers.
-    pub jwt_jwks_url: String,
-
-    /// `WAVEFLOW_JWT_ISSUER` — expected `iss` claim on verified
-    /// tokens. Must match Better Auth's `BETTER_AUTH_URL`. Required.
-    pub jwt_issuer: String,
-
-    /// `WAVEFLOW_JWT_AUDIENCE` — expected `aud` claim on verified
-    /// tokens. Must match `WAVEFLOW_JWT_AUDIENCE` on the auth server
-    /// side (defaults there to `"waveflow-server"`). Required.
-    pub jwt_audience: String,
-
-    /// `WAVEFLOW_MUSIC_ROOT` — filesystem root the streaming endpoint
-    /// resolves `track.file_path` against. Every file the server can
-    /// stream lives under this directory; the handler canonicalises
-    /// the joined path and refuses anything outside it (path-traversal
-    /// guard). `None` disables the streaming endpoints — the mint
-    /// route returns 503 instead of issuing tokens that would just
-    /// 404 on the stream side.
-    pub music_root: Option<std::path::PathBuf>,
-
-    /// `WAVEFLOW_STREAM_SECRET` — HMAC key the mint endpoint signs
-    /// stream URLs with. Browsers can't attach a Bearer to
-    /// `<audio src>`, so the short-lived signed URL replaces the JWT
-    /// for that one route. `None` disables streaming (the mint
-    /// endpoint returns 503). 32 random bytes (`openssl rand -base64
-    /// 32`) is the recommended size.
-    pub stream_secret: Option<Vec<u8>>,
-
-    /// Artwork storage configuration. `Some` when
-    /// `WAVEFLOW_ARTWORK_LOCAL_DIR` is set at boot; `None` disables
-    /// the artwork endpoints (they answer 503). Same opt-in
-    /// philosophy as streaming — a deploy that doesn't want to ship
-    /// the feature just leaves the env unset.
-    pub artwork: Option<crate::storage::ArtworkConfig>,
-
-    /// Background scanner that periodically repairs partial variant
-    /// caches (Phase 1.i.1). `Some` when the artwork backend is set
-    /// AND `WAVEFLOW_ARTWORK_SCANNER_DISABLED` is unset/empty;
-    /// `None` skips the spawn at boot. Defaults: 5-minute interval,
-    /// 50 parents per cycle.
-    pub artwork_scanner: Option<crate::artwork_jobs::ArtworkScannerConfig>,
+    pub sqlite_busy_timeout: Duration,
+    pub access_token_ttl: Duration,
+    pub refresh_token_ttl: Duration,
+    pub scan_interval: Option<Duration>,
+    pub scan_parallelism: usize,
+    pub ffmpeg_path: PathBuf,
+    pub ffprobe_path: PathBuf,
+    pub transcode_cache_dir: PathBuf,
+    pub transcode_cache_max_bytes: u64,
+    pub transcode_global_limit: usize,
+    pub transcode_per_user_limit: usize,
+    pub allowed_origins: Vec<axum::http::HeaderValue>,
 }
 
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("bind_addr", &self.bind_addr)
-            .field("request_timeout_secs", &self.request_timeout_secs)
-            // `DATABASE_URL` typically embeds the Postgres credentials
-            // (`postgres://user:password@host/db`), so a derived
-            // `Debug` would land them in any `tracing` field or
-            // anyhow context that prints the config. Redact the
-            // whole value rather than try to parse-and-mask the
-            // password segment — opaque is the safer default.
-            .field("database_url", &"<redacted>")
+            .field("public_url", &self.public_url)
+            .field("request_timeout", &self.request_timeout)
+            .field("data_dir", &self.data_dir)
+            .field("database_path", &self.database_path)
+            .field("instance_key_path", &self.instance_key_path)
+            .field("artwork_dir", &self.artwork_dir)
             .field("db_max_connections", &self.db_max_connections)
-            .field("jwt_jwks_url", &self.jwt_jwks_url)
-            .field("jwt_issuer", &self.jwt_issuer)
-            .field("jwt_audience", &self.jwt_audience)
-            .field("music_root", &self.music_root)
-            .field(
-                "stream_secret",
-                &self.stream_secret.as_ref().map(|_| "<redacted>"),
-            )
-            .field("artwork", &self.artwork)
-            .field("artwork_scanner", &self.artwork_scanner)
+            .field("sqlite_busy_timeout", &self.sqlite_busy_timeout)
+            .field("access_token_ttl", &self.access_token_ttl)
+            .field("refresh_token_ttl", &self.refresh_token_ttl)
+            .field("scan_interval", &self.scan_interval)
+            .field("scan_parallelism", &self.scan_parallelism)
+            .field("ffmpeg_path", &self.ffmpeg_path)
+            .field("ffprobe_path", &self.ffprobe_path)
+            .field("transcode_cache_dir", &self.transcode_cache_dir)
+            .field("transcode_cache_max_bytes", &self.transcode_cache_max_bytes)
+            .field("transcode_global_limit", &self.transcode_global_limit)
+            .field("transcode_per_user_limit", &self.transcode_per_user_limit)
+            .field("allowed_origins", &self.allowed_origins)
             .finish()
     }
 }
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let bind_addr = std::env::var("WAVEFLOW_BIND")
-            .as_deref()
-            .unwrap_or("127.0.0.1:3000")
-            .parse()
-            .map_err(|e| anyhow::anyhow!("invalid WAVEFLOW_BIND: {e}"))?;
+        let data_dir = std::env::var_os("WAVEFLOW_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data"));
 
-        let request_timeout_secs = std::env::var("WAVEFLOW_REQUEST_TIMEOUT_SECS")
+        let bind_addr = parse_env("WAVEFLOW_BIND", "127.0.0.1:4533")?;
+        let public_url = std::env::var("WAVEFLOW_PUBLIC_URL")
             .ok()
-            .map(|s| s.parse::<u64>())
-            .transpose()
-            .map_err(|e| anyhow::anyhow!("invalid WAVEFLOW_REQUEST_TIMEOUT_SECS: {e}"))?
-            .unwrap_or(30);
-
-        // Zero would make every request time out before the handler
-        // runs. Fail fast at boot rather than silently 408 every call.
-        if request_timeout_secs == 0 {
-            anyhow::bail!("invalid WAVEFLOW_REQUEST_TIMEOUT_SECS: must be > 0");
-        }
-
-        let database_url = std::env::var("DATABASE_URL")
-            .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
-
-        let db_max_connections = std::env::var("WAVEFLOW_DB_MAX_CONNECTIONS")
-            .ok()
-            .map(|s| s.parse::<u32>())
-            .transpose()
-            .map_err(|e| anyhow::anyhow!("invalid WAVEFLOW_DB_MAX_CONNECTIONS: {e}"))?
-            .unwrap_or(20);
-
-        if db_max_connections == 0 {
-            anyhow::bail!("invalid WAVEFLOW_DB_MAX_CONNECTIONS: must be > 0");
-        }
-
-        // JWT triple — all three are required for the server to
-        // boot. The dev `X-User-Id` shim retired in Phase 1.d.2, so
-        // there's no longer a "boot without JWT" mode to fall back
-        // to. Failing at boot (rather than silently 503-ing every
-        // request) tells the operator immediately that the
-        // deployment is misconfigured.
-        let jwt_jwks_url = std::env::var("WAVEFLOW_JWT_JWKS_URL")
-            .map_err(|_| anyhow::anyhow!("WAVEFLOW_JWT_JWKS_URL is required"))?;
-        let jwt_issuer = std::env::var("WAVEFLOW_JWT_ISSUER")
-            .map_err(|_| anyhow::anyhow!("WAVEFLOW_JWT_ISSUER is required"))?;
-        let jwt_audience = std::env::var("WAVEFLOW_JWT_AUDIENCE")
-            .map_err(|_| anyhow::anyhow!("WAVEFLOW_JWT_AUDIENCE is required"))?;
-
-        // Streaming knobs — both required together, both optional
-        // (unset disables `/api/v1/stream/*` cleanly with 503). A
-        // half-set config (one without the other) is a footgun, so
-        // we bail at boot instead. `std::env::var` returns `Ok("")`
-        // when a variable is exported but empty, which would slip
-        // a zero-byte HMAC key past the structural check — treat
-        // empties as if the var were unset (and then enforce the
-        // mutual-presence + minimum-length rules).
-        let music_root = std::env::var("WAVEFLOW_MUSIC_ROOT")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(std::path::PathBuf::from);
-        let stream_secret = std::env::var("WAVEFLOW_STREAM_SECRET")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.into_bytes());
-        if music_root.is_some() != stream_secret.is_some() {
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| normalize_public_url(&value))
+            .transpose()?;
+        let request_timeout_secs = parse_positive_env("WAVEFLOW_REQUEST_TIMEOUT_SECS", 30u64)?;
+        let db_max_connections = parse_positive_env("WAVEFLOW_DB_MAX_CONNECTIONS", 8u32)?;
+        let sqlite_busy_timeout_ms =
+            parse_positive_env("WAVEFLOW_SQLITE_BUSY_TIMEOUT_MS", 5_000u64)?;
+        let access_token_ttl_secs =
+            parse_positive_env("WAVEFLOW_ACCESS_TOKEN_TTL_SECS", 15 * 60u64)?;
+        let refresh_token_ttl_secs =
+            parse_positive_env("WAVEFLOW_REFRESH_TOKEN_TTL_SECS", 30 * 24 * 60 * 60u64)?;
+        let scan_interval_secs = std::env::var("WAVEFLOW_SCAN_INTERVAL_SECS")
+            .unwrap_or_else(|_| "21600".to_owned())
+            .parse::<u64>()
+            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_SCAN_INTERVAL_SECS: {error}"))?;
+        let scan_parallelism = parse_positive_env(
+            "WAVEFLOW_SCAN_PARALLELISM",
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(4)
+                .clamp(1, 16),
+        )?;
+        let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        let ffprobe_path = std::env::var_os("WAVEFLOW_FFPROBE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("ffprobe"));
+        let transcode_cache_max_bytes =
+            parse_positive_env("WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES", 10_737_418_240u64)?;
+        let transcode_global_limit = parse_positive_env("WAVEFLOW_TRANSCODE_GLOBAL_LIMIT", 4usize)?;
+        let transcode_per_user_limit =
+            parse_positive_env("WAVEFLOW_TRANSCODE_PER_USER_LIMIT", 2usize)?;
+        if transcode_per_user_limit > transcode_global_limit {
             anyhow::bail!(
-                "streaming requires both WAVEFLOW_MUSIC_ROOT and \
-                 WAVEFLOW_STREAM_SECRET to be set together (non-empty) \
-                 or both unset to disable"
+                "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
             );
         }
-        // Sanity-check the HMAC key length. `openssl rand -base64 32`
-        // (the doc-recommended generator) emits 44 bytes, so 32 is a
-        // comfortably-low floor; rejecting anything shorter keeps a
-        // trivially-guessable secret (think "x" exported on a quick
-        // local boot) from masquerading as a real key.
-        const MIN_STREAM_SECRET_BYTES: usize = 32;
-        if let Some(secret) = stream_secret.as_ref() {
-            if secret.len() < MIN_STREAM_SECRET_BYTES {
-                anyhow::bail!(
-                    "WAVEFLOW_STREAM_SECRET is too short ({} bytes); minimum is {} bytes. \
-                     Generate with `openssl rand -base64 32`.",
-                    secret.len(),
-                    MIN_STREAM_SECRET_BYTES,
-                );
-            }
-        }
-
-        // Artwork storage — opt-in (same shape as streaming). The
-        // `from_env` helper returns `Ok(None)` when the feature is
-        // unconfigured so a fresh deploy doesn't have to set the
-        // var until it wants to ship the cache.
-        let artwork = crate::storage::ArtworkConfig::from_env()?;
-
-        // Background self-heal scanner. Only resolved when the
-        // artwork backend itself is enabled (a scanner with no
-        // storage would have nothing to repair) AND the operator
-        // hasn't explicitly disabled it. Defaults are tuned for a
-        // healthy server — see the constants in `artwork_jobs`.
-        let artwork_scanner = if artwork.is_some() {
-            let disabled = std::env::var("WAVEFLOW_ARTWORK_SCANNER_DISABLED")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .is_some();
-            if disabled {
-                None
-            } else {
-                let interval_secs = std::env::var("WAVEFLOW_ARTWORK_SCANNER_INTERVAL_SECS")
-                    .ok()
-                    .map(|s| s.parse::<u64>())
-                    .transpose()
-                    .map_err(|e| {
-                        anyhow::anyhow!("invalid WAVEFLOW_ARTWORK_SCANNER_INTERVAL_SECS: {e}")
-                    })?
-                    .unwrap_or_else(|| crate::artwork_jobs::DEFAULT_SCAN_INTERVAL.as_secs());
-                // Floor at 1 s — zero would busy-loop the worker.
-                let interval = std::time::Duration::from_secs(interval_secs.max(1));
-                let batch_size = std::env::var("WAVEFLOW_ARTWORK_SCANNER_BATCH_SIZE")
-                    .ok()
-                    .map(|s| s.parse::<usize>())
-                    .transpose()
-                    .map_err(|e| {
-                        anyhow::anyhow!("invalid WAVEFLOW_ARTWORK_SCANNER_BATCH_SIZE: {e}")
-                    })?
-                    .unwrap_or(crate::artwork_jobs::DEFAULT_BATCH_SIZE)
-                    .max(1)
-                    // The scanner ultimately passes this through to SQL
-                    // `LIMIT $`, which sqlx binds as `i64`. On a 64-bit
-                    // target `usize::MAX > i64::MAX`, so a hostile env
-                    // value above `i64::MAX` would wrap to a negative
-                    // bind and either error inside Postgres or skew
-                    // the query semantics. Clamp here at boot so the
-                    // hot path stays a plain `as i64`.
-                    .min(i64::MAX as usize);
-                Some(crate::artwork_jobs::ArtworkScannerConfig {
-                    interval,
-                    batch_size,
+        let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(|origin| {
+                origin.parse::<axum::http::HeaderValue>().map_err(|error| {
+                    anyhow::anyhow!("invalid WAVEFLOW_ALLOWED_ORIGINS entry {origin:?}: {error}")
                 })
-            }
-        } else {
-            None
-        };
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        if refresh_token_ttl_secs <= access_token_ttl_secs {
+            anyhow::bail!(
+                "WAVEFLOW_REFRESH_TOKEN_TTL_SECS must be greater than WAVEFLOW_ACCESS_TOKEN_TTL_SECS"
+            );
+        }
+        let transcode_cache_dir = data_dir.join("transcode-cache");
 
         Ok(Self {
             bind_addr,
-            request_timeout_secs,
-            database_url,
+            public_url,
+            request_timeout: Duration::from_secs(request_timeout_secs),
+            database_path: data_dir.join("waveflow.db"),
+            instance_key_path: data_dir.join("instance.key"),
+            artwork_dir: data_dir.join("artwork"),
+            data_dir,
             db_max_connections,
-            jwt_jwks_url,
-            jwt_issuer,
-            jwt_audience,
-            music_root,
-            stream_secret,
-            artwork,
-            artwork_scanner,
+            sqlite_busy_timeout: Duration::from_millis(sqlite_busy_timeout_ms),
+            access_token_ttl: Duration::from_secs(access_token_ttl_secs),
+            refresh_token_ttl: Duration::from_secs(refresh_token_ttl_secs),
+            scan_interval: (scan_interval_secs > 0)
+                .then(|| Duration::from_secs(scan_interval_secs)),
+            scan_parallelism,
+            ffmpeg_path,
+            ffprobe_path,
+            transcode_cache_dir,
+            transcode_cache_max_bytes,
+            transcode_global_limit,
+            transcode_per_user_limit,
+            allowed_origins,
         })
+    }
+
+    pub fn for_data_dir(data_dir: PathBuf) -> Self {
+        let transcode_cache_dir = data_dir.join("transcode-cache");
+        Self {
+            bind_addr: "127.0.0.1:0".parse().expect("literal socket address"),
+            public_url: Some("http://waveflow.test".to_owned()),
+            request_timeout: Duration::from_secs(30),
+            database_path: data_dir.join("waveflow.db"),
+            instance_key_path: data_dir.join("instance.key"),
+            artwork_dir: data_dir.join("artwork"),
+            data_dir,
+            db_max_connections: 4,
+            sqlite_busy_timeout: Duration::from_secs(5),
+            access_token_ttl: Duration::from_secs(15 * 60),
+            refresh_token_ttl: Duration::from_secs(30 * 24 * 60 * 60),
+            scan_interval: None,
+            scan_parallelism: 2,
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+            ffprobe_path: PathBuf::from("ffprobe"),
+            transcode_cache_dir,
+            transcode_cache_max_bytes: 128 * 1024 * 1024,
+            transcode_global_limit: 2,
+            transcode_per_user_limit: 1,
+            allowed_origins: Vec::new(),
+        }
+    }
+}
+
+fn normalize_public_url(value: &str) -> anyhow::Result<String> {
+    let parsed = url::Url::parse(value.trim())
+        .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_PUBLIC_URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        anyhow::bail!(
+            "WAVEFLOW_PUBLIC_URL must be an http(s) origin without credentials, path, query or fragment"
+        );
+    }
+    Ok(parsed.origin().ascii_serialization())
+}
+
+fn parse_env<T>(name: &str, default: &str) -> anyhow::Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    std::env::var(name)
+        .unwrap_or_else(|_| default.to_owned())
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
+}
+
+fn parse_positive_env<T>(name: &str, default: T) -> anyhow::Result<T>
+where
+    T: std::str::FromStr + PartialOrd + Default + Copy + std::fmt::Display,
+    T::Err: std::fmt::Display,
+{
+    let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    let value = raw
+        .parse::<T>()
+        .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))?;
+    if value <= T::default() {
+        anyhow::bail!("invalid {name}: must be greater than zero");
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_public_url;
+
+    #[test]
+    fn public_url_is_reduced_to_a_safe_http_origin() {
+        assert_eq!(
+            normalize_public_url("https://music.example.com:8443/").unwrap(),
+            "https://music.example.com:8443"
+        );
+        for invalid in [
+            "ftp://music.example.com",
+            "https://user:secret@music.example.com",
+            "https://music.example.com/waveflow",
+            "https://music.example.com?token=secret",
+        ] {
+            assert!(normalize_public_url(invalid).is_err(), "{invalid}");
+        }
     }
 }

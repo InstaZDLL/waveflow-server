@@ -1,0 +1,20 @@
+services:
+  waveflow:
+    build: .
+    image: waveflow-server:2.0.0-beta.0
+    restart: unless-stopped
+    ports:
+      - "4533:4533"
+    environment:
+      WAVEFLOW_DATA_DIR: /data
+      WAVEFLOW_BIND: 0.0.0.0:4533
+      WAVEFLOW_PUBLIC_URL: ${WAVEFLOW_PUBLIC_URL:-}
+    volumes:
+      - waveflow-data:/data
+      - type: bind
+        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        target: /music
+        read_only: true
+
+volumes:
+  waveflow-data:

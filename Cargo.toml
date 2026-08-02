@@ -1,240 +1,72 @@
 [package]
 name = "waveflow-server"
-version = "0.0.0"
-description = "Self-hosted backend for WaveFlow: multi-device sync, web playback, public shareable playlists."
+version = "2.0.0-beta.0"
+description = "Self-hosted music server with WaveFlow and Subsonic compatibility."
 authors = ["InstaZDLL <github.105mh@8shield.net>"]
 edition = "2021"
-# Matches sqlx 0.9's documented MSRV — any older toolchain fails to
-# resolve the dependency anyway, declaring it here just turns the
-# error into a single clear message instead of a wall of rustc output.
 rust-version = "1.94"
 license = "AGPL-3.0-only"
 repository = "https://github.com/InstaZDLL/waveflow-server"
 homepage = "https://waveflow.app"
+# The PostgreSQL v1 integration tests stay in-tree as transition evidence but
+# are intentionally not discovered by the v2 crate. They are removed with the
+# final /api/v1 retirement at M4.
+autotests = false
 
-# Dependencies are added one at a time as the phases in RFC-001 land,
-# so the workspace stays cheap to compile during the scaffolding
-# window. 1.b.1 added axum; 1.b.2 adds sqlx + waveflow-core; the
-# OpenAPI spec (utoipa) lands in 1.b.3.
+[features]
+default = []
+legacy-v1 = []
 
 [dependencies]
-# waveflow-core ships the repository traits + Postgres implementations
-# (RFC-001 §6.5). Pinned by rev rather than branch so the server's
-# build is reproducible — bump the rev in tree when picking up a new
-# core release. `default-features = false` because core's
-# default-feature set is empty; we only want the `postgres` feature.
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "afb6aaf9af0ad092eab9bc8a3528ea85d94e7141", default-features = false, features = ["postgres"] }
-
-# Database. `runtime-tokio` matches our `#[tokio::main]` runtime;
-# `postgres` is the driver; `macros` enables `query_as!`; `migrate`
-# pulls in the migration runner used by `db::run_migrations`; and
-# `tls-rustls` lets us connect to managed Postgres providers that
-# mandate `sslmode=require` (Neon, Supabase, Prisma Accelerate, RDS).
-# Pure-Rust rustls matches the convention reqwest uses elsewhere in
-# the project — no OpenSSL system dep to ship in the container image.
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid", "tls-rustls"] }
-
-# Wall-clock timestamps for `created_at` / `last_used_at`. Same
-# crate the desktop uses so a shared timestamp helper stays cheap.
+anyhow = "1"
+async-stream = "0.3"
+argon2 = { version = "0.5", features = ["std"] }
+axum = "0.8"
+base64 = "0.22"
+blake3 = "1"
+bytes = "1"
+chacha20poly1305 = "0.10"
 chrono = "0.4"
-
-# OpenAPI 3.1 spec generation. `utoipa-axum` exposes an
-# `OpenApiRouter` that picks up every handler tagged with
-# `#[utoipa::path]` so the spec stays in lockstep with the routes
-# without a parallel paths(...) list to maintain. `utoipa-scalar`
-# serves the Scalar API reference (Stripe-style — modern, ~500 KB
-# bundle, dark mode, integrated search) from `/reference`.
+clap = { version = "4", features = ["derive"] }
+dashmap = "6"
+dotenvy = "0.15"
+futures-util = "0.3"
+hex = "0.4"
+lofty = "0.24"
+md-5 = "0.10"
+quick-xml = "0.39"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+sha2 = "0.10"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "uuid"] }
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["cors", "request-id", "timeout", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
-
-# HTTP layer. axum 0.8 is the line current for Tokio 1.45+ — the same
-# generation used by the desktop's reqwest 0.12, so we're not pulling
-# two competing hyper trees once `waveflow-core` lands as a dependency
-# in 1.b.2. The `ws` feature gates the WebSocket extractor the
-# sync-broadcast endpoint (Phase 1.f) needs.
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
-# Stream combinators for the WebSocket handler — `SinkExt::send` +
-# `StreamExt::next` on the split halves of an `axum::extract::ws::WebSocket`.
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-# UUIDv4 for `sync_op.operation_id` — the idempotency key the client
-# generates and the server enforces uniqueness on per `(user_id,
-# device_id, operation_id)`. `v4` for the random generator, `serde`
-# for axum's `Json<…>` round-trip.
+url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-# Lock-free concurrent map for the in-memory ACK buffer in
-# `sync::SyncHub`. Per-key shard locks mean handler-side `record_ack`
-# never blocks behind the 5 s flusher.
-dashmap = "6"
-tower = "0.5"
-tower-http = { version = "0.7", features = ["trace", "request-id", "timeout", "util"] }
-
-# Structured logging. `tracing-subscriber` reads `RUST_LOG`; the binary
-# wires JSON output when `WAVEFLOW_LOG_FORMAT=json` is set (CI / prod),
-# pretty output otherwise (dev).
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# Loaded at boot from `.env` if present, else env vars only. dotenvy is
-# the maintained successor to `dotenv` (the original crate was archived
-# in 2020); it stays inert in release builds where there's no `.env`.
-dotenvy = "0.15"
-
-# Typed serialization for the JSON responses; same crate / version pair
-# the desktop app uses so a future shared response type stays cheap.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-# JWT verification against Better Auth's JWKS endpoint (RFC-001 §6.6).
-# `jsonwebtoken` 10 covers RS256 / ES256 signature verification, exp /
-# nbf clock checks and the `jwk` / `jwk-set` types for parsing a JWKS
-# document. The middleware that consumes this (1.d.1-PR3) caches the
-# decoded keys keyed by `kid` so the per-request path stays a single
-# RSA verify, no HTTP round-trip in the hot loop.
-#
-# v10 introduced a `CryptoProvider` indirection: exactly one of
-# `rust_crypto` / `aws_lc_rs` must be enabled or every signature
-# verify panics. `rust_crypto` is the pure-Rust path that matches the
-# `rustls-tls` feature we use on `reqwest` — no OpenSSL / aws-lc
-# native deps to ship in the container image.
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
-
-# HTTP client for the JWKS fetcher. Already a dev-dep for the
-# integration tests — promoted to runtime so the auth module can
-# hit Better Auth's well-known endpoint. `rustls-tls` matches the
-# convention used elsewhere in the project (no OpenSSL system dep).
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# Error chaining at boundaries (main, Config::from_env, integration
-# tests). Internal modules should prefer `thiserror`-typed errors
-# once we have a domain richer than "boot failed"; anyhow's flexibility
-# is what we want at the binary edge.
-anyhow = "1"
-
-# Typed errors for internal modules. The first consumer is
-# `auth::AuthError` — the middleware needs to discriminate "bad
-# header" from "unreachable JWKS" to pick the right HTTP status,
-# which a stringly-typed `anyhow::Error` would muddle.
-thiserror = "2"
-
-# HMAC-SHA256 for signed streaming URLs (Phase 1.e). The browser
-# can't attach a Bearer header to `<audio src>`, so the mint endpoint
-# vends a short-lived URL signed with `WAVEFLOW_STREAM_SECRET` and
-# the stream endpoint verifies the signature instead of going through
-# the JWT middleware.
-hmac = "0.13"
-sha2 = "0.11"
-
-# Promote `base64` from dev-deps to runtime — the signed-URL token
-# encodes the payload + signature as base64url. Already pinned to
-# 0.22 for the JWKS test harness.
-base64 = "0.22"
-
-# Opaque public-share token generation (Phase 1.g.1). Same crate
-# the JWT test harness uses under dev-deps; one runtime entry
-# suffices. `Alphanumeric.sample_string` is the URL-safe random
-# generator the share helper calls.
-#
-# Pinned to 0.8 because `rsa = "0.9"` (the dev-dep that signs the
-# JWT test fixtures) requires `rand_core::CryptoRngCore` from the
-# 0.8/0.9 lineage. Bumping to 0.10 fails the test build until
-# `rsa` cuts a 0.10-compatible release. Revisit once it does.
-rand = "0.8"
-
-# Stream files through axum without buffering the whole body. The
-# range handler in `src/api/stream.rs` wraps a `tokio::fs::File` in
-# `ReaderStream` and returns it as an axum response body.
-tokio-util = { version = "0.7", features = ["io"] }
-
-# Storage abstraction for the artwork cache (Phase 1.h). The Apache
-# `object_store` crate exposes a single `ObjectStore` trait backed by
-# LocalFileSystem (default), S3, Azure Blob, GCS, in-memory. 1.h.1
-# shipped the LocalFileSystem backend; 1.h.2 unlocks S3 via the
-# `aws` feature — same trait, same `put` / `get` / `head`, so the
-# caller side never branches on backend. AWS, MinIO, Cloudflare R2,
-# Backblaze B2 are all S3-API-compatible and reachable through the
-# same builder (an `WAVEFLOW_ARTWORK_S3_ENDPOINT` override is the
-# only knob a non-AWS provider needs).
-object_store = { version = "0.13", features = ["aws"] }
-
-# Owned byte buffers for the artwork upload path. axum's `Bytes`
-# extractor reads the request body into one shot; `object_store`'s
-# `PutPayload` accepts `Bytes` directly. Already transitive via axum
-# + reqwest; expliciting it here makes the surface area visible to
-# anyone reading the manifest.
-bytes = "1"
-
-# BLAKE3 hashing of uploaded artwork bytes. Same crate the desktop
-# uses to fingerprint cover/picture downloads, so a shared hash means
-# a shared file across desktop ↔ server caches.
-blake3 = "1"
-
-# Image decode + resize for the artwork pipeline (Phase 1.h.3).
-# `image` is the Rust ecosystem's de facto image library — pure
-# Rust, no native deps. We disable default features (which pull in
-# every supported codec, including HEIC + AVIF + TIFF + farbfeld +
-# QOI + PNM that we don't accept on the wire anyway) and re-enable
-# only the three formats `api/artwork.rs` actually allows: JPEG
-# (encode + decode), PNG (decode), WebP (decode). Variants are
-# re-encoded as JPEG q85, which gives ~60% smaller files than PNG
-# at visually identical quality for cover art (always opaque) — so
-# we don't need the WebP encoder feature.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-hex = "0.4.3"
+walkdir = "2"
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "d4c44eb5024a7b8e3aa42170c0ab5bd693788297", default-features = false }
 
 [dev-dependencies]
-# Activate `use_pem` for the JWT tests only. The harness in
-# `tests/jwks_harness.rs` calls `EncodingKey::from_rsa_pem(…)` to
-# sign tokens from a freshly generated keypair. Production code
-# (`src/auth.rs`) reads keys via `DecodingKey::from_rsa_components(n, e)`
-# off the JWKS, so it doesn't need the PEM parser — and Cargo's
-# feature unification per build target keeps the release binary
-# free of the extra ~20 KB pem/asn.1 deps.
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
-
-# JWT auth tests sign a token with an RSA-2048 keypair generated at
-# test time, expose the public half on a local mock JWKS endpoint
-# (via axum), and assert the verifier's accept / reject paths. The
-# RSA crate generates the keypair; `rand` seeds the OsRng wrapper
-# the keygen needs; `base64` URL-encodes the `n` / `e` components
-# the JWK Set advertises. All dev-only — production never generates
-# keys, it only consumes the JWKS document.
-rsa = "0.9"
-rand = "0.8"
-
-# ES256 / P-256 keypair generation for the ECDSA mirror of the RSA
-# harness — same role as `rsa` above, just for the elliptic-curve
-# branch of `build_cached_key`. Per-test keygen is ~1 ms (vs ~50 ms
-# for RSA-2048), so adding an ES256 sweep across the test suite is
-# essentially free.
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-
-# Per-test scratch directory for the streaming tests — auto-removed
-# on drop, so each `#[sqlx::test]` gets an isolated music root with
-# no cleanup boilerplate.
+http-body-util = "0.1"
 tempfile = "3"
 
-# WebSocket client for the sync fan-out integration tests. The
-# tokio-tungstenite version that pairs with tokio 1.x ships only
-# rustls feature flags — `rustls-tls-webpki-roots` matches the
-# pure-Rust convention used elsewhere in the project.
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-
-# `record_ack` takes a `uuid::Uuid`; the sync tests construct one per
-# op. Use the `serde` feature so the same value round-trips through
-# the JSON request body.
-uuid = { version = "1", features = ["v4", "serde"] }
-
-# Streaming tests already pulled `futures-util` transitively; the
-# sync WS test needs `StreamExt::next` + `SinkExt::send` directly.
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+[[test]]
+name = "v2_foundations"
+path = "tests/v2_foundations.rs"
 
 [profile.release]
-# Match the desktop app's release profile so behaviour parity holds at
-# the binary level. Single-codegen-unit + LTO trade compile time for
-# smaller and faster binaries — fine for a server we deploy once per
-# release.
 codegen-units = 1
 lto = "thin"
 strip = "debuginfo"

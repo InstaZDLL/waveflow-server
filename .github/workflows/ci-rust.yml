@@ -13,6 +13,7 @@ on:
       - "Cargo.lock"
       - "src/**"
       - "migrations/**"
+      - "migrations-v2/**"
       - "tests/**"
       - ".github/workflows/ci-rust.yml"
   pull_request:
@@ -21,6 +22,7 @@ on:
       - "Cargo.lock"
       - "src/**"
       - "migrations/**"
+      - "migrations-v2/**"
       - "tests/**"
       - ".github/workflows/ci-rust.yml"
 
@@ -33,30 +35,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Linux runs the full suite with a Postgres service container.
-  # `sqlx::test` creates a per-test database from `DATABASE_URL`,
-  # runs `db::MIGRATOR`, and drops the database at the end of each
-  # test — so the suite stays hermetic without manual fixtures.
+  # SQLite v2 tests create their own temporary data directories.
   linux:
     name: Rust (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: waveflow_server_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/waveflow_server_ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
@@ -79,12 +62,8 @@ jobs:
       - name: cargo test
         run: cargo test --all-features
 
-  # Windows runs build + lint only. GitHub Actions service containers
-  # are Linux-only, so we'd need to install Postgres on the runner just
-  # to run the integration tests — and waveflow-server is a Linux/macOS
-  # daemon by design (it's not the desktop binary). Keep the Windows
-  # leg as a compile guard so a Rust-stable change on Windows doesn't
-  # silently break developers building on that platform.
+  # The self-contained SQLite suite also runs on Windows because v2 is
+  # intentionally a portable single-binary server.
   windows:
     name: Rust (windows-latest)
     runs-on: windows-latest
@@ -104,3 +83,6 @@ jobs:
 
       - name: cargo check
         run: cargo check --all-targets --all-features
+
+      - name: cargo test
+        run: cargo test --all-features
