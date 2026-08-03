@@ -1543,6 +1543,9 @@ fn render_protocol(node: Node, json: bool, status: StatusCode) -> Response {
 
 fn node_json(node: &Node) -> Value {
     if node.attrs.is_empty() && node.children.is_empty() {
+        if json_array_node(&node.name) {
+            return Value::Array(Vec::new());
+        }
         if let Some(text) = &node.text {
             return Value::String(text.clone());
         }
@@ -1569,6 +1572,13 @@ fn node_json(node: &Node) -> Value {
         map.insert("value".into(), Value::String(text.clone()));
     }
     Value::Object(map)
+}
+
+/// Elements the OpenSubsonic specification types as a JSON array rather than an
+/// object. They must serialise as `[]` when empty; an empty object breaks
+/// strictly typed clients that decode the field into a list.
+fn json_array_node(name: &str) -> bool {
+    matches!(name, "openSubsonicExtensions")
 }
 
 fn json_array_field(parent: &str, name: &str) -> bool {
