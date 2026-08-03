@@ -1089,6 +1089,14 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             assert!(response["subsonic-response"]["albumList"]["album"].is_array());
             assert!(response["subsonic-response"].get("albumList2").is_none());
         }
+        if method == "getOpenSubsonicExtensions" {
+            let extensions = &response["subsonic-response"]["openSubsonicExtensions"];
+            assert!(
+                extensions.is_array(),
+                "the extension list stays an array when empty, never an object"
+            );
+            assert!(extensions.as_array().unwrap().is_empty());
+        }
     }
     let exhausted_search = subsonic_json(
         &router,

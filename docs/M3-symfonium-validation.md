@@ -1,9 +1,15 @@
 # M3 — Subsonic/OpenSubsonic : état & handoff
 
-> Note de suivi (2026-08-02). La porte M3 reste **ouverte** : un seul point
+> Note de suivi (2026-08-03). La porte M3 reste **ouverte** : un seul point
 > manque, la validation **Symfonium**, qui exige une URL HTTPS publique à
 > certificat reconnu. Ce document décrit ce qui est fait et la procédure exacte
 > pour clore M3, à reprendre par le prochain agent.
+>
+> **Décision (user, 2026-08-03).** La validation Symfonium conditionne désormais
+> le **tag `v2.0-beta`**, plus le **démarrage de M4**. M4 démarre avec la porte
+> M3 partiellement ouverte : 3 clients réels sur 4 sont validés, et le contrat
+> Subsonic est gelé au RFC-002. Aucune release ne peut être coupée tant que
+> Symfonium n'est pas passé.
 
 ## Où on en est
 
@@ -34,17 +40,43 @@
 | Feishin | ✅ validé |
 | Substreamer | ✅ validé |
 | DSub | ✅ validé |
-| **Symfonium** | ⛔ **bloqué** — exige une URL **HTTPS publique à certificat reconnu** |
+| **Symfonium** | ⛔ **bloqué** — exige une URL **HTTPS publique à certificat reconnu**, et l'app n'existe que sur **Android** |
 
 ## Ce qui reste pour fermer M3
 
 Valider **Symfonium** contre l'instance exposée en HTTPS public, puis marquer la
-porte M3 verte et démarrer **M4**.
+porte M3 verte. Ce n'est plus un préalable au démarrage de M4 (voir la note de
+suivi en tête), mais cela reste un préalable au tag `v2.0-beta`.
 
-### Décision (user, 2026-08-02)
+### Session 2026-08-03 — tunnel monté, test non réalisé
 
-Le test Symfonium via tunnel HTTPS **n'a pas été fait dans la session courante**.
-Il sera réalisé **avec un autre agent**. Ce document sert de reprise.
+Le tunnel HTTPS a été monté et **validé de bout en bout** (`cloudflared`,
+certificat reconnu, `ping` + `getArtists` corrects depuis l'extérieur). Le test
+n'a pas pu être déroulé : **Symfonium est une application Android uniquement**,
+et le user teste depuis un iPhone. Le point de blocage n'est donc pas le
+certificat — il est résolu — mais l'accès à un Android exécutant l'app.
+
+Deux voies restent ouvertes pour clore la porte :
+
+1. **Appareil Android physique** avec Symfonium installé — le plus direct.
+2. **Émulateur Android + tunnel HTTPS.** La note « Symfonium ne fait pas
+   confiance au CA utilisateur de l'émulateur » de `subsonic-compatibility.md`
+   ne bloque plus : le tunnel fournit un certificat publiquement reconnu, ce que
+   l'émulateur accepte sans CA custom. Il faut en revanche une image système
+   **`google_apis_playstore`** (l'AVD `waveflow_test` local est une image
+   `default`, sans Play Store) et une licence ou un essai Symfonium, l'app étant
+   payante et distribuée uniquement via le Play Store.
+
+### Correctif issu de cette session
+
+`getOpenSubsonicExtensions` sérialisait sa liste vide en `{}` en JSON. La
+spécification OpenSubsonic type ce champ comme un **tableau**, et le contrat gelé
+du RFC-002 impose « JSON collection fields are arrays ». Un client à typage
+strict — Symfonium est en Kotlin — peut échouer dès le handshake sur un objet
+vide là où il attend une liste ; Feishin (TypeScript, tolérant) ne pouvait pas
+révéler l'écart. Corrigé dans `src/subsonic.rs` (`json_array_node`), XML
+inchangé, décision « liste vide » du RFC préservée, test de non-régression dans
+`tests/v2_foundations.rs`.
 
 ### Procédure recommandée pour le test Symfonium (avec garde-fous)
 
