@@ -65,8 +65,13 @@ pub struct AppState {
         http::start_scan,
         http::scan_status,
         http::scan_events,
-        http::list_tracks
-        ,media::stream_track
+        http::list_tracks,
+        http::list_albums,
+        http::get_album,
+        http::list_artists,
+        http::get_artist,
+        http::search_catalog,
+        media::stream_track
     ),
     components(schemas(
         http::ProbeResponse,
@@ -80,6 +85,13 @@ pub struct AppState {
         http::ScanQueuedResponse,
         catalog::ScanJobRecord,
         catalog::TrackRecord,
+        services::AlbumItem,
+        services::ArtistItem,
+        services::SongItem,
+        services::ArtistSummary,
+        services::AlbumDetail,
+        services::ArtistDetail,
+        services::SearchResult,
         scanner::ScanProgress
     )),
     tags(

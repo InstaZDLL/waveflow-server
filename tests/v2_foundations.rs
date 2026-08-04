@@ -2086,3 +2086,215 @@ async fn login_token(router: &axum::Router, username: &str, password: &str) -> S
         .unwrap()
         .to_owned()
 }
+
+/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
+/// it is not a compilation, so `album_artist_id` is populated and the artist
+/// drill-down has something to resolve.
+#[allow(clippy::too_many_arguments)]
+fn browse_input(
+    index: usize,
+    title: &str,
+    album: &str,
+    artist: &str,
+    track_number: i64,
+    disc_number: i64,
+) -> CatalogTrackInput {
+    CatalogTrackInput {
+        relative_path: format!("browse-{index}.flac"),
+        file_size: 2048 + index as i64,
+        modified_at: 1_700_000_000_000 + index as i64,
+        quick_hash: format!("{:064x}", index + 500),
+        full_hash: format!("{:064x}", index + 900),
+        title: title.into(),
+        artist: Some(artist.into()),
+        album: Some(album.into()),
+        album_artist: Some(artist.into()),
+        is_compilation: false,
+        genre: Some("Ambient".into()),
+        year: Some(2024),
+        track_number: Some(track_number),
+        disc_number: Some(disc_number),
+        duration_ms: 120_000,
+        bitrate: Some(900),
+        sample_rate: Some(44_100),
+        channels: Some(2),
+        bit_depth: Some(16),
+        codec: Some("FLAC".into()),
+        musical_key: None,
+        tag_rating: None,
+        artwork: None,
+    }
+}
+
+#[tokio::test]
+async fn native_browse_endpoints_page_search_and_isolate_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("browse-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("browse-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("browse-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Browse",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 4).await.unwrap();
+    // Tracks are applied out of sleeve order on purpose: the album drill-down
+    // must sort them, not echo insertion order.
+    for (index, (title, album, artist, track, disc)) in [
+        ("Slow Tide", "Aurora Fields", "Lumen Drift", 2, 1),
+        ("First Light", "Aurora Fields", "Lumen Drift", 1, 1),
+        ("Rivière Noire", "Nocturne Bleue", "Écho Solaire", 2, 1),
+        ("Prélude", "Nocturne Bleue", "Écho Solaire", 1, 1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &browse_input(index, title, album, artist, track, disc),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "browse-owner", password).await;
+    let intruder_token = login_token(&router, "browse-intruder", password).await;
+
+    let get = |uri: String, token: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Albums are ordered by title, so Aurora Fields precedes Nocturne Bleue.
+    let albums = get("/api/v2/albums".into(), owner_token.clone()).await;
+    assert_eq!(albums.status(), StatusCode::OK);
+    let albums = json_body(albums).await;
+    let albums = albums.as_array().unwrap();
+    assert_eq!(albums.len(), 2);
+    assert_eq!(albums[0]["title"], "Aurora Fields");
+    assert_eq!(albums[1]["title"], "Nocturne Bleue");
+
+    // Paging is applied in SQL, not after the fact.
+    let page = get(
+        "/api/v2/albums?limit=1&offset=1".into(),
+        owner_token.clone(),
+    )
+    .await;
+    let page = json_body(page).await;
+    assert_eq!(page.as_array().unwrap().len(), 1);
+    assert_eq!(page[0]["title"], "Nocturne Bleue");
+
+    // The paging ceiling matches the Subsonic contract's 500-item cap.
+    let rejected = get("/api/v2/albums?limit=501".into(), owner_token.clone()).await;
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let album_id = albums[0]["id"].as_str().unwrap().to_owned();
+    let detail = get(format!("/api/v2/albums/{album_id}"), owner_token.clone()).await;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = json_body(detail).await;
+    assert_eq!(detail["title"], "Aurora Fields");
+    let songs = detail["songs"].as_array().unwrap();
+    assert_eq!(songs.len(), 2);
+    assert_eq!(songs[0]["title"], "First Light", "sleeve order wins");
+    assert_eq!(songs[1]["title"], "Slow Tide");
+
+    let artists = get("/api/v2/artists".into(), owner_token.clone()).await;
+    let artists = json_body(artists).await;
+    let artists = artists.as_array().unwrap();
+    assert_eq!(artists.len(), 2);
+    let echo = artists
+        .iter()
+        .find(|artist| artist["name"] == "Écho Solaire")
+        .expect("accented artist is listed");
+    assert_eq!(echo["album_count"], 1);
+
+    let artist_id = echo["id"].as_str().unwrap().to_owned();
+    let detail = get(format!("/api/v2/artists/{artist_id}"), owner_token.clone()).await;
+    let detail = json_body(detail).await;
+    assert_eq!(detail["name"], "Écho Solaire");
+    assert_eq!(detail["albums"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["albums"][0]["title"], "Nocturne Bleue");
+
+    // FTS5 folds diacritics, so an unaccented query still reaches "Écho Solaire".
+    let found = get("/api/v2/search?q=echo".into(), owner_token.clone()).await;
+    assert_eq!(found.status(), StatusCode::OK);
+    let found = json_body(found).await;
+    assert_eq!(found["artists"].as_array().unwrap().len(), 1);
+    assert_eq!(found["artists"][0]["name"], "Écho Solaire");
+    assert_eq!(found["albums"].as_array().unwrap().len(), 1);
+    assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
+    assert_eq!(found["songs"].as_array().unwrap().len(), 2);
+
+    // A search with no usable term is an empty result, never a SQL error.
+    let blank = get("/api/v2/search?q=%20".into(), owner_token.clone()).await;
+    assert_eq!(blank.status(), StatusCode::OK);
+    let blank = json_body(blank).await;
+    assert!(blank["songs"].as_array().unwrap().is_empty());
+
+    // A foreign tenant sees an empty catalogue and cannot probe ids.
+    let foreign = get("/api/v2/albums".into(), intruder_token.clone()).await;
+    assert_eq!(foreign.status(), StatusCode::OK);
+    assert!(json_body(foreign).await.as_array().unwrap().is_empty());
+    for uri in [
+        format!("/api/v2/albums/{album_id}"),
+        format!("/api/v2/artists/{artist_id}"),
+    ] {
+        let response = get(uri, intruder_token.clone()).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "foreign ids must not be distinguishable from missing ones"
+        );
+    }
+    let foreign_search = get("/api/v2/search?q=echo".into(), intruder_token).await;
+    let foreign_search = json_body(foreign_search).await;
+    assert!(foreign_search["artists"].as_array().unwrap().is_empty());
+    assert!(foreign_search["songs"].as_array().unwrap().is_empty());
+
+    // Anonymous access is rejected before any catalogue work happens.
+    let anonymous = router
+        .clone()
+        .oneshot(Request::get("/api/v2/albums").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}

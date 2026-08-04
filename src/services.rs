@@ -4,6 +4,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use serde::Serialize;
 use sqlx::Row;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -12,18 +13,63 @@ use crate::{
     security::{self, EncryptedSecret, SecretBox},
 };
 
+/// Tenant-filtered projections shared by the Subsonic facade and the native
+/// browse endpoints. Each expands to a literal ending at `WHERE m.user_id=?` so
+/// callers `concat!` their own predicates onto it — sqlx only accepts static SQL,
+/// which keeps these compositions injection-proof by construction. The first
+/// bind is always the user id.
+macro_rules! song_select {
+    () => {
+        "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
+                t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
+                t.codec, t.relative_path, t.file_size, t.artwork_hash, t.created_at, \
+                us.starred_at, ur.rating AS user_rating \
+         FROM track t JOIN library_member m ON m.library_id=t.library_id \
+         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
+         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
+         WHERE m.user_id=? AND t.is_available=1"
+    };
+}
+
+macro_rules! album_select {
+    () => {
+        "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
+                al.artwork_hash, al.year, al.created_at, us.starred_at, ur.rating AS user_rating, \
+                (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
+                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
+                (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
+                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at \
+         FROM album al JOIN library_member m ON m.library_id=al.library_id \
+         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
+         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='album' AND ur.entity_id=al.id \
+         WHERE m.user_id=?"
+    };
+}
+
+macro_rules! artist_select {
+    () => {
+        "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, us.starred_at, \
+                ur.rating AS user_rating, \
+                (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count \
+         FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
+         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
+         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
+         WHERE m.user_id=?"
+    };
+}
+
 pub struct SubsonicCredentialRecord {
     pub account: AccountRecord,
     pub encrypted_password: EncryptedSecret,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct MusicFolderItem {
     pub id: Uuid,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ArtistItem {
     pub id: Uuid,
     pub library_id: Uuid,
@@ -33,7 +79,7 @@ pub struct ArtistItem {
     pub user_rating: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AlbumItem {
     pub id: Uuid,
     pub library_id: Uuid,
@@ -49,7 +95,7 @@ pub struct AlbumItem {
     pub last_played_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SongItem {
     pub id: Uuid,
     pub library_id: Uuid,
@@ -75,6 +121,67 @@ pub struct SongItem {
 #[derive(Debug, Clone)]
 pub struct CatalogSnapshot {
     pub folders: Vec<MusicFolderItem>,
+    pub artists: Vec<ArtistItem>,
+    pub albums: Vec<AlbumItem>,
+    pub songs: Vec<SongItem>,
+}
+
+/// Upper bound on a native browse page. It matches the Subsonic contract's
+/// 500-item cap so both surfaces expose the same paging ceiling.
+pub const MAX_BROWSE_LIMIT: i64 = 500;
+const DEFAULT_BROWSE_LIMIT: i64 = 100;
+
+/// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
+/// bind it without re-checking bounds.
+#[derive(Debug, Clone, Copy)]
+pub struct BrowsePage {
+    offset: i64,
+    limit: i64,
+}
+
+impl BrowsePage {
+    pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Self, ServiceError> {
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(DEFAULT_BROWSE_LIMIT);
+        if offset < 0 || limit <= 0 || limit > MAX_BROWSE_LIMIT {
+            return Err(ServiceError::Invalid);
+        }
+        Ok(Self { offset, limit })
+    }
+}
+
+impl Default for BrowsePage {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            limit: DEFAULT_BROWSE_LIMIT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ArtistSummary {
+    #[serde(flatten)]
+    pub artist: ArtistItem,
+    pub album_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AlbumDetail {
+    #[serde(flatten)]
+    pub album: AlbumItem,
+    pub songs: Vec<SongItem>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ArtistDetail {
+    #[serde(flatten)]
+    pub artist: ArtistItem,
+    pub albums: Vec<AlbumItem>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SearchResult {
     pub artists: Vec<ArtistItem>,
     pub albums: Vec<AlbumItem>,
     pub songs: Vec<SongItem>,
@@ -262,6 +369,185 @@ impl DomainServices {
         let songs = fetch_songs(&self.db, user_id, folder_filter.as_deref(), None).await?;
         Ok(CatalogSnapshot {
             folders,
+            artists,
+            albums,
+            songs,
+        })
+    }
+
+    /// Albums visible to the user, paginated. Unlike [`Self::catalog_snapshot`],
+    /// which materialises the whole catalogue for the Subsonic surface, this
+    /// pages in SQL so a large library never loads in full to render one screen.
+    pub async fn list_albums(
+        &self,
+        user_id: Uuid,
+        library_id: Option<Uuid>,
+        page: BrowsePage,
+    ) -> Result<Vec<AlbumItem>, ServiceError> {
+        let library = library_id.map(|id| id.to_string());
+        Ok(sqlx::query(concat!(
+            album_select!(),
+            " AND (? IS NULL OR al.library_id=?) \
+              ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(library.as_deref())
+        .bind(library.as_deref())
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// One album with its tracks in sleeve order. Returns [`ServiceError::NotFound`]
+    /// both when the album does not exist and when it belongs to a library the
+    /// user cannot see, so the surface never leaks another tenant's catalogue.
+    pub async fn album(&self, user_id: Uuid, album_id: Uuid) -> Result<AlbumDetail, ServiceError> {
+        let album = sqlx::query(concat!(album_select!(), " AND al.id=?"))
+            .bind(user_id.to_string())
+            .bind(album_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?
+            .map(album_from_row)
+            .transpose()?
+            .ok_or(ServiceError::NotFound)?;
+        let songs = sqlx::query(concat!(
+            song_select!(),
+            " AND t.album_id=? \
+              ORDER BY t.disc_number, t.track_number, t.title COLLATE NOCASE, t.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(album_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(AlbumDetail { album, songs })
+    }
+
+    /// Artists visible to the user, paginated, each with its album count.
+    pub async fn list_artists(
+        &self,
+        user_id: Uuid,
+        library_id: Option<Uuid>,
+        page: BrowsePage,
+    ) -> Result<Vec<ArtistSummary>, ServiceError> {
+        let library = library_id.map(|id| id.to_string());
+        Ok(sqlx::query(concat!(
+            artist_select!(),
+            " AND (? IS NULL OR ar.library_id=?) \
+              ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(library.as_deref())
+        .bind(library.as_deref())
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_summary_from_row)
+        .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// One artist with the albums it is credited on as album artist.
+    pub async fn artist(
+        &self,
+        user_id: Uuid,
+        artist_id: Uuid,
+    ) -> Result<ArtistDetail, ServiceError> {
+        let artist = sqlx::query(concat!(artist_select!(), " AND ar.id=?"))
+            .bind(user_id.to_string())
+            .bind(artist_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?
+            .map(|row| artist_summary_from_row(row).map(|summary| summary.artist))
+            .transpose()?
+            .ok_or(ServiceError::NotFound)?;
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND al.album_artist_id=? ORDER BY al.year, al.title COLLATE NOCASE, al.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(artist_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(ArtistDetail { artist, albums })
+    }
+
+    /// Full-text search across the user's visible catalogue. Tracks are matched
+    /// through the FTS5 index built in M1, which folds case and diacritics, so
+    /// "echo" finds "Écho". Albums and artists are derived from the same index
+    /// rather than a second scan, keeping one source of truth for relevance.
+    pub async fn search(
+        &self,
+        user_id: Uuid,
+        query: &str,
+        page: BrowsePage,
+    ) -> Result<SearchResult, ServiceError> {
+        let Some(fts) = crate::catalog::fts_match_query(query) else {
+            return Ok(SearchResult {
+                artists: Vec::new(),
+                albums: Vec::new(),
+                songs: Vec::new(),
+            });
+        };
+        let songs = sqlx::query(concat!(
+            song_select!(),
+            " AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+              ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(&fts)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND al.id IN (SELECT t.album_id FROM track t \
+                WHERE t.album_id IS NOT NULL \
+                  AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+              ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(&fts)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let artists = sqlx::query(concat!(
+            artist_select!(),
+            " AND ar.id IN (SELECT ta.artist_id FROM track_artist ta \
+                WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+              ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(&fts)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_summary_from_row)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|summary| summary.artist)
+        .collect();
+        Ok(SearchResult {
             artists,
             albums,
             songs,
@@ -1104,18 +1390,11 @@ async fn fetch_songs(
     id: Option<Uuid>,
 ) -> Result<Vec<SongItem>, sqlx::Error> {
     let id = id.map(|id| id.to_string());
-    sqlx::query(
-        "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
-                t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
-                t.codec, t.relative_path, t.file_size, t.artwork_hash, t.created_at, \
-                us.starred_at, ur.rating AS user_rating \
-         FROM track t JOIN library_member m ON m.library_id=t.library_id \
-         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
-         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
-         WHERE m.user_id=? AND t.is_available=1 \
-           AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
-           AND (? IS NULL OR t.id=?) ORDER BY t.title COLLATE NOCASE",
-    )
+    sqlx::query(concat!(
+        song_select!(),
+        " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
+           AND (? IS NULL OR t.id=?) ORDER BY t.title COLLATE NOCASE"
+    ))
     .bind(user_id.to_string())
     .bind(folder_filter)
     .bind(folder_filter)
@@ -1159,6 +1438,14 @@ fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Err
         artwork_hash: row.try_get("artwork_hash")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
+    })
+}
+
+fn artist_summary_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistSummary, sqlx::Error> {
+    let album_count = row.try_get("album_count")?;
+    Ok(ArtistSummary {
+        artist: artist_from_row(row)?,
+        album_count,
     })
 }
 
