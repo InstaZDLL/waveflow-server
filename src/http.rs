@@ -59,6 +59,20 @@ pub struct TrackQuery {
     pub q: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BrowseQuery {
+    pub library_id: Option<Uuid>,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -70,6 +84,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}", get(scan_status))
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
+        .route("/api/v2/albums", get(list_albums))
+        .route("/api/v2/albums/{album_id}", get(get_album))
+        .route("/api/v2/artists", get(list_artists))
+        .route("/api/v2/artists/{artist_id}", get(get_artist))
+        .route("/api/v2/search", get(search_catalog))
         .with_state(state)
 }
 
@@ -289,6 +308,87 @@ pub async fn list_tracks(
     Ok(Json(tracks))
 }
 
+#[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_albums(
+    State(state): State<AppState>,
+    Query(query): Query<BrowseQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::AlbumItem>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .list_albums(user.id, query.library_id, page)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/albums/{album_id}", tag = "catalog", params(("album_id" = Uuid, Path)), responses((status = 200, body = crate::services::AlbumDetail), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_album(
+    State(state): State<AppState>,
+    Path(album_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::AlbumDetail>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .album(user.id, album_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/artists", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::ArtistSummary]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_artists(
+    State(state): State<AppState>,
+    Query(query): Query<BrowseQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::ArtistSummary>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .list_artists(user.id, query.library_id, page)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/artists/{artist_id}", tag = "catalog", params(("artist_id" = Uuid, Path)), responses((status = 200, body = crate::services::ArtistDetail), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_artist(
+    State(state): State<AppState>,
+    Path(artist_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::ArtistDetail>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .artist(user.id, artist_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn search_catalog(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::SearchResult>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .search(user.id, &query.q, page)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
 #[derive(Debug)]
 pub enum ApiError {
     Unauthorized,
@@ -351,4 +451,21 @@ async fn authenticated(
 fn db_error(error: sqlx::Error) -> ApiError {
     tracing::error!(error = %error, "catalog database operation failed");
     ApiError::Unavailable
+}
+
+/// Maps a domain failure onto the HTTP surface. `Forbidden` deliberately answers
+/// 404 like `NotFound`: telling a caller that a resource exists but belongs to
+/// someone else would leak another tenant's catalogue, which is the same
+/// no-existence-leak rule the Subsonic facade applies.
+fn service_error(error: crate::services::ServiceError) -> ApiError {
+    use crate::services::ServiceError;
+    match error {
+        ServiceError::NotFound | ServiceError::Forbidden => ApiError::NotFound,
+        ServiceError::Invalid | ServiceError::Conflict => ApiError::Validation,
+        ServiceError::Database(error) => db_error(error),
+        ServiceError::Security(error) => {
+            tracing::error!(error = %error, "catalog security operation failed");
+            ApiError::Unavailable
+        }
+    }
 }

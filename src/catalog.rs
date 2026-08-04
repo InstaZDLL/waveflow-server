@@ -585,19 +585,27 @@ impl Database {
     }
 }
 
+/// Turns free-form user input into an FTS5 `MATCH` expression. Every term is
+/// quoted so punctuation cannot be read as FTS syntax, and terms are ANDed so
+/// extra words narrow the result. Returns `None` when the input carries no
+/// searchable term — `MATCH ''` is a SQLite error, not an empty result.
+pub(crate) fn fts_match_query(query: &str) -> Option<String> {
+    let expression = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    (!expression.is_empty()).then_some(expression)
+}
+
 async fn fetch_tracks(
     db: &Database,
     user: Uuid,
     library: Uuid,
     query: Option<&str>,
 ) -> Result<Vec<TrackRecord>, sqlx::Error> {
-    let rows = if let Some(query) = query {
-        let fts_query = query
-            .split_whitespace()
-            .filter(|term| !term.is_empty())
-            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+    let rows = if let Some(fts_query) = query.and_then(fts_match_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
