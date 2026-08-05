@@ -17,6 +17,12 @@ pub struct Config {
     pub db_max_connections: u32,
     pub sqlite_busy_timeout: Duration,
     pub access_token_ttl: Duration,
+    /// Lifetime of a browser stream ticket. It must outlive a full listen, not
+    /// just the initial request: the browser reuses the same URL for every
+    /// range request, so a seek late in a long track still redeems the original
+    /// ticket. Access is re-checked on every redemption, so this bounds how
+    /// long a leaked URL stays useful, not how long access itself lasts.
+    pub stream_ticket_ttl: Duration,
     pub refresh_token_ttl: Duration,
     pub scan_interval: Option<Duration>,
     pub scan_parallelism: usize,
@@ -42,6 +48,7 @@ impl std::fmt::Debug for Config {
             .field("db_max_connections", &self.db_max_connections)
             .field("sqlite_busy_timeout", &self.sqlite_busy_timeout)
             .field("access_token_ttl", &self.access_token_ttl)
+            .field("stream_ticket_ttl", &self.stream_ticket_ttl)
             .field("refresh_token_ttl", &self.refresh_token_ttl)
             .field("scan_interval", &self.scan_interval)
             .field("scan_parallelism", &self.scan_parallelism)
@@ -72,6 +79,8 @@ impl Config {
         let db_max_connections = parse_positive_env("WAVEFLOW_DB_MAX_CONNECTIONS", 8u32)?;
         let sqlite_busy_timeout_ms =
             parse_positive_env("WAVEFLOW_SQLITE_BUSY_TIMEOUT_MS", 5_000u64)?;
+        let stream_ticket_ttl_secs =
+            parse_positive_env("WAVEFLOW_STREAM_TICKET_TTL_SECS", 60 * 60u64)?;
         let access_token_ttl_secs =
             parse_positive_env("WAVEFLOW_ACCESS_TOKEN_TTL_SECS", 15 * 60u64)?;
         let refresh_token_ttl_secs =
@@ -133,6 +142,7 @@ impl Config {
             db_max_connections,
             sqlite_busy_timeout: Duration::from_millis(sqlite_busy_timeout_ms),
             access_token_ttl: Duration::from_secs(access_token_ttl_secs),
+            stream_ticket_ttl: Duration::from_secs(stream_ticket_ttl_secs),
             refresh_token_ttl: Duration::from_secs(refresh_token_ttl_secs),
             scan_interval: (scan_interval_secs > 0)
                 .then(|| Duration::from_secs(scan_interval_secs)),
@@ -160,6 +170,7 @@ impl Config {
             db_max_connections: 4,
             sqlite_busy_timeout: Duration::from_secs(5),
             access_token_ttl: Duration::from_secs(15 * 60),
+            stream_ticket_ttl: Duration::from_secs(60 * 60),
             refresh_token_ttl: Duration::from_secs(30 * 24 * 60 * 60),
             scan_interval: None,
             scan_parallelism: 2,

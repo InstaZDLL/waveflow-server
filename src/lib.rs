@@ -10,6 +10,7 @@ pub mod media;
 pub mod scanner;
 pub mod security;
 pub mod services;
+pub mod stream_ticket;
 pub mod subsonic;
 pub mod webui;
 
@@ -47,6 +48,7 @@ pub struct AppState {
     pub artwork_dir: std::path::PathBuf,
     pub instance_key_path: std::path::PathBuf,
     pub public_url: Option<String>,
+    pub stream_ticket_ttl: std::time::Duration,
 }
 
 #[derive(OpenApi)]
@@ -85,7 +87,9 @@ pub struct AppState {
         http::list_now_playing,
         http::get_queue,
         http::save_queue,
-        media::stream_track
+        media::stream_track,
+        media::create_stream_ticket,
+        media::stream_with_ticket
     ),
     components(schemas(
         http::ProbeResponse,
@@ -115,6 +119,7 @@ pub struct AppState {
         http::SaveQueueRequest,
         http::StarredEntry,
         http::NowPlayingEntry,
+        media::StreamTicketResponse,
         scanner::ScanProgress
     )),
     tags(
@@ -159,6 +164,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         artwork_dir: config.artwork_dir.clone(),
         instance_key_path: config.instance_key_path.clone(),
         public_url: config.public_url.clone(),
+        stream_ticket_ttl: config.stream_ticket_ttl,
     })
 }
 
@@ -241,6 +247,9 @@ pub fn app(config: &Config, state: AppState) -> Router {
 }
 
 fn trace_path(path: &str) -> &str {
+    if path.starts_with("/api/v2/stream/") {
+        return "/api/v2/stream/{redacted}";
+    }
     if path.starts_with("/share/") {
         "/share/{redacted}"
     } else {
@@ -299,6 +308,11 @@ mod tests {
 
     #[test]
     fn trace_paths_redact_public_share_bearer_tokens() {
+        assert_eq!(
+            trace_path("/api/v2/stream/sealed-ticket"),
+            "/api/v2/stream/{redacted}",
+            "a stream ticket is a credential and must not reach a trace sink"
+        );
         assert_eq!(trace_path("/share/wfs_secret"), "/share/{redacted}");
         assert_eq!(
             trace_path("/share/wfs_secret/tracks/id/stream"),

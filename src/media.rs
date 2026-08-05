@@ -391,7 +391,117 @@ impl Drop for ActiveGuard<'_> {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v2/tracks/{track_id}/stream", get(stream_track))
+        .route(
+            "/api/v2/tracks/{track_id}/stream-ticket",
+            axum::routing::post(create_stream_ticket),
+        )
+        // Deliberately outside the bearer-authenticated surface: the sealed
+        // ticket in the path is the credential, because <audio src> cannot send
+        // an Authorization header.
+        .route("/api/v2/stream/{ticket}", get(stream_with_ticket))
         .with_state(state)
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct StreamTicketResponse {
+    /// Path to play from, already containing the ticket.
+    pub url: String,
+    pub expires_at: i64,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v2/tracks/{track_id}/stream-ticket",
+    tag = "media",
+    params(("track_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = StreamTicketResponse),
+        (status = 401),
+        (status = 404)
+    )
+)]
+pub async fn create_stream_ticket(
+    State(state): State<AppState>,
+    AxumPath(track_id): AxumPath<Uuid>,
+    headers: HeaderMap,
+) -> Result<axum::Json<StreamTicketResponse>, MediaError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty())
+        .ok_or(MediaError::Unauthorized)?;
+    let user = state
+        .auth
+        .authenticate(token)
+        .await
+        .map_err(|_| MediaError::Unauthorized)?;
+    // Minting proves access now; redeeming re-proves it, so a ticket cannot
+    // outlive the membership that justified it.
+    state
+        .db
+        .stream_track_for_user(user.id, track_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "stream ticket authorization lookup failed");
+            MediaError::Internal
+        })?
+        .ok_or(MediaError::NotFound)?;
+    let expires_at = crate::authentication::now_ms()
+        + i64::try_from(state.stream_ticket_ttl.as_millis()).unwrap_or(i64::MAX);
+    let ticket = crate::stream_ticket::mint(&state.secret_box, user.id, track_id, expires_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, "stream ticket minting failed");
+            MediaError::Internal
+        })?;
+    Ok(axum::Json(StreamTicketResponse {
+        url: format!("/api/v2/stream/{ticket}"),
+        expires_at,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v2/stream/{ticket}",
+    tag = "media",
+    params(
+        ("ticket" = String, Path),
+        ("format" = Option<String>, Query, description = "raw, mp3 or opus"),
+        ("bitrate" = Option<u32>, Query),
+        ("offset_ms" = Option<u64>, Query)
+    ),
+    responses(
+        (status = 200, description = "Original or live transcoded audio"),
+        (status = 206, description = "Original or completed cached transcode range"),
+        (status = 404),
+        (status = 416),
+        (status = 429)
+    )
+)]
+pub async fn stream_with_ticket(
+    State(state): State<AppState>,
+    AxumPath(ticket): AxumPath<String>,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, MediaError> {
+    // An invalid, forged or expired ticket is indistinguishable from an unknown
+    // track, so probing tells an attacker nothing.
+    let (user_id, track_id) =
+        crate::stream_ticket::verify(&state.secret_box, &ticket, crate::authentication::now_ms())
+            .ok_or(MediaError::NotFound)?;
+    let track = state
+        .db
+        .stream_track_for_user(user_id, track_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "ticket stream authorization lookup failed");
+            MediaError::Internal
+        })?
+        .ok_or(MediaError::NotFound)?;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    state.media.serve(user_id, track, query, range).await
 }
 
 #[utoipa::path(
