@@ -187,7 +187,7 @@ pub struct SearchResult {
     pub songs: Vec<SongItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlaylistItem {
     pub id: Uuid,
     pub name: String,
@@ -198,7 +198,7 @@ pub struct PlaylistItem {
     pub songs: Vec<SongItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QueueItem {
     pub current: Option<Uuid>,
     pub position_ms: i64,

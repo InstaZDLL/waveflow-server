@@ -2298,3 +2298,264 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
         .unwrap();
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("data-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("data-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("data-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "User data",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    for (index, title) in ["First Light", "Slow Tide"].into_iter().enumerate() {
+        state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &browse_input(
+                    index,
+                    title,
+                    "Aurora Fields",
+                    "Lumen Drift",
+                    index as i64 + 1,
+                    1,
+                ),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "data-owner", password).await;
+    let intruder_token = login_token(&router, "data-intruder", password).await;
+
+    let send =
+        |method: &'static str, uri: String, token: String, body: Option<serde_json::Value>| {
+            let router = router.clone();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {token}"));
+                let request = match body {
+                    Some(body) => request
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                    None => request.body(Body::empty()).unwrap(),
+                };
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+    // Collect the track ids through the native browse surface.
+    let albums = send("GET", "/api/v2/albums".into(), owner_token.clone(), None).await;
+    let albums = json_body(albums).await;
+    let album_id = albums[0]["id"].as_str().unwrap().to_owned();
+    let detail = send(
+        "GET",
+        format!("/api/v2/albums/{album_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    let detail = json_body(detail).await;
+    let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
+    let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
+
+    // Playlists: create, read back, mutate, then delete.
+    let created = send(
+        "POST",
+        "/api/v2/playlists".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({ "name": "Evening", "track_ids": [first] })),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    let playlist_id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["songs"].as_array().unwrap().len(), 1);
+
+    let listed = send("GET", "/api/v2/playlists".into(), owner_token.clone(), None).await;
+    assert_eq!(json_body(listed).await.as_array().unwrap().len(), 1);
+
+    let updated = send(
+        "PATCH",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "comment": "late night", "add": [second] })),
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = json_body(updated).await;
+    assert_eq!(updated["comment"], "late night");
+    assert_eq!(updated["songs"].as_array().unwrap().len(), 2);
+
+    // Favorites round-trip through the dedicated collection.
+    let starred = send(
+        "PUT",
+        format!("/api/v2/favorites/track/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(starred.status(), StatusCode::NO_CONTENT);
+    let favorites = send("GET", "/api/v2/favorites".into(), owner_token.clone(), None).await;
+    let favorites = json_body(favorites).await;
+    assert_eq!(favorites.as_array().unwrap().len(), 1);
+    assert_eq!(favorites[0]["entity_type"], "track");
+    assert_eq!(favorites[0]["entity_id"], first);
+
+    let unstarred = send(
+        "DELETE",
+        format!("/api/v2/favorites/track/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(unstarred.status(), StatusCode::NO_CONTENT);
+    let favorites = send("GET", "/api/v2/favorites".into(), owner_token.clone(), None).await;
+    assert!(json_body(favorites).await.as_array().unwrap().is_empty());
+
+    // Ratings are read back through the browse surface, not inferred.
+    let rated = send(
+        "PUT",
+        format!("/api/v2/ratings/track/{first}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "rating": 4 })),
+    )
+    .await;
+    assert_eq!(rated.status(), StatusCode::NO_CONTENT);
+    let detail = send(
+        "GET",
+        format!("/api/v2/albums/{album_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(json_body(detail).await["songs"][0]["user_rating"], 4);
+
+    // Out-of-range ratings and unknown entity kinds are refused, not stored.
+    let invalid = send(
+        "PUT",
+        format!("/api/v2/ratings/track/{first}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "rating": 6 })),
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unknown_kind = send(
+        "PUT",
+        format!("/api/v2/favorites/banana/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_kind.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let scrobbled = send(
+        "POST",
+        "/api/v2/scrobbles".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({ "track_id": first, "submission": true })),
+    )
+    .await;
+    assert_eq!(scrobbled.status(), StatusCode::NO_CONTENT);
+
+    // The queue survives a write/read round-trip.
+    let saved = send(
+        "PUT",
+        "/api/v2/queue".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({
+            "track_ids": [first, second],
+            "current": first,
+            "position_ms": 4200,
+            "client": "test"
+        })),
+    )
+    .await;
+    assert_eq!(saved.status(), StatusCode::NO_CONTENT);
+    let queue = send("GET", "/api/v2/queue".into(), owner_token.clone(), None).await;
+    let queue = json_body(queue).await;
+    assert_eq!(queue["position_ms"], 4200);
+    assert_eq!(queue["current"], first);
+    assert_eq!(queue["songs"].as_array().unwrap().len(), 2);
+
+    // A foreign tenant can neither read nor mutate any of it.
+    let foreign_playlists = send(
+        "GET",
+        "/api/v2/playlists".into(),
+        intruder_token.clone(),
+        None,
+    )
+    .await;
+    assert!(json_body(foreign_playlists)
+        .await
+        .as_array()
+        .unwrap()
+        .is_empty());
+    for (method, uri) in [
+        ("GET", format!("/api/v2/playlists/{playlist_id}")),
+        ("DELETE", format!("/api/v2/playlists/{playlist_id}")),
+        ("PUT", format!("/api/v2/favorites/track/{first}")),
+    ] {
+        let response = send(method, uri, intruder_token.clone(), None).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{method} must not reach another tenant's data"
+        );
+    }
+    let foreign_queue = send("GET", "/api/v2/queue".into(), intruder_token.clone(), None).await;
+    assert_eq!(foreign_queue.status(), StatusCode::OK);
+    assert!(json_body(foreign_queue).await.is_null());
+
+    // Deleting the playlist makes it unreachable for its owner too.
+    let deleted = send(
+        "DELETE",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let gone = send(
+        "GET",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
