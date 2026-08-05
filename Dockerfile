@@ -1,7 +1,17 @@
+# The web client is compiled into the server binary, so it must be built first.
+FROM oven/bun:1 AS web
+WORKDIR /web
+COPY webapp/package.json webapp/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY webapp/ ./
+RUN bun run build
+
 FROM rust:1.94-bookworm AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY . .
+# After COPY . ., so the built assets win over any stale local dist/.
+COPY --from=web /web/dist ./webapp/dist
 RUN cargo build --locked --release
 
 FROM debian:bookworm-slim

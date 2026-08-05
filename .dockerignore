@@ -9,3 +9,5 @@ web/.output
 *.db
 *.db-wal
 *.db-shm
+webapp/node_modules
+webapp/dist
