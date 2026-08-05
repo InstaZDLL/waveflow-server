@@ -11,6 +11,7 @@ pub mod scanner;
 pub mod security;
 pub mod services;
 pub mod subsonic;
+pub mod webui;
 
 use std::{sync::Arc, time::Duration};
 
@@ -208,6 +209,9 @@ pub fn app(config: &Config, state: AppState) -> Router {
         // disconnected consumers are bounded by MediaService itself.
         .merge(media::router(state.clone()))
         .merge(subsonic::router(state))
+        // Anything no API route claimed is served by the embedded web client:
+        // a built asset, or the shell for a client-side route.
+        .fallback(webui::handler)
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware);
 

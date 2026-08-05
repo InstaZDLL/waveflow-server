@@ -2559,3 +2559,55 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     .await;
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+
+    let get = |uri: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // The shell is served at the root.
+    let root = get("/").await;
+    assert_eq!(root.status(), StatusCode::OK);
+    assert!(root.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    // The shell must never be cached: it is what points at the hashed assets.
+    assert_eq!(root.headers()["cache-control"], "no-cache");
+
+    // Client-side routes resolve to the same shell rather than 404.
+    let deep = get("/albums/some-client-route").await;
+    assert_eq!(deep.status(), StatusCode::OK);
+    assert!(deep.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
+    // An unknown API path stays a JSON 404 instead of silently returning HTML.
+    let missing_api = get("/api/v2/does-not-exist").await;
+    assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        missing_api.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap(),
+        "application/json"
+    );
+
+    // Real routes are untouched by the fallback.
+    let health = get("/health").await;
+    assert_eq!(health.status(), StatusCode::OK);
+    assert_eq!(json_body(health).await["status"], "ok");
+}
