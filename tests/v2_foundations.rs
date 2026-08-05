@@ -2611,3 +2611,129 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     assert_eq!(health.status(), StatusCode::OK);
     assert_eq!(json_body(health).await["status"], "ok");
 }
+
+#[tokio::test]
+async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("ticket-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("ticket-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("ticket-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Ticket.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Tickets",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Tickets".into(),
+            root_path: root,
+        },
+    )
+    .await;
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "ticket-owner", password).await;
+    let intruder_token = login_token(&router, "ticket-intruder", password).await;
+
+    let tracks = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/libraries/{library_id}/tracks"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let tracks = json_body(tracks).await;
+    let track_id = tracks[0]["id"].as_str().unwrap().to_owned();
+
+    let mint = |token: Option<String>| {
+        let router = router.clone();
+        let track_id = track_id.clone();
+        async move {
+            let request = Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
+                .body(Body::empty());
+            let request = match token {
+                Some(token) => Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+                None => request.unwrap(),
+            };
+            router.oneshot(request).await.unwrap()
+        }
+    };
+
+    // Minting requires a bearer; redeeming must not.
+    assert_eq!(mint(None).await.status(), StatusCode::UNAUTHORIZED);
+
+    let issued = mint(Some(owner_token.clone())).await;
+    assert_eq!(issued.status(), StatusCode::OK);
+    let issued = json_body(issued).await;
+    let url = issued["url"].as_str().unwrap().to_owned();
+    assert!(url.starts_with("/api/v2/stream/"));
+    assert!(issued["expires_at"].as_i64().unwrap() > now_ms());
+
+    // The ticket URL plays with no Authorization header at all.
+    let played = router
+        .clone()
+        .oneshot(Request::get(&url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(played.status(), StatusCode::OK);
+    assert_eq!(played.headers()["accept-ranges"], "bytes");
+
+    // Range requests work, which is what a browser seek relies on.
+    let ranged = router
+        .clone()
+        .oneshot(
+            Request::get(&url)
+                .header("range", "bytes=0-15")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+
+    // A tampered ticket is indistinguishable from an unknown track.
+    let mut tampered: Vec<char> = url.chars().collect();
+    let last = tampered.len() - 1;
+    tampered[last] = if tampered[last] == 'A' { 'B' } else { 'A' };
+    let tampered: String = tampered.into_iter().collect();
+    let forged = router
+        .clone()
+        .oneshot(Request::get(&tampered).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(forged.status(), StatusCode::NOT_FOUND);
+
+    // A tenant without access cannot mint a ticket in the first place.
+    assert_eq!(
+        mint(Some(intruder_token)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
