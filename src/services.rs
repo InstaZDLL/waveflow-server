@@ -416,8 +416,12 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)?;
         let songs = sqlx::query(concat!(
             song_select!(),
+            // SQLite orders NULL first, which would put an untagged track ahead
+            // of track 1. Incomplete disc/track tags are common in real
+            // libraries, so unnumbered tracks sort to the end instead.
             " AND t.album_id=? \
-              ORDER BY t.disc_number, t.track_number, t.title COLLATE NOCASE, t.id"
+              ORDER BY t.disc_number NULLS LAST, t.track_number NULLS LAST, \
+                       t.title COLLATE NOCASE, t.id"
         ))
         .bind(user_id.to_string())
         .bind(album_id.to_string())

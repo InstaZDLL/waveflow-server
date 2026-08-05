@@ -2096,8 +2096,8 @@ fn browse_input(
     title: &str,
     album: &str,
     artist: &str,
-    track_number: i64,
-    disc_number: i64,
+    track_number: Option<i64>,
+    disc_number: Option<i64>,
 ) -> CatalogTrackInput {
     CatalogTrackInput {
         relative_path: format!("browse-{index}.flac"),
@@ -2112,8 +2112,8 @@ fn browse_input(
         is_compilation: false,
         genre: Some("Ambient".into()),
         year: Some(2024),
-        track_number: Some(track_number),
-        disc_number: Some(disc_number),
+        track_number,
+        disc_number,
         duration_ms: 120_000,
         bitrate: Some(900),
         sample_rate: Some(44_100),
@@ -2159,14 +2159,40 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan_id, 4).await.unwrap();
+    state.db.start_scan_job(scan_id, 5).await.unwrap();
     // Tracks are applied out of sleeve order on purpose: the album drill-down
     // must sort them, not echo insertion order.
     for (index, (title, album, artist, track, disc)) in [
-        ("Slow Tide", "Aurora Fields", "Lumen Drift", 2, 1),
-        ("First Light", "Aurora Fields", "Lumen Drift", 1, 1),
-        ("Rivière Noire", "Nocturne Bleue", "Écho Solaire", 2, 1),
-        ("Prélude", "Nocturne Bleue", "Écho Solaire", 1, 1),
+        (
+            "Slow Tide",
+            "Aurora Fields",
+            "Lumen Drift",
+            Some(2),
+            Some(1),
+        ),
+        (
+            "First Light",
+            "Aurora Fields",
+            "Lumen Drift",
+            Some(1),
+            Some(1),
+        ),
+        // Incomplete tags are common in real libraries and must not jump ahead.
+        ("Hidden Track", "Aurora Fields", "Lumen Drift", None, None),
+        (
+            "Rivière Noire",
+            "Nocturne Bleue",
+            "Écho Solaire",
+            Some(2),
+            Some(1),
+        ),
+        (
+            "Prélude",
+            "Nocturne Bleue",
+            "Écho Solaire",
+            Some(1),
+            Some(1),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -2233,9 +2259,13 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     let detail = json_body(detail).await;
     assert_eq!(detail["title"], "Aurora Fields");
     let songs = detail["songs"].as_array().unwrap();
-    assert_eq!(songs.len(), 2);
+    assert_eq!(songs.len(), 3);
     assert_eq!(songs[0]["title"], "First Light", "sleeve order wins");
     assert_eq!(songs[1]["title"], "Slow Tide");
+    assert_eq!(
+        songs[2]["title"], "Hidden Track",
+        "an untagged track sorts last, not ahead of track 1"
+    );
 
     let artists = get("/api/v2/artists".into(), owner_token.clone()).await;
     let artists = json_body(artists).await;
@@ -2344,8 +2374,8 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
                     title,
                     "Aurora Fields",
                     "Lumen Drift",
-                    index as i64 + 1,
-                    1,
+                    Some(index as i64 + 1),
+                    Some(1),
                 ),
                 None,
                 false,
