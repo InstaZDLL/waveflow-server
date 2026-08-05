@@ -9,7 +9,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Response, Sse,
     },
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,65 @@ pub struct SearchQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreatePlaylistRequest {
+    pub name: String,
+    #[serde(default)]
+    pub track_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdatePlaylistRequest {
+    pub name: Option<String>,
+    pub comment: Option<String>,
+    pub public: Option<bool>,
+    /// Track ids appended to the end, applied after `remove_indexes`.
+    #[serde(default)]
+    pub add: Vec<Uuid>,
+    /// Zero-based positions removed before `add` is applied.
+    #[serde(default)]
+    pub remove_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RatingRequest {
+    /// 1 to 5 stars; 0 clears the rating.
+    pub rating: i64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ScrobbleRequest {
+    pub track_id: Uuid,
+    /// `false` records a "now playing" ping, `true` a completed listen.
+    #[serde(default)]
+    pub submission: bool,
+    pub played_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SaveQueueRequest {
+    #[serde(default)]
+    pub track_ids: Vec<Uuid>,
+    pub current: Option<Uuid>,
+    #[serde(default)]
+    pub position_ms: i64,
+    pub client: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct StarredEntry {
+    pub entity_type: String,
+    pub entity_id: Uuid,
+    pub starred_at: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NowPlayingEntry {
+    pub username: String,
+    pub song: crate::services::SongItem,
+    pub started_at: i64,
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -89,6 +148,25 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/artists", get(list_artists))
         .route("/api/v2/artists/{artist_id}", get(get_artist))
         .route("/api/v2/search", get(search_catalog))
+        .route(
+            "/api/v2/playlists",
+            get(list_playlists).post(create_playlist),
+        )
+        .route(
+            "/api/v2/playlists/{playlist_id}",
+            get(get_playlist)
+                .patch(update_playlist)
+                .delete(delete_playlist),
+        )
+        .route("/api/v2/favorites", get(list_favorites))
+        .route(
+            "/api/v2/favorites/{entity_type}/{entity_id}",
+            put(add_favorite).delete(remove_favorite),
+        )
+        .route("/api/v2/ratings/{entity_type}/{entity_id}", put(set_rating))
+        .route("/api/v2/scrobbles", post(create_scrobble))
+        .route("/api/v2/now-playing", get(list_now_playing))
+        .route("/api/v2/queue", get(get_queue).put(save_queue))
         .with_state(state)
 }
 
@@ -387,6 +465,236 @@ pub async fn search_catalog(
         .await
         .map(Json)
         .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/playlists", tag = "user-data", responses((status = 200, body = [crate::services::PlaylistItem]), (status = 401, body = ErrorResponse)))]
+pub async fn list_playlists(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::PlaylistItem>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .playlists(user.id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(post, path = "/api/v2/playlists", tag = "user-data", request_body = CreatePlaylistRequest, responses((status = 201, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn create_playlist(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreatePlaylistRequest>,
+) -> Result<(StatusCode, Json<crate::services::PlaylistItem>), ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let playlist = state
+        .services
+        .create_playlist(user.id, &request.name, &request.track_ids)
+        .await
+        .map_err(service_error)?;
+    Ok((StatusCode::CREATED, Json(playlist)))
+}
+
+#[utoipa::path(get, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), responses((status = 200, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_playlist(
+    State(state): State<AppState>,
+    Path(playlist_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::PlaylistItem>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .playlist(user.id, playlist_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(patch, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), request_body = UpdatePlaylistRequest, responses((status = 200, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn update_playlist(
+    State(state): State<AppState>,
+    Path(playlist_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<UpdatePlaylistRequest>,
+) -> Result<Json<crate::services::PlaylistItem>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .update_playlist(
+            user.id,
+            playlist_id,
+            request.name.as_deref(),
+            request.comment.as_deref(),
+            request.public,
+            &request.add,
+            &request.remove_indexes,
+        )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(delete, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn delete_playlist(
+    State(state): State<AppState>,
+    Path(playlist_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .delete_playlist(user.id, playlist_id)
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, path = "/api/v2/favorites", tag = "user-data", responses((status = 200, body = [StarredEntry]), (status = 401, body = ErrorResponse)))]
+pub async fn list_favorites(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<StarredEntry>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let entries = state
+        .services
+        .starred_ids(user.id)
+        .await
+        .map_err(service_error)?
+        .into_iter()
+        .map(|(entity_type, entity_id, starred_at)| StarredEntry {
+            entity_type,
+            entity_id,
+            starred_at,
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
+#[utoipa::path(put, path = "/api/v2/favorites/{entity_type}/{entity_id}", tag = "user-data", params(("entity_type" = String, Path, description = "track, album or artist"), ("entity_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn add_favorite(
+    State(state): State<AppState>,
+    Path((entity_type, entity_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    set_favorite(state, headers, &entity_type, entity_id, true).await
+}
+
+#[utoipa::path(delete, path = "/api/v2/favorites/{entity_type}/{entity_id}", tag = "user-data", params(("entity_type" = String, Path, description = "track, album or artist"), ("entity_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn remove_favorite(
+    State(state): State<AppState>,
+    Path((entity_type, entity_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    set_favorite(state, headers, &entity_type, entity_id, false).await
+}
+
+async fn set_favorite(
+    state: AppState,
+    headers: HeaderMap,
+    entity_type: &str,
+    entity_id: Uuid,
+    starred: bool,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .set_star(user.id, entity_type, entity_id, starred)
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(put, path = "/api/v2/ratings/{entity_type}/{entity_id}", tag = "user-data", params(("entity_type" = String, Path, description = "track, album or artist"), ("entity_id" = Uuid, Path)), request_body = RatingRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn set_rating(
+    State(state): State<AppState>,
+    Path((entity_type, entity_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+    Json(request): Json<RatingRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .set_rating(user.id, &entity_type, entity_id, request.rating)
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn create_scrobble(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ScrobbleRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .scrobble(
+            user.id,
+            request.track_id,
+            request.submission,
+            request.played_at,
+        )
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, path = "/api/v2/now-playing", tag = "user-data", responses((status = 200, body = [NowPlayingEntry]), (status = 401, body = ErrorResponse)))]
+pub async fn list_now_playing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<NowPlayingEntry>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let entries = state
+        .services
+        .now_playing(user.id)
+        .await
+        .map_err(service_error)?
+        .into_iter()
+        .map(|(username, song, started_at)| NowPlayingEntry {
+            username,
+            song,
+            started_at,
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
+#[utoipa::path(get, path = "/api/v2/queue", tag = "user-data", responses((status = 200, body = Option<crate::services::QueueItem>), (status = 401, body = ErrorResponse)))]
+pub async fn get_queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<crate::services::QueueItem>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .queue(user.id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(put, path = "/api/v2/queue", tag = "user-data", request_body = SaveQueueRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn save_queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SaveQueueRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .save_queue(
+            user.id,
+            &request.track_ids,
+            request.current,
+            request.position_ms,
+            request.client.as_deref(),
+        )
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug)]
