@@ -1744,15 +1744,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
-name = "quick-xml"
-version = "0.39.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3166,19 +3157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "utoipa-axum"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c25bae5bccc842449ec0c5ddc5cbb6a3a1eaeac4503895dc105a1138f8234a0"
-dependencies = [
- "axum",
- "paste",
- "tower-layer",
- "tower-service",
- "utoipa",
-]
-
-[[package]]
 name = "utoipa-gen"
 version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3365,7 +3343,6 @@ dependencies = [
  "http-body-util",
  "lofty",
  "md-5 0.10.6",
- "quick-xml",
  "rand 0.8.6",
  "rust-embed",
  "serde",
@@ -3385,7 +3362,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "utoipa",
- "utoipa-axum",
  "utoipa-scalar",
  "uuid",
  "walkdir",
