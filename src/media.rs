@@ -302,7 +302,22 @@ impl MediaService {
             let mut buffer = vec![0u8; STREAM_CHUNK_SIZE];
             let mut consumer_present = true;
             loop {
-                match stdout.read(&mut buffer).await {
+                // Watch for the consumer leaving alongside the read instead of
+                // only noticing on the next send. FFmpeg can sit on a chunk for
+                // a long time under load, and until it yields one there is
+                // nothing to fail on, so an abandoned transcode would hold a
+                // process and a concurrency slot for as long as the encode took.
+                // Both branches are cancel-safe, and `biased` checks departure
+                // first so a consumer that left during the read is seen at once.
+                let read = tokio::select! {
+                    biased;
+                    _ = sender.closed() => {
+                        consumer_present = false;
+                        break;
+                    }
+                    result = stdout.read(&mut buffer) => result,
+                };
+                match read {
                     Ok(0) => break,
                     Ok(read) => {
                         if let Some(file) = cache_file.as_mut() {
