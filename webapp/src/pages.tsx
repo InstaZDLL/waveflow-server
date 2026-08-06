@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import {
   authorize,
+  isAllowedRedirect,
   formatDuration,
   getAlbum,
   getArtist,
@@ -328,7 +329,14 @@ export function AuthorizePage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const missing = !clientId || !redirectUri || !params.get("code_challenge");
+  // Refuse the whole screen when the target is one we would not navigate to:
+  // failing here is clearer than offering a Cancel button that cannot honour
+  // its own redirect.
+  const missing =
+    !clientId ||
+    !redirectUri ||
+    !params.get("code_challenge") ||
+    !isAllowedRedirect(redirectUri);
 
   async function approve() {
     setBusy(true);
@@ -350,6 +358,7 @@ export function AuthorizePage() {
   }
 
   function deny() {
+    if (!isAllowedRedirect(redirectUri)) return;
     const url = new URL(redirectUri);
     url.searchParams.set("error", "access_denied");
     const state = params.get("state");
@@ -361,7 +370,10 @@ export function AuthorizePage() {
     return (
       <section>
         <h2>Authorisation</h2>
-        <p className="error">This authorisation link is incomplete.</p>
+        <p className="error">
+          This authorisation link is incomplete or asks to send you somewhere we
+          do not trust.
+        </p>
       </section>
     );
   }
