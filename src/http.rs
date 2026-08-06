@@ -512,7 +512,10 @@ pub async fn oauth_authorize(
     crate::oauth::validate_redirect_uri(&request.redirect_uri).map_err(|_| ApiError::Validation)?;
     crate::oauth::validate_challenge(&request.code_challenge_method, &request.code_challenge)
         .map_err(|_| ApiError::Validation)?;
-    if request.client_id.trim().is_empty() || request.device_name.trim().is_empty() {
+    let device_name = request.device_name.trim();
+    // Checked here rather than only at redemption: a name the session issuer
+    // would reject must not burn a code before the client can use it.
+    if request.client_id.trim().is_empty() || device_name.is_empty() || device_name.len() > 120 {
         return Err(ApiError::Validation);
     }
 
@@ -526,7 +529,7 @@ pub async fn oauth_authorize(
             client_id: request.client_id.trim(),
             redirect_uri: &request.redirect_uri,
             code_challenge: &request.code_challenge,
-            device_name: request.device_name.trim(),
+            device_name,
             now_ms: now,
             expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
         })

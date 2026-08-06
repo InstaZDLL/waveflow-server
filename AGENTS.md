@@ -7,7 +7,7 @@ This monorepo is being rebuilt as WaveFlow Server v2. The accepted design is `do
 - `/`: one axum binary with SQLite as the only v2 database.
 - `web/`: the superseded TanStack/Better Auth v1 front end, kept only until its reusable parts are salvaged. It is not built, served or tested.
 - `webapp/`: the embedded React client, built to `webapp/dist` and compiled into the binary by `rust_embed`. Build it before the server, never after.
-- The v1 PostgreSQL/JWKS implementation has been removed. Anything predating RFC-002 lives in git history only.
+- The v1 PostgreSQL/JWKS **server** implementation has been removed; it lives in git history only. This does not extend to `web/`, which is still present in the tree as described above.
 
 ## Commands
 

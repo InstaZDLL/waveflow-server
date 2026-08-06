@@ -36,7 +36,7 @@ lofty = "0.24"
 md-5 = "0.10"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
-rust-embed = { version = "8", features = ["debug-embed", "mime-guess"] }
+rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-path", "mime-guess"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"

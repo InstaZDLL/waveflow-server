@@ -354,6 +354,7 @@ impl Database {
         grant: NewAuthorization<'_>,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO oauth_authorization \
                (code_hash, user_id, client_id, redirect_uri, code_challenge, device_name, \
@@ -368,8 +369,19 @@ impl Database {
         .bind(grant.device_name)
         .bind(grant.now_ms)
         .bind(grant.expires_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        // Delegating access to another application is exactly the kind of event
+        // the audit trail exists for, alongside account and credential changes.
+        insert_audit(
+            &mut tx,
+            Some(grant.user_id),
+            "oauth.authorization.granted",
+            Some(grant.user_id),
+            grant.now_ms,
+        )
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -410,6 +422,31 @@ impl Database {
             })
         })
         .transpose()
+    }
+
+    /// Sweeps expired grants hourly for the life of the process.
+    ///
+    /// Rows are kept after redemption so a replay is recognised rather than
+    /// looking unknown, so nothing else ever deletes them; without this the
+    /// table only grows.
+    pub fn spawn_authorization_pruning(&self) {
+        let db = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+            loop {
+                ticker.tick().await;
+                match db
+                    .prune_authorizations(crate::authentication::now_ms())
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(removed) => tracing::debug!(removed, "pruned expired authorization codes"),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "could not prune authorization codes")
+                    }
+                }
+            }
+        });
     }
 
     /// Drops grants that can no longer be redeemed.

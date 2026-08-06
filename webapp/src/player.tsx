@@ -43,15 +43,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // A completed listen is reported once per track, when playback passes half
   // of it — the same threshold the Subsonic clients use for a submission.
   const submitted = useRef<string | null>(null);
+  // The ended handler is registered once, so it reads the queue length through
+  // a ref rather than closing over a stale value.
+  const queueLength = useRef(0);
 
   const current = queue[index] ?? null;
+  queueLength.current = queue.length;
 
   useEffect(() => {
     if (!audio.current) audio.current = new Audio();
     const element = audio.current;
     const onTime = () => setPosition(element.currentTime);
     const onDuration = () => setDuration(element.duration || 0);
-    const onEnd = () => setIndex((value) => value + 1);
+    // Stop on the last track rather than stepping past it: an out-of-range
+    // index empties `current` and the player bar vanishes mid-listen.
+    const onEnd = () =>
+      setIndex((value) => Math.min(value + 1, Math.max(queueLength.current - 1, 0)));
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     element.addEventListener("timeupdate", onTime);
@@ -122,7 +129,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       duration,
       play,
       toggle,
-      next: () => setIndex((value) => Math.min(value + 1, queue.length)),
+      next: () =>
+        setIndex((value) => Math.min(value + 1, Math.max(queue.length - 1, 0))),
       previous: () => setIndex((value) => Math.max(value - 1, 0)),
       seek: (seconds: number) => {
         if (audio.current) audio.current.currentTime = seconds;
@@ -138,7 +146,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
 export function PlayerBar() {
   const player = usePlayer();
+  const [scrubbing, setScrubbing] = useState<number | null>(null);
   if (!player.current) return null;
+  const commit = (value: number) => {
+    player.seek(value);
+    setScrubbing(null);
+  };
   return (
     <footer className="player">
       <div className="player-track">
@@ -160,14 +173,17 @@ export function PlayerBar() {
         </button>
       </div>
       <div className="player-progress">
-        <span>{formatDuration(player.position * 1000)}</span>
+        <span>{formatDuration((scrubbing ?? player.position) * 1000)}</span>
         <input
           type="range"
           min={0}
           max={player.duration || 0}
           step={0.5}
-          value={player.position}
-          onChange={(event) => player.seek(Number(event.target.value))}
+          value={scrubbing ?? player.position}
+          onChange={(event) => setScrubbing(Number(event.target.value))}
+          onMouseUp={(event) => commit(Number(event.currentTarget.value))}
+          onTouchEnd={(event) => commit(Number(event.currentTarget.value))}
+          onKeyUp={(event) => commit(Number(event.currentTarget.value))}
           aria-label="Seek"
         />
         <span>{formatDuration(player.duration * 1000)}</span>

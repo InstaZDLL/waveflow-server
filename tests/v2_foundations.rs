@@ -2636,6 +2636,35 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
         "application/json"
     );
 
+    // The other server namespaces answer as themselves rather than falling
+    // through: /rest keeps its Subsonic error contract (400 for a missing
+    // credential), /share is a plain 404. Neither may return the client shell.
+    for uri in ["/rest/nope", "/share/nope"] {
+        let response = get(uri).await;
+        assert!(
+            response.status().is_client_error(),
+            "{uri} answered {}",
+            response.status()
+        );
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .map(|value| value.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        assert!(
+            !content_type.starts_with("text/html"),
+            "{uri} must not return the client shell"
+        );
+    }
+
+    // A client route that merely starts like a reserved endpoint is not one.
+    let lookalike = get("/reference-guide").await;
+    assert_eq!(lookalike.status(), StatusCode::OK);
+    assert!(lookalike.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
     // Real routes are untouched by the fallback.
     let health = get("/health").await;
     assert_eq!(health.status(), StatusCode::OK);
@@ -2683,6 +2712,8 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     )
     .await;
 
+    // Kept before `state` moves into the router, to mint an expired ticket below.
+    let secret_box = std::sync::Arc::clone(&state.secret_box);
     let router = waveflow_server::app(&config, state);
     let owner_token = login_token(&router, "ticket-owner", password).await;
     let intruder_token = login_token(&router, "ticket-intruder", password).await;
@@ -2749,10 +2780,32 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
         .unwrap();
     assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
 
-    // A tampered ticket is indistinguishable from an unknown track.
+    // An expired ticket is refused even though it is otherwise well formed.
+    let expired = waveflow_server::stream_ticket::mint(
+        &secret_box,
+        owner,
+        uuid::Uuid::parse_str(&track_id).unwrap(),
+        now_ms() - 1,
+    )
+    .unwrap();
+    let expired = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/stream/{expired}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), StatusCode::NOT_FOUND);
+
+    // A tampered ticket is indistinguishable from an unknown track. The flipped
+    // character sits mid-ticket: trailing base64url characters carry spare bits,
+    // so changing one there can decode to the same bytes.
+    let prefix_len = "/api/v2/stream/".len();
     let mut tampered: Vec<char> = url.chars().collect();
-    let last = tampered.len() - 1;
-    tampered[last] = if tampered[last] == 'A' { 'B' } else { 'A' };
+    let middle = prefix_len + (tampered.len() - prefix_len) / 2;
+    tampered[middle] = if tampered[middle] == 'A' { 'B' } else { 'A' };
     let tampered: String = tampered.into_iter().collect();
     let forged = router
         .clone()

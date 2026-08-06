@@ -5,7 +5,7 @@
 -- after redemption rather than deleted so a replayed code is detected as
 -- "already used" instead of silently looking like an unknown code.
 CREATE TABLE oauth_authorization (
-    code_hash BLOB PRIMARY KEY,
+    code_hash BLOB PRIMARY KEY NOT NULL,
     user_id TEXT NOT NULL,
     client_id TEXT NOT NULL CHECK (length(client_id) > 0),
     redirect_uri TEXT NOT NULL CHECK (length(redirect_uri) > 0),
@@ -16,7 +16,7 @@ CREATE TABLE oauth_authorization (
     expires_at INTEGER NOT NULL,
     redeemed_at INTEGER,
     FOREIGN KEY (user_id) REFERENCES account(id) ON DELETE CASCADE
-);
+) STRICT;
 
 -- Supports pruning expired grants without scanning the table.
 CREATE INDEX oauth_authorization_expires_idx ON oauth_authorization (expires_at);
