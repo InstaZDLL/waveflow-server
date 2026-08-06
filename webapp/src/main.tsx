@@ -17,6 +17,7 @@ import {
   AlbumsPage,
   ArtistPage,
   ArtistsPage,
+  AuthorizePage,
   LoginPage,
   SearchPage,
 } from "./pages";
@@ -63,7 +64,16 @@ const authedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "authed",
   beforeLoad: () => {
-    if (!storedTokens()) throw redirect({ to: "/login" });
+    if (!storedTokens()) {
+      // Remember where the user was headed so a desktop authorisation link
+      // survives the detour through sign-in instead of dropping its PKCE
+      // parameters and forcing the client to start over.
+      sessionStorage.setItem(
+        "waveflow.after-login",
+        window.location.pathname + window.location.search,
+      );
+      throw redirect({ to: "/login" });
+    }
   },
   component: Shell,
 });
@@ -98,6 +108,12 @@ const artistRoute = createRoute({
   },
 });
 
+const authorizeRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/authorize",
+  component: AuthorizePage,
+});
+
 const searchRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/search",
@@ -112,6 +128,7 @@ const routeTree = rootRoute.addChildren([
     artistsRoute,
     artistRoute,
     searchRoute,
+    authorizeRoute,
   ]),
 ]);
 

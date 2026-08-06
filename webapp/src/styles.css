@@ -297,3 +297,17 @@ main {
     flex-basis: 100%;
   }
 }
+
+.consent {
+  max-width: 34rem;
+}
+
+.consent code {
+  word-break: break-all;
+}
+
+.consent-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 1.2rem;
+}

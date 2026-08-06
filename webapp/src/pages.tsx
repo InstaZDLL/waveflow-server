@@ -2,6 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
+  authorize,
   formatDuration,
   getAlbum,
   getArtist,
@@ -57,7 +58,10 @@ export function LoginPage() {
     setError(null);
     try {
       await login(username, password);
-      await navigate({ to: "/" });
+      const next = sessionStorage.getItem("waveflow.after-login");
+      sessionStorage.removeItem("waveflow.after-login");
+      if (next) window.location.assign(next);
+      else await navigate({ to: "/" });
     } catch {
       setError("Wrong username or password.");
     } finally {
@@ -306,6 +310,81 @@ export function SearchPage() {
             value.songs.length === 0 && <p className="muted">Nothing found.</p>}
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * Consent screen for the native Authorization Code + PKCE flow.
+ *
+ * The desktop application opens this URL in the system browser with its PKCE
+ * parameters; approving posts them back with the browser session attached and
+ * follows the redirect the server computes.
+ */
+export function AuthorizePage() {
+  const params = new URLSearchParams(window.location.search);
+  const clientId = params.get("client_id") ?? "";
+  const redirectUri = params.get("redirect_uri") ?? "";
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const missing = !clientId || !redirectUri || !params.get("code_challenge");
+
+  async function approve() {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await authorize({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        code_challenge: params.get("code_challenge") ?? "",
+        code_challenge_method: params.get("code_challenge_method") ?? "S256",
+        state: params.get("state"),
+        device_name: params.get("device_name") ?? clientId,
+      });
+      window.location.assign(response.redirect_to);
+    } catch {
+      setError("The application sent an authorisation request we cannot honour.");
+      setBusy(false);
+    }
+  }
+
+  function deny() {
+    const url = new URL(redirectUri);
+    url.searchParams.set("error", "access_denied");
+    const state = params.get("state");
+    if (state) url.searchParams.set("state", state);
+    window.location.assign(url.toString());
+  }
+
+  if (missing) {
+    return (
+      <section>
+        <h2>Authorisation</h2>
+        <p className="error">This authorisation link is incomplete.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="consent">
+      <h2>Authorise {clientId}</h2>
+      <p className="muted">
+        It will be able to browse your libraries, play your music and manage
+        your playlists, favourites and ratings — everything this account can do.
+      </p>
+      <p className="muted">
+        Sending you back to <code>{redirectUri}</code>
+      </p>
+      {error && <p className="error">{error}</p>}
+      <div className="consent-actions">
+        <button onClick={() => void approve()} disabled={busy}>
+          {busy ? "Authorising…" : "Authorise"}
+        </button>
+        <button onClick={deny} disabled={busy}>
+          Cancel
+        </button>
+      </div>
     </section>
   );
 }

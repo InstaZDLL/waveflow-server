@@ -118,6 +118,36 @@ pub struct SaveQueueRequest {
     pub client: Option<String>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AuthorizeRequest {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub code_challenge: String,
+    #[serde(default = "default_challenge_method")]
+    pub code_challenge_method: String,
+    pub state: Option<String>,
+    /// Name recorded for the device this grant will create a session for.
+    pub device_name: String,
+}
+
+fn default_challenge_method() -> String {
+    "S256".into()
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthorizeResponse {
+    /// Where the consent screen must send the user agent.
+    pub redirect_to: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct TokenRequest {
+    pub code: String,
+    pub code_verifier: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct StarredEntry {
     pub entity_type: String,
@@ -139,6 +169,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/auth/login", post(login))
         .route("/api/v2/auth/refresh", post(refresh))
         .route("/api/v2/auth/logout", post(logout))
+        .route("/api/v2/oauth/authorize", post(oauth_authorize))
+        // No auth layer: the code plus its PKCE verifier are the credential.
+        .route("/api/v2/oauth/token", post(oauth_token))
         .route("/api/v2/libraries/{library_id}/scans", post(start_scan))
         .route("/api/v2/scans/{scan_id}", get(scan_status))
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
@@ -465,6 +498,79 @@ pub async fn search_catalog(
         .await
         .map(Json)
         .map_err(service_error)
+}
+
+#[utoipa::path(post, path = "/api/v2/oauth/authorize", tag = "authentication", request_body = AuthorizeRequest, responses((status = 200, body = AuthorizeResponse), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn oauth_authorize(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AuthorizeRequest>,
+) -> Result<Json<AuthorizeResponse>, ApiError> {
+    // The browser session is the proof of identity; the consent screen is a
+    // route of the embedded client, so this is a JSON call rather than a form.
+    let user = authenticated(&state, &headers).await?;
+    crate::oauth::validate_redirect_uri(&request.redirect_uri).map_err(|_| ApiError::Validation)?;
+    crate::oauth::validate_challenge(&request.code_challenge_method, &request.code_challenge)
+        .map_err(|_| ApiError::Validation)?;
+    if request.client_id.trim().is_empty() || request.device_name.trim().is_empty() {
+        return Err(ApiError::Validation);
+    }
+
+    let code = crate::security::generate_token("wfc_");
+    let now = crate::authentication::now_ms();
+    state
+        .db
+        .create_authorization(crate::database::NewAuthorization {
+            code_hash: crate::security::token_hash(&code),
+            user_id: user.id,
+            client_id: request.client_id.trim(),
+            redirect_uri: &request.redirect_uri,
+            code_challenge: &request.code_challenge,
+            device_name: request.device_name.trim(),
+            now_ms: now,
+            expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
+        })
+        .await
+        .map_err(db_error)?;
+    Ok(Json(AuthorizeResponse {
+        redirect_to: crate::oauth::redirect_with_code(
+            &request.redirect_uri,
+            &code,
+            request.state.as_deref(),
+        ),
+    }))
+}
+
+#[utoipa::path(post, path = "/api/v2/oauth/token", tag = "authentication", request_body = TokenRequest, responses((status = 200, body = crate::authentication::AuthTokens), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+pub async fn oauth_token(
+    State(state): State<AppState>,
+    Json(request): Json<TokenRequest>,
+) -> Result<Json<crate::authentication::AuthTokens>, ApiError> {
+    // Mounted without authentication by design: the code plus the verifier are
+    // the credential. Every rejection below is the same 401 so a caller cannot
+    // learn whether a code existed, expired, or was already spent.
+    let now = crate::authentication::now_ms();
+    let grant = state
+        .db
+        .redeem_authorization(&crate::security::token_hash(&request.code), now)
+        .await
+        .map_err(db_error)?
+        .ok_or(ApiError::Unauthorized)?;
+    if grant.client_id != request.client_id.trim()
+        || grant.redirect_uri != request.redirect_uri
+        || crate::oauth::verify_challenge(&grant.code_challenge, &request.code_verifier).is_err()
+    {
+        return Err(ApiError::Unauthorized);
+    }
+    state
+        .auth
+        .issue_session_for_account(grant.user_id, &grant.device_name)
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            crate::authentication::AuthError::Unavailable => ApiError::Unavailable,
+            _ => ApiError::Unauthorized,
+        })
 }
 
 #[utoipa::path(get, path = "/api/v2/playlists", tag = "user-data", responses((status = 200, body = [crate::services::PlaylistItem]), (status = 401, body = ErrorResponse)))]

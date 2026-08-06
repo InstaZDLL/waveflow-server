@@ -7,6 +7,7 @@ pub mod config;
 pub mod database;
 pub mod http;
 pub mod media;
+pub mod oauth;
 pub mod scanner;
 pub mod security;
 pub mod services;
@@ -65,6 +66,8 @@ pub struct AppState {
         http::login,
         http::refresh,
         http::logout,
+        http::oauth_authorize,
+        http::oauth_token,
         http::start_scan,
         http::scan_status,
         http::scan_events,
@@ -117,6 +120,9 @@ pub struct AppState {
         http::RatingRequest,
         http::ScrobbleRequest,
         http::SaveQueueRequest,
+        http::AuthorizeRequest,
+        http::AuthorizeResponse,
+        http::TokenRequest,
         http::StarredEntry,
         http::NowPlayingEntry,
         media::StreamTicketResponse,
