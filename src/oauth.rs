@@ -52,8 +52,9 @@ pub fn validate_challenge(method: &str, challenge: &str) -> Result<(), GrantErro
     if !method.eq_ignore_ascii_case("S256") {
         return Err(GrantError::UnsupportedChallenge);
     }
-    // 43 characters is the base64url length of a 32-byte digest.
-    if challenge.len() < 43 || challenge.len() > 128 {
+    // base64url of a 32-byte digest is always exactly 43 characters, so any
+    // other length is not an S256 challenge whatever else it might be.
+    if challenge.len() != 43 {
         return Err(GrantError::UnsupportedChallenge);
     }
     if !challenge
@@ -140,6 +141,11 @@ mod tests {
         assert_eq!(
             validate_challenge("S256", "short"),
             Err(GrantError::UnsupportedChallenge)
+        );
+        assert_eq!(
+            validate_challenge("S256", &"a".repeat(64)),
+            Err(GrantError::UnsupportedChallenge),
+            "an S256 challenge is exactly 43 characters"
         );
         assert_eq!(
             validate_challenge("S256", &"+".repeat(43)),

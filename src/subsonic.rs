@@ -1606,6 +1606,7 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("share", "entry")
             | ("users", "user")
             | ("user", "folder")
+            | ("openSubsonicExtensions", "openSubsonicExtension")
     )
 }
 

@@ -59,15 +59,20 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await login(username, password);
+      try {
+        await login(username, password);
+      } catch {
+        // Only a failed sign-in means bad credentials. Anything after it is a
+        // different problem and must not be reported as one.
+        setError("Wrong username or password.");
+        return;
+      }
       const next = safeInternalPath(
         sessionStorage.getItem("waveflow.after-login"),
       );
       sessionStorage.removeItem("waveflow.after-login");
       if (next) window.location.assign(next);
       else await navigate({ to: "/" });
-    } catch {
-      setError("Wrong username or password.");
     } finally {
       setBusy(false);
     }

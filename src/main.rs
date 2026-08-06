@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
 async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Result<()> {
     let bind_addr = config.bind_addr;
     state.scanner.spawn_background(config.scan_interval);
+    state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await

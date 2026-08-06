@@ -84,7 +84,26 @@ async function parse<T>(response: Response): Promise<T> {
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
-async function refresh(): Promise<boolean> {
+/**
+ * In-flight refresh, shared by every caller.
+ *
+ * Refresh tokens rotate, so two concurrent 401s each starting their own refresh
+ * would spend the same token twice: the second call presents one the server has
+ * already retired and the whole session is dropped. Callers await one operation
+ * instead.
+ */
+let pendingRefresh: Promise<boolean> | null = null;
+
+function refresh(): Promise<boolean> {
+  if (!pendingRefresh) {
+    pendingRefresh = performRefresh().finally(() => {
+      pendingRefresh = null;
+    });
+  }
+  return pendingRefresh;
+}
+
+async function performRefresh(): Promise<boolean> {
   const tokens = storedTokens();
   if (!tokens) return false;
   const response = await fetch("/api/v2/auth/refresh", {
@@ -146,10 +165,23 @@ export async function logout(): Promise<void> {
   }
 }
 
-export const listAlbums = () => call<Album[]>("/api/v2/albums?limit=500");
+/** Walks the paged endpoint to completion; the server caps a page at 500. */
+async function collect<T>(path: string): Promise<T[]> {
+  const pageSize = 500;
+  const all: T[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await call<T[]>(
+      `${path}?limit=${pageSize}&offset=${offset}`,
+    );
+    all.push(...page);
+    if (page.length < pageSize) return all;
+  }
+}
+
+export const listAlbums = () => collect<Album>("/api/v2/albums");
 export const getAlbum = (id: string) =>
   call<AlbumDetail>(`/api/v2/albums/${id}`);
-export const listArtists = () => call<Artist[]>("/api/v2/artists?limit=500");
+export const listArtists = () => collect<Artist>("/api/v2/artists");
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 export const search = (query: string) =>

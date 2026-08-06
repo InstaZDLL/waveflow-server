@@ -474,7 +474,8 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)?;
         let albums = sqlx::query(concat!(
             album_select!(),
-            " AND al.album_artist_id=? ORDER BY al.year, al.title COLLATE NOCASE, al.id"
+            " AND al.album_artist_id=? \
+              ORDER BY al.year NULLS LAST, al.title COLLATE NOCASE, al.id"
         ))
         .bind(user_id.to_string())
         .bind(artist_id.to_string())

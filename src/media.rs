@@ -38,6 +38,10 @@ use crate::{catalog::StreamTrack, config::Config, AppState};
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 const TRANSCODE_PROFILE_VERSION: &str = "waveflow-ffmpeg-v1";
+/// Audio is tenant-scoped and reached through a bearer token or a stream
+/// ticket, so the same URL means different things to different callers. No
+/// shared cache may retain a copy.
+const MEDIA_CACHE_CONTROL: &str = "private, no-store";
 
 #[derive(Clone)]
 pub struct MediaService {
@@ -386,7 +390,7 @@ impl MediaService {
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, mime_for_format(format)),
-                (header::CACHE_CONTROL, "private, no-store"),
+                (header::CACHE_CONTROL, MEDIA_CACHE_CONTROL),
                 (header::ACCEPT_RANGES, "none"),
             ],
             body,
@@ -462,8 +466,15 @@ pub async fn create_stream_ticket(
             MediaError::Internal
         })?
         .ok_or(MediaError::NotFound)?;
-    let expires_at = crate::authentication::now_ms()
-        + i64::try_from(state.stream_ticket_ttl.as_millis()).unwrap_or(i64::MAX);
+    // Saturating on overflow would mint a ticket that never expires; a TTL that
+    // cannot be represented is a misconfiguration, not something to round off.
+    let expires_at = i64::try_from(state.stream_ticket_ttl.as_millis())
+        .ok()
+        .and_then(|ttl| crate::authentication::now_ms().checked_add(ttl))
+        .ok_or_else(|| {
+            tracing::error!("stream ticket TTL does not fit in an epoch timestamp");
+            MediaError::Internal
+        })?;
     let ticket = crate::stream_ticket::mint(&state.secret_box, user.id, track_id, expires_at)
         .map_err(|error| {
             tracing::error!(error = %error, "stream ticket minting failed");
@@ -689,6 +700,10 @@ async fn serve_file(
             response
                 .headers_mut()
                 .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(MEDIA_CACHE_CONTROL),
+            );
             Ok(response)
         }
     }
@@ -715,6 +730,10 @@ async fn serve_partial(
         HeaderValue::from_str(&length.to_string()).map_err(|_| MediaError::Internal)?,
     );
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(MEDIA_CACHE_CONTROL),
+    );
     headers.insert(
         header::CONTENT_RANGE,
         HeaderValue::from_str(&format!("bytes {start}-{end}/{size}"))
