@@ -230,3 +230,19 @@ export function isAllowedRedirect(redirectUri: string): boolean {
       return url.protocol.slice(0, -1).includes(".");
   }
 }
+
+/**
+ * Narrows a remembered destination to a same-document path.
+ *
+ * The value is read back from storage and handed to `location.assign`, which
+ * resolves far more than a path: `//host` is protocol-relative and leaves the
+ * origin entirely, and a `javascript:` value would execute. Only a single
+ * leading slash followed by a non-slash, non-backslash character is a path —
+ * browsers normalise backslashes, so `/\host` escapes just like `//host`.
+ */
+export function safeInternalPath(value: string | null): string | null {
+  if (!value || value.length < 1) return null;
+  if (value[0] !== "/") return null;
+  if (value[1] === "/" || value[1] === "\\") return null;
+  return value;
+}
