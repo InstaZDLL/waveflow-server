@@ -186,3 +186,18 @@ export function formatDuration(ms: number): string {
   const seconds = total % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
+
+export type AuthorizeRequest = {
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  state: string | null;
+  device_name: string;
+};
+
+export const authorize = (request: AuthorizeRequest) =>
+  call<{ redirect_to: string }>("/api/v2/oauth/authorize", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });

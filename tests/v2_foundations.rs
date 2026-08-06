@@ -2767,3 +2767,176 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn pkce_authorization_grants_a_native_session_exactly_once() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    state
+        .db
+        .create_account("pkce-user", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+    let token = login_token(&router, "pkce-user", password).await;
+
+    let verifier = "H1r8mQ2xY7pL4vC0nB6zK9tW3sD5gJ8fA2eR7uI1oP4";
+    let challenge = waveflow_server::oauth::challenge_for(verifier);
+    let redirect_uri = "http://127.0.0.1:49152/callback";
+
+    let authorize = |body: serde_json::Value, bearer: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut request =
+                Request::post("/api/v2/oauth/authorize").header("content-type", "application/json");
+            if let Some(bearer) = bearer {
+                request = request.header("authorization", format!("Bearer {bearer}"));
+            }
+            router
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let exchange = |body: serde_json::Value| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::post("/api/v2/oauth/token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let grant = serde_json::json!({
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": "opaque-state",
+        "device_name": "WaveFlow Desktop"
+    });
+
+    // Granting requires the browser session: the consent screen is authenticated.
+    assert_eq!(
+        authorize(grant.clone(), None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    // A redirect that could carry the code off the machine is refused.
+    let mut remote = grant.clone();
+    remote["redirect_uri"] = "http://evil.example.com/cb".into();
+    assert_eq!(
+        authorize(remote, Some(token.clone())).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // "plain" would defeat the point of PKCE.
+    let mut plain = grant.clone();
+    plain["code_challenge_method"] = "plain".into();
+    assert_eq!(
+        authorize(plain, Some(token.clone())).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let granted = authorize(grant.clone(), Some(token.clone())).await;
+    assert_eq!(granted.status(), StatusCode::OK);
+    let redirect_to = json_body(granted).await["redirect_to"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(redirect_to.starts_with(redirect_uri));
+    assert!(redirect_to.contains("state=opaque-state"));
+    let code = redirect_to
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // Without the verifier the code is useless, which is the whole point. The
+    // attempt also burns the code: presenting one at all spends it, so a
+    // verifier cannot be guessed across retries.
+    let wrong = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2H1g0F9e",
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    let after_failure = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(
+        after_failure.status(),
+        StatusCode::UNAUTHORIZED,
+        "a failed exchange spends the code; the client restarts the flow"
+    );
+
+    // A fresh grant completes normally.
+    let granted = authorize(grant.clone(), Some(token.clone())).await;
+    assert_eq!(granted.status(), StatusCode::OK);
+    let redirect_to = json_body(granted).await["redirect_to"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let code = redirect_to
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let exchanged = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(exchanged.status(), StatusCode::OK);
+    let tokens = json_body(exchanged).await;
+    let access = tokens["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(tokens["user"]["username"], "pkce-user");
+
+    // The issued session is a real one.
+    let albums = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(albums.status(), StatusCode::OK);
+
+    // A replayed code must not yield a second session.
+    let replay = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(
+        replay.status(),
+        StatusCode::UNAUTHORIZED,
+        "an authorization code is single use"
+    );
+}
