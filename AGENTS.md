@@ -5,8 +5,9 @@
 This monorepo is being rebuilt as WaveFlow Server v2. The accepted design is `docs/rfcs/RFC-002-waveflow-server-v2.md`; read it before adding a module or public route.
 
 - `/`: one axum binary with SQLite as the only v2 database.
-- `web/`: legacy TanStack/Better Auth v1 code until the M4 embedded SPA migration.
-- `src/db.rs`, old `src/api/*`, `migrations/` and old integration tests are transition evidence. They are not part of the default v2 crate and must not be extended.
+- `web/`: the superseded TanStack/Better Auth v1 front end, kept only until its reusable parts are salvaged. It is not built, served or tested.
+- `webapp/`: the embedded React client, built to `webapp/dist` and compiled into the binary by `rust_embed`. Build it before the server, never after.
+- The v1 PostgreSQL/JWKS implementation has been removed. Anything predating RFC-002 lives in git history only.
 
 ## Commands
 
