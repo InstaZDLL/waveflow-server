@@ -201,3 +201,32 @@ export const authorize = (request: AuthorizeRequest) =>
     method: "POST",
     body: JSON.stringify(request),
   });
+
+/**
+ * Mirrors the server's `validate_redirect_uri` policy.
+ *
+ * The consent screen navigates to the client's redirect target itself when the
+ * user cancels, and that target arrives in the query string. Without this check
+ * the page is an open redirect: no authorisation code leaks, but a crafted link
+ * borrows the server's origin to bounce a visitor anywhere. The server remains
+ * the authority for approvals; this guards the navigation the client performs.
+ */
+export function isAllowedRedirect(redirectUri: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return false;
+  }
+  if (url.hash) return false;
+  switch (url.protocol) {
+    case "http:":
+      return ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
+    case "https:":
+      return true;
+    default:
+      // A private-use scheme must be a reverse-domain name, never a bare word
+      // another application could plausibly claim.
+      return url.protocol.slice(0, -1).includes(".");
+  }
+}
