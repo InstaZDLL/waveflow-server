@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   authorize,
   isAllowedRedirect,
+  safeInternalPath,
   formatDuration,
   getAlbum,
   getArtist,
@@ -59,7 +60,9 @@ export function LoginPage() {
     setError(null);
     try {
       await login(username, password);
-      const next = sessionStorage.getItem("waveflow.after-login");
+      const next = safeInternalPath(
+        sessionStorage.getItem("waveflow.after-login"),
+      );
       sessionStorage.removeItem("waveflow.after-login");
       if (next) window.location.assign(next);
       else await navigate({ to: "/" });

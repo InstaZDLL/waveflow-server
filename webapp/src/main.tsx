@@ -68,6 +68,8 @@ const authedRoute = createRoute({
       // Remember where the user was headed so a desktop authorisation link
       // survives the detour through sign-in instead of dropping its PKCE
       // parameters and forcing the client to start over.
+      // Stored and re-read as a path only; safeInternalPath re-checks it on the
+      // way out, since location.pathname can itself begin with "//".
       sessionStorage.setItem(
         "waveflow.after-login",
         window.location.pathname + window.location.search,
