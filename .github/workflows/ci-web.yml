@@ -1,20 +1,24 @@
 name: CI (Web)
 
-# Web client CI. Triggered only on web/** changes (plus this
-# workflow file). Mirrors the workflow that lived at
-# `web/.github/workflows/ci.yml` before the monorepo merge but with
-# every shell step rooted in `web/` and the trigger gated by path.
+# Embedded web client CI, rooted in `webapp/`.
+#
+# It validates the client on its own terms — a broken build here also breaks
+# the Rust build, since rust_embed compiles `webapp/dist` into the binary, but
+# the Rust job would only report it as a missing asset.
+#
+# The superseded `web/` front end is deliberately not covered: it is not built,
+# served or tested, and gating merges on a dead surface would be noise.
 
 on:
   push:
     branches: [main]
     paths:
-      - "web/**"
+      - "webapp/**"
       - ".github/workflows/ci-web.yml"
   pull_request:
     branches: [main]
     paths:
-      - "web/**"
+      - "webapp/**"
       - ".github/workflows/ci-web.yml"
 
 permissions:
@@ -26,11 +30,11 @@ concurrency:
 
 defaults:
   run:
-    working-directory: web
+    working-directory: webapp
 
 jobs:
   lint-typecheck-build-test:
-    name: Lint / Typecheck / Build / Test
+    name: Typecheck / Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,22 +67,8 @@ jobs:
         # instead of silently regenerating against the registry.
         run: bun install --frozen-lockfile
 
-      - name: Prettier check
-        run: bun run format:check
-
-      - name: ESLint
-        run: bun run lint
-
+      # `bun run build` typechecks before bundling, so this covers both.
+      # The client carries no linter or test runner yet; adding steps for
+      # scripts that do not exist would fail the job without checking anything.
       - name: Build
-        # Runs first so the TanStack Router plugin can regenerate
-        # `src/routeTree.gen.ts` (which is gitignored). The typecheck
-        # step below imports it; without a prior build it would 404.
         run: bun run build
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        # `vitest run` is configured in package.json — no watch mode
-        # so it exits cleanly under the runner.
-        run: bun run test
