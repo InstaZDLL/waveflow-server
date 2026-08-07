@@ -509,39 +509,22 @@ pub async fn oauth_authorize(
     // The browser session is the proof of identity; the consent screen is a
     // route of the embedded client, so this is a JSON call rather than a form.
     let user = authenticated(&state, &headers).await?;
-    crate::oauth::validate_redirect_uri(&request.redirect_uri).map_err(|_| ApiError::Validation)?;
-    crate::oauth::validate_challenge(&request.code_challenge_method, &request.code_challenge)
-        .map_err(|_| ApiError::Validation)?;
-    let device_name = request.device_name.trim();
-    // Checked here rather than only at redemption: a name the session issuer
-    // would reject must not burn a code before the client can use it.
-    if request.client_id.trim().is_empty() || device_name.is_empty() || device_name.len() > 120 {
-        return Err(ApiError::Validation);
-    }
-
-    let code = crate::security::generate_token("wfc_");
-    let now = crate::authentication::now_ms();
-    state
-        .db
-        .create_authorization(crate::database::NewAuthorization {
-            code_hash: crate::security::token_hash(&code),
-            user_id: user.id,
-            client_id: request.client_id.trim(),
-            redirect_uri: &request.redirect_uri,
-            code_challenge: &request.code_challenge,
-            device_name,
-            now_ms: now,
-            expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
-        })
+    let redirect_to = state
+        .services
+        .authorize_native_client(
+            user.id,
+            crate::services::AuthorizationRequest {
+                client_id: &request.client_id,
+                redirect_uri: &request.redirect_uri,
+                code_challenge: &request.code_challenge,
+                code_challenge_method: &request.code_challenge_method,
+                device_name: &request.device_name,
+                state: request.state.as_deref(),
+            },
+        )
         .await
-        .map_err(db_error)?;
-    Ok(Json(AuthorizeResponse {
-        redirect_to: crate::oauth::redirect_with_code(
-            &request.redirect_uri,
-            &code,
-            request.state.as_deref(),
-        ),
-    }))
+        .map_err(service_error)?;
+    Ok(Json(AuthorizeResponse { redirect_to }))
 }
 
 #[utoipa::path(post, path = "/api/v2/oauth/token", tag = "authentication", request_body = TokenRequest, responses((status = 200, body = crate::authentication::AuthTokens), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]

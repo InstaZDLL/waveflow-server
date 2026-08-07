@@ -57,13 +57,16 @@ pub fn validate_challenge(method: &str, challenge: &str) -> Result<(), GrantErro
     if challenge.len() != 43 {
         return Err(GrantError::UnsupportedChallenge);
     }
-    if !challenge
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return Err(GrantError::UnsupportedChallenge);
+    // Decoding also settles canonicality. 43 characters carry 258 bits, so the
+    // last one has two spare bits that a real digest leaves zero; a value that
+    // sets them is a different string that no verifier can ever reproduce,
+    // since verification compares the encoded form. Rejecting it here fails the
+    // request instead of issuing a grant whose exchange is doomed — and that
+    // exchange would spend the code on its way to failing.
+    match URL_SAFE_NO_PAD.decode(challenge) {
+        Ok(digest) if digest.len() == 32 => Ok(()),
+        _ => Err(GrantError::UnsupportedChallenge),
     }
-    Ok(())
 }
 
 /// The S256 challenge for a verifier: `base64url(sha256(verifier))`.
@@ -151,6 +154,23 @@ mod tests {
             validate_challenge("S256", &"+".repeat(43)),
             Err(GrantError::UnsupportedChallenge),
             "standard base64 padding characters are not base64url"
+        );
+
+        // Right length, right alphabet, but the final character sets padding
+        // bits a digest never sets. It decodes to nothing a verifier can match.
+        let canonical = challenge_for(&"x".repeat(64));
+        const ALPHABET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let last = canonical.chars().last().unwrap();
+        let shifted = ALPHABET
+            .chars()
+            .nth(ALPHABET.chars().position(|c| c == last).unwrap() + 1)
+            .unwrap();
+        let non_canonical = format!("{}{shifted}", &canonical[..42]);
+        assert_eq!(non_canonical.len(), 43);
+        assert_eq!(
+            validate_challenge("S256", &non_canonical),
+            Err(GrantError::UnsupportedChallenge),
+            "a non-canonical encoding is not a challenge any verifier can match"
         );
     }
 

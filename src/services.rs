@@ -180,6 +180,17 @@ pub struct ArtistDetail {
     pub albums: Vec<AlbumItem>,
 }
 
+/// Inputs for a native client's authorization request.
+#[derive(Debug, Clone, Copy)]
+pub struct AuthorizationRequest<'a> {
+    pub client_id: &'a str,
+    pub redirect_uri: &'a str,
+    pub code_challenge: &'a str,
+    pub code_challenge_method: &'a str,
+    pub device_name: &'a str,
+    pub state: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SearchResult {
     pub artists: Vec<ArtistItem>,
@@ -557,6 +568,50 @@ impl DomainServices {
             albums,
             songs,
         })
+    }
+
+    /// Issues an authorization code for a native client.
+    ///
+    /// Validation, credential generation and persistence live here rather than
+    /// in the handler so the grant rules hold for every surface that ever
+    /// issues one, and so they can be exercised without an HTTP request.
+    /// Returns the URL the consent screen must send the user agent to.
+    pub async fn authorize_native_client(
+        &self,
+        user_id: Uuid,
+        request: AuthorizationRequest<'_>,
+    ) -> Result<String, ServiceError> {
+        crate::oauth::validate_redirect_uri(request.redirect_uri)
+            .map_err(|_| ServiceError::Invalid)?;
+        crate::oauth::validate_challenge(request.code_challenge_method, request.code_challenge)
+            .map_err(|_| ServiceError::Invalid)?;
+        let client_id = request.client_id.trim();
+        let device_name = request.device_name.trim();
+        // Checked before the code exists: a name the session issuer would
+        // reject must not burn a grant the client can never redeem.
+        if client_id.is_empty() || device_name.is_empty() || device_name.len() > 120 {
+            return Err(ServiceError::Invalid);
+        }
+
+        let code = security::generate_token("wfc_");
+        let now = now_ms();
+        self.db
+            .create_authorization(crate::database::NewAuthorization {
+                code_hash: security::token_hash(&code),
+                user_id,
+                client_id,
+                redirect_uri: request.redirect_uri,
+                code_challenge: request.code_challenge,
+                device_name,
+                now_ms: now,
+                expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
+            })
+            .await?;
+        Ok(crate::oauth::redirect_with_code(
+            request.redirect_uri,
+            &code,
+            request.state,
+        ))
     }
 
     pub async fn songs_by_ids(
