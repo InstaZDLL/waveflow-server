@@ -1,0 +1,313 @@
+/* Deliberately restrained: M4 ships a functional player, the studio-nocturne
+   visual identity lands in M6. Dark by default, light honoured if requested. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #262b35;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --line: #e2e5ea;
+    --text: #14171d;
+    --muted: #5d6675;
+    --accent: #2f6fd0;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.link,
+button.star {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.star {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+button[aria-pressed="true"].star {
+  color: var(--accent);
+}
+
+input {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: #ff6b6b;
+}
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 5.5rem;
+}
+
+nav {
+  display: flex;
+  gap: 1.2rem;
+  align-items: center;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-right: auto;
+}
+
+main {
+  padding: 1.5rem;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.centered {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.6rem;
+  display: grid;
+  gap: 0.9rem;
+  min-width: 20rem;
+}
+
+.card h1 {
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+}
+
+.card label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1.2rem;
+}
+
+.grid a {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.grid span {
+  font-size: 0.85rem;
+}
+
+.cover {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.cover.large {
+  width: 140px;
+  font-size: 3rem;
+}
+
+.detail-header {
+  display: flex;
+  gap: 1.2rem;
+  align-items: flex-end;
+  margin-bottom: 1.4rem;
+}
+
+.detail-header h2 {
+  margin: 0 0 0.2rem;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.55rem 0.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.songs {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.songs td {
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.songs tr.active {
+  color: var(--accent);
+}
+
+.songs .index {
+  width: 2.5rem;
+  color: var(--muted);
+}
+
+.search {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.2rem;
+}
+
+.search input {
+  flex: 1;
+}
+
+.player {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.7rem 1.5rem;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.player-track {
+  display: grid;
+  min-width: 12rem;
+  font-size: 0.9rem;
+}
+
+.player-track span {
+  color: var(--muted);
+}
+
+.player-controls {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.player-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.player-progress input {
+  flex: 1;
+  padding: 0;
+}
+
+@media (max-width: 700px) {
+  .player {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .player-progress {
+    order: 3;
+    width: 100%;
+    flex-basis: 100%;
+  }
+}
+
+.consent {
+  max-width: 34rem;
+}
+
+.consent code {
+  word-break: break-all;
+}
+
+.consent-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 1.2rem;
+}

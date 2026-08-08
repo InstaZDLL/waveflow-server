@@ -1089,6 +1089,14 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             assert!(response["subsonic-response"]["albumList"]["album"].is_array());
             assert!(response["subsonic-response"].get("albumList2").is_none());
         }
+        if method == "getOpenSubsonicExtensions" {
+            let extensions = &response["subsonic-response"]["openSubsonicExtensions"];
+            assert!(
+                extensions.is_array(),
+                "the extension list stays an array when empty, never an object"
+            );
+            assert!(extensions.as_array().unwrap().is_empty());
+        }
     }
     let exhausted_search = subsonic_json(
         &router,
@@ -2077,4 +2085,911 @@ async fn login_token(router: &axum::Router, username: &str, password: &str) -> S
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
+/// it is not a compilation, so `album_artist_id` is populated and the artist
+/// drill-down has something to resolve.
+#[allow(clippy::too_many_arguments)]
+fn browse_input(
+    index: usize,
+    title: &str,
+    album: &str,
+    artist: &str,
+    track_number: Option<i64>,
+    disc_number: Option<i64>,
+) -> CatalogTrackInput {
+    CatalogTrackInput {
+        relative_path: format!("browse-{index}.flac"),
+        file_size: 2048 + index as i64,
+        modified_at: 1_700_000_000_000 + index as i64,
+        quick_hash: format!("{:064x}", index + 500),
+        full_hash: format!("{:064x}", index + 900),
+        title: title.into(),
+        artist: Some(artist.into()),
+        album: Some(album.into()),
+        album_artist: Some(artist.into()),
+        is_compilation: false,
+        genre: Some("Ambient".into()),
+        year: Some(2024),
+        track_number,
+        disc_number,
+        duration_ms: 120_000,
+        bitrate: Some(900),
+        sample_rate: Some(44_100),
+        channels: Some(2),
+        bit_depth: Some(16),
+        codec: Some("FLAC".into()),
+        musical_key: None,
+        tag_rating: None,
+        artwork: None,
+    }
+}
+
+#[tokio::test]
+async fn native_browse_endpoints_page_search_and_isolate_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("browse-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("browse-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("browse-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Browse",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 5).await.unwrap();
+    // Tracks are applied out of sleeve order on purpose: the album drill-down
+    // must sort them, not echo insertion order.
+    for (index, (title, album, artist, track, disc)) in [
+        (
+            "Slow Tide",
+            "Aurora Fields",
+            "Lumen Drift",
+            Some(2),
+            Some(1),
+        ),
+        (
+            "First Light",
+            "Aurora Fields",
+            "Lumen Drift",
+            Some(1),
+            Some(1),
+        ),
+        // Incomplete tags are common in real libraries and must not jump ahead.
+        ("Hidden Track", "Aurora Fields", "Lumen Drift", None, None),
+        (
+            "Rivière Noire",
+            "Nocturne Bleue",
+            "Écho Solaire",
+            Some(2),
+            Some(1),
+        ),
+        (
+            "Prélude",
+            "Nocturne Bleue",
+            "Écho Solaire",
+            Some(1),
+            Some(1),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &browse_input(index, title, album, artist, track, disc),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "browse-owner", password).await;
+    let intruder_token = login_token(&router, "browse-intruder", password).await;
+
+    let get = |uri: String, token: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Albums are ordered by title, so Aurora Fields precedes Nocturne Bleue.
+    let albums = get("/api/v2/albums".into(), owner_token.clone()).await;
+    assert_eq!(albums.status(), StatusCode::OK);
+    let albums = json_body(albums).await;
+    let albums = albums.as_array().unwrap();
+    assert_eq!(albums.len(), 2);
+    assert_eq!(albums[0]["title"], "Aurora Fields");
+    assert_eq!(albums[1]["title"], "Nocturne Bleue");
+
+    // Paging is applied in SQL, not after the fact.
+    let page = get(
+        "/api/v2/albums?limit=1&offset=1".into(),
+        owner_token.clone(),
+    )
+    .await;
+    let page = json_body(page).await;
+    assert_eq!(page.as_array().unwrap().len(), 1);
+    assert_eq!(page[0]["title"], "Nocturne Bleue");
+
+    // The paging ceiling matches the Subsonic contract's 500-item cap.
+    let rejected = get("/api/v2/albums?limit=501".into(), owner_token.clone()).await;
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let album_id = albums[0]["id"].as_str().unwrap().to_owned();
+    let detail = get(format!("/api/v2/albums/{album_id}"), owner_token.clone()).await;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = json_body(detail).await;
+    assert_eq!(detail["title"], "Aurora Fields");
+    let songs = detail["songs"].as_array().unwrap();
+    assert_eq!(songs.len(), 3);
+    assert_eq!(songs[0]["title"], "First Light", "sleeve order wins");
+    assert_eq!(songs[1]["title"], "Slow Tide");
+    assert_eq!(
+        songs[2]["title"], "Hidden Track",
+        "an untagged track sorts last, not ahead of track 1"
+    );
+
+    let artists = get("/api/v2/artists".into(), owner_token.clone()).await;
+    let artists = json_body(artists).await;
+    let artists = artists.as_array().unwrap();
+    assert_eq!(artists.len(), 2);
+    let echo = artists
+        .iter()
+        .find(|artist| artist["name"] == "Écho Solaire")
+        .expect("accented artist is listed");
+    assert_eq!(echo["album_count"], 1);
+
+    let artist_id = echo["id"].as_str().unwrap().to_owned();
+    let detail = get(format!("/api/v2/artists/{artist_id}"), owner_token.clone()).await;
+    let detail = json_body(detail).await;
+    assert_eq!(detail["name"], "Écho Solaire");
+    assert_eq!(detail["albums"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["albums"][0]["title"], "Nocturne Bleue");
+
+    // FTS5 folds diacritics, so an unaccented query still reaches "Écho Solaire".
+    let found = get("/api/v2/search?q=echo".into(), owner_token.clone()).await;
+    assert_eq!(found.status(), StatusCode::OK);
+    let found = json_body(found).await;
+    assert_eq!(found["artists"].as_array().unwrap().len(), 1);
+    assert_eq!(found["artists"][0]["name"], "Écho Solaire");
+    assert_eq!(found["albums"].as_array().unwrap().len(), 1);
+    assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
+    assert_eq!(found["songs"].as_array().unwrap().len(), 2);
+
+    // A search with no usable term is an empty result, never a SQL error.
+    let blank = get("/api/v2/search?q=%20".into(), owner_token.clone()).await;
+    assert_eq!(blank.status(), StatusCode::OK);
+    let blank = json_body(blank).await;
+    assert!(blank["songs"].as_array().unwrap().is_empty());
+
+    // A foreign tenant sees an empty catalogue and cannot probe ids.
+    let foreign = get("/api/v2/albums".into(), intruder_token.clone()).await;
+    assert_eq!(foreign.status(), StatusCode::OK);
+    assert!(json_body(foreign).await.as_array().unwrap().is_empty());
+    for uri in [
+        format!("/api/v2/albums/{album_id}"),
+        format!("/api/v2/artists/{artist_id}"),
+    ] {
+        let response = get(uri, intruder_token.clone()).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "foreign ids must not be distinguishable from missing ones"
+        );
+    }
+    let foreign_search = get("/api/v2/search?q=echo".into(), intruder_token).await;
+    let foreign_search = json_body(foreign_search).await;
+    assert!(foreign_search["artists"].as_array().unwrap().is_empty());
+    assert!(foreign_search["songs"].as_array().unwrap().is_empty());
+
+    // Anonymous access is rejected before any catalogue work happens.
+    let anonymous = router
+        .clone()
+        .oneshot(Request::get("/api/v2/albums").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("data-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("data-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("data-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "User data",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    for (index, title) in ["First Light", "Slow Tide"].into_iter().enumerate() {
+        state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &browse_input(
+                    index,
+                    title,
+                    "Aurora Fields",
+                    "Lumen Drift",
+                    Some(index as i64 + 1),
+                    Some(1),
+                ),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "data-owner", password).await;
+    let intruder_token = login_token(&router, "data-intruder", password).await;
+
+    let send =
+        |method: &'static str, uri: String, token: String, body: Option<serde_json::Value>| {
+            let router = router.clone();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {token}"));
+                let request = match body {
+                    Some(body) => request
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                    None => request.body(Body::empty()).unwrap(),
+                };
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+    // Collect the track ids through the native browse surface.
+    let albums = send("GET", "/api/v2/albums".into(), owner_token.clone(), None).await;
+    let albums = json_body(albums).await;
+    let album_id = albums[0]["id"].as_str().unwrap().to_owned();
+    let detail = send(
+        "GET",
+        format!("/api/v2/albums/{album_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    let detail = json_body(detail).await;
+    let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
+    let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
+
+    // Playlists: create, read back, mutate, then delete.
+    let created = send(
+        "POST",
+        "/api/v2/playlists".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({ "name": "Evening", "track_ids": [first] })),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    let playlist_id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["songs"].as_array().unwrap().len(), 1);
+
+    let listed = send("GET", "/api/v2/playlists".into(), owner_token.clone(), None).await;
+    assert_eq!(json_body(listed).await.as_array().unwrap().len(), 1);
+
+    let updated = send(
+        "PATCH",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "comment": "late night", "add": [second] })),
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = json_body(updated).await;
+    assert_eq!(updated["comment"], "late night");
+    assert_eq!(updated["songs"].as_array().unwrap().len(), 2);
+
+    // Favorites round-trip through the dedicated collection.
+    let starred = send(
+        "PUT",
+        format!("/api/v2/favorites/track/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(starred.status(), StatusCode::NO_CONTENT);
+    let favorites = send("GET", "/api/v2/favorites".into(), owner_token.clone(), None).await;
+    let favorites = json_body(favorites).await;
+    assert_eq!(favorites.as_array().unwrap().len(), 1);
+    assert_eq!(favorites[0]["entity_type"], "track");
+    assert_eq!(favorites[0]["entity_id"], first);
+
+    let unstarred = send(
+        "DELETE",
+        format!("/api/v2/favorites/track/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(unstarred.status(), StatusCode::NO_CONTENT);
+    let favorites = send("GET", "/api/v2/favorites".into(), owner_token.clone(), None).await;
+    assert!(json_body(favorites).await.as_array().unwrap().is_empty());
+
+    // Ratings are read back through the browse surface, not inferred.
+    let rated = send(
+        "PUT",
+        format!("/api/v2/ratings/track/{first}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "rating": 4 })),
+    )
+    .await;
+    assert_eq!(rated.status(), StatusCode::NO_CONTENT);
+    let detail = send(
+        "GET",
+        format!("/api/v2/albums/{album_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(json_body(detail).await["songs"][0]["user_rating"], 4);
+
+    // Out-of-range ratings and unknown entity kinds are refused, not stored.
+    let invalid = send(
+        "PUT",
+        format!("/api/v2/ratings/track/{first}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "rating": 6 })),
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unknown_kind = send(
+        "PUT",
+        format!("/api/v2/favorites/banana/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_kind.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let scrobbled = send(
+        "POST",
+        "/api/v2/scrobbles".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({ "track_id": first, "submission": true })),
+    )
+    .await;
+    assert_eq!(scrobbled.status(), StatusCode::NO_CONTENT);
+
+    // The queue survives a write/read round-trip.
+    let saved = send(
+        "PUT",
+        "/api/v2/queue".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({
+            "track_ids": [first, second],
+            "current": first,
+            "position_ms": 4200,
+            "client": "test"
+        })),
+    )
+    .await;
+    assert_eq!(saved.status(), StatusCode::NO_CONTENT);
+    let queue = send("GET", "/api/v2/queue".into(), owner_token.clone(), None).await;
+    let queue = json_body(queue).await;
+    assert_eq!(queue["position_ms"], 4200);
+    assert_eq!(queue["current"], first);
+    assert_eq!(queue["songs"].as_array().unwrap().len(), 2);
+
+    // A foreign tenant can neither read nor mutate any of it.
+    let foreign_playlists = send(
+        "GET",
+        "/api/v2/playlists".into(),
+        intruder_token.clone(),
+        None,
+    )
+    .await;
+    assert!(json_body(foreign_playlists)
+        .await
+        .as_array()
+        .unwrap()
+        .is_empty());
+    for (method, uri) in [
+        ("GET", format!("/api/v2/playlists/{playlist_id}")),
+        ("DELETE", format!("/api/v2/playlists/{playlist_id}")),
+        ("PUT", format!("/api/v2/favorites/track/{first}")),
+    ] {
+        let response = send(method, uri, intruder_token.clone(), None).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{method} must not reach another tenant's data"
+        );
+    }
+    let foreign_queue = send("GET", "/api/v2/queue".into(), intruder_token.clone(), None).await;
+    assert_eq!(foreign_queue.status(), StatusCode::OK);
+    assert!(json_body(foreign_queue).await.is_null());
+
+    // Deleting the playlist makes it unreachable for its owner too.
+    let deleted = send(
+        "DELETE",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let gone = send(
+        "GET",
+        format!("/api/v2/playlists/{playlist_id}"),
+        owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+
+    let get = |uri: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // The shell is served at the root.
+    let root = get("/").await;
+    assert_eq!(root.status(), StatusCode::OK);
+    assert!(root.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    // The shell must never be cached: it is what points at the hashed assets.
+    assert_eq!(root.headers()["cache-control"], "no-cache");
+
+    // Client-side routes resolve to the same shell rather than 404.
+    let deep = get("/albums/some-client-route").await;
+    assert_eq!(deep.status(), StatusCode::OK);
+    assert!(deep.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
+    // An unknown API path stays a JSON 404 instead of silently returning HTML.
+    let missing_api = get("/api/v2/does-not-exist").await;
+    assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        missing_api.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap(),
+        "application/json"
+    );
+
+    // The other server namespaces answer as themselves rather than falling
+    // through: /rest keeps its Subsonic error contract (400 for a missing
+    // credential), /share is a plain 404. Neither may return the client shell.
+    for uri in ["/rest/nope", "/share/nope"] {
+        let response = get(uri).await;
+        assert!(
+            response.status().is_client_error(),
+            "{uri} answered {}",
+            response.status()
+        );
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .map(|value| value.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        assert!(
+            !content_type.starts_with("text/html"),
+            "{uri} must not return the client shell"
+        );
+    }
+
+    // A client route that merely starts like a reserved endpoint is not one.
+    let lookalike = get("/reference-guide").await;
+    assert_eq!(lookalike.status(), StatusCode::OK);
+    assert!(lookalike.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
+    // Real routes are untouched by the fallback.
+    let health = get("/health").await;
+    assert_eq!(health.status(), StatusCode::OK);
+    assert_eq!(json_body(health).await["status"], "ok");
+}
+
+#[tokio::test]
+async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("ticket-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("ticket-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("ticket-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Ticket.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Tickets",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Tickets".into(),
+            root_path: root,
+        },
+    )
+    .await;
+
+    // Kept before `state` moves into the router, to mint an expired ticket below.
+    let secret_box = std::sync::Arc::clone(&state.secret_box);
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "ticket-owner", password).await;
+    let intruder_token = login_token(&router, "ticket-intruder", password).await;
+
+    let tracks = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/libraries/{library_id}/tracks"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let tracks = json_body(tracks).await;
+    let track_id = tracks[0]["id"].as_str().unwrap().to_owned();
+
+    let mint = |token: Option<String>| {
+        let router = router.clone();
+        let track_id = track_id.clone();
+        async move {
+            let request = Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
+                .body(Body::empty());
+            let request = match token {
+                Some(token) => Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+                None => request.unwrap(),
+            };
+            router.oneshot(request).await.unwrap()
+        }
+    };
+
+    // Minting requires a bearer; redeeming must not.
+    assert_eq!(mint(None).await.status(), StatusCode::UNAUTHORIZED);
+
+    let issued = mint(Some(owner_token.clone())).await;
+    assert_eq!(issued.status(), StatusCode::OK);
+    let issued = json_body(issued).await;
+    let url = issued["url"].as_str().unwrap().to_owned();
+    assert!(url.starts_with("/api/v2/stream/"));
+    assert!(issued["expires_at"].as_i64().unwrap() > now_ms());
+
+    // The ticket URL plays with no Authorization header at all.
+    let played = router
+        .clone()
+        .oneshot(Request::get(&url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(played.status(), StatusCode::OK);
+    assert_eq!(played.headers()["accept-ranges"], "bytes");
+
+    // Range requests work, which is what a browser seek relies on.
+    let ranged = router
+        .clone()
+        .oneshot(
+            Request::get(&url)
+                .header("range", "bytes=0-15")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+
+    // An expired ticket is refused even though it is otherwise well formed.
+    let expired = waveflow_server::stream_ticket::mint(
+        &secret_box,
+        owner,
+        uuid::Uuid::parse_str(&track_id).unwrap(),
+        now_ms() - 1,
+    )
+    .unwrap();
+    let expired = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/stream/{expired}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), StatusCode::NOT_FOUND);
+
+    // A tampered ticket is indistinguishable from an unknown track. The flipped
+    // character sits mid-ticket: trailing base64url characters carry spare bits,
+    // so changing one there can decode to the same bytes.
+    let prefix_len = "/api/v2/stream/".len();
+    let mut tampered: Vec<char> = url.chars().collect();
+    let middle = prefix_len + (tampered.len() - prefix_len) / 2;
+    tampered[middle] = if tampered[middle] == 'A' { 'B' } else { 'A' };
+    let tampered: String = tampered.into_iter().collect();
+    let forged = router
+        .clone()
+        .oneshot(Request::get(&tampered).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(forged.status(), StatusCode::NOT_FOUND);
+
+    // A tenant without access cannot mint a ticket in the first place.
+    assert_eq!(
+        mint(Some(intruder_token)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn pkce_authorization_grants_a_native_session_exactly_once() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    state
+        .db
+        .create_account("pkce-user", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+    let token = login_token(&router, "pkce-user", password).await;
+
+    let verifier = "H1r8mQ2xY7pL4vC0nB6zK9tW3sD5gJ8fA2eR7uI1oP4";
+    let challenge = waveflow_server::oauth::challenge_for(verifier);
+    let redirect_uri = "http://127.0.0.1:49152/callback";
+
+    let authorize = |body: serde_json::Value, bearer: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut request =
+                Request::post("/api/v2/oauth/authorize").header("content-type", "application/json");
+            if let Some(bearer) = bearer {
+                request = request.header("authorization", format!("Bearer {bearer}"));
+            }
+            router
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let exchange = |body: serde_json::Value| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::post("/api/v2/oauth/token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let grant = serde_json::json!({
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": "opaque-state",
+        "device_name": "WaveFlow Desktop"
+    });
+
+    // Granting requires the browser session: the consent screen is authenticated.
+    assert_eq!(
+        authorize(grant.clone(), None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    // A redirect that could carry the code off the machine is refused.
+    let mut remote = grant.clone();
+    remote["redirect_uri"] = "http://evil.example.com/cb".into();
+    assert_eq!(
+        authorize(remote, Some(token.clone())).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // "plain" would defeat the point of PKCE.
+    let mut plain = grant.clone();
+    plain["code_challenge_method"] = "plain".into();
+    assert_eq!(
+        authorize(plain, Some(token.clone())).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let granted = authorize(grant.clone(), Some(token.clone())).await;
+    assert_eq!(granted.status(), StatusCode::OK);
+    let redirect_to = json_body(granted).await["redirect_to"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(redirect_to.starts_with(redirect_uri));
+    assert!(redirect_to.contains("state=opaque-state"));
+    let code = redirect_to
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // Without the verifier the code is useless, which is the whole point. The
+    // attempt also burns the code: presenting one at all spends it, so a
+    // verifier cannot be guessed across retries.
+    let wrong = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2H1g0F9e",
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    let after_failure = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(
+        after_failure.status(),
+        StatusCode::UNAUTHORIZED,
+        "a failed exchange spends the code; the client restarts the flow"
+    );
+
+    // A fresh grant completes normally.
+    let granted = authorize(grant.clone(), Some(token.clone())).await;
+    assert_eq!(granted.status(), StatusCode::OK);
+    let redirect_to = json_body(granted).await["redirect_to"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let code = redirect_to
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let exchanged = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(exchanged.status(), StatusCode::OK);
+    let tokens = json_body(exchanged).await;
+    let access = tokens["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(tokens["user"]["username"], "pkce-user");
+
+    // The issued session is a real one.
+    let albums = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(albums.status(), StatusCode::OK);
+
+    // A replayed code must not yield a second session.
+    let replay = exchange(serde_json::json!({
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri
+    }))
+    .await;
+    assert_eq!(
+        replay.status(),
+        StatusCode::UNAUTHORIZED,
+        "an authorization code is single use"
+    );
 }

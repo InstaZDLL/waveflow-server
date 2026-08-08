@@ -113,6 +113,45 @@ impl AuthService {
         .await
     }
 
+    /// Issues a session for an account whose identity was already established
+    /// by another means — today, a redeemed OAuth authorization code. It
+    /// deliberately takes no password: the caller is responsible for having
+    /// proved the grant, and a disabled account is still refused here so a code
+    /// minted before deactivation cannot be cashed in afterwards.
+    pub async fn issue_session_for_account(
+        &self,
+        user_id: Uuid,
+        device_name: &str,
+    ) -> Result<AuthTokens, AuthError> {
+        let device_name = device_name.trim();
+        if device_name.is_empty() || device_name.len() > 120 {
+            return Err(AuthError::InvalidDeviceName);
+        }
+        let account = self
+            .db
+            .account_by_id(user_id)
+            .await
+            .map_err(db_unavailable)?
+            .ok_or(AuthError::InvalidCredentials)?;
+        if account.disabled {
+            return Err(AuthError::InvalidCredentials);
+        }
+        let now_ms = now_ms();
+        let device_id = self
+            .db
+            .create_device(account.id, device_name, now_ms)
+            .await
+            .map_err(db_unavailable)?;
+        self.issue_new_session(
+            account.id,
+            account.username,
+            account.role,
+            device_id,
+            now_ms,
+        )
+        .await
+    }
+
     pub async fn refresh(&self, refresh_token: &str) -> Result<AuthTokens, AuthError> {
         let expected_hash = security::token_hash(refresh_token);
         let now_ms = now_ms();

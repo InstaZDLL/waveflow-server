@@ -11,19 +11,25 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "build.rs"
       - "src/**"
-      - "migrations/**"
       - "migrations-v2/**"
       - "tests/**"
+      # rust_embed compiles the client into the binary, so a webapp change
+      # changes the Rust build.
+      - "webapp/**"
       - ".github/workflows/ci-rust.yml"
   pull_request:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "build.rs"
       - "src/**"
-      - "migrations/**"
       - "migrations-v2/**"
       - "tests/**"
+      # rust_embed compiles the client into the binary, so a webapp change
+      # changes the Rust build.
+      - "webapp/**"
       - ".github/workflows/ci-rust.yml"
 
 permissions:
@@ -49,6 +55,11 @@ jobs:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # The suite boots a real MediaService, which refuses to start without
+      # ffmpeg and ffprobe, so every integration test needs them present.
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: cargo fmt
         run: cargo fmt --all --check
@@ -77,6 +88,9 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg --yes --no-progress
 
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

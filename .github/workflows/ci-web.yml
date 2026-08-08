@@ -1,20 +1,26 @@
 name: CI (Web)
 
-# Web client CI. Triggered only on web/** changes (plus this
-# workflow file). Mirrors the workflow that lived at
-# `web/.github/workflows/ci.yml` before the monorepo merge but with
-# every shell step rooted in `web/` and the trigger gated by path.
+# Embedded web client CI, rooted in `webapp/`.
+#
+# It validates the client build directly, which nothing else does. build.rs
+# only substitutes a placeholder when `webapp/dist/index.html` is absent: a
+# directory left over from an earlier build is embedded as-is. Either way the
+# Rust build succeeds, so without this job a broken or stale client would ship
+# inside a binary that looks healthy.
+#
+# The superseded `web/` front end is deliberately not covered: it is not built,
+# served or tested, and gating merges on a dead surface would be noise.
 
 on:
   push:
     branches: [main]
     paths:
-      - "web/**"
+      - "webapp/**"
       - ".github/workflows/ci-web.yml"
   pull_request:
     branches: [main]
     paths:
-      - "web/**"
+      - "webapp/**"
       - ".github/workflows/ci-web.yml"
 
 permissions:
@@ -26,11 +32,11 @@ concurrency:
 
 defaults:
   run:
-    working-directory: web
+    working-directory: webapp
 
 jobs:
   lint-typecheck-build-test:
-    name: Lint / Typecheck / Build / Test
+    name: Typecheck / Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,22 +69,11 @@ jobs:
         # instead of silently regenerating against the registry.
         run: bun install --frozen-lockfile
 
-      - name: Prettier check
-        run: bun run format:check
-
-      - name: ESLint
-        run: bun run lint
-
+      # `bun run build` typechecks before bundling, so this covers both.
       - name: Build
-        # Runs first so the TanStack Router plugin can regenerate
-        # `src/routeTree.gen.ts` (which is gitignored). The typecheck
-        # step below imports it; without a prior build it would 404.
         run: bun run build
 
-      - name: Typecheck
-        run: bun run typecheck
-
+      # Covers the redirect guards that keep the consent screen and the
+      # post-login hop from navigating to attacker-supplied targets.
       - name: Test
-        # `vitest run` is configured in package.json — no watch mode
-        # so it exits cleanly under the runner.
         run: bun run test
