@@ -2,10 +2,11 @@ name: CI (Web)
 
 # Embedded web client CI, rooted in `webapp/`.
 #
-# It validates the client build directly, which nothing else does: when
-# `webapp/dist` is missing or stale, build.rs stages a placeholder and the Rust
-# build succeeds regardless. A broken client would otherwise ship as a working
-# binary serving the placeholder page.
+# It validates the client build directly, which nothing else does. build.rs
+# only substitutes a placeholder when `webapp/dist/index.html` is absent: a
+# directory left over from an earlier build is embedded as-is. Either way the
+# Rust build succeeds, so without this job a broken or stale client would ship
+# inside a binary that looks healthy.
 #
 # The superseded `web/` front end is deliberately not covered: it is not built,
 # served or tested, and gating merges on a dead surface would be noise.

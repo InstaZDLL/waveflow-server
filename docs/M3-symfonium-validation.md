@@ -6,10 +6,10 @@
 > pour clore M3, à reprendre par le prochain agent.
 >
 > **Décision (user, 2026-08-03).** La validation Symfonium conditionne désormais
-> le **tag `v2.0-beta`**, plus le **démarrage de M4**. M4 démarre avec la porte
-> M3 partiellement ouverte : 3 clients réels sur 4 sont validés, et le contrat
-> Subsonic est gelé au RFC-002. Aucune release ne peut être coupée tant que
-> Symfonium n'est pas passé.
+> le **tag `v2.0-beta`** — et **elle ne conditionne plus le démarrage de M4**,
+> ni sa fusion. M4 avance donc avec la porte M3 partiellement ouverte : 3
+> clients réels sur 4 sont validés et le contrat Subsonic est gelé au RFC-002.
+> Aucune release ne peut être coupée tant que Symfonium n'est pas passé.
 
 ## Où on en est
 

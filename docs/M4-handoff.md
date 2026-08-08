@@ -43,13 +43,14 @@ dans `lib.rs` / `Cargo.toml`).
 Ces choix ont été pris délibérément ; les « corriger » sans contexte serait une
 régression.
 
-- **Symfonium conditionne le tag `v2.0-beta`, pas le démarrage ni la fusion de
-  M4.** C'est une **dérogation explicitement approuvée par le user le
-  2026-08-03** à la règle « pas de milestone suivant avant la porte
-  précédente » d'`AGENTS.md`, consignée en tête de
-  `docs/M3-symfonium-validation.md`. Elle porte sur le démarrage de M4
-  uniquement : le tag reste bloqué. Trois revues automatisées ont demandé de
-  l'annuler ; c'est à écarter en s'y référant.
+- **Symfonium conditionne le tag `v2.0-beta`, et lui seul.** La dérogation
+  approuvée par le user le 2026-08-03 couvre **le démarrage et la fusion de
+  M4** : le travail M4 avance et se fusionne sans attendre M3. Ce qui reste
+  bloqué, c'est le tag `v2.0-beta`, rien d'autre. C'est une dérogation
+  explicite à la règle « pas de milestone suivant avant la porte précédente »
+  d'`AGENTS.md`, consignée en tête de `docs/M3-symfonium-validation.md`.
+  Quatre revues automatisées ont demandé de l'annuler ; c'est à écarter en s'y
+  référant.
 - **Un code d'autorisation est dépensé à la première présentation**, quelle que
   soit l'issue. Un verifier erroné brûle le code. Cela ferme le devinage et suit
   la règle de révocation-sur-réutilisation d'OAuth 2.1 ; un client qui rate son
