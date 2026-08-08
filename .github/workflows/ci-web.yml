@@ -2,9 +2,10 @@ name: CI (Web)
 
 # Embedded web client CI, rooted in `webapp/`.
 #
-# It validates the client on its own terms — a broken build here also breaks
-# the Rust build, since rust_embed compiles `webapp/dist` into the binary, but
-# the Rust job would only report it as a missing asset.
+# It validates the client build directly, which nothing else does: when
+# `webapp/dist` is missing or stale, build.rs stages a placeholder and the Rust
+# build succeeds regardless. A broken client would otherwise ship as a working
+# binary serving the placeholder page.
 #
 # The superseded `web/` front end is deliberately not covered: it is not built,
 # served or tested, and gating merges on a dead surface would be noise.
@@ -68,7 +69,10 @@ jobs:
         run: bun install --frozen-lockfile
 
       # `bun run build` typechecks before bundling, so this covers both.
-      # The client carries no linter or test runner yet; adding steps for
-      # scripts that do not exist would fail the job without checking anything.
       - name: Build
         run: bun run build
+
+      # Covers the redirect guards that keep the consent screen and the
+      # post-login hop from navigating to attacker-supplied targets.
+      - name: Test
+        run: bun run test
