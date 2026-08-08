@@ -20,7 +20,7 @@
 à une liste de pistes par bibliothèque : toute vue catalogue devait passer par
 la façade Subsonic.
 
-```
+```text
 GET  /api/v2/albums · /albums/{id} · /artists · /artists/{id} · /search
 GET  /api/v2/playlists · POST · PATCH · DELETE
 GET  /api/v2/favorites · PUT|DELETE /favorites/{kind}/{id}
@@ -43,9 +43,13 @@ dans `lib.rs` / `Cargo.toml`).
 Ces choix ont été pris délibérément ; les « corriger » sans contexte serait une
 régression.
 
-- **Symfonium conditionne le tag `v2.0-beta`, pas le démarrage de M4.**
-  Décision utilisateur du 2026-08-03. Deux revues automatisées ont demandé de
-  bloquer M4 : c'est à écarter.
+- **Symfonium conditionne le tag `v2.0-beta`, pas le démarrage ni la fusion de
+  M4.** C'est une **dérogation explicitement approuvée par le user le
+  2026-08-03** à la règle « pas de milestone suivant avant la porte
+  précédente » d'`AGENTS.md`, consignée en tête de
+  `docs/M3-symfonium-validation.md`. Elle porte sur le démarrage de M4
+  uniquement : le tag reste bloqué. Trois revues automatisées ont demandé de
+  l'annuler ; c'est à écarter en s'y référant.
 - **Un code d'autorisation est dépensé à la première présentation**, quelle que
   soit l'issue. Un verifier erroné brûle le code. Cela ferme le devinage et suit
   la règle de révocation-sur-réutilisation d'OAuth 2.1 ; un client qui rate son
@@ -97,10 +101,13 @@ régression.
 ## Dettes identifiées, non traitées
 
 - `search3` n'exploite pas FTS5 (voir ci-dessus).
-- `webapp/` n'a ni linter ni tests : `isAllowedRedirect` et `safeInternalPath`
-  sont des fonctions pures qui mériteraient un vitest. La CI web ne fait
-  qu'installer et construire.
+- `webapp/` n'a pas de linter. Les tests se limitent aux gardes de redirection
+  (`isAllowedRedirect`, `safeInternalPath`) : aucun test de composant ni de
+  parcours. La CI web installe, construit et lance ce vitest.
 - Les jetons de session vivent en `localStorage`, donc exposés à une XSS. C'est
   le compromis SPA habituel ; un cookie éviterait cela mais ajouterait une
   authentification ambiante et une surface CSRF à une API sinon purement par
-  en-tête. À rejuger avant la stable.
+  en-tête. **Porte de sortie : trancher avant le tag `v2.0` stable** (pas avant
+  la beta) — soit adopter un cookie `httpOnly` + protection CSRF, soit acter le
+  risque par écrit dans ce document avec la justification retenue. Ne pas taguer
+  la stable tant que l'une des deux branches n'est pas tranchée.

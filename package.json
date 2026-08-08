@@ -10,7 +10,7 @@
     "build": "bun run build:web && bun run build:server",
     "build:server": "cargo build --release",
     "build:web": "bun --cwd=webapp run build",
-    "test": "bun run test:server",
+    "test": "concurrently --names server,web --prefix-colors blue,magenta \"bun run test:server\" \"bun run test:web\"",
     "test:server": "cargo test --all-features",
     "lint": "bun run lint:server",
     "lint:server": "cargo clippy --all-targets --all-features -- -D warnings",
@@ -22,7 +22,8 @@
     "typecheck:server": "cargo check --all-targets --all-features",
     "typecheck:web": "bun --cwd=webapp run typecheck",
     "check": "bun run typecheck",
-    "db:migrate": "bun --cwd=web run db:migrate"
+    "db:migrate": "bun --cwd=web run db:migrate",
+    "test:web": "bun --cwd=webapp run test"
   },
   "devDependencies": {
     "concurrently": "^10.0.4"
