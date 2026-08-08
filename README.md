@@ -4,7 +4,7 @@ WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the 
 
 > **Status:** M0, M1 and M2 pass their release gates. M3 is implemented and its automated protocol suite passes. Feishin 1.15.1, Substreamer 8.0.91 and DSub 5.5.3 have completed the real-client matrix; Symfonium still needs a publicly trusted HTTPS test endpoint before the beta can be tagged.
 
-The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The PostgreSQL/JWKS implementation remains in-tree as transition evidence but is no longer mounted or compiled by default.
+The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The v1 PostgreSQL/JWKS implementation has been removed; it remains available in git history.
 
 ## Current quick start
 
@@ -66,7 +66,16 @@ cargo check --all-targets --all-features
 cargo test --all-features
 ```
 
-Tests use temporary SQLite databases and need no service container. The React/TanStack application under `web/` is the legacy v1 surface until the M4 embedded web vertical replaces its Better Auth/PostgreSQL boundary.
+Tests use temporary SQLite databases and need no service container.
+
+The web client lives in `webapp/` and is compiled into the binary, so it must be built first:
+
+```bash
+bun --cwd=webapp install
+bun run build          # webapp then cargo, in that order
+```
+
+`cargo build` alone still works: a placeholder page is embedded when no client build is present.
 
 ## Data and security posture
 

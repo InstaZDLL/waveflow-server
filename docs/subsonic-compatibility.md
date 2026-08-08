@@ -4,7 +4,7 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 
 | Client | Version | Login | Browse/search | Native/transcode | Playlists/user data | Status |
 |---|---:|---:|---:|---:|---:|---|
-| Symfonium | 15.0.0 | blocked | blocked | blocked | blocked | The official client forces HTTPS and does not trust the emulator's user CA; validate against a temporary publicly trusted HTTPS endpoint. |
+| Symfonium | 15.0.0 | blocked | blocked | blocked | blocked | The official client forces HTTPS and does not trust the emulator's user CA. A `cloudflared` tunnel supplying a publicly trusted certificate was verified end to end on 2026-08-03, which removes the certificate obstacle; the remaining blocker is access to an Android device or a `google_apis_playstore` emulator image running the app, which ships only through the Play Store. |
 | Feishin | 1.15.1 | pass | pass | pass | pass | Validated 2026-08-02: native playback, Opus cache, playlist create/add, favorite, rating, scrobble and queue. |
 | Substreamer | 8.0.91 | pass | pass | pass | pass* | Validated 2026-08-02 from the official release source: native playback, Opus/128 cache, playlist add, favorite, rating and scrobble. `*` Its playback queue is local-only and the client never calls `getPlayQueue`/`savePlayQueue`; those endpoints remain covered by fixtures and Feishin. |
 | DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass* | Validated 2026-08-02 on Android 14: native playback, 64 kbit/s MP3 transcoding, queue, playlist add, album favorite and rating. `*` Scrobbling was disabled in this client run; the endpoint is covered by fixtures, Feishin and Substreamer. Android 17 remains incompatible with this legacy client runtime before it issues a media request. |

@@ -38,6 +38,10 @@ use crate::{catalog::StreamTrack, config::Config, AppState};
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 const TRANSCODE_PROFILE_VERSION: &str = "waveflow-ffmpeg-v1";
+/// Audio is tenant-scoped and reached through a bearer token or a stream
+/// ticket, so the same URL means different things to different callers. No
+/// shared cache may retain a copy.
+const MEDIA_CACHE_CONTROL: &str = "private, no-store";
 
 #[derive(Clone)]
 pub struct MediaService {
@@ -302,7 +306,22 @@ impl MediaService {
             let mut buffer = vec![0u8; STREAM_CHUNK_SIZE];
             let mut consumer_present = true;
             loop {
-                match stdout.read(&mut buffer).await {
+                // Watch for the consumer leaving alongside the read instead of
+                // only noticing on the next send. FFmpeg can sit on a chunk for
+                // a long time under load, and until it yields one there is
+                // nothing to fail on, so an abandoned transcode would hold a
+                // process and a concurrency slot for as long as the encode took.
+                // Both branches are cancel-safe, and `biased` checks departure
+                // first so a consumer that left during the read is seen at once.
+                let read = tokio::select! {
+                    biased;
+                    _ = sender.closed() => {
+                        consumer_present = false;
+                        break;
+                    }
+                    result = stdout.read(&mut buffer) => result,
+                };
+                match read {
                     Ok(0) => break,
                     Ok(read) => {
                         if let Some(file) = cache_file.as_mut() {
@@ -371,7 +390,7 @@ impl MediaService {
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, mime_for_format(format)),
-                (header::CACHE_CONTROL, "private, no-store"),
+                (header::CACHE_CONTROL, MEDIA_CACHE_CONTROL),
                 (header::ACCEPT_RANGES, "none"),
             ],
             body,
@@ -391,7 +410,124 @@ impl Drop for ActiveGuard<'_> {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v2/tracks/{track_id}/stream", get(stream_track))
+        .route(
+            "/api/v2/tracks/{track_id}/stream-ticket",
+            axum::routing::post(create_stream_ticket),
+        )
+        // Deliberately outside the bearer-authenticated surface: the sealed
+        // ticket in the path is the credential, because <audio src> cannot send
+        // an Authorization header.
+        .route("/api/v2/stream/{ticket}", get(stream_with_ticket))
         .with_state(state)
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct StreamTicketResponse {
+    /// Path to play from, already containing the ticket.
+    pub url: String,
+    pub expires_at: i64,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v2/tracks/{track_id}/stream-ticket",
+    tag = "media",
+    params(("track_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = StreamTicketResponse),
+        (status = 401),
+        (status = 404)
+    )
+)]
+pub async fn create_stream_ticket(
+    State(state): State<AppState>,
+    AxumPath(track_id): AxumPath<Uuid>,
+    headers: HeaderMap,
+) -> Result<axum::Json<StreamTicketResponse>, MediaError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty())
+        .ok_or(MediaError::Unauthorized)?;
+    let user = state
+        .auth
+        .authenticate(token)
+        .await
+        .map_err(|_| MediaError::Unauthorized)?;
+    // Minting proves access now; redeeming re-proves it, so a ticket cannot
+    // outlive the membership that justified it.
+    state
+        .db
+        .stream_track_for_user(user.id, track_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "stream ticket authorization lookup failed");
+            MediaError::Internal
+        })?
+        .ok_or(MediaError::NotFound)?;
+    // Saturating on overflow would mint a ticket that never expires; a TTL that
+    // cannot be represented is a misconfiguration, not something to round off.
+    let expires_at = i64::try_from(state.stream_ticket_ttl.as_millis())
+        .ok()
+        .and_then(|ttl| crate::authentication::now_ms().checked_add(ttl))
+        .ok_or_else(|| {
+            tracing::error!("stream ticket TTL does not fit in an epoch timestamp");
+            MediaError::Internal
+        })?;
+    let ticket = crate::stream_ticket::mint(&state.secret_box, user.id, track_id, expires_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, "stream ticket minting failed");
+            MediaError::Internal
+        })?;
+    Ok(axum::Json(StreamTicketResponse {
+        url: format!("/api/v2/stream/{ticket}"),
+        expires_at,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v2/stream/{ticket}",
+    tag = "media",
+    params(
+        ("ticket" = String, Path),
+        ("format" = Option<String>, Query, description = "raw, mp3 or opus"),
+        ("bitrate" = Option<u32>, Query),
+        ("offset_ms" = Option<u64>, Query)
+    ),
+    responses(
+        (status = 200, description = "Original or live transcoded audio"),
+        (status = 206, description = "Original or completed cached transcode range"),
+        (status = 404),
+        (status = 416),
+        (status = 429)
+    )
+)]
+pub async fn stream_with_ticket(
+    State(state): State<AppState>,
+    AxumPath(ticket): AxumPath<String>,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, MediaError> {
+    // An invalid, forged or expired ticket is indistinguishable from an unknown
+    // track, so probing tells an attacker nothing.
+    let (user_id, track_id) =
+        crate::stream_ticket::verify(&state.secret_box, &ticket, crate::authentication::now_ms())
+            .ok_or(MediaError::NotFound)?;
+    let track = state
+        .db
+        .stream_track_for_user(user_id, track_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "ticket stream authorization lookup failed");
+            MediaError::Internal
+        })?
+        .ok_or(MediaError::NotFound)?;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    state.media.serve(user_id, track, query, range).await
 }
 
 #[utoipa::path(
@@ -564,6 +700,10 @@ async fn serve_file(
             response
                 .headers_mut()
                 .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(MEDIA_CACHE_CONTROL),
+            );
             Ok(response)
         }
     }
@@ -590,6 +730,10 @@ async fn serve_partial(
         HeaderValue::from_str(&length.to_string()).map_err(|_| MediaError::Internal)?,
     );
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(MEDIA_CACHE_CONTROL),
+    );
     headers.insert(
         header::CONTENT_RANGE,
         HeaderValue::from_str(&format!("bytes {start}-{end}/{size}"))
