@@ -28,7 +28,9 @@ describe("isAllowedRedirect", () => {
   });
 
   it("refuses a fragment, which the server also rejects", () => {
-    expect(isAllowedRedirect("https://desktop.example.com/cb#frag")).toBe(false);
+    expect(isAllowedRedirect("https://desktop.example.com/cb#frag")).toBe(
+      false,
+    );
   });
 });
 

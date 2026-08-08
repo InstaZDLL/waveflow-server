@@ -65,8 +65,10 @@ régression.
 - **Le contrat Subsonic est gelé.** `search3` filtre encore en mémoire sans
   utiliser l'index FTS5 — dette assumée : y toucher risquerait une régression
   sur les trois clients validés.
-- **`web/` reste dans l'arbre**, hors de toute CI, en attendant qu'on décide
-  quoi en récupérer. Il n'est ni construit, ni servi, ni testé.
+- **`web/` a été supprimé** (décision user du 2026-08-08) après extraction de
+  `packages/design-tokens` vers `webapp/src/design-tokens/`. Le reste était
+  arrimé à la hiérarchie profil/bibliothèque de la v1 et aux server functions
+  Better Auth : git en garde l'historique.
 
 ## Pièges connus
 
@@ -95,16 +97,15 @@ régression.
    physique, ou image d'émulateur `google_apis_playstore` + licence Symfonium).
    Procédure détaillée dans `docs/M3-symfonium-validation.md`.
 3. **Taguer `v2.0-beta`** — ⚠️ jamais sans demande explicite du user.
-4. **Trancher le sort de `web/`** (notamment le package design-tokens).
-5. **M5** : réconciliation locale/serveur conservatrice.
-6. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+4. **M5** : réconciliation locale/serveur conservatrice.
+5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
 
 ## Dettes identifiées, non traitées
 
 - `search3` n'exploite pas FTS5 (voir ci-dessus).
-- `webapp/` n'a pas de linter. Les tests se limitent aux gardes de redirection
-  (`isAllowedRedirect`, `safeInternalPath`) : aucun test de composant ni de
-  parcours. La CI web installe, construit et lance ce vitest.
+- `webapp/` n'a pas de test de composant ni de parcours : la suite couvre les
+  gardes de redirection et les design tokens. La CI web lint (biome), construit
+  et lance vitest.
 - Les jetons de session vivent en `localStorage`, donc exposés à une XSS. C'est
   le compromis SPA habituel ; un cookie éviterait cela mais ajouterait une
   authentification ambiante et une surface CSRF à une API sinon purement par

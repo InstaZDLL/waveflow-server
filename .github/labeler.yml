@@ -25,7 +25,7 @@
 'scope: web':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/**'
+          - 'webapp/**'
 
 # ─────────────────────────────────────────────────────────────
 # Server-side fine scopes (inside src/).
@@ -49,20 +49,14 @@
       - any-glob-to-any-file:
           - 'src/auth.rs'
           - 'src/middleware.rs'
-          - 'web/src/auth/**'
-          - 'web/src/lib/auth.ts'
-          - 'web/src/lib/auth-client.ts'
           # `sign-in.tsx` / `sign-up.tsx` are FILES at the root of
-          # `web/src/routes/`, not directories. minimatch's
+          # `webapp/src/`, not directories. minimatch's
           # `{a,b}` brace expansion gives us a clean union of the
           # two real shapes: the literal `.tsx` file today and a
           # future `sign-in/` subtree (e.g. `sign-in.callback.tsx`,
           # `sign-in/index.tsx`). The earlier `{,/**}` shape only
           # produced `sign-in` (no extension, doesn't exist) and
           # `sign-in/**`, missing the actual `.tsx` file.
-          - 'web/src/routes/sign-in{.tsx,/**}'
-          - 'web/src/routes/sign-up{.tsx,/**}'
-          - 'web/src/routes/api/auth/**'
 
 'scope: sync':
   - changed-files:
@@ -86,23 +80,23 @@
           - 'src/storage.rs'
 
 # ─────────────────────────────────────────────────────────────
-# Web fine scopes (inside web/src/).
+# Web fine scopes (inside webapp/src/).
 # ─────────────────────────────────────────────────────────────
 
 'scope: routes':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/src/routes/**'
+          - 'webapp/src/main.tsx'
 
 'scope: components':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/src/components/**'
+          - 'webapp/src/pages.tsx'
 
 'scope: design-tokens':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/packages/design-tokens/**'
+          - 'webapp/src/design-tokens/**'
 
 # ─────────────────────────────────────────────────────────────
 # Cross-cutting.
@@ -112,19 +106,16 @@
   - changed-files:
       - any-glob-to-any-file:
           - '.github/**'
-          - 'web/.husky/**'
-          - 'web/eslint.config.js'
-          - 'web/.prettierrc.json'
-          - 'web/.commitlintrc.cjs'
-          - 'web/vite.config.ts'
-          - 'web/vitest.config.ts'
-          - 'web/tsconfig.json'
+          - 'webapp/vite.config.ts'
+          - 'webapp/vitest.config.ts'
+          - 'webapp/tsconfig.json'
 
 'scope: deps':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/package.json'
-          - 'web/bun.lock'
+          - 'webapp/biome.json'
+          - 'webapp/package.json'
+          - 'webapp/bun.lock'
           - 'Cargo.toml'
           - 'Cargo.lock'
 
