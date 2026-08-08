@@ -1,24 +1,24 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import {
-  authorize,
-  isAllowedRedirect,
-  safeInternalPath,
-  formatDuration,
-  getAlbum,
-  getArtist,
-  listAlbums,
-  listArtists,
-  login,
-  search,
-  setFavorite,
   type Album,
   type AlbumDetail,
   type Artist,
   type ArtistDetail,
+  authorize,
+  formatDuration,
+  getAlbum,
+  getArtist,
+  isAllowedRedirect,
+  listAlbums,
+  listArtists,
+  login,
   type SearchResult,
   type Song,
+  safeInternalPath,
+  search,
+  setFavorite,
 } from "./api";
 import { usePlayer } from "./player";
 
@@ -33,12 +33,13 @@ function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
     load().then(
       (result) => !cancelled && setValue(result),
       (cause: unknown) =>
-        !cancelled && setError(cause instanceof Error ? cause.message : "error"),
+        !cancelled &&
+        setError(cause instanceof Error ? cause.message : "error"),
     );
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // biome-ignore lint/correctness/useExhaustiveDependencies: the caller supplies the dependency list, which is the point of this hook
   }, deps);
   return { value, error };
 }
@@ -168,6 +169,7 @@ function SongTable({ songs }: { songs: Song[] }) {
               <td className="index">{song.track ?? position + 1}</td>
               <td>
                 <button
+                  type="button"
                   className="link"
                   onClick={() => player.play(songs, position)}
                 >
@@ -178,6 +180,7 @@ function SongTable({ songs }: { songs: Song[] }) {
               <td className="muted">{formatDuration(song.duration_ms)}</td>
               <td>
                 <button
+                  type="button"
                   className="star"
                   onClick={() => void toggleStar(song)}
                   aria-label={starred ? "Remove favourite" : "Add favourite"}
@@ -360,7 +363,9 @@ export function AuthorizePage() {
       });
       window.location.assign(response.redirect_to);
     } catch {
-      setError("The application sent an authorisation request we cannot honour.");
+      setError(
+        "The application sent an authorisation request we cannot honour.",
+      );
       setBusy(false);
     }
   }
@@ -398,10 +403,10 @@ export function AuthorizePage() {
       </p>
       {error && <p className="error">{error}</p>}
       <div className="consent-actions">
-        <button onClick={() => void approve()} disabled={busy}>
+        <button type="button" onClick={() => void approve()} disabled={busy}>
           {busy ? "Authorising…" : "Authorise"}
         </button>
-        <button onClick={deny} disabled={busy}>
+        <button type="button" onClick={deny} disabled={busy}>
           Cancel
         </button>
       </div>

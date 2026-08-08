@@ -27,12 +27,11 @@ updates:
     ignore:
       - dependency-name: waveflow-core
 
-  # Web client (TanStack Start app) lives under web/ since the
-  # monorepo merge. The npm ecosystem covers Bun's package.json +
+  # Embedded web client. The npm ecosystem covers Bun's package.json +
   # bun.lock — Dependabot doesn't have a dedicated Bun parser yet,
   # but the npm resolver reads the lockfile correctly.
   - package-ecosystem: npm
-    directory: "/web"
+    directory: "/webapp"
     schedule:
       interval: weekly
       day: monday

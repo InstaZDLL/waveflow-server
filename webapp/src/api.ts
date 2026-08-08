@@ -138,10 +138,7 @@ async function call<T>(
   return parse<T>(response);
 }
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<void> {
+export async function login(username: string, password: string): Promise<void> {
   const response = await fetch("/api/v2/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -170,9 +167,7 @@ async function collect<T>(path: string): Promise<T[]> {
   const pageSize = 500;
   const all: T[] = [];
   for (let offset = 0; ; offset += pageSize) {
-    const page = await call<T[]>(
-      `${path}?limit=${pageSize}&offset=${offset}`,
-    );
+    const page = await call<T[]>(`${path}?limit=${pageSize}&offset=${offset}`);
     all.push(...page);
     if (page.length < pageSize) return all;
   }
