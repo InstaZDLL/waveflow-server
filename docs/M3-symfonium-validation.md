@@ -98,10 +98,9 @@ inchangé, décision « liste vide » du RFC préservée, test de non-régressio
 - Marquer la **porte M3** verte.
 - Publier / confirmer la release **`v2.0-beta`** (⚠️ **jamais cut de release sans
   demande explicite du user**).
-- Démarrer **M4** : API native `/api/v2`, WaveFlow Desktop (Authorization Code +
-  PKCE, catalogue serveur = source distante séparée, pas de fusion avec la biblio
-  locale), SPA React/TanStack embarquée dans le binaire, retrait de `/api/v1` au
-  passage v2.0 stable.
+
+M4 n'est plus une suite à planifier ici : il est livré (API native `/api/v2`,
+PKCE, SPA embarquée, retrait de `/api/v1`). Voir `docs/M4-handoff.md`.
 
 ## Référence
 
