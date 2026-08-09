@@ -299,6 +299,15 @@ pub enum ServiceError {
     Security(#[from] security::SecurityError),
 }
 
+impl From<crate::sync::SyncError> for ServiceError {
+    fn from(error: crate::sync::SyncError) -> Self {
+        match error {
+            crate::sync::SyncError::Invalid => Self::Invalid,
+            crate::sync::SyncError::Database(error) => Self::Database(error),
+        }
+    }
+}
+
 impl DomainServices {
     pub fn new(db: Database, secret_box: Arc<SecretBox>, sync: SyncService) -> Self {
         Self {
@@ -798,11 +807,34 @@ impl DomainServices {
     }
 
     pub async fn playlist(&self, user_id: Uuid, id: Uuid) -> Result<PlaylistItem, ServiceError> {
-        self.playlists(user_id)
-            .await?
-            .into_iter()
-            .find(|playlist| playlist.id == id)
-            .ok_or(ServiceError::NotFound)
+        let mut connection = self.db.pool().acquire().await?;
+        self.playlist_on(&mut connection, user_id, id).await
+    }
+
+    async fn playlist_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        id: Uuid,
+    ) -> Result<PlaylistItem, ServiceError> {
+        let row = sqlx::query(
+            "SELECT id, name, comment, public, created_at, updated_at FROM playlist \
+             WHERE id=? AND owner_user_id=?",
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or(ServiceError::NotFound)?;
+        Ok(PlaylistItem {
+            id,
+            name: row.try_get("name")?,
+            comment: row.try_get("comment")?,
+            public: row.try_get::<i64, _>("public")? != 0,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+            songs: self.playlist_songs_on(connection, user_id, id).await?,
+        })
     }
 
     async fn playlist_songs_on(
@@ -1555,22 +1587,35 @@ impl DomainServices {
     ) -> Result<Vec<ShareItem>, ServiceError> {
         let rows = sqlx::query("SELECT id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE owner_user_id=? ORDER BY created_at DESC")
             .bind(user_id.to_string()).fetch_all(&mut *connection).await?;
-        let mut shares = Vec::new();
+        let track_rows = sqlx::query(
+            "SELECT st.share_id, st.track_id FROM share_track st \
+             JOIN share s ON s.id=st.share_id WHERE s.owner_user_id=? \
+             ORDER BY st.share_id, st.position",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&mut *connection)
+        .await?;
+        let mut track_owners = Vec::with_capacity(track_rows.len());
+        let mut track_ids = Vec::with_capacity(track_rows.len());
+        for track_row in track_rows {
+            track_owners.push(parse_uuid(track_row.try_get("share_id")?)?);
+            track_ids.push(parse_uuid(track_row.try_get("track_id")?)?);
+        }
+        let songs = self
+            .songs_by_ids_on(connection, user_id, &track_ids)
+            .await?;
+        let mut songs_by_share = HashMap::<Uuid, Vec<SongItem>>::new();
+        for (share_id, song) in track_owners.into_iter().zip(songs) {
+            songs_by_share.entry(share_id).or_default().push(song);
+        }
+
+        let mut shares = Vec::with_capacity(rows.len());
         for row in rows {
             let id = parse_uuid(row.try_get("id")?)?;
             let nonce: Vec<u8> = row.try_get("token_nonce")?;
             let ciphertext: Vec<u8> = row.try_get("token_ciphertext")?;
             let token = String::from_utf8(self.secret_box.decrypt(&nonce, &ciphertext)?)
                 .map_err(|_| ServiceError::Invalid)?;
-            let track_ids = sqlx::query_scalar::<_, String>(
-                "SELECT track_id FROM share_track WHERE share_id=? ORDER BY position",
-            )
-            .bind(id.to_string())
-            .fetch_all(&mut *connection)
-            .await?
-            .into_iter()
-            .map(parse_uuid)
-            .collect::<Result<Vec<_>, _>>()?;
             shares.push(ShareItem {
                 id,
                 owner_id: user_id,
@@ -1579,9 +1624,7 @@ impl DomainServices {
                 expires_at: row.try_get("expires_at")?,
                 created_at: row.try_get("created_at")?,
                 visit_count: row.try_get("visit_count")?,
-                songs: self
-                    .songs_by_ids_on(connection, user_id, &track_ids)
-                    .await?,
+                songs: songs_by_share.remove(&id).unwrap_or_default(),
             });
         }
         Ok(shares)
@@ -1949,7 +1992,7 @@ impl DomainServices {
         folder_ids: Option<&[Uuid]>,
     ) -> Result<UserItem, ServiceError> {
         self.require_admin(actor_id).await?;
-        validate_username(username)?;
+        validate_name(username)?;
         if password.is_empty() {
             return Err(ServiceError::Invalid);
         }

@@ -171,16 +171,21 @@ async function performRefresh(): Promise<boolean> {
     handleRefreshFailure(hadSession);
     return false;
   }
-  const response = await fetch("/api/v2/web/auth/refresh", {
-    method: "POST",
-    headers: { "x-waveflow-csrf": csrf },
-  });
-  if (!response.ok) {
+  try {
+    const response = await fetch("/api/v2/web/auth/refresh", {
+      method: "POST",
+      headers: { "x-waveflow-csrf": csrf },
+    });
+    if (!response.ok) {
+      handleRefreshFailure(hadSession);
+      return false;
+    }
+    session = await parse<WebSession>(response);
+    return true;
+  } catch {
     handleRefreshFailure(hadSession);
     return false;
   }
-  session = await parse<WebSession>(response);
-  return true;
 }
 
 function handleRefreshFailure(hadSession: boolean): void {

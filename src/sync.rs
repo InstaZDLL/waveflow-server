@@ -15,6 +15,14 @@ use crate::{authentication::now_ms, database::Database};
 pub const DEFAULT_SYNC_LIMIT: i64 = 100;
 pub const MAX_SYNC_LIMIT: i64 = 500;
 
+#[derive(Debug, thiserror::Error)]
+pub enum SyncError {
+    #[error("invalid synchronization input")]
+    Invalid,
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MutationContext {
     pub operation_id: Uuid,
@@ -91,7 +99,7 @@ impl SyncService {
         connection: &mut SqliteConnection,
         user_id: Uuid,
         context: MutationContext,
-    ) -> Result<OperationClaim, sqlx::Error> {
+    ) -> Result<OperationClaim, SyncError> {
         if let Some(device_id) = context.origin_device_id {
             let owned = sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM device \
@@ -108,9 +116,7 @@ impl SyncService {
                     %device_id,
                     "sync mutation rejected for an invalid origin device"
                 );
-                return Err(sqlx::Error::Protocol(
-                    "sync origin device does not belong to the user".into(),
-                ));
+                return Err(SyncError::Invalid);
             }
         }
         let inserted = sqlx::query(
@@ -144,7 +150,7 @@ impl SyncService {
                 operation_id = %context.operation_id,
                 "sync operation exists but has no completed event"
             );
-            return Err(sqlx::Error::Protocol("sync operation is incomplete".into()));
+            return Err(sqlx::Error::Protocol("sync operation is incomplete".into()).into());
         };
         Ok(OperationClaim::Replayed(MutationReceipt {
             operation_id: context.operation_id,
@@ -225,7 +231,10 @@ impl SyncService {
         user_id: Uuid,
         after: i64,
         limit: i64,
-    ) -> Result<SyncPage, sqlx::Error> {
+    ) -> Result<SyncPage, SyncError> {
+        if !(1..=MAX_SYNC_LIMIT).contains(&limit) {
+            return Err(SyncError::Invalid);
+        }
         let rows = sqlx::query(
             "SELECT cursor, event_id, operation_id, origin_device_id, entity_type, entity_id, \
                     action, payload_json, changed_at \

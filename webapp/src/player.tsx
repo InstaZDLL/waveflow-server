@@ -68,7 +68,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const queueRef = useRef<Song[]>([]);
   const indexRef = useRef(0);
   const positionRef = useRef(0);
-  const hydrated = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
+  const localMutation = useRef(false);
   const resumePosition = useRef(0);
   const resumeTrack = useRef<string | null>(null);
   const autoplay = useRef(false);
@@ -94,7 +95,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void getQueue()
       .then((saved) => {
-        if (cancelled || !saved) return;
+        if (cancelled || localMutation.current || !saved) return;
         setQueue(saved.songs);
         const savedIndex = saved.current
           ? saved.songs.findIndex((song) => song.id === saved.current)
@@ -107,7 +108,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // playback can still start a new queue and retry on its first mutation.
       .catch(() => undefined)
       .finally(() => {
-        if (!cancelled) hydrated.current = true;
+        if (!cancelled) setHydrated(true);
       });
     return () => {
       cancelled = true;
@@ -131,7 +132,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onPlay = () => setPlaying(true);
     const onPause = () => {
       setPlaying(false);
-      if (!hydrated.current) return;
+      if (!hydrated) return;
       const songs = queueRef.current;
       const selected = songs[indexRef.current] ?? null;
       persistQueue(
@@ -152,7 +153,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
     };
-  }, [persistQueue]);
+  }, [hydrated, persistQueue]);
 
   // Loading a track needs a round-trip for its ticket, so guard against a
   // stale response overwriting a newer selection.
@@ -195,6 +196,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [position, duration, current]);
 
   const play = useCallback((next: Song[], at: number) => {
+    localMutation.current = true;
     const sameSelection = next === queueRef.current && at === indexRef.current;
     if (sameSelection) {
       const element = audio.current;
@@ -213,7 +215,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!hydrated) return;
     const timeout = window.setTimeout(() => {
       persistQueue(
         queue,
@@ -222,7 +224,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       );
     }, 400);
     return () => window.clearTimeout(timeout);
-  }, [queue, current, persistQueue]);
+  }, [queue, current, hydrated, persistQueue]);
 
   const toggle = useCallback(() => {
     const element = audio.current;
@@ -259,6 +261,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playing,
       play,
       remove: (at: number) => {
+        localMutation.current = true;
         setQueue((songs) => songs.filter((_, position) => position !== at));
         setIndex((value) =>
           value > at
@@ -267,6 +270,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         );
       },
       clear: () => {
+        localMutation.current = true;
         audio.current?.pause();
         audio.current?.removeAttribute("src");
         audio.current?.load();
