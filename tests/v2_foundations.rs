@@ -3690,6 +3690,167 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
 }
 
 #[tokio::test]
+async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password(&Uuid::new_v4().to_string()).unwrap();
+    let owner = state
+        .db
+        .create_account("claim-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let listener = state
+        .db
+        .create_account("claim-listener", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("claim-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Claim library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library,
+            scan,
+            &browse_input(
+                0,
+                "Claimed Song",
+                "Claimed Album",
+                "Claimed Artist",
+                Some(1),
+                Some(1),
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+
+    let playlist_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    let playlist = state
+        .services
+        .create_playlist_with_context(owner, "Claimed playlist", &[track], playlist_context)
+        .await
+        .unwrap();
+    state
+        .services
+        .delete_playlist(owner, playlist.id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .update_playlist_with_context(
+                owner,
+                playlist.id,
+                Some("Changed after deletion"),
+                None,
+                None,
+                &[],
+                &[],
+                playlist_context,
+            )
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+
+    state
+        .db
+        .add_library_member(owner, library, listener, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let inaccessible_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    state
+        .services
+        .set_star_with_context(listener, "track", track, true, inaccessible_context)
+        .await
+        .unwrap();
+    assert!(state
+        .db
+        .remove_library_member(owner, library, listener, now_ms())
+        .await
+        .unwrap());
+    state
+        .services
+        .set_star_with_context(listener, "track", track, true, inaccessible_context)
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(listener, "track", track, 5, inaccessible_context)
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+
+    let invalid_replay_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    state
+        .services
+        .set_rating_with_context(owner, "track", track, 5, invalid_replay_context)
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(owner, "track", track, 6, invalid_replay_context)
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+
+    let rolled_back_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(owner, "track", track, 6, rolled_back_context)
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    let reservation_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_operation WHERE user_id=? AND operation_id=?",
+    )
+    .bind(owner.to_string())
+    .bind(rolled_back_context.operation_id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(reservation_count, 0);
+    state
+        .services
+        .set_rating_with_context(owner, "track", track, 4, rolled_back_context)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     let (_temp, config, state) = test_app().await;
     let router = waveflow_server::app(&config, state);
