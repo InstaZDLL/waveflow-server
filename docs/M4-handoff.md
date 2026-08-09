@@ -1,20 +1,35 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi (2026-08-08). **M4 est fusionné** (PR #83, commit `14aec76`).
-> Ce document décrit ce qui est fait, les décisions non évidentes à ne pas
-> défaire, et ce qui reste. Voir aussi `docs/M3-symfonium-validation.md`,
-> toujours d'actualité pour la porte `v2.0-beta`.
+> Note de suivi mise à jour le 2026-08-09. **M4 est fusionné** (`14aec76`). La
+> validation réelle Symfonium est terminée et ferme M3. Ce document décrit ce
+> qui est fait, les décisions non évidentes à ne pas défaire, et ce qui reste.
+> Aucun tag de release ne doit être créé sans demande explicite.
 
 ## Où on en est
 
 - **M0, M1, M2 : fermés.**
-- **M3 : implémenté, suite verte, porte ouverte** — seule la validation
-  **Symfonium** manque. Elle bloque le **tag `v2.0-beta`**, pas le reste.
-- **M4 : fusionné** (`14aec76`).
+- **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
+  lecture native/transcodée, favoris, scrobbles et playlists.
+- **M4 : fusionné** (`14aec76`). L'ancien `web/` est retiré par la PR #84 après
+  extraction de ses design tokens utiles.
 - **M5, M6 : non commencés.**
 
-`main` est vert sur les deux runners depuis le 2026-08-07 — il était rouge
-depuis le 2026-08-02 (voir « Pièges connus »).
+## Validation sur bibliothèque réelle (2026-08-09)
+
+Un scan en lecture seule de 28,8 Go a indexé 2 859 fichiers sur 2 859 sans
+erreur : 1 591 AAC/M4A, 942 MP3, 285 FLAC et 41 WAV. Le catalogue obtenu compte
+1 398 albums, 1 142 artistes, 27 genres, 1 368 artworks dédupliqués et 2 859
+lignes FTS5. Les lectures `Range` natives des quatre codecs et un transcodage
+FLAC vers Opus 64 kbit/s ont réussi.
+
+Ce corpus a révélé deux défauts M4 corrigés après fusion : les jetons natifs
+`wfapi_` créés par la CLI n'étaient pas consultés par l'authentification
+`/api/v2`, et la liste des pistes était limitée silencieusement à 500 sans
+pagination. Les jetons hachés honorent désormais révocation, expiration et
+désactivation du compte ; la route des pistes accepte `offset`/`limit` avec un
+plafond de 500. Le filtre de logs par défaut masque aussi les milliers
+d'avertissements identiques produits par les atomes MP4 optionnels vides, tout
+en restant surchargeable via `RUST_LOG`.
 
 ## Ce que M4 a livré
 
@@ -45,14 +60,11 @@ dans `lib.rs` / `Cargo.toml`).
 Ces choix ont été pris délibérément ; les « corriger » sans contexte serait une
 régression.
 
-- **Symfonium conditionne le tag `v2.0-beta`, et lui seul.** La dérogation
-  approuvée par le user le 2026-08-03 couvre **le démarrage et la fusion de
-  M4** : le travail M4 avance et se fusionne sans attendre M3. Ce qui reste
-  bloqué, c'est le tag `v2.0-beta`, rien d'autre. C'est une dérogation
-  explicite à la règle « pas de milestone suivant avant la porte précédente »
-  d'`AGENTS.md`, consignée en tête de `docs/M3-symfonium-validation.md`.
-  Quatre revues automatisées ont demandé de l'annuler ; c'est à écarter en s'y
-  référant.
+- **La validation Symfonium a fermé M3 après la fusion de M4.** La dérogation
+  approuvée le 2026-08-03 autorisait explicitement le démarrage et la fusion de
+  M4 avant cette validation, sans autoriser le tag `v2.0-beta`. Elle expliquait
+  l'écart temporaire avec l'ordre des jalons d'`AGENTS.md` ; elle est désormais
+  historique puisque la porte M3 est fermée.
 - **Un code d'autorisation est dépensé à la première présentation**, quelle que
   soit l'issue. Un verifier erroné brûle le code. Cela ferme le devinage et suit
   la règle de révocation-sur-réutilisation d'OAuth 2.1 ; un client qui rate son
@@ -85,19 +97,18 @@ régression.
 - **SQLite trie les `NULL` en premier.** Deux bugs déjà corrigés ainsi (pistes
   sans numéro, albums sans année) : penser à `NULLS LAST` sur tout tri où une
   métadonnée absente passerait devant.
-- **Les migrations sont immuables une fois fusionnées** — mais celles de la PR
-  #83 ne le sont pas encore tant qu'elle n'est pas mergée.
+- **Les migrations sont immuables une fois fusionnées.** Celles de M4 sont
+  désormais sur `main` ; toute évolution ajoute une nouvelle migration datée.
 - **Toutes les tables utilisent `STRICT`.** En SQLite non-STRICT, une colonne
   `PRIMARY KEY` accepte encore `NULL` : déclarer `NOT NULL` explicitement.
 
 ## Ce qui reste
 
-1. **Clore M3** : valider Symfonium. Le certificat n'est plus l'obstacle — un
-   tunnel HTTPS à certificat reconnu a été vérifié de bout en bout le
-   2026-08-03. Il manque un **Android** exécutant l'application (appareil
-   physique, ou image d'émulateur `google_apis_playstore` + licence Symfonium).
-   Procédure détaillée dans `docs/M3-symfonium-validation.md`.
-2. **Taguer `v2.0-beta`** — ⚠️ jamais sans demande explicite du user.
+1. **Trancher la sécurité de session navigateur avant `v2.0` stable**, comme
+   détaillé dans les dettes ci-dessous.
+2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
+   validation Symfonium sont terminés ; aucune action de compatibilité ne reste
+   ouverte pour cette porte.
 3. **M5** : réconciliation locale/serveur conservatrice.
 4. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
 

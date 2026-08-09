@@ -41,7 +41,12 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
 }
 
 fn init_tracing() -> anyhow::Result<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // Some real-world MP4 libraries contain empty optional `data` atoms. Lofty
+    // safely skips them but emits one warning per atom, which can bury the scan
+    // summary under thousands of harmless lines. Operators can still opt back
+    // into that target explicitly through RUST_LOG when diagnosing tag files.
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,lofty::mp4::ilst::read=error"));
     if std::env::var("WAVEFLOW_LOG_FORMAT").as_deref() == Ok("json") {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
