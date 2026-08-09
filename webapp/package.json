@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "biome check src",
-    "format": "biome check --write src"
+    "lint": "biome check .",
+    "format": "biome check --write ."
   },
   "dependencies": {
     "@tanstack/react-router": "^1.95.0",

@@ -39,6 +39,8 @@ function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
     return () => {
       cancelled = true;
     };
+    // Placed here, not above useEffect: the rule fires on the dependency
+    // argument, and biome only accepts the suppression on that line.
     // biome-ignore lint/correctness/useExhaustiveDependencies: the caller supplies the dependency list, which is the point of this hook
   }, deps);
   return { value, error };
