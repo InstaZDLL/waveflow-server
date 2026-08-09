@@ -553,7 +553,7 @@ impl Database {
         user_id: Uuid,
         library_id: Uuid,
     ) -> Result<Vec<TrackRecord>, sqlx::Error> {
-        fetch_tracks(self, user_id, library_id, None).await
+        fetch_tracks(self, user_id, library_id, None, 0, 500).await
     }
 
     pub async fn search_tracks_for_user(
@@ -562,7 +562,18 @@ impl Database {
         library_id: Uuid,
         query: &str,
     ) -> Result<Vec<TrackRecord>, sqlx::Error> {
-        fetch_tracks(self, user_id, library_id, Some(query)).await
+        fetch_tracks(self, user_id, library_id, Some(query), 0, 200).await
+    }
+
+    pub async fn browse_tracks_for_user(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+        query: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TrackRecord>, sqlx::Error> {
+        fetch_tracks(self, user_id, library_id, query, offset, limit).await
     }
 
     pub async fn stream_track_for_user(
@@ -604,19 +615,21 @@ async fn fetch_tracks(
     user: Uuid,
     library: Uuid,
     query: Option<&str>,
+    offset: i64,
+    limit: i64,
 ) -> Result<Vec<TrackRecord>, sqlx::Error> {
     let rows = if let Some(fts_query) = query.and_then(fts_match_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
-            WHERE t.library_id=? AND m.user_id=? AND track_fts MATCH ? ORDER BY rank LIMIT 200")
-            .bind(library.to_string()).bind(user.to_string()).bind(fts_query).fetch_all(db.pool()).await?
+            WHERE t.library_id=? AND m.user_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
+            .bind(library.to_string()).bind(user.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id WHERE t.library_id=? AND m.user_id=? \
-            ORDER BY t.title COLLATE NOCASE LIMIT 500")
-            .bind(library.to_string()).bind(user.to_string()).fetch_all(db.pool()).await?
+            ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?")
+            .bind(library.to_string()).bind(user.to_string()).bind(limit).bind(offset).fetch_all(db.pool()).await?
     };
     rows.into_iter().map(track_from_row).collect()
 }
