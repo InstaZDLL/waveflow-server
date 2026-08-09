@@ -1787,20 +1787,22 @@ impl DomainServices {
             validate_replay_type(&receipt, "share")?;
             let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
             drop(_writer);
-            return self
+            let mut share = self
                 .shares(user_id)
                 .await?
                 .into_iter()
                 .find(|share| share.id == id)
-                .ok_or(ServiceError::NotFound);
+                .ok_or(ServiceError::NotFound)?;
+            share.url_token = Some(self.secret_box.derive_share_token(id));
+            return Ok(share);
         }
         if ids.is_empty() {
             return Err(ServiceError::Invalid);
         }
         let songs = self.songs_by_ids_on(&mut tx, user_id, ids).await?;
-        let token = security::generate_token("wfs_");
-        let token_hash = security::token_hash(&token);
         let id = Uuid::new_v4();
+        let token = self.secret_box.derive_share_token(id);
+        let token_hash = security::token_hash(&token);
         let now = now_ms();
         sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;

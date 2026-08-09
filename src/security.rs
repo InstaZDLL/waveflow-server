@@ -37,6 +37,7 @@ pub enum SecurityError {
 #[derive(Clone)]
 pub struct SecretBox {
     cipher: ChaCha20Poly1305,
+    key: [u8; INSTANCE_KEY_BYTES],
 }
 
 pub struct EncryptedSecret {
@@ -63,13 +64,27 @@ impl SecretBox {
     }
 
     pub fn from_key_bytes(key: &[u8]) -> Result<Self, SecurityError> {
-        if key.len() != INSTANCE_KEY_BYTES {
-            return Err(SecurityError::InvalidInstanceKey);
-        }
+        let key: [u8; INSTANCE_KEY_BYTES] = key
+            .try_into()
+            .map_err(|_| SecurityError::InvalidInstanceKey)?;
         Ok(Self {
-            cipher: ChaCha20Poly1305::new_from_slice(key)
+            cipher: ChaCha20Poly1305::new_from_slice(&key)
                 .map_err(|_| SecurityError::InvalidInstanceKey)?,
+            key,
         })
+    }
+
+    /// Derives a stable, unforgeable bearer token without persisting any
+    /// reversible token material. The domain label prevents reuse for another
+    /// keyed purpose from producing the same output.
+    pub fn derive_share_token(&self, share_id: uuid::Uuid) -> String {
+        let mut hasher = blake3::Hasher::new_keyed(&self.key);
+        hasher.update(b"waveflow/share-token/v1\0");
+        hasher.update(share_id.as_bytes());
+        format!(
+            "wfs_{}",
+            URL_SAFE_NO_PAD.encode(hasher.finalize().as_bytes())
+        )
     }
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedSecret, SecurityError> {
@@ -181,6 +196,26 @@ mod tests {
                 .decrypt(&encrypted.nonce, &encrypted.ciphertext)
                 .unwrap(),
             b"subsonic-only-password"
+        );
+    }
+
+    #[test]
+    fn share_tokens_are_stable_and_bound_to_the_instance_and_share() {
+        let secret = SecretBox::from_key_bytes(&[7; 32]).unwrap();
+        let other_secret = SecretBox::from_key_bytes(&[8; 32]).unwrap();
+        let share = uuid::Uuid::new_v4();
+
+        assert_eq!(
+            secret.derive_share_token(share),
+            secret.derive_share_token(share)
+        );
+        assert_ne!(
+            secret.derive_share_token(share),
+            secret.derive_share_token(uuid::Uuid::new_v4())
+        );
+        assert_ne!(
+            secret.derive_share_token(share),
+            other_secret.derive_share_token(share)
         );
     }
 }

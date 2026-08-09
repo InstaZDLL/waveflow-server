@@ -55,7 +55,7 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 
 For browser-hosted clients such as Feishin, list every trusted origin explicitly, for example `WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com`. Wildcards are rejected so credential-bearing Subsonic requests cannot be opened to arbitrary sites.
 
-Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind the reverse proxy so `createShare` returns an absolute, externally usable URL once at creation. Only the token hash is persisted, so later share reads and sync snapshots omit the URL. When the setting is absent, the creation response uses a URL relative to the server origin.
+Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind the reverse proxy so `createShare` returns an absolute, externally usable URL at creation. An authenticated idempotent retry of that creation returns the same URL, but later share reads and sync snapshots omit it because only its hash is persisted. When the setting is absent, the creation response uses a URL relative to the server origin.
 
 Create or restore a coherent database/key bundle:
 

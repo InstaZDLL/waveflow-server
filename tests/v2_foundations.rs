@@ -3532,9 +3532,8 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     assert_eq!(playlist_count, 1);
 
     let share_operation = Uuid::new_v4();
-    let mut share_ids = Vec::new();
-    for _ in 0..2 {
-        let response = mutate(
+    let share_request = || {
+        mutate(
             "POST",
             "/api/v2/shares".into(),
             share_operation,
@@ -3543,11 +3542,36 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
                 "description": "Synchronized share"
             })),
         )
-        .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
-        share_ids.push(json_body(response).await["id"].as_str().unwrap().to_owned());
-    }
-    assert_eq!(share_ids[0], share_ids[1]);
+    };
+    let lost_response = share_request().await;
+    assert_eq!(lost_response.status(), StatusCode::CREATED);
+    drop(lost_response);
+
+    let replayed_share = share_request().await;
+    assert_eq!(replayed_share.status(), StatusCode::CREATED);
+    let replayed_share = json_body(replayed_share).await;
+    let share_id = replayed_share["id"].as_str().unwrap();
+    let share_url = replayed_share["url"].as_str().unwrap();
+    let public_share = router
+        .clone()
+        .oneshot(Request::get(share_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(public_share.status(), StatusCode::OK);
+
+    let listed_shares = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/shares")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let listed_shares = json_body(listed_shares).await;
+    assert_eq!(listed_shares[0]["id"], share_id);
+    assert!(listed_shares[0].get("url").is_none());
 
     let mut notice_cursors = Vec::new();
     for _ in 0..4 {
