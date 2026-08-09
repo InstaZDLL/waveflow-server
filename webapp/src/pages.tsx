@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   type Album,
@@ -88,15 +88,21 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
+      if (setup) {
+        try {
+          await bootstrapAdmin(username, password);
+          setSetup(false);
+        } catch {
+          setError(
+            "Setup failed. Use a valid username and at least 12 password characters.",
+          );
+          return;
+        }
+      }
       try {
-        if (setup) await bootstrapAdmin(username, password);
         await login(username, password);
       } catch {
-        setError(
-          setup
-            ? "Setup failed. Use a valid username and at least 12 password characters."
-            : "Wrong username or password.",
-        );
+        setError("Wrong username or password.");
         return;
       }
       const next = safeInternalPath(
@@ -135,6 +141,7 @@ export function LoginPage() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete={setup ? "new-password" : "current-password"}
+            minLength={setup ? 12 : undefined}
             required
           />
         </label>
@@ -195,41 +202,43 @@ export function SongTable({ songs }: { songs: Song[] }) {
   }
 
   return (
-    <table className="songs">
-      <tbody>
-        {songs.map((song, position) => {
-          const starred = stars[song.id] ?? song.starred_at !== null;
-          const active = player.current?.id === song.id;
-          return (
-            <tr key={song.id} className={active ? "active" : undefined}>
-              <td className="index">{song.track ?? position + 1}</td>
-              <td>
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => player.play(songs, position)}
-                >
-                  {song.title}
-                </button>
-              </td>
-              <td className="muted">{song.artist}</td>
-              <td className="muted">{formatDuration(song.duration_ms)}</td>
-              <td>
-                <button
-                  type="button"
-                  className="star"
-                  onClick={() => void toggleStar(song)}
-                  aria-label={starred ? "Remove favourite" : "Add favourite"}
-                  aria-pressed={starred}
-                >
-                  {starred ? "★" : "☆"}
-                </button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="songs-scroll">
+      <table className="songs">
+        <tbody>
+          {songs.map((song, position) => {
+            const starred = stars[song.id] ?? song.starred_at !== null;
+            const active = player.current?.id === song.id;
+            return (
+              <tr key={song.id} className={active ? "active" : undefined}>
+                <td className="index">{song.track ?? position + 1}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => player.play(songs, position)}
+                  >
+                    {song.title}
+                  </button>
+                </td>
+                <td className="muted">{song.artist}</td>
+                <td className="muted">{formatDuration(song.duration_ms)}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="star"
+                    onClick={() => void toggleStar(song)}
+                    aria-label={starred ? "Remove favourite" : "Add favourite"}
+                    aria-pressed={starred}
+                  >
+                    {starred ? "★" : "☆"}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -237,7 +246,12 @@ export function FavoritesPage() {
   const { value, error } = useAsync(async () => {
     const favorites = await listFavorites();
     const tracks = favorites.filter((item) => item.entity_type === "track");
-    return Promise.all(tracks.map((item) => getTrack(item.entity_id)));
+    const resolved = await Promise.allSettled(
+      tracks.map((item) => getTrack(item.entity_id)),
+    );
+    return resolved.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
   }, []);
   if (!value) return <Loading error={error} />;
   return (
@@ -273,6 +287,7 @@ export function PlaylistsPage() {
 
   async function addQueue(playlist: Playlist) {
     if (!player.queue.length) return;
+    setMutationError(null);
     try {
       await appendToPlaylist(
         playlist.id,
@@ -359,6 +374,14 @@ export function PlaylistsPage() {
 
 export function QueuePage() {
   const player = usePlayer();
+  const queueKeys = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return player.queue.map((song) => {
+      const occurrence = occurrences.get(song.id) ?? 0;
+      occurrences.set(song.id, occurrence + 1);
+      return `${song.id}-${occurrence}`;
+    });
+  }, [player.queue]);
   return (
     <section>
       <PageHeader
@@ -378,7 +401,7 @@ export function QueuePage() {
           <ol className="queue-list">
             {player.queue.map((song, position) => (
               <li
-                key={queueOccurrenceKey(player.queue, position)}
+                key={queueKeys[position]}
                 className={player.index === position ? "active" : undefined}
               >
                 <button
@@ -535,6 +558,8 @@ export function AdminPage() {
   const [libraryPath, setLibraryPath] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [userBusy, setUserBusy] = useState(false);
   const { value, error } = useAsync(
     () => Promise.all([listLibraries(), listUsers()]),
     [revision],
@@ -544,7 +569,9 @@ export function AdminPage() {
 
   async function registerLibrary(event: FormEvent) {
     event.preventDefault();
+    setLibraryBusy(true);
     setAdminError(null);
+    setNotice(null);
     try {
       const result = await addLibrary(libraryName, libraryPath, "private");
       setLibraryName("");
@@ -553,12 +580,16 @@ export function AdminPage() {
       setRevision((value) => value + 1);
     } catch {
       setAdminError("The library path could not be registered.");
+    } finally {
+      setLibraryBusy(false);
     }
   }
 
   async function addUser(event: FormEvent) {
     event.preventDefault();
+    setUserBusy(true);
     setAdminError(null);
+    setNotice(null);
     try {
       await createUser(username, password, "user");
       setUsername("");
@@ -566,11 +597,14 @@ export function AdminPage() {
       setRevision((value) => value + 1);
     } catch {
       setAdminError("The account could not be created.");
+    } finally {
+      setUserBusy(false);
     }
   }
 
   async function toggleUser(user: User) {
     setAdminError(null);
+    setNotice(null);
     try {
       await setUserDisabled(user.username, !user.disabled);
       setRevision((value) => value + 1);
@@ -581,6 +615,7 @@ export function AdminPage() {
 
   async function scanLibrary(libraryId: string) {
     setAdminError(null);
+    setNotice(null);
     try {
       const result = await startScan(libraryId);
       setNotice(`Scan ${result.scan_id} queued.`);
@@ -616,7 +651,9 @@ export function AdminPage() {
               placeholder="Absolute server folder path"
               required
             />
-            <button type="submit">Register and scan</button>
+            <button type="submit" disabled={libraryBusy}>
+              {libraryBusy ? "Registering…" : "Register and scan"}
+            </button>
           </form>
           <ul className="resource-list compact">
             {libraries.map((library) => (
@@ -657,7 +694,9 @@ export function AdminPage() {
               autoComplete="new-password"
               required
             />
-            <button type="submit">Create account</button>
+            <button type="submit" disabled={userBusy}>
+              {userBusy ? "Creating…" : "Create account"}
+            </button>
           </form>
         </article>
       </div>
@@ -707,14 +746,6 @@ function EmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   );
-}
-
-function queueOccurrenceKey(songs: Song[], position: number): string {
-  const id = songs[position]?.id ?? "missing";
-  const occurrence = songs
-    .slice(0, position)
-    .filter((song) => song.id === id).length;
-  return `${id}-${occurrence}`;
 }
 
 export function AlbumPage({ albumId }: { albumId: string }) {

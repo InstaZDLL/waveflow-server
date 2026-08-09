@@ -50,15 +50,16 @@ pub struct SyncPage {
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MutationReceipt {
     pub operation_id: Uuid,
     pub result_entity_id: Option<Uuid>,
+    pub entity_type: String,
     pub cursor: i64,
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum OperationClaim {
     New,
     Replayed(MutationReceipt),
@@ -91,6 +92,27 @@ impl SyncService {
         user_id: Uuid,
         context: MutationContext,
     ) -> Result<OperationClaim, sqlx::Error> {
+        if let Some(device_id) = context.origin_device_id {
+            let owned = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM device \
+                 WHERE id=? AND user_id=? AND revoked_at IS NULL)",
+            )
+            .bind(device_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_one(&mut *connection)
+            .await?;
+            if !owned {
+                tracing::warn!(
+                    %user_id,
+                    operation_id = %context.operation_id,
+                    %device_id,
+                    "sync mutation rejected for an invalid origin device"
+                );
+                return Err(sqlx::Error::Protocol(
+                    "sync origin device does not belong to the user".into(),
+                ));
+            }
+        }
         let inserted = sqlx::query(
             "INSERT INTO sync_operation \
              (user_id, operation_id, origin_device_id, created_at) VALUES (?, ?, ?, ?) \
@@ -108,20 +130,29 @@ impl SyncService {
         }
 
         let row = sqlx::query(
-            "SELECT result_entity_id, event_cursor FROM sync_operation \
-             WHERE user_id=? AND operation_id=? AND applied_at IS NOT NULL",
+            "SELECT so.result_entity_id, so.event_cursor, se.entity_type \
+             FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor \
+             WHERE so.user_id=? AND so.operation_id=? AND so.applied_at IS NOT NULL",
         )
         .bind(user_id.to_string())
         .bind(context.operation_id.to_string())
         .fetch_optional(&mut *connection)
-        .await?
-        .ok_or_else(|| sqlx::Error::Protocol("sync operation is incomplete".into()))?;
+        .await?;
+        let Some(row) = row else {
+            tracing::error!(
+                %user_id,
+                operation_id = %context.operation_id,
+                "sync operation exists but has no completed event"
+            );
+            return Err(sqlx::Error::Protocol("sync operation is incomplete".into()));
+        };
         Ok(OperationClaim::Replayed(MutationReceipt {
             operation_id: context.operation_id,
             result_entity_id: row
                 .try_get::<Option<String>, _>("result_entity_id")?
                 .map(parse_uuid)
                 .transpose()?,
+            entity_type: row.try_get("entity_type")?,
             cursor: row.try_get("event_cursor")?,
             replayed: true,
         }))
@@ -172,6 +203,7 @@ impl SyncService {
         Ok(MutationReceipt {
             operation_id: context.operation_id,
             result_entity_id,
+            entity_type: entity_type.to_owned(),
             cursor,
             replayed: false,
         })

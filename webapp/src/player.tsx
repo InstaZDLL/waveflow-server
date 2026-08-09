@@ -23,8 +23,6 @@ type PlayerState = {
   index: number;
   current: Song | null;
   playing: boolean;
-  position: number;
-  duration: number;
   play: (queue: Song[], index: number) => void;
   remove: (index: number) => void;
   clear: () => void;
@@ -34,12 +32,24 @@ type PlayerState = {
   seek: (seconds: number) => void;
 };
 
+type PlayerProgress = {
+  position: number;
+  duration: number;
+};
+
 const PlayerContext = createContext<PlayerState | null>(null);
+const PlayerProgressContext = createContext<PlayerProgress | null>(null);
 
 export function usePlayer(): PlayerState {
   const player = useContext(PlayerContext);
   if (!player) throw new Error("usePlayer requires PlayerProvider");
   return player;
+}
+
+function usePlayerProgress(): PlayerProgress {
+  const progress = useContext(PlayerProgressContext);
+  if (!progress) throw new Error("usePlayerProgress requires PlayerProvider");
+  return progress;
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
@@ -60,12 +70,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const positionRef = useRef(0);
   const hydrated = useRef(false);
   const resumePosition = useRef(0);
+  const resumeTrack = useRef<string | null>(null);
+  const autoplay = useRef(false);
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
 
   const current = queue[index] ?? null;
   queueLength.current = queue.length;
   queueRef.current = queue;
   indexRef.current = index;
   positionRef.current = position;
+
+  const persistQueue = useCallback(
+    (songs: Song[], selected: string | null, positionMs: number) => {
+      const snapshot = [...songs];
+      saveChain.current = saveChain.current
+        .then(() => saveQueue(snapshot, selected, positionMs))
+        .catch(() => undefined);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +101,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           : 0;
         setIndex(Math.max(savedIndex, 0));
         resumePosition.current = Math.max(saved.position_ms, 0) / 1000;
+        resumeTrack.current = saved.current;
       })
       // A transient queue failure must not become an unhandled browser error;
       // playback can still start a new queue and retry on its first mutation.
@@ -97,21 +121,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onDuration = () => setDuration(element.duration || 0);
     // Stop on the last track rather than stepping past it: an out-of-range
     // index empties `current` and the player bar vanishes mid-listen.
-    const onEnd = () =>
-      setIndex((value) =>
-        Math.min(value + 1, Math.max(queueLength.current - 1, 0)),
-      );
+    const onEnd = () => {
+      setIndex((value) => {
+        const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
+        autoplay.current = next !== value;
+        return next;
+      });
+    };
     const onPlay = () => setPlaying(true);
     const onPause = () => {
       setPlaying(false);
       if (!hydrated.current) return;
       const songs = queueRef.current;
       const selected = songs[indexRef.current] ?? null;
-      void saveQueue(
+      persistQueue(
         songs,
         selected?.id ?? null,
         Math.round(positionRef.current * 1000),
-      ).catch(() => undefined);
+      );
     };
     element.addEventListener("timeupdate", onTime);
     element.addEventListener("loadedmetadata", onDuration);
@@ -125,7 +152,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
     };
-  }, []);
+  }, [persistQueue]);
 
   // Loading a track needs a round-trip for its ticket, so guard against a
   // stale response overwriting a newer selection.
@@ -134,15 +161,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!element || !current) return;
     let cancelled = false;
     submitted.current = null;
+    const shouldAutoplay = autoplay.current;
+    autoplay.current = false;
     void (async () => {
       try {
         const url = await streamUrl(current.id);
         if (cancelled) return;
         element.src = url;
-        if (resumePosition.current > 0) {
+        if (resumeTrack.current === current.id && resumePosition.current > 0) {
           element.currentTime = resumePosition.current;
           resumePosition.current = 0;
+          resumeTrack.current = null;
         }
+        if (!shouldAutoplay) return;
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
       } catch {
@@ -164,6 +195,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [position, duration, current]);
 
   const play = useCallback((next: Song[], at: number) => {
+    const sameSelection = next === queueRef.current && at === indexRef.current;
+    if (sameSelection) {
+      const element = audio.current;
+      const selected = next[at];
+      if (element && selected) {
+        void element
+          .play()
+          .then(() => scrobble(selected.id, false))
+          .catch(() => undefined);
+      }
+      return;
+    }
+    autoplay.current = true;
     setQueue(next);
     setIndex(at);
   }, []);
@@ -171,21 +215,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated.current) return;
     const timeout = window.setTimeout(() => {
-      void saveQueue(
+      persistQueue(
         queue,
         current?.id ?? null,
         Math.round(positionRef.current * 1000),
-      ).catch(() => undefined);
+      );
     }, 400);
     return () => window.clearTimeout(timeout);
-  }, [queue, current]);
+  }, [queue, current, persistQueue]);
 
   const toggle = useCallback(() => {
     const element = audio.current;
     if (!element || !current) return;
-    if (element.paused) void element.play();
-    else element.pause();
+    if (element.paused) {
+      void element
+        .play()
+        .then(() => scrobble(current.id, false))
+        .catch(() => undefined);
+    } else element.pause();
   }, [current]);
+
+  const next = useCallback(() => {
+    setIndex((value) => {
+      const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
+      autoplay.current = next !== value;
+      return next;
+    });
+  }, []);
+
+  const previous = useCallback(() => {
+    setIndex((value) => {
+      const previous = Math.max(value - 1, 0);
+      autoplay.current = previous !== value;
+      return previous;
+    });
+  }, []);
 
   const value = useMemo<PlayerState>(
     () => ({
@@ -193,8 +257,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       index,
       current,
       playing,
-      position,
-      duration,
       play,
       remove: (at: number) => {
         setQueue((songs) => songs.filter((_, position) => position !== at));
@@ -206,27 +268,50 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       },
       clear: () => {
         audio.current?.pause();
+        audio.current?.removeAttribute("src");
+        audio.current?.load();
+        autoplay.current = false;
         setQueue([]);
         setIndex(0);
+        persistQueue([], null, 0);
       },
       toggle,
-      next: () =>
-        setIndex((value) => Math.min(value + 1, Math.max(queue.length - 1, 0))),
-      previous: () => setIndex((value) => Math.max(value - 1, 0)),
+      next,
+      previous,
       seek: (seconds: number) => {
         if (audio.current) audio.current.currentTime = seconds;
       },
     }),
-    [queue, index, current, playing, position, duration, play, toggle],
+    [
+      queue,
+      index,
+      current,
+      playing,
+      play,
+      toggle,
+      next,
+      previous,
+      persistQueue,
+    ],
+  );
+
+  const progress = useMemo(
+    () => ({ position, duration }),
+    [position, duration],
   );
 
   return (
-    <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
+    <PlayerContext.Provider value={value}>
+      <PlayerProgressContext.Provider value={progress}>
+        {children}
+      </PlayerProgressContext.Provider>
+    </PlayerContext.Provider>
   );
 }
 
 export function PlayerBar() {
   const player = usePlayer();
+  const progress = usePlayerProgress();
   const [scrubbing, setScrubbing] = useState<number | null>(null);
   if (!player.current) return null;
   const commit = (value: number) => {
@@ -259,20 +344,20 @@ export function PlayerBar() {
         </button>
       </div>
       <div className="player-progress">
-        <span>{formatDuration((scrubbing ?? player.position) * 1000)}</span>
+        <span>{formatDuration((scrubbing ?? progress.position) * 1000)}</span>
         <input
           type="range"
           min={0}
-          max={player.duration || 0}
+          max={progress.duration || 0}
           step={0.5}
-          value={scrubbing ?? player.position}
+          value={scrubbing ?? progress.position}
           onChange={(event) => setScrubbing(Number(event.target.value))}
           onMouseUp={(event) => commit(Number(event.currentTarget.value))}
           onTouchEnd={(event) => commit(Number(event.currentTarget.value))}
           onKeyUp={(event) => commit(Number(event.currentTarget.value))}
           aria-label="Seek"
         />
-        <span>{formatDuration(player.duration * 1000)}</span>
+        <span>{formatDuration(progress.duration * 1000)}</span>
       </div>
     </footer>
   );

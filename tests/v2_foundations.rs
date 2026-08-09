@@ -2,9 +2,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use futures_util::StreamExt;
 use http_body_util::BodyExt;
 use sqlx::Row;
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 use uuid::Uuid;
 use waveflow_server::{
@@ -225,6 +227,7 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
         .unwrap();
     assert!(refresh_cookie.contains("HttpOnly"));
     assert!(refresh_cookie.contains("SameSite=Strict"));
+    assert!(refresh_cookie.contains("Path=/api/v2/web/auth"));
     let refresh_pair = refresh_cookie.split(';').next().unwrap().to_owned();
     let csrf_pair = cookies
         .iter()
@@ -250,6 +253,18 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
         StatusCode::FORBIDDEN
     );
 
+    let wrong_csrf = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .header("x-waveflow-csrf", "wfcsrf_wrong")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(wrong_csrf).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
     let refresh = Request::post("/api/v2/web/auth/refresh")
         .header("origin", "http://waveflow.test")
         .header("host", "waveflow.test")
@@ -259,14 +274,72 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
         .unwrap();
     let response = router.clone().oneshot(refresh).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let refreshed_cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let refreshed_refresh = refreshed_cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-refresh="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let refreshed_csrf = refreshed_cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-csrf="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let refreshed_csrf_value = refreshed_csrf.split_once('=').unwrap().1;
+
+    let logout = Request::post("/api/v2/web/auth/logout")
+        .header("origin", "http://waveflow.test/")
+        .header("host", "ignored.invalid")
+        .header("cookie", format!("{refreshed_refresh}; {refreshed_csrf}"))
+        .header("x-waveflow-csrf", refreshed_csrf_value)
+        .body(Body::empty())
+        .unwrap();
+    let logout = router.clone().oneshot(logout).await.unwrap();
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    let expired = logout
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(expired.len(), 2);
+    assert!(expired.iter().all(|cookie| cookie.contains("Max-Age=0")));
+    assert!(expired.iter().any(|cookie| {
+        cookie.starts_with("waveflow-refresh=")
+            && cookie.contains("Path=/api/v2/web/auth")
+            && cookie.contains("HttpOnly")
+    }));
+
+    let logout_without_refresh = Request::post("/api/v2/web/auth/logout")
+        .header("origin", "http://waveflow.test")
+        .header("cookie", &refreshed_csrf)
+        .header("x-waveflow-csrf", refreshed_csrf_value)
+        .body(Body::empty())
+        .unwrap();
+    let logout_without_refresh = router
+        .clone()
+        .oneshot(logout_without_refresh)
+        .await
+        .unwrap();
+    assert_eq!(logout_without_refresh.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
-        response
+        logout_without_refresh
             .headers()
             .get_all("set-cookie")
             .iter()
-            .filter(|value| value.to_str().unwrap().starts_with("waveflow-refresh="))
             .count(),
-        1
+        2
     );
 
     let mut foreign = json_request(
@@ -304,6 +377,23 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         .await
         .unwrap();
     assert_eq!(json_body(status).await["required"], true);
+
+    let missing_origin = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "first-admin",
+            "password": &admin_password
+        }),
+    );
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(missing_origin)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
 
     let mut request = json_request(
         "/api/v2/setup",
@@ -434,7 +524,7 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         )
         .await
         .unwrap();
-    assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -1839,6 +1929,28 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .collect::<Vec<_>>();
     assert!(default_folders.contains(&library.to_string()));
     assert!(default_folders.contains(&secondary_library.to_string()));
+
+    let invalid_username = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/createUser.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&username=%C3%A9lodie&password=invalid-user-secret&email=invalid@example.invalid"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_username.status(), StatusCode::BAD_REQUEST);
+    let invalid_username = json_body(invalid_username).await;
+    assert_eq!(invalid_username["subsonic-response"]["status"], "failed");
+    assert!(state
+        .db
+        .account_by_username("élodie")
+        .await
+        .unwrap()
+        .is_none());
+
     assert_eq!(
         subsonic_json(&router, "deleteUser", api_key, "&username=sub-default").await
             ["subsonic-response"]["status"],
@@ -3039,6 +3151,21 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     .await;
     assert_eq!(unknown_kind.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    for invalid_time in [-1, now_ms().saturating_add(10 * 60 * 1_000)] {
+        let invalid = send(
+            "POST",
+            "/api/v2/scrobbles".into(),
+            owner_token.clone(),
+            Some(serde_json::json!({
+                "track_id": first,
+                "submission": true,
+                "played_at": invalid_time
+            })),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     let scrobbled = send(
         "POST",
         "/api/v2/scrobbles".into(),
@@ -3195,10 +3322,9 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let owner_login = login("sync-owner").await;
     let owner_token = owner_login["access_token"].as_str().unwrap().to_owned();
     let device_id = owner_login["device_id"].as_str().unwrap().to_owned();
-    let intruder_token = login("sync-intruder").await["access_token"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let intruder_login = login("sync-intruder").await;
+    let intruder_token = intruder_login["access_token"].as_str().unwrap().to_owned();
+    let intruder_device_id = intruder_login["device_id"].as_str().unwrap().to_owned();
 
     let mutate =
         |method: &'static str, uri: String, operation_id: Uuid, body: Option<serde_json::Value>| {
@@ -3242,6 +3368,15 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(star_count, 1);
+
+    let mismatched_replay = mutate(
+        "POST",
+        "/api/v2/playlists".into(),
+        favorite_operation,
+        Some(serde_json::json!({ "name": "Wrong replay type", "track_ids": [track] })),
+    )
+    .await;
+    assert_eq!(mismatched_replay.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let scrobble_operation = Uuid::new_v4();
     for _ in 0..2 {
@@ -3294,31 +3429,84 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     }
     assert_eq!(share_ids[0], share_ids[1]);
 
-    let notice = tokio::time::timeout(std::time::Duration::from_secs(1), notices.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(notice.0, owner);
-    assert!(notice.1.cursor > 0);
+    let mut notice_cursors = Vec::new();
+    for _ in 0..4 {
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(1), notices.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(notice.0, owner);
+        notice_cursors.push(notice.1.cursor);
+    }
+    assert!(notice_cursors.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(matches!(
+        notices.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
 
-    let changes = router
-        .clone()
-        .oneshot(
-            Request::get("/api/v2/sync/changes?after=0&limit=1")
-                .header("authorization", format!("Bearer {owner_token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(changes.status(), StatusCode::OK);
-    let changes = json_body(changes).await;
-    assert_eq!(changes["changes"].as_array().unwrap().len(), 1);
-    assert!(changes["has_more"].as_bool().unwrap());
+    let mut after = 0;
+    let mut paged_changes = Vec::new();
+    loop {
+        let changes = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/sync/changes?after={after}&limit=1"))
+                    .header("authorization", format!("Bearer {owner_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changes.status(), StatusCode::OK);
+        let page = json_body(changes).await;
+        let page_changes = page["changes"].as_array().unwrap();
+        if page_changes.is_empty() {
+            assert!(!page["has_more"].as_bool().unwrap());
+            break;
+        }
+        let returned_cursor = page_changes[0]["cursor"].as_i64().unwrap();
+        assert_eq!(page["next_cursor"], returned_cursor);
+        paged_changes.push(page_changes[0].clone());
+        after = returned_cursor;
+        if !page["has_more"].as_bool().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(paged_changes.len(), 4);
     assert_eq!(
-        changes["changes"][0]["operation_id"],
+        paged_changes[0]["operation_id"],
         favorite_operation.to_string()
     );
+
+    // The real WebSocket route sends the durable cursor immediately when a
+    // reconnecting client is behind. The lagged-receiver branch is covered by
+    // the focused `http` unit test using the same serve-path helper.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_router = router.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_router).await.unwrap();
+    });
+    let mut socket_request = format!("ws://{address}/api/v2/sync/socket?after=0")
+        .into_client_request()
+        .unwrap();
+    socket_request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {owner_token}").parse().unwrap(),
+    );
+    let (mut socket, response) = tokio_tungstenite::connect_async(socket_request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let notice: serde_json::Value = serde_json::from_str(notice.to_text().unwrap()).unwrap();
+    assert_eq!(notice["cursor"], paged_changes[3]["cursor"]);
+    socket.close(None).await.unwrap();
+    server.abort();
 
     let snapshot = router
         .clone()
@@ -3351,6 +3539,41 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(ack.status(), StatusCode::NO_CONTENT);
+
+    let future_ack = router
+        .clone()
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "device_id": device_id,
+                        "cursor": cursor + 1_000
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(future_ack.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let foreign_device = Request::put(format!("/api/v2/favorites/track/{track}"))
+        .header("authorization", format!("Bearer {owner_token}"))
+        .header("x-waveflow-operation-id", Uuid::new_v4().to_string())
+        .header("x-waveflow-device-id", intruder_device_id)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(foreign_device)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
 
     let foreign = router
         .oneshot(

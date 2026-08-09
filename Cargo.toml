@@ -43,7 +43,7 @@ sha2 = "0.10"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "uuid"] }
 subtle = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util"] }
@@ -60,6 +60,7 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "d4c44eb5
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
+tokio-tungstenite = "0.29"
 
 [[test]]
 name = "v2_foundations"
