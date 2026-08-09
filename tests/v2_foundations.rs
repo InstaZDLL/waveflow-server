@@ -3825,6 +3825,17 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
             .await,
         Err(ServiceError::Conflict)
     ));
+    let fresh_inaccessible_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(listener, "track", track, 5, fresh_inaccessible_context)
+            .await,
+        Err(ServiceError::NotFound)
+    ));
 
     let invalid_replay_context = MutationContext {
         operation_id: Uuid::new_v4(),
@@ -3877,6 +3888,87 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
             .await,
         Err(ServiceError::Invalid)
     ));
+
+    state
+        .services
+        .save_queue(
+            owner,
+            &[track, track],
+            Some(track),
+            0,
+            Some("duplicate-test"),
+        )
+        .await
+        .unwrap();
+    let duplicate_queue = state.services.queue(owner).await.unwrap().unwrap();
+    assert_eq!(
+        duplicate_queue
+            .songs
+            .iter()
+            .map(|song| song.id)
+            .collect::<Vec<_>>(),
+        vec![track, track]
+    );
+    let positions = sqlx::query_scalar::<_, i64>(
+        "SELECT position FROM play_queue_track WHERE user_id=? ORDER BY position",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(positions, vec![0, 1]);
+
+    let aggregate_playlist = state
+        .services
+        .create_playlist(owner, "Unavailable aggregate", &[track])
+        .await
+        .unwrap();
+    let aggregate_share = state
+        .services
+        .create_share(owner, &[track], Some("Unavailable aggregate"), None)
+        .await
+        .unwrap();
+    let empty_scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(empty_scan, 1).await.unwrap();
+    assert_eq!(
+        state
+            .db
+            .mark_unseen_unavailable(library, empty_scan)
+            .await
+            .unwrap(),
+        1
+    );
+    state.db.finish_scan_job(empty_scan, 1).await.unwrap();
+    assert!(state
+        .services
+        .playlist(owner, aggregate_playlist.id)
+        .await
+        .unwrap()
+        .songs
+        .is_empty());
+    assert!(state
+        .services
+        .queue(owner)
+        .await
+        .unwrap()
+        .unwrap()
+        .songs
+        .is_empty());
+    assert!(state
+        .services
+        .shares(owner)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|share| share.id == aggregate_share.id)
+        .unwrap()
+        .songs
+        .is_empty());
+    state.services.sync_snapshot(owner, 100).await.unwrap();
 }
 
 #[tokio::test]

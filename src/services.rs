@@ -731,6 +731,22 @@ impl DomainServices {
         user_id: Uuid,
         ids: &[Uuid],
     ) -> Result<Vec<SongItem>, ServiceError> {
+        let songs = self
+            .songs_by_ids_lenient_on(connection, user_id, ids)
+            .await?;
+        if songs.len() == ids.len() {
+            Ok(songs)
+        } else {
+            Err(ServiceError::NotFound)
+        }
+    }
+
+    async fn songs_by_ids_lenient_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<SongItem>, ServiceError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -750,9 +766,10 @@ impl DomainServices {
             .into_iter()
             .map(|song| (song.id, song))
             .collect::<HashMap<_, _>>();
-        ids.iter()
-            .map(|id| available.get(id).cloned().ok_or(ServiceError::NotFound))
-            .collect()
+        Ok(ids
+            .iter()
+            .filter_map(|id| available.get(id).cloned())
+            .collect())
     }
 
     pub async fn artwork_for_user(
@@ -858,7 +875,8 @@ impl DomainServices {
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
-        self.songs_by_ids_on(connection, user_id, &ids).await
+        self.songs_by_ids_lenient_on(connection, user_id, &ids)
+            .await
     }
 
     pub async fn create_playlist(
@@ -1641,7 +1659,9 @@ impl DomainServices {
             position_ms: row.try_get("position_ms")?,
             changed_by: row.try_get("changed_by")?,
             updated_at: row.try_get("updated_at")?,
-            songs: self.songs_by_ids_on(connection, user_id, &ids).await?,
+            songs: self
+                .songs_by_ids_lenient_on(connection, user_id, &ids)
+                .await?,
         }))
     }
 
@@ -1672,11 +1692,19 @@ impl DomainServices {
             track_ids.push(parse_uuid(track_row.try_get("track_id")?)?);
         }
         let songs = self
-            .songs_by_ids_on(connection, user_id, &track_ids)
-            .await?;
+            .songs_by_ids_lenient_on(connection, user_id, &track_ids)
+            .await?
+            .into_iter()
+            .map(|song| (song.id, song))
+            .collect::<HashMap<_, _>>();
         let mut songs_by_share = HashMap::<Uuid, Vec<SongItem>>::new();
-        for (share_id, song) in track_owners.into_iter().zip(songs) {
-            songs_by_share.entry(share_id).or_default().push(song);
+        for (share_id, track_id) in track_owners.into_iter().zip(track_ids) {
+            if let Some(song) = songs.get(&track_id) {
+                songs_by_share
+                    .entry(share_id)
+                    .or_default()
+                    .push(song.clone());
+            }
         }
 
         let mut shares = Vec::with_capacity(rows.len());

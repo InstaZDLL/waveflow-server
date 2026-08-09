@@ -73,7 +73,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const resumePosition = useRef(0);
   const resumeTrack = useRef<string | null>(null);
   const autoplay = useRef(false);
-  const suppressPausePersistence = useRef(false);
+  const suppressedPauseEvents = useRef(0);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
 
   const current = queue[index] ?? null;
@@ -131,11 +131,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return next;
       });
     };
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      suppressedPauseEvents.current = 0;
+      setPlaying(true);
+    };
     const onPause = () => {
       setPlaying(false);
-      if (suppressPausePersistence.current) {
-        suppressPausePersistence.current = false;
+      if (suppressedPauseEvents.current > 0) {
+        suppressedPauseEvents.current -= 1;
         return;
       }
       if (!hydrated) return;
@@ -173,7 +176,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setPosition(resumeSeconds);
     setDuration(0);
     if (!element) return;
-    if (!element.paused) suppressPausePersistence.current = true;
+    suppressedPauseEvents.current = 2;
     element.pause();
     element.removeAttribute("src");
     element.load();
@@ -297,9 +300,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       },
       clear: () => {
         localMutation.current = true;
-        audio.current?.pause();
-        audio.current?.removeAttribute("src");
-        audio.current?.load();
+        const element = audio.current;
+        queueRef.current = [];
+        indexRef.current = 0;
+        positionRef.current = 0;
+        if (element) {
+          suppressedPauseEvents.current = 2;
+          element.pause();
+          element.removeAttribute("src");
+          element.load();
+        }
         autoplay.current = false;
         setQueue([]);
         setIndex(0);
