@@ -75,8 +75,9 @@ known event discards its local projection and fetches a fresh snapshot.
 
 The operation reservation, domain mutation and journal append commit in one
 SQLite transaction behind the process-wide writer gate. Repeating the same
-operation ID returns the original result and never creates a second domain row
-or journal event.
+operation ID is recognized as already applied and never creates a second domain
+row or journal event. Resource endpoints return the current representation when
+it still exists; the journal receipt remains the durable proof of application.
 
 `PUT /api/v2/sync/ack` with `{ "device_id": "<uuid>", "cursor": 42 }`
 records a monotonic per-device acknowledgement. A cursor below the stored ACK
