@@ -4,8 +4,8 @@ import {
   createRouter,
   Link,
   Outlet,
-  redirect,
   RouterProvider,
+  redirect,
   useNavigate,
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
@@ -34,6 +34,7 @@ function Shell() {
         <Link to="/artists">Artists</Link>
         <Link to="/search">Search</Link>
         <button
+          type="button"
           className="link"
           onClick={async () => {
             await logout();

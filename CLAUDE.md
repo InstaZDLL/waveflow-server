@@ -12,11 +12,10 @@ Layout:
 
 - `/` — the server crate (`waveflow-server`).
 - `webapp/` — the embedded React client, built to `webapp/dist` and compiled in by `rust_embed`.
-- `web/` — the superseded v1 TanStack/Better Auth front end. Not built, not served, not tested; kept only until its reusable parts are salvaged. Do not extend it.
 
 The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) is a separate repository. It consumes this API but is not part of this codebase.
 
-The v1 PostgreSQL/JWKS server was removed once M4 landed. If you find a reference to `/api/v1`, `src/db.rs`, `src/apply.rs`, the sync log or the Postgres `migrations/` directory, it is stale documentation — the code lives in git history only.
+The v1 PostgreSQL/JWKS server and its TanStack/Better Auth front end were removed once M4 landed. If you find a reference to `/api/v1`, `src/db.rs`, `src/apply.rs`, the sync log or the Postgres `migrations/` directory, it is stale documentation — the code lives in git history only.
 
 ## Commands
 
