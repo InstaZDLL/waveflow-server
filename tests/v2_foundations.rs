@@ -14,7 +14,7 @@ use waveflow_server::{
     catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
     database::{AccountRole, LibraryRole, LibraryVisibility},
     security,
-    services::{ServiceError, MAX_QUEUE_TRACKS},
+    services::{ServiceError, MAX_HISTORY_LIMIT, MAX_QUEUE_TRACKS},
     sync::{MutationContext, SyncError, MAX_SYNC_LIMIT},
     Config,
 };
@@ -1887,10 +1887,11 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await
         .unwrap();
     assert_eq!(foreign_public_stream.status(), StatusCode::NOT_FOUND);
-    assert_eq!(
-        subsonic_json(&router, "getShares", api_key, "").await["subsonic-response"]["status"],
-        "ok"
-    );
+    let listed_shares = subsonic_json(&router, "getShares", api_key, "").await;
+    assert_eq!(listed_shares["subsonic-response"]["status"], "ok");
+    assert!(listed_shares["subsonic-response"]["shares"]["share"][0]
+        .get("url")
+        .is_none());
     assert_eq!(
         subsonic_json(
             &router,
@@ -3011,7 +3012,7 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     }
     state.db.finish_scan_job(scan_id, 0).await.unwrap();
 
-    let router = waveflow_server::app(&config, state);
+    let router = waveflow_server::app(&config, state.clone());
     let owner_token = login_token(&router, "data-owner", password).await;
     let intruder_token = login_token(&router, "data-intruder", password).await;
 
@@ -3182,6 +3183,12 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     )
     .await;
     assert_eq!(scrobbled.status(), StatusCode::NO_CONTENT);
+    for invalid_limit in [-1, MAX_HISTORY_LIMIT + 1] {
+        assert!(matches!(
+            state.services.history(owner, invalid_limit).await,
+            Err(ServiceError::Invalid)
+        ));
+    }
 
     // The queue survives a write/read round-trip.
     let saved = send(
@@ -3214,9 +3221,15 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
         )
         .await;
         assert_eq!(share.status(), StatusCode::CREATED);
+        assert!(json_body(share).await["url"].as_str().is_some());
     }
     let shares = send("GET", "/api/v2/shares".into(), owner_token.clone(), None).await;
     let shares = json_body(shares).await;
+    assert!(shares
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|share| share.get("url").is_none()));
     let song_orders = shares
         .as_array()
         .unwrap()
@@ -3232,6 +3245,14 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
         .collect::<Vec<_>>();
     assert!(song_orders.contains(&vec![second.to_string(), first.to_string()]));
     assert!(song_orders.contains(&vec![first.to_string()]));
+    let share_columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('share')")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert!(share_columns.contains(&"token_hash".to_owned()));
+    assert!(!share_columns.contains(&"token_nonce".to_owned()));
+    assert!(!share_columns.contains(&"token_ciphertext".to_owned()));
 
     // A foreign tenant can neither read nor mutate any of it.
     let foreign_playlists = send(
@@ -3622,6 +3643,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     assert_eq!(snapshot["history"].as_array().unwrap().len(), 1);
     assert_eq!(snapshot["playlists"].as_array().unwrap().len(), 1);
     assert_eq!(snapshot["shares"].as_array().unwrap().len(), 1);
+    assert!(snapshot["shares"][0].get("url").is_none());
     let cursor = snapshot["cursor"].as_i64().unwrap();
 
     let ack = router

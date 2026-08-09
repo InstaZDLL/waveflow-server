@@ -65,7 +65,7 @@ Each change has `cursor`, `event_id`, `operation_id`, optional
 | `rating` | `upsert`, `delete` | `entity_type`, `entity_id`, `rating` (0 means clear) |
 | `scrobble` | `upsert`, `append` | `track_id`, `submission`, `played_at` |
 | `queue` | `upsert` | ordered `track_ids`, current track, `position_ms`, client |
-| `share` | `upsert`, `delete` | id and the changed share fields |
+| `share` | `upsert`, `delete` | id and the changed non-secret share fields; bearer token and URL are never synchronized |
 
 Unknown entity types, actions and payload fields must be ignored and retained
 only if a client needs to relay diagnostic data. A client that cannot apply a

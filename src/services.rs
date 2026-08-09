@@ -131,6 +131,7 @@ pub struct CatalogSnapshot {
 /// 500-item cap so both surfaces expose the same paging ceiling.
 pub const MAX_BROWSE_LIMIT: i64 = 500;
 const DEFAULT_BROWSE_LIMIT: i64 = 100;
+pub const MAX_HISTORY_LIMIT: i64 = 500;
 /// Fits a UUID-only queue request below the server's 16 KiB body limit while
 /// also bounding the work performed under the global SQLite writer gate.
 pub const MAX_QUEUE_TRACKS: usize = 400;
@@ -241,7 +242,9 @@ pub struct HistoryItem {
 pub struct ShareItem {
     pub id: Uuid,
     pub owner_id: Uuid,
-    pub url_token: String,
+    /// Present only in the result of a newly-created share. Persistent reads
+    /// deliberately cannot recover the bearer token from its lookup hash.
+    pub url_token: Option<String>,
     pub description: Option<String>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
@@ -1517,6 +1520,9 @@ impl DomainServices {
         user_id: Uuid,
         limit: i64,
     ) -> Result<Vec<HistoryItem>, ServiceError> {
+        if !(0..=MAX_HISTORY_LIMIT).contains(&limit) {
+            return Err(ServiceError::Invalid);
+        }
         sqlx::query(
             "SELECT p.track_id, p.submission, p.played_at FROM play_event p \
              JOIN track t ON t.id=p.track_id JOIN library_member m ON m.library_id=t.library_id \
@@ -1687,7 +1693,7 @@ impl DomainServices {
         connection: &mut SqliteConnection,
         user_id: Uuid,
     ) -> Result<Vec<ShareItem>, ServiceError> {
-        let rows = sqlx::query("SELECT id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE owner_user_id=? ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT id, description, expires_at, created_at, visit_count FROM share WHERE owner_user_id=? ORDER BY created_at DESC")
             .bind(user_id.to_string()).fetch_all(&mut *connection).await?;
         let track_rows = sqlx::query(
             "SELECT st.share_id, st.track_id FROM share_track st \
@@ -1722,14 +1728,10 @@ impl DomainServices {
         let mut shares = Vec::with_capacity(rows.len());
         for row in rows {
             let id = parse_uuid(row.try_get("id")?)?;
-            let nonce: Vec<u8> = row.try_get("token_nonce")?;
-            let ciphertext: Vec<u8> = row.try_get("token_ciphertext")?;
-            let token = String::from_utf8(self.secret_box.decrypt(&nonce, &ciphertext)?)
-                .map_err(|_| ServiceError::Invalid)?;
             shares.push(ShareItem {
                 id,
                 owner_id: user_id,
-                url_token: token,
+                url_token: None,
                 description: row.try_get("description")?,
                 expires_at: row.try_get("expires_at")?,
                 created_at: row.try_get("created_at")?,
@@ -1795,14 +1797,13 @@ impl DomainServices {
         if ids.is_empty() {
             return Err(ServiceError::Invalid);
         }
-        self.songs_by_ids_on(&mut tx, user_id, ids).await?;
+        let songs = self.songs_by_ids_on(&mut tx, user_id, ids).await?;
         let token = security::generate_token("wfs_");
         let token_hash = security::token_hash(&token);
-        let encrypted = self.secret_box.encrypt(token.as_bytes())?;
         let id = Uuid::new_v4();
         let now = now_ms();
-        sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, token_nonce, token_ciphertext, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;
         for (position, track) in ids.iter().enumerate() {
             sqlx::query("INSERT INTO share_track (share_id, track_id, position) VALUES (?, ?, ?)")
                 .bind(id.to_string())
@@ -1832,16 +1833,21 @@ impl DomainServices {
         tx.commit().await?;
         drop(_writer);
         self.sync.publish(user_id, receipt);
-        self.shares(user_id)
-            .await?
-            .into_iter()
-            .find(|share| share.id == id)
-            .ok_or(ServiceError::NotFound)
+        Ok(ShareItem {
+            id,
+            owner_id: user_id,
+            url_token: Some(token),
+            description: description.map(str::to_owned),
+            expires_at,
+            created_at: now,
+            visit_count: 0,
+            songs,
+        })
     }
 
     pub async fn public_share(&self, token: &str) -> Result<ShareItem, ServiceError> {
         let hash = security::token_hash(token);
-        let row = sqlx::query("SELECT id, owner_user_id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE token_hash=? AND (expires_at IS NULL OR expires_at>?)")
+        let row = sqlx::query("SELECT id, owner_user_id, description, expires_at, created_at, visit_count FROM share WHERE token_hash=? AND (expires_at IS NULL OR expires_at>?)")
             .bind(hash.as_slice()).bind(now_ms()).fetch_optional(self.db.pool()).await?.ok_or(ServiceError::NotFound)?;
         let id = parse_uuid(row.try_get("id")?)?;
         let owner = parse_uuid(row.try_get("owner_user_id")?)?;
@@ -1854,13 +1860,6 @@ impl DomainServices {
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
-        let nonce: Vec<u8> = row.try_get("token_nonce")?;
-        let ciphertext: Vec<u8> = row.try_get("token_ciphertext")?;
-        let stored = String::from_utf8(self.secret_box.decrypt(&nonce, &ciphertext)?)
-            .map_err(|_| ServiceError::Invalid)?;
-        if !security::constant_time_bytes_eq(stored.as_bytes(), token.as_bytes()) {
-            return Err(ServiceError::NotFound);
-        }
         let _writer = self.db.writer_guard().await;
         sqlx::query("UPDATE share SET visit_count=visit_count+1, last_visited_at=? WHERE id=?")
             .bind(now_ms())
@@ -1870,7 +1869,7 @@ impl DomainServices {
         Ok(ShareItem {
             id,
             owner_id: owner,
-            url_token: stored,
+            url_token: None,
             description: row.try_get("description")?,
             expires_at: row.try_get("expires_at")?,
             created_at: row.try_get("created_at")?,
@@ -2131,7 +2130,10 @@ impl DomainServices {
             return Err(ServiceError::Invalid);
         }
         let placeholder = security::generate_token("web-disabled-");
-        let password_hash = security::hash_password(&placeholder)?;
+        let password_hash =
+            tokio::task::spawn_blocking(move || security::hash_password(&placeholder))
+                .await
+                .map_err(|_| ServiceError::Unavailable)??;
         let encrypted = self.secret_box.encrypt(password.as_bytes())?;
         let api_key = security::generate_token("wfsk_");
         let api_key_hash = security::token_hash(&api_key);
