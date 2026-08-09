@@ -188,7 +188,8 @@ async fn login_refresh_rotation_and_logout_work() {
 #[tokio::test]
 async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
     let (_temp, config, state) = test_app().await;
-    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    let password = Uuid::new_v4().to_string();
+    let password_hash = security::hash_password(&password).unwrap();
     state
         .db
         .create_account("web-listener", &password_hash, AccountRole::User, now_ms())
@@ -200,7 +201,7 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
         "/api/v2/web/auth/login",
         serde_json::json!({
             "username": "web-listener",
-            "password": "correct horse battery staple",
+            "password": &password,
             "device_name": "Embedded web player"
         }),
     );
@@ -272,7 +273,7 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
         "/api/v2/web/auth/login",
         serde_json::json!({
             "username": "web-listener",
-            "password": "correct horse battery staple",
+            "password": &password,
             "device_name": "Foreign page"
         }),
     );
@@ -291,6 +292,8 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
 #[tokio::test]
 async fn setup_and_native_administration_cover_users_credentials_and_libraries() {
     let (_temp, config, state) = test_app().await;
+    let admin_password = Uuid::new_v4().to_string();
+    let listener_password = Uuid::new_v4().to_string();
     let music = config.data_dir.join("admin-library");
     std::fs::create_dir_all(&music).unwrap();
     let router = waveflow_server::app(&config, state.clone());
@@ -306,7 +309,7 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         "/api/v2/setup",
         serde_json::json!({
             "username": "first-admin",
-            "password": "correct horse battery staple"
+            "password": &admin_password
         }),
     );
     request
@@ -324,7 +327,7 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         "/api/v2/setup",
         serde_json::json!({
             "username": "second-admin",
-            "password": "correct horse battery staple"
+            "password": &admin_password
         }),
     );
     repeated
@@ -338,14 +341,14 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         StatusCode::UNPROCESSABLE_ENTITY
     );
 
-    let admin_token = login_token(&router, "first-admin", "correct horse battery staple").await;
+    let admin_token = login_token(&router, "first-admin", &admin_password).await;
     let create_user = Request::post("/api/v2/admin/users")
         .header("authorization", format!("Bearer {admin_token}"))
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::json!({
                 "username": "native-listener",
-                "web_password": "another correct horse password",
+                "web_password": &listener_password,
                 "role": "user"
             })
             .to_string(),
@@ -407,8 +410,7 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
         StatusCode::NO_CONTENT
     );
 
-    let listener_token =
-        login_token(&router, "native-listener", "another correct horse password").await;
+    let listener_token = login_token(&router, "native-listener", &listener_password).await;
     let libraries = router
         .clone()
         .oneshot(
@@ -3117,8 +3119,8 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
 #[tokio::test]
 async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let (_temp, config, state) = test_app().await;
-    let password = "sync integration password";
-    let hash = security::hash_password(password).unwrap();
+    let password = Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
     let owner = state
         .db
         .create_account("sync-owner", &hash, AccountRole::Admin, now_ms())
@@ -3173,6 +3175,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let router = waveflow_server::app(&config, state.clone());
     let login = |username: &'static str| {
         let router = router.clone();
+        let password = password.clone();
         async move {
             let response = router
                 .oneshot(json_request(
