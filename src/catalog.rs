@@ -16,6 +16,16 @@ pub struct LibraryRecord {
     pub root_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LibraryAccess {
+    pub id: Uuid,
+    pub name: String,
+    pub visibility: crate::database::LibraryVisibility,
+    pub role: crate::database::LibraryRole,
+    pub last_scan_started_at: Option<i64>,
+    pub last_scan_completed_at: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExistingTrack {
     pub id: Uuid,
@@ -122,6 +132,37 @@ pub struct TrackRecord {
 }
 
 impl Database {
+    pub async fn libraries_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<LibraryAccess>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT l.id, l.name, l.visibility, m.role, l.last_scan_started_at, \
+                    l.last_scan_completed_at \
+             FROM library l JOIN library_member m ON m.library_id=l.id \
+             WHERE m.user_id=? ORDER BY l.name COLLATE NOCASE, l.id",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.pool())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(LibraryAccess {
+                    id: parse_uuid(row.try_get("id")?)?,
+                    name: row.try_get("name")?,
+                    visibility: crate::database::LibraryVisibility::from_str(
+                        row.try_get::<&str, _>("visibility")?,
+                    )
+                    .map_err(|error| sqlx::Error::Decode(error.into()))?,
+                    role: crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+                        .map_err(|error| sqlx::Error::Decode(error.into()))?,
+                    last_scan_started_at: row.try_get("last_scan_started_at")?,
+                    last_scan_completed_at: row.try_get("last_scan_completed_at")?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn all_libraries(&self) -> Result<Vec<LibraryRecord>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, name, root_path FROM library ORDER BY created_at")
             .fetch_all(self.pool())

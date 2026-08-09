@@ -1,16 +1,33 @@
 /**
  * Thin client over /api/v2.
  *
- * Access tokens are short-lived, so every call retries once through /refresh
- * before surfacing a 401. Tokens live in localStorage: this is a SPA with no
- * server-rendered session, and the alternative — a cookie — would add ambient
- * authentication and a CSRF surface to an API that is otherwise header-only.
+ * Access tokens are short-lived and live in memory only. The server keeps the
+ * rotating refresh token in an HttpOnly, SameSite cookie; refresh and logout
+ * additionally require a double-submit CSRF value.
  */
 
-const ACCESS_KEY = "waveflow.access";
-const REFRESH_KEY = "waveflow.refresh";
+export type SessionUser = {
+  id: string;
+  username: string;
+  role: "admin" | "user";
+};
 
-export type Tokens = { access_token: string; refresh_token: string };
+export type WebSession = {
+  access_token: string;
+  user: SessionUser;
+  device_id: string;
+};
+
+let session: WebSession | null = null;
+
+// M4 originally persisted both tokens. Remove those legacy entries on upgrade
+// so an old rotating refresh token is not left readable by JavaScript.
+try {
+  localStorage.removeItem("waveflow.access");
+  localStorage.removeItem("waveflow.refresh");
+} catch {
+  // Storage may be disabled; sessions do not depend on it anymore.
+}
 
 export type Album = {
   id: string;
@@ -53,6 +70,58 @@ export type SearchResult = {
   songs: Song[];
 };
 
+export type Playlist = {
+  id: string;
+  name: string;
+  comment: string | null;
+  public: boolean;
+  created_at: number;
+  updated_at: number;
+  songs: Song[];
+};
+
+export type Favorite = {
+  entity_type: string;
+  entity_id: string;
+  starred_at: number;
+};
+
+export type Queue = {
+  current: string | null;
+  position_ms: number;
+  changed_by: string | null;
+  updated_at: number;
+  songs: Song[];
+};
+
+export type Share = {
+  id: string;
+  url?: string;
+  description: string | null;
+  expires_at: number | null;
+  created_at: number;
+  visit_count: number;
+  track_ids: string[];
+};
+
+export type Library = {
+  id: string;
+  name: string;
+  visibility: "private" | "shared";
+  role: "owner" | "manager" | "listener";
+  last_scan_started_at: number | null;
+  last_scan_completed_at: number | null;
+};
+
+export type User = {
+  id: string;
+  username: string;
+  role: "admin" | "user";
+  disabled: boolean;
+  has_subsonic_credential: boolean;
+  folder_ids: string[];
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -62,20 +131,12 @@ export class ApiError extends Error {
   }
 }
 
-export function storedTokens(): Tokens | null {
-  const access_token = localStorage.getItem(ACCESS_KEY);
-  const refresh_token = localStorage.getItem(REFRESH_KEY);
-  return access_token && refresh_token ? { access_token, refresh_token } : null;
+export function hasSession(): boolean {
+  return session !== null;
 }
 
-function store(tokens: Tokens) {
-  localStorage.setItem(ACCESS_KEY, tokens.access_token);
-  localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-}
-
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+export function currentUser(): SessionUser | null {
+  return session?.user ?? null;
 }
 
 async function parse<T>(response: Response): Promise<T> {
@@ -104,19 +165,38 @@ function refresh(): Promise<boolean> {
 }
 
 async function performRefresh(): Promise<boolean> {
-  const tokens = storedTokens();
-  if (!tokens) return false;
-  const response = await fetch("/api/v2/auth/refresh", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ refresh_token: tokens.refresh_token }),
-  });
-  if (!response.ok) {
-    clearTokens();
+  const hadSession = session !== null;
+  const csrf = cookieValue("waveflow-csrf");
+  if (!csrf) {
+    handleRefreshFailure(hadSession);
     return false;
   }
-  store(await parse<Tokens>(response));
-  return true;
+  try {
+    const response = await fetch("/api/v2/web/auth/refresh", {
+      method: "POST",
+      headers: { "x-waveflow-csrf": csrf },
+    });
+    if (!response.ok) {
+      handleRefreshFailure(hadSession);
+      return false;
+    }
+    session = await parse<WebSession>(response);
+    return true;
+  } catch {
+    handleRefreshFailure(hadSession);
+    return false;
+  }
+}
+
+function handleRefreshFailure(hadSession: boolean): void {
+  session = null;
+  if (hadSession && window.location.pathname !== "/login") {
+    window.location.assign("/login");
+  }
+}
+
+export async function ensureSession(): Promise<boolean> {
+  return hasSession() || refresh();
 }
 
 async function call<T>(
@@ -124,9 +204,8 @@ async function call<T>(
   init: RequestInit = {},
   retry = true,
 ): Promise<T> {
-  const tokens = storedTokens();
   const headers = new Headers(init.headers);
-  if (tokens) headers.set("authorization", `Bearer ${tokens.access_token}`);
+  if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   if (init.body) headers.set("content-type", "application/json");
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && retry && (await refresh())) {
@@ -139,7 +218,7 @@ async function call<T>(
 }
 
 export async function login(username: string, password: string): Promise<void> {
-  const response = await fetch("/api/v2/auth/login", {
+  const response = await fetch("/api/v2/web/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -151,15 +230,47 @@ export async function login(username: string, password: string): Promise<void> {
   if (!response.ok) {
     throw new ApiError(response.status, "login failed");
   }
-  store(await parse<Tokens>(response));
+  session = await parse<WebSession>(response);
+}
+
+export const setupRequired = () =>
+  call<{ required: boolean }>("/api/v2/setup", {}, false).then(
+    (status) => status.required,
+  );
+
+export async function bootstrapAdmin(
+  username: string,
+  password: string,
+): Promise<void> {
+  const response = await fetch("/api/v2/setup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "setup failed");
+  }
 }
 
 export async function logout(): Promise<void> {
   try {
-    await call<void>("/api/v2/auth/logout", { method: "POST" });
+    const csrf = cookieValue("waveflow-csrf");
+    await call<void>("/api/v2/web/auth/logout", {
+      method: "POST",
+      headers: csrf ? { "x-waveflow-csrf": csrf } : undefined,
+    });
   } finally {
-    clearTokens();
+    session = null;
   }
+}
+
+function cookieValue(name: string): string | null {
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split(";")) {
+    const value = part.trim();
+    if (value.startsWith(prefix)) return value.slice(prefix.length);
+  }
+  return null;
 }
 
 /** Walks the paged endpoint to completion; the server caps a page at 500. */
@@ -181,6 +292,83 @@ export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 export const search = (query: string) =>
   call<SearchResult>(`/api/v2/search?q=${encodeURIComponent(query)}`);
+export const getTrack = (id: string) => call<Song>(`/api/v2/tracks/${id}`);
+
+export const listPlaylists = () => call<Playlist[]>("/api/v2/playlists");
+export const createPlaylist = (name: string, trackIds: string[] = []) =>
+  call<Playlist>("/api/v2/playlists", {
+    method: "POST",
+    body: JSON.stringify({ name, track_ids: trackIds }),
+  });
+export const deletePlaylist = (id: string) =>
+  call<void>(`/api/v2/playlists/${id}`, { method: "DELETE" });
+export const appendToPlaylist = (id: string, trackIds: string[]) =>
+  call<Playlist>(`/api/v2/playlists/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ add: trackIds }),
+  });
+
+export const listFavorites = () => call<Favorite[]>("/api/v2/favorites");
+export const getQueue = () => call<Queue | null>("/api/v2/queue");
+export const saveQueue = (
+  songs: Song[],
+  current: string | null,
+  positionMs: number,
+) =>
+  call<void>("/api/v2/queue", {
+    method: "PUT",
+    body: JSON.stringify({
+      track_ids: songs.map((song) => song.id),
+      current,
+      position_ms: positionMs,
+      client: "WaveFlow Web",
+    }),
+  });
+
+export const listShares = () => call<Share[]>("/api/v2/shares");
+export const createShare = (trackIds: string[], description: string) =>
+  call<Share>("/api/v2/shares", {
+    method: "POST",
+    body: JSON.stringify({ track_ids: trackIds, description }),
+  });
+export const deleteShare = (id: string) =>
+  call<void>(`/api/v2/shares/${id}`, { method: "DELETE" });
+
+export const listLibraries = () => call<Library[]>("/api/v2/libraries");
+export const addLibrary = (
+  name: string,
+  path: string,
+  visibility: "private" | "shared",
+) =>
+  call<{ library_id: string; scan_id: string }>("/api/v2/libraries", {
+    method: "POST",
+    body: JSON.stringify({ name, path, visibility }),
+  });
+export const startScan = (libraryId: string) =>
+  call<{ scan_id: string }>(`/api/v2/libraries/${libraryId}/scans`, {
+    method: "POST",
+  });
+
+export const listUsers = () => call<User[]>("/api/v2/admin/users");
+export const createUser = (
+  username: string,
+  webPassword: string,
+  role: "admin" | "user",
+) =>
+  call<User>("/api/v2/admin/users", {
+    method: "POST",
+    body: JSON.stringify({ username, web_password: webPassword, role }),
+  });
+export const setUserDisabled = (username: string, disabled: boolean) =>
+  call<User>(`/api/v2/admin/users/${encodeURIComponent(username)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ disabled }),
+  });
+export const setSubsonicCredential = (username: string, password: string) =>
+  call<{ api_key: string }>(
+    `/api/v2/admin/users/${encodeURIComponent(username)}/subsonic-credential`,
+    { method: "PUT", body: JSON.stringify({ password }) },
+  );
 
 export const setFavorite = (kind: string, id: string, on: boolean) =>
   call<void>(`/api/v2/favorites/${kind}/${id}`, {

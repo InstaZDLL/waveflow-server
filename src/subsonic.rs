@@ -1363,10 +1363,13 @@ async fn admin(
                 .update_user(
                     principal.id,
                     params.first("username").ok_or_else(missing)?,
-                    params.bool_optional("adminRole")?,
-                    params.bool_optional("locked")?,
-                    folders.as_deref(),
-                    password.as_deref(),
+                    crate::services::UserUpdate {
+                        admin: params.bool_optional("adminRole")?,
+                        disabled: params.bool_optional("locked")?,
+                        folder_ids: folders.as_deref(),
+                        subsonic_password: password.as_deref(),
+                        web_password: None,
+                    },
                 )
                 .await
                 .map_err(service_protocol)?;
@@ -1506,10 +1509,13 @@ fn user_node(user: &crate::services::UserItem) -> Node {
 }
 
 fn share_node(share: &crate::services::ShareItem, public_url: Option<&str>) -> Node {
-    let path = format!("/share/{}", share.url_token);
+    let url = share.url_token.as_ref().map(|token| {
+        let path = format!("/share/{token}");
+        external_url(public_url, &path)
+    });
     Node::new("share")
         .attr("id", share.id.to_string())
-        .attr("url", external_url(public_url, &path))
+        .maybe_attr("url", url)
         .maybe_attr("description", share.description.clone())
         .maybe_attr("expires", share.expires_at.map(iso_time))
         .attr("username", "")

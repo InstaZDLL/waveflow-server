@@ -1,24 +1,46 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   type Album,
   type AlbumDetail,
   type Artist,
   type ArtistDetail,
+  addLibrary,
+  appendToPlaylist,
   authorize,
+  bootstrapAdmin,
+  createPlaylist,
+  createShare,
+  createUser,
+  currentUser,
+  deletePlaylist,
+  deleteShare,
   formatDuration,
   getAlbum,
   getArtist,
+  getTrack,
   isAllowedRedirect,
   listAlbums,
   listArtists,
+  listFavorites,
+  listLibraries,
+  listPlaylists,
+  listShares,
+  listUsers,
   login,
+  type Playlist,
   type SearchResult,
+  type Share,
   type Song,
   safeInternalPath,
   search,
   setFavorite,
+  setSubsonicCredential,
+  setUserDisabled,
+  setupRequired,
+  startScan,
+  type User,
 } from "./api";
 import { usePlayer } from "./player";
 
@@ -56,17 +78,31 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [setup, setSetup] = useState(false);
+
+  useEffect(() => {
+    void setupRequired().then(setSetup, () => setSetup(false));
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      if (setup) {
+        try {
+          await bootstrapAdmin(username, password);
+          setSetup(false);
+        } catch {
+          setError(
+            "Setup failed. Use a valid username and at least 12 password characters.",
+          );
+          return;
+        }
+      }
       try {
         await login(username, password);
       } catch {
-        // Only a failed sign-in means bad credentials. Anything after it is a
-        // different problem and must not be reported as one.
         setError("Wrong username or password.");
         return;
       }
@@ -84,7 +120,12 @@ export function LoginPage() {
   return (
     <main className="centered">
       <form className="card" onSubmit={submit}>
-        <h1>WaveFlow</h1>
+        <h1>{setup ? "Create the administrator" : "WaveFlow"}</h1>
+        {setup ? (
+          <p className="muted">
+            This is a new server. Choose the first administrator account.
+          </p>
+        ) : null}
         <label>
           Username
           <input
@@ -100,13 +141,14 @@ export function LoginPage() {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
+            autoComplete={setup ? "new-password" : "current-password"}
+            minLength={setup ? 12 : undefined}
             required
           />
         </label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Please wait…" : setup ? "Create and sign in" : "Sign in"}
         </button>
       </form>
     </main>
@@ -146,7 +188,7 @@ export function AlbumsPage() {
   );
 }
 
-function SongTable({ songs }: { songs: Song[] }) {
+export function SongTable({ songs }: { songs: Song[] }) {
   const player = usePlayer();
   const [stars, setStars] = useState<Record<string, boolean>>({});
 
@@ -161,41 +203,570 @@ function SongTable({ songs }: { songs: Song[] }) {
   }
 
   return (
-    <table className="songs">
-      <tbody>
-        {songs.map((song, position) => {
-          const starred = stars[song.id] ?? song.starred_at !== null;
-          const active = player.current?.id === song.id;
-          return (
-            <tr key={song.id} className={active ? "active" : undefined}>
-              <td className="index">{song.track ?? position + 1}</td>
-              <td>
+    <div className="songs-scroll">
+      <table className="songs">
+        <tbody>
+          {songs.map((song, position) => {
+            const starred = stars[song.id] ?? song.starred_at !== null;
+            const active = player.current?.id === song.id;
+            return (
+              <tr key={song.id} className={active ? "active" : undefined}>
+                <td className="index">{song.track ?? position + 1}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => player.play(songs, position)}
+                  >
+                    {song.title}
+                  </button>
+                </td>
+                <td className="muted">{song.artist}</td>
+                <td className="muted">{formatDuration(song.duration_ms)}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="star"
+                    onClick={() => void toggleStar(song)}
+                    aria-label={starred ? "Remove favourite" : "Add favourite"}
+                    aria-pressed={starred}
+                  >
+                    {starred ? "★" : "☆"}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function FavoritesPage() {
+  const { value, error } = useAsync(async () => {
+    const favorites = await listFavorites();
+    const tracks = favorites.filter((item) => item.entity_type === "track");
+    const resolved = await Promise.allSettled(
+      tracks.map((item) => getTrack(item.entity_id)),
+    );
+    return resolved.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+  }, []);
+  if (!value) return <Loading error={error} />;
+  return (
+    <section>
+      <PageHeader title="Favourites" detail={`${value.length} saved tracks`} />
+      {value.length ? (
+        <SongTable songs={value} />
+      ) : (
+        <EmptyState message="Star a track from an album or search result and it will appear here." />
+      )}
+    </section>
+  );
+}
+
+export function PlaylistsPage() {
+  const player = usePlayer();
+  const [revision, setRevision] = useState(0);
+  const [name, setName] = useState("");
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const { value, error } = useAsync(listPlaylists, [revision]);
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setMutationError(null);
+    try {
+      await createPlaylist(name);
+      setName("");
+      setRevision((value) => value + 1);
+    } catch {
+      setMutationError("The playlist could not be created.");
+    }
+  }
+
+  async function addQueue(playlist: Playlist) {
+    if (!player.queue.length) return;
+    setMutationError(null);
+    try {
+      await appendToPlaylist(
+        playlist.id,
+        player.queue.map((song) => song.id),
+      );
+      setRevision((value) => value + 1);
+    } catch {
+      setMutationError("The queue could not be added to this playlist.");
+    }
+  }
+
+  async function removePlaylist(id: string) {
+    setMutationError(null);
+    try {
+      await deletePlaylist(id);
+      setRevision((value) => value + 1);
+    } catch {
+      setMutationError("The playlist could not be deleted.");
+    }
+  }
+
+  if (!value) return <Loading error={error} />;
+  return (
+    <section>
+      <PageHeader title="Playlists" detail={`${value.length} collections`} />
+      <form className="inline-form" onSubmit={(event) => void create(event)}>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="New playlist name"
+          aria-label="New playlist name"
+          required
+        />
+        <button type="submit">Create playlist</button>
+      </form>
+      {mutationError ? <p className="error">{mutationError}</p> : null}
+      {value.length ? (
+        <div className="stack">
+          {value.map((playlist) => (
+            <article className="collection" key={playlist.id}>
+              <header className="collection-header">
+                <div>
+                  <h3>{playlist.name}</h3>
+                  <span className="muted">{playlist.songs.length} tracks</span>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    onClick={() => player.play(playlist.songs, 0)}
+                    disabled={!playlist.songs.length}
+                  >
+                    Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void addQueue(playlist)}
+                    disabled={!player.queue.length}
+                  >
+                    Add queue
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void removePlaylist(playlist.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </header>
+              {playlist.songs.length ? (
+                <SongTable songs={playlist.songs} />
+              ) : (
+                <p className="muted">This playlist is empty.</p>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState message="Create a playlist to keep a set of tracks together." />
+      )}
+    </section>
+  );
+}
+
+export function QueuePage() {
+  const player = usePlayer();
+  const queueKeys = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return player.queue.map((song) => {
+      const occurrence = occurrences.get(song.id) ?? 0;
+      occurrences.set(song.id, occurrence + 1);
+      return `${song.id}-${occurrence}`;
+    });
+  }, [player.queue]);
+  return (
+    <section>
+      <PageHeader
+        title="Queue"
+        detail={`${player.queue.length} tracks synchronized with your account`}
+      />
+      {player.queue.length ? (
+        <>
+          <div className="actions section-actions">
+            <button type="button" onClick={() => player.play(player.queue, 0)}>
+              Play from start
+            </button>
+            <button type="button" className="danger" onClick={player.clear}>
+              Clear queue
+            </button>
+          </div>
+          <ol className="queue-list">
+            {player.queue.map((song, position) => (
+              <li
+                key={queueKeys[position]}
+                className={player.index === position ? "active" : undefined}
+              >
                 <button
                   type="button"
-                  className="link"
-                  onClick={() => player.play(songs, position)}
+                  className="link queue-title"
+                  onClick={() => player.play(player.queue, position)}
                 >
                   {song.title}
                 </button>
-              </td>
-              <td className="muted">{song.artist}</td>
-              <td className="muted">{formatDuration(song.duration_ms)}</td>
-              <td>
+                <span className="muted">{song.artist ?? "Unknown artist"}</span>
+                <span className="muted">
+                  {formatDuration(song.duration_ms)}
+                </span>
+                <button type="button" onClick={() => player.remove(position)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <EmptyState message="Play an album or playlist to build your synchronized queue." />
+      )}
+    </section>
+  );
+}
+
+export function SharesPage() {
+  const player = usePlayer();
+  const [description, setDescription] = useState("");
+  const [createdShare, setCreatedShare] = useState<Share | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const { value, error } = useAsync(listShares, [revision]);
+  const createdShareNotice = createdShare?.url ? (
+    <p>
+      This link is shown only once:{" "}
+      <a className="resource-url" href={createdShare.url}>
+        {createdShare.url}
+      </a>
+    </p>
+  ) : null;
+  if (!value) {
+    return (
+      <>
+        {createdShareNotice}
+        <Loading error={error} />
+      </>
+    );
+  }
+
+  async function shareQueue(event: FormEvent) {
+    event.preventDefault();
+    setMutationError(null);
+    try {
+      const share = await createShare(
+        player.queue.map((song) => song.id),
+        description,
+      );
+      setCreatedShare(share);
+      setDescription("");
+      setRevision((value) => value + 1);
+    } catch {
+      setMutationError("The share could not be created.");
+    }
+  }
+
+  async function removeShare(id: string) {
+    setMutationError(null);
+    try {
+      await deleteShare(id);
+      setCreatedShare((current) => (current?.id === id ? null : current));
+      setRevision((value) => value + 1);
+    } catch {
+      setMutationError("The share could not be deleted.");
+    }
+  }
+
+  return (
+    <section>
+      <PageHeader title="Shares" detail="Public links for selected music" />
+      <form
+        className="inline-form"
+        onSubmit={(event) => void shareQueue(event)}
+      >
+        <input
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Description"
+          aria-label="Share description"
+          required
+        />
+        <button type="submit" disabled={!player.queue.length}>
+          Share current queue
+        </button>
+      </form>
+      {!player.queue.length ? (
+        <p className="muted">Add tracks to the queue before creating a link.</p>
+      ) : null}
+      {mutationError ? <p className="error">{mutationError}</p> : null}
+      {createdShareNotice}
+      {value.length ? (
+        <ul className="resource-list">
+          {value.map((share) => (
+            <li key={share.id}>
+              <div>
+                <strong>{share.description ?? "Music share"}</strong>
+                {share.url ? (
+                  <a className="muted resource-url" href={share.url}>
+                    {share.url}
+                  </a>
+                ) : null}
+              </div>
+              <span className="muted">{share.track_ids.length} tracks</span>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void removeShare(share.id)}
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyState message="No public links have been created." />
+      )}
+    </section>
+  );
+}
+
+function CredentialForm({ user }: { user: User }) {
+  const [password, setPassword] = useState("");
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    try {
+      const result = await setSubsonicCredential(user.username, password);
+      setApiKey(result.api_key);
+      setPassword("");
+    } catch {
+      setError("Credential rotation failed.");
+    }
+  }
+  return (
+    <form className="credential-form" onSubmit={(event) => void submit(event)}>
+      <input
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        placeholder="Dedicated Subsonic password"
+        aria-label={`Subsonic password for ${user.username}`}
+        minLength={12}
+        required
+      />
+      <button type="submit">Rotate credential</button>
+      {apiKey ? (
+        <output className="secret-output">
+          Copy this API key now: <code>{apiKey}</code>
+        </output>
+      ) : null}
+      {error ? <span className="error">{error}</span> : null}
+    </form>
+  );
+}
+
+export function AdminPage() {
+  const signedInUser = currentUser();
+  const [revision, setRevision] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [libraryName, setLibraryName] = useState("");
+  const [libraryPath, setLibraryPath] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [userBusy, setUserBusy] = useState(false);
+  const { value, error } = useAsync(
+    () => Promise.all([listLibraries(), listUsers()]),
+    [revision],
+  );
+  if (!value) return <Loading error={error} />;
+  const [libraries, users] = value;
+
+  async function registerLibrary(event: FormEvent) {
+    event.preventDefault();
+    setLibraryBusy(true);
+    setAdminError(null);
+    setNotice(null);
+    try {
+      const result = await addLibrary(libraryName, libraryPath, "private");
+      setLibraryName("");
+      setLibraryPath("");
+      setNotice(`Initial scan ${result.scan_id} queued.`);
+      setRevision((value) => value + 1);
+    } catch {
+      setAdminError("The library path could not be registered.");
+    } finally {
+      setLibraryBusy(false);
+    }
+  }
+
+  async function addUser(event: FormEvent) {
+    event.preventDefault();
+    setUserBusy(true);
+    setAdminError(null);
+    setNotice(null);
+    try {
+      await createUser(username, password, "user");
+      setUsername("");
+      setPassword("");
+      setRevision((value) => value + 1);
+    } catch {
+      setAdminError("The account could not be created.");
+    } finally {
+      setUserBusy(false);
+    }
+  }
+
+  async function toggleUser(user: User) {
+    setAdminError(null);
+    setNotice(null);
+    try {
+      await setUserDisabled(user.username, !user.disabled);
+      setRevision((value) => value + 1);
+    } catch {
+      setAdminError("The account status could not be changed.");
+    }
+  }
+
+  async function scanLibrary(libraryId: string) {
+    setAdminError(null);
+    setNotice(null);
+    try {
+      const result = await startScan(libraryId);
+      setNotice(`Scan ${result.scan_id} queued.`);
+    } catch {
+      setAdminError("The scan could not be started.");
+    }
+  }
+
+  return (
+    <section>
+      <PageHeader
+        title="Administration"
+        detail="Libraries, scans and accounts"
+      />
+      {notice ? <p className="notice">{notice}</p> : null}
+      {adminError ? <p className="error">{adminError}</p> : null}
+      <div className="admin-grid">
+        <article className="admin-panel">
+          <h3>Libraries</h3>
+          <form
+            className="stacked-form"
+            onSubmit={(event) => void registerLibrary(event)}
+          >
+            <input
+              value={libraryName}
+              onChange={(event) => setLibraryName(event.target.value)}
+              placeholder="Library name"
+              required
+            />
+            <input
+              value={libraryPath}
+              onChange={(event) => setLibraryPath(event.target.value)}
+              placeholder="Absolute server folder path"
+              required
+            />
+            <button type="submit" disabled={libraryBusy}>
+              {libraryBusy ? "Registering…" : "Register and scan"}
+            </button>
+          </form>
+          <ul className="resource-list compact">
+            {libraries.map((library) => (
+              <li key={library.id}>
+                <div>
+                  <strong>{library.name}</strong>
+                  <span className="muted">{library.visibility}</span>
+                </div>
                 <button
                   type="button"
-                  className="star"
-                  onClick={() => void toggleStar(song)}
-                  aria-label={starred ? "Remove favourite" : "Add favourite"}
-                  aria-pressed={starred}
+                  onClick={() => void scanLibrary(library.id)}
                 >
-                  {starred ? "★" : "☆"}
+                  Scan now
                 </button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+              </li>
+            ))}
+          </ul>
+        </article>
+        <article className="admin-panel">
+          <h3>Accounts</h3>
+          <form
+            className="stacked-form"
+            onSubmit={(event) => void addUser(event)}
+          >
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="Username"
+              autoComplete="off"
+              required
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Web password, 12 characters minimum"
+              minLength={12}
+              autoComplete="new-password"
+              required
+            />
+            <button type="submit" disabled={userBusy}>
+              {userBusy ? "Creating…" : "Create account"}
+            </button>
+          </form>
+        </article>
+      </div>
+      <div className="stack">
+        {users.map((user) => (
+          <article className="user-row" key={user.id}>
+            <header>
+              <div>
+                <strong>{user.username}</strong>
+                <span className="muted">
+                  {user.role} · {user.folder_ids.length} libraries
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void toggleUser(user)}
+                disabled={user.id === signedInUser?.id}
+                title={
+                  user.id === signedInUser?.id
+                    ? "You cannot disable your current account"
+                    : undefined
+                }
+              >
+                {user.disabled ? "Enable" : "Disable"}
+              </button>
+            </header>
+            <CredentialForm user={user} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PageHeader({ title, detail }: { title: string; detail: string }) {
+  return (
+    <header className="page-header">
+      <h2>{title}</h2>
+      <p className="muted">{detail}</p>
+    </header>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="empty-state">
+      <p>{message}</p>
+    </div>
   );
 }
 
@@ -398,7 +969,7 @@ export function AuthorizePage() {
       <h2>Authorise {clientId}</h2>
       <p className="muted">
         It will be able to browse your libraries, play your music and manage
-        your playlists, favourites and ratings — everything this account can do.
+        your playlists, favourites and ratings, everything this account can do.
       </p>
       <p className="muted">
         Sending you back to <code>{redirectUri}</code>
