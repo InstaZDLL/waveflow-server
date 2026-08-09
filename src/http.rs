@@ -155,7 +155,8 @@ pub struct UpdateShareRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ShareResponse {
     pub id: Uuid,
-    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub description: Option<String>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
@@ -1473,11 +1474,13 @@ pub async fn delete_share(
 }
 
 fn share_response(state: &AppState, share: crate::services::ShareItem) -> ShareResponse {
-    let path = format!("/share/{}", share.url_token);
-    let url = state
-        .public_url
-        .as_ref()
-        .map_or_else(|| path.clone(), |base| format!("{base}{path}"));
+    let url = share.url_token.map(|token| {
+        let path = format!("/share/{token}");
+        state
+            .public_url
+            .as_ref()
+            .map_or_else(|| path.clone(), |base| format!("{base}{path}"))
+    });
     ShareResponse {
         id: share.id,
         url,

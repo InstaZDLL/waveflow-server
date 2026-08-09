@@ -96,7 +96,7 @@ export type Queue = {
 
 export type Share = {
   id: string;
-  url: string;
+  url?: string;
   description: string | null;
   expires_at: number | null;
   created_at: number;

@@ -31,6 +31,7 @@ import {
   login,
   type Playlist,
   type SearchResult,
+  type Share,
   type Song,
   safeInternalPath,
   search,
@@ -432,6 +433,7 @@ export function QueuePage() {
 export function SharesPage() {
   const player = usePlayer();
   const [description, setDescription] = useState("");
+  const [createdShare, setCreatedShare] = useState<Share | null>(null);
   const [revision, setRevision] = useState(0);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const { value, error } = useAsync(listShares, [revision]);
@@ -441,10 +443,11 @@ export function SharesPage() {
     event.preventDefault();
     setMutationError(null);
     try {
-      await createShare(
+      const share = await createShare(
         player.queue.map((song) => song.id),
         description,
       );
+      setCreatedShare(share);
       setDescription("");
       setRevision((value) => value + 1);
     } catch {
@@ -484,15 +487,25 @@ export function SharesPage() {
         <p className="muted">Add tracks to the queue before creating a link.</p>
       ) : null}
       {mutationError ? <p className="error">{mutationError}</p> : null}
+      {createdShare?.url ? (
+        <p>
+          This link is shown only once:{" "}
+          <a className="resource-url" href={createdShare.url}>
+            {createdShare.url}
+          </a>
+        </p>
+      ) : null}
       {value.length ? (
         <ul className="resource-list">
           {value.map((share) => (
             <li key={share.id}>
               <div>
                 <strong>{share.description ?? "Music share"}</strong>
-                <a className="muted resource-url" href={share.url}>
-                  {share.url}
-                </a>
+                {share.url ? (
+                  <a className="muted resource-url" href={share.url}>
+                    {share.url}
+                  </a>
+                ) : null}
               </div>
               <span className="muted">{share.track_ids.length} tracks</span>
               <button
