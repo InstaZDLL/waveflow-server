@@ -11,7 +11,7 @@ use crate::{
     authentication::now_ms,
     database::{AccountRecord, AccountRole, Database},
     security::{self, EncryptedSecret, SecretBox},
-    sync::{MutationContext, MutationReceipt, OperationClaim, SyncService},
+    sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},
 };
 
 /// Tenant-filtered projections shared by the Subsonic facade and the native
@@ -303,6 +303,7 @@ impl From<crate::sync::SyncError> for ServiceError {
     fn from(error: crate::sync::SyncError) -> Self {
         match error {
             crate::sync::SyncError::Invalid => Self::Invalid,
+            crate::sync::SyncError::Conflict => Self::Conflict,
             crate::sync::SyncError::Database(error) => Self::Database(error),
         }
     }
@@ -881,10 +882,17 @@ impl DomainServices {
     ) -> Result<PlaylistItem, ServiceError> {
         validate_name(name)?;
         self.songs_by_ids(user_id, track_ids).await?;
+        let intent = MutationIntent::new(
+            "create",
+            "playlist",
+            &serde_json::json!({ "name": name.trim(), "track_ids": track_ids }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "playlist")?;
@@ -962,10 +970,21 @@ impl DomainServices {
             validate_name(name)?;
         }
         self.songs_by_ids(user_id, add).await?;
-        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
         let mut removes = remove_indexes.to_vec();
         removes.sort_unstable_by(|a, b| b.cmp(a));
         removes.dedup();
+        let intent = MutationIntent::new(
+            "update",
+            &format!("playlist:{id}"),
+            &serde_json::json!({
+                "name": name.map(str::trim),
+                "comment": comment,
+                "public": public,
+                "add": add,
+                "remove_indexes": &removes,
+            }),
+        );
+        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
         for index in removes {
             if index >= ids.len() {
                 return Err(ServiceError::Invalid);
@@ -975,8 +994,10 @@ impl DomainServices {
         ids.extend_from_slice(add);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "playlist")?;
@@ -1037,10 +1058,14 @@ impl DomainServices {
         id: Uuid,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        let intent =
+            MutationIntent::new("delete", &format!("playlist:{id}"), &serde_json::json!({}));
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "playlist")?;
@@ -1102,10 +1127,17 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         self.authorize_entity(user_id, entity_type, entity_id)
             .await?;
+        let intent = MutationIntent::new(
+            if starred { "star" } else { "unstar" },
+            &format!("{entity_type}:{entity_id}"),
+            &serde_json::json!({ "starred": starred }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "favorite")?;
@@ -1267,10 +1299,17 @@ impl DomainServices {
         }
         self.authorize_entity(user_id, entity_type, entity_id)
             .await?;
+        let intent = MutationIntent::new(
+            "set-rating",
+            &format!("{entity_type}:{entity_id}"),
+            &serde_json::json!({ "rating": rating }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "rating")?;
@@ -1343,10 +1382,21 @@ impl DomainServices {
         if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
             return Err(ServiceError::Invalid);
         }
+        let intent = MutationIntent::new(
+            if submission {
+                "scrobble"
+            } else {
+                "now-playing"
+            },
+            &format!("track:{track_id}"),
+            &serde_json::json!({ "submission": submission, "time": time }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "scrobble")?;
@@ -1491,10 +1541,22 @@ impl DomainServices {
         if let Some(current) = current {
             self.songs_by_ids(user_id, &[current]).await?;
         }
+        let intent = MutationIntent::new(
+            "save",
+            &format!("queue:{user_id}"),
+            &serde_json::json!({
+                "track_ids": ids,
+                "current": current,
+                "position_ms": position_ms,
+                "client": client,
+            }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "queue")?;
@@ -1659,15 +1721,21 @@ impl DomainServices {
             return Err(ServiceError::Invalid);
         }
         self.songs_by_ids(user_id, ids).await?;
-        let token = security::generate_token("wfs_");
-        let token_hash = security::token_hash(&token);
-        let encrypted = self.secret_box.encrypt(token.as_bytes())?;
-        let id = Uuid::new_v4();
-        let now = now_ms();
+        let intent = MutationIntent::new(
+            "create",
+            "share",
+            &serde_json::json!({
+                "track_ids": ids,
+                "description": description,
+                "expires_at": expires_at,
+            }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "share")?;
@@ -1680,6 +1748,11 @@ impl DomainServices {
                 .find(|share| share.id == id)
                 .ok_or(ServiceError::NotFound);
         }
+        let token = security::generate_token("wfs_");
+        let token_hash = security::token_hash(&token);
+        let encrypted = self.secret_box.encrypt(token.as_bytes())?;
+        let id = Uuid::new_v4();
+        let now = now_ms();
         sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, token_nonce, token_ciphertext, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;
         for (position, track) in ids.iter().enumerate() {
@@ -1783,10 +1856,20 @@ impl DomainServices {
         expires_at: Option<i64>,
         context: MutationContext,
     ) -> Result<ShareItem, ServiceError> {
+        let intent = MutationIntent::new(
+            "update",
+            &format!("share:{id}"),
+            &serde_json::json!({
+                "description": description,
+                "expires_at": expires_at,
+            }),
+        );
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "share")?;
@@ -1844,10 +1927,13 @@ impl DomainServices {
         id: Uuid,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        let intent = MutationIntent::new("delete", &format!("share:{id}"), &serde_json::json!({}));
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(receipt) =
-            self.sync.claim_operation(&mut tx, user_id, context).await?
+        if let OperationClaim::Replayed(receipt) = self
+            .sync
+            .claim_operation(&mut tx, user_id, context, intent)
+            .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "share")?;

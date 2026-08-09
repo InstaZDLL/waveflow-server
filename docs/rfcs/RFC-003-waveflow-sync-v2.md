@@ -78,6 +78,9 @@ SQLite transaction behind the process-wide writer gate. Repeating the same
 operation ID is recognized as already applied and never creates a second domain
 row or journal event. Resource endpoints return the current representation when
 it still exists; the journal receipt remains the durable proof of application.
+The reservation stores a canonical fingerprint of the action, target resource
+and normalized payload. Reusing an operation ID with a different fingerprint is
+rejected as a conflict instead of being reported as a successful replay.
 
 `PUT /api/v2/sync/ack` with `{ "device_id": "<uuid>", "cursor": 42 }`
 records a monotonic per-device acknowledgement. A cursor below the stored ACK
