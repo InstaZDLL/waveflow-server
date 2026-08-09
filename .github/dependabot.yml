@@ -27,12 +27,10 @@ updates:
     ignore:
       - dependency-name: waveflow-core
 
-  # Embedded web client. Dependabot does have a dedicated `bun` ecosystem now,
-  # but it supports version updates only — no security updates. `npm` reads
-  # package.json + bun.lock correctly here and does raise security PRs, which
-  # matters more than a native parser for a handful of dependencies. Revisit if
-  # `bun` gains security updates.
-  - package-ecosystem: npm
+  # Embedded web client. The dedicated ecosystem keeps package.json and
+  # bun.lock in sync. GitHub currently supports Bun version updates, but not
+  # Dependabot security updates for Bun.
+  - package-ecosystem: bun
     directory: "/webapp"
     schedule:
       interval: weekly
