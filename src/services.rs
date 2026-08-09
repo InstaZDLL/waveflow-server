@@ -131,6 +131,9 @@ pub struct CatalogSnapshot {
 /// 500-item cap so both surfaces expose the same paging ceiling.
 pub const MAX_BROWSE_LIMIT: i64 = 500;
 const DEFAULT_BROWSE_LIMIT: i64 = 100;
+/// Fits a UUID-only queue request below the server's 16 KiB body limit while
+/// also bounding the work performed under the global SQLite writer gate.
+pub const MAX_QUEUE_TRACKS: usize = 400;
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
 /// bind it without re-checking bounds.
@@ -889,7 +892,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -983,7 +986,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1064,7 +1067,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1134,7 +1137,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1303,7 +1306,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1388,7 +1391,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1549,12 +1552,15 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
             validate_replay_type(&receipt, "queue")?;
             return Ok(());
+        }
+        if ids.len() > MAX_QUEUE_TRACKS {
+            return Err(ServiceError::Invalid);
         }
         if position_ms < 0 {
             return Err(ServiceError::Invalid);
@@ -1569,13 +1575,14 @@ impl DomainServices {
             .bind(user_id.to_string())
             .execute(&mut *tx)
             .await?;
-        for (position, id) in ids.iter().enumerate() {
+        if !ids.is_empty() {
+            let ids_json = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
             sqlx::query(
-                "INSERT INTO play_queue_track (user_id, track_id, position) VALUES (?, ?, ?)",
+                "INSERT INTO play_queue_track (user_id, track_id, position) \
+                 SELECT ?, value, CAST(key AS INTEGER) FROM json_each(?)",
             )
             .bind(user_id.to_string())
-            .bind(id.to_string())
-            .bind(position as i64)
+            .bind(ids_json)
             .execute(&mut *tx)
             .await?;
         }
@@ -1731,7 +1738,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1869,7 +1876,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;
@@ -1933,7 +1940,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&mut tx, user_id, context, intent)
+            .claim_operation(&_writer, &mut tx, user_id, context, intent)
             .await?
         {
             tx.rollback().await?;

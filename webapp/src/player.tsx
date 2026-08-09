@@ -309,9 +309,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       next,
       previous,
       seek: (seconds: number) => {
-        if (audio.current) {
+        const element = audio.current;
+        if (element) {
           localMutation.current = true;
-          audio.current.currentTime = seconds;
+          element.currentTime = seconds;
+          positionRef.current = seconds;
+          const songs = queueRef.current;
+          const selected = songs[indexRef.current] ?? null;
+          // Queue the seek itself: it must not depend on a later pause event,
+          // which may never arrive before the page is closed.
+          persistQueue(
+            songs,
+            selected?.id ?? null,
+            Math.round(positionRef.current * 1000),
+          );
         }
       },
     }),

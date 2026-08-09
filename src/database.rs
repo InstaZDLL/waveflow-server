@@ -353,6 +353,7 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn reserve_sync_operation(
         &self,
+        _writer_guard: &OwnedMutexGuard<()>,
         connection: &mut SqliteConnection,
         user_id: Uuid,
         operation_id: Uuid,
@@ -393,7 +394,7 @@ impl Database {
 
         let row = sqlx::query(
             "SELECT so.result_entity_id, so.event_cursor, so.intent_hash, se.entity_type \
-             FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor \
+             FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor AND se.user_id=so.user_id \
              WHERE so.user_id=? AND so.operation_id=? AND so.applied_at IS NOT NULL",
         )
         .bind(user_id.to_string())
