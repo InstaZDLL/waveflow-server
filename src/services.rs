@@ -1267,7 +1267,14 @@ impl DomainServices {
         connection: &mut SqliteConnection,
         user_id: Uuid,
     ) -> Result<Vec<(String, Uuid, i64)>, ServiceError> {
-        sqlx::query("SELECT entity_type, entity_id, starred_at FROM user_star WHERE user_id=? ORDER BY starred_at DESC")
+        sqlx::query(
+            "SELECT s.entity_type, s.entity_id, s.starred_at FROM user_star s \
+             WHERE s.user_id=? AND ( \
+               (s.entity_type='track' AND EXISTS (SELECT 1 FROM track e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=s.entity_id AND m.user_id=s.user_id)) OR \
+               (s.entity_type='album' AND EXISTS (SELECT 1 FROM album e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=s.entity_id AND m.user_id=s.user_id)) OR \
+               (s.entity_type='artist' AND EXISTS (SELECT 1 FROM artist e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=s.entity_id AND m.user_id=s.user_id)) \
+             ) ORDER BY s.starred_at DESC",
+        )
             .bind(user_id.to_string()).fetch_all(&mut *connection).await?
             .into_iter().map(|row| Ok((row.try_get("entity_type")?, parse_uuid(row.try_get("entity_id")?)?, row.try_get("starred_at")?)))
             .collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
@@ -1864,12 +1871,21 @@ impl DomainServices {
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
+        // The rows above were read outside the writer gate, so the share may
+        // have been revoked in between. Let the UPDATE arbitrate: no row means
+        // it is gone, and a visitor must not see what an owner just deleted.
         let _writer = self.db.writer_guard().await;
-        sqlx::query("UPDATE share SET visit_count=visit_count+1, last_visited_at=? WHERE id=?")
-            .bind(now_ms())
-            .bind(id.to_string())
-            .execute(self.db.pool())
-            .await?;
+        let visited =
+            sqlx::query("UPDATE share SET visit_count=visit_count+1, last_visited_at=? WHERE id=?")
+                .bind(now_ms())
+                .bind(id.to_string())
+                .execute(self.db.pool())
+                .await?
+                .rows_affected();
+        drop(_writer);
+        if visited == 0 {
+            return Err(ServiceError::NotFound);
+        }
         Ok(ShareItem {
             id,
             owner_id: owner,
@@ -2201,6 +2217,7 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        drop(_writer);
         self.users(actor_id)
             .await?
             .into_iter()
@@ -2295,6 +2312,7 @@ impl DomainServices {
             }
         }
         tx.commit().await?;
+        drop(_writer);
         self.users(actor_id)
             .await?
             .into_iter()
