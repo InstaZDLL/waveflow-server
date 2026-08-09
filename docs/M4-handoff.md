@@ -1,18 +1,35 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi (2026-08-07). **M4 est implémenté et livré dans la PR #83**
-> (branche `feat/native-catalog-api`, 14 commits, CI verte, non fusionnée à la
-> rédaction). Ce document décrit ce qui est fait, les décisions non évidentes à
-> ne pas défaire, et ce qui reste. Voir aussi `docs/M3-symfonium-validation.md`,
-> toujours d'actualité pour la porte `v2.0-beta`.
+> Note de suivi mise à jour le 2026-08-09. **M4 est fusionné** (`14aec76`). La
+> validation réelle Symfonium est terminée et ferme M3. Ce document décrit ce
+> qui est fait, les décisions non évidentes à ne pas défaire, et ce qui reste.
+> Aucun tag de release ne doit être créé sans demande explicite.
 
 ## Où on en est
 
 - **M0, M1, M2 : fermés.**
-- **M3 : implémenté, suite verte, porte ouverte** — seule la validation
-  **Symfonium** manque. Elle bloque le **tag `v2.0-beta`**, pas le reste.
-- **M4 : implémenté** (PR #83), en attente de relecture / fusion.
+- **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
+  lecture native/transcodée, favoris, scrobbles et playlists.
+- **M4 : fusionné** (`14aec76`). Le nettoyage de `web/` reste porté par la PR
+  #84 tant qu'elle n'est pas fusionnée.
 - **M5, M6 : non commencés.**
+
+## Validation sur bibliothèque réelle (2026-08-09)
+
+Un scan en lecture seule de 28,8 Go a indexé 2 859 fichiers sur 2 859 sans
+erreur : 1 591 AAC/M4A, 942 MP3, 285 FLAC et 41 WAV. Le catalogue obtenu compte
+1 398 albums, 1 142 artistes, 27 genres, 1 368 artworks dédupliqués et 2 859
+lignes FTS5. Les lectures `Range` natives des quatre codecs et un transcodage
+FLAC vers Opus 64 kbit/s ont réussi.
+
+Ce corpus a révélé deux défauts M4 corrigés après fusion : les jetons natifs
+`wfapi_` créés par la CLI n'étaient pas consultés par l'authentification
+`/api/v2`, et la liste des pistes était limitée silencieusement à 500 sans
+pagination. Les jetons hachés honorent désormais révocation, expiration et
+désactivation du compte ; la route des pistes accepte `offset`/`limit` avec un
+plafond de 500. Le filtre de logs par défaut masque aussi les milliers
+d'avertissements identiques produits par les atomes MP4 optionnels vides, tout
+en restant surchargeable via `RUST_LOG`.
 
 ## Ce que M4 a livré
 

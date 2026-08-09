@@ -1,20 +1,16 @@
 # M3 — Subsonic/OpenSubsonic : état & handoff
 
-> Note de suivi (2026-08-03). La porte M3 reste **ouverte** : un seul point
-> manque, la validation **Symfonium**, qui exige une URL HTTPS publique à
-> certificat reconnu. Ce document décrit ce qui est fait et la procédure exacte
-> pour clore M3, à reprendre par le prochain agent.
+> Mise à jour (2026-08-09). La porte M3 est **fermée** : Symfonium 14.1.0 a
+> été validé sur un émulateur Android 17 via une URL HTTPS publique éphémère.
 >
-> **Décision (user, 2026-08-03).** La validation Symfonium conditionne désormais
-> le **tag `v2.0-beta`** — et **elle ne conditionne plus le démarrage de M4**,
-> ni sa fusion. M4 avance donc avec la porte M3 partiellement ouverte : 3
-> clients réels sur 4 sont validés et le contrat Subsonic est gelé au RFC-002.
-> Aucune release ne peut être coupée tant que Symfonium n'est pas passé.
+> **Décision (user, 2026-08-03).** La validation Symfonium conditionnait le
+> **tag `v2.0-beta`**, sans bloquer M4. Cette condition est maintenant satisfaite ;
+> le tag reste toutefois une action explicite séparée.
 
 ## Où on en est
 
 - **M0, M1, M2 : fermés.**
-- **M3 : implémenté et validé localement**, porte **ouverte** (Symfonium seul).
+- **M3 : fermé**, y compris la matrice des quatre clients réels.
 
 ### Validation déjà passée (locale)
 
@@ -40,13 +36,30 @@
 | Feishin | ✅ validé |
 | Substreamer | ✅ validé |
 | DSub | ✅ validé |
-| **Symfonium** | ⛔ **bloqué** — exige une URL **HTTPS publique à certificat reconnu**, et l'app n'existe que sur **Android** |
+| **Symfonium 14.1.0** | ✅ validé sur Android 17 |
 
-## Ce qui reste pour fermer M3
+## Validation Symfonium du 2026-08-09
 
-Valider **Symfonium** contre l'instance exposée en HTTPS public, puis marquer la
-porte M3 verte. Ce n'est plus un préalable au démarrage de M4 (voir la note de
-suivi en tête), mais cela reste un préalable au tag `v2.0-beta`.
+L'instance jetable contenait un album, un artiste et deux pistes. Elle a été
+exposée par un tunnel `cloudflared` aléatoire, sans donnée personnelle. Le
+parcours réel a validé :
+
+- authentification compte puis API key ;
+- synchronisation complète, recherche et affichage de l'album/artiste ;
+- lecture native MP3 et FLAC avec HTTP Range ;
+- transcodage Opus à 64 kbit/s demandé par `maxBitRate=64` ;
+- favori d'album et scrobbles relus côté serveur ;
+- création puis mise à jour d'une playlist de deux pistes, relue par
+  `getPlaylist`.
+
+Trois écarts ont été découverts et couverts par des tests de non-régression :
+
+1. après le vrai credential, Symfonium envoie un `GET ping` exact avec
+   `c=Symfonium` et `test/test` pour la découverte ; seule cette enveloppe
+   publique est acceptée, sans principal ni accès catalogue ;
+2. `search3?query=%22%22` signifie « tout le catalogue » ;
+3. `getBookmarks` fait partie du sync initial et renvoie un conteneur vide tant
+   que la progression audiobook n'est pas implémentée.
 
 ### Session 2026-08-03 — tunnel monté, test non réalisé
 
@@ -78,7 +91,7 @@ révéler l'écart. Corrigé dans `src/subsonic.rs` (`json_array_node`), XML
 inchangé, décision « liste vide » du RFC préservée, test de non-régression dans
 `tests/v2_foundations.rs`.
 
-### Procédure recommandée pour le test Symfonium (avec garde-fous)
+### Procédure rejouable pour le test Symfonium (avec garde-fous)
 
 1. Créer une **bibliothèque de test jetable** + un **compte admin/user de test**
    à **identifiants aléatoires forts** (via la CLI de bootstrap). Aucune donnée
@@ -93,11 +106,10 @@ inchangé, décision « liste vide » du RFC préservée, test de non-régressio
    artistes / albums / stream / star / playlists).
 5. **Détruire le tunnel juste après** le test et **désactiver le compte de test**.
 
-### Après Symfonium OK
+### Release
 
-- Marquer la **porte M3** verte.
-- Publier / confirmer la release **`v2.0-beta`** (⚠️ **jamais cut de release sans
-  demande explicite du user**).
+La porte M3 est verte. Publier / confirmer la release **`v2.0-beta`** reste une
+action séparée : **jamais de tag ni de release sans demande explicite du user**.
 
 M4 n'est plus une suite à planifier ici : il est livré (API native `/api/v2`,
 PKCE, SPA embarquée, retrait de `/api/v1`). Voir `docs/M4-handoff.md`.

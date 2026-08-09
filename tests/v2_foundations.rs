@@ -186,6 +186,67 @@ async fn login_refresh_rotation_and_logout_work() {
 }
 
 #[tokio::test]
+async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
+    let (_temp, config, state) = test_app().await;
+    let now = now_ms();
+    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    let user_id = state
+        .db
+        .create_account("native-token-user", &password_hash, AccountRole::User, now)
+        .await
+        .unwrap();
+    let token = "wfapi_native-token-fixture";
+    state
+        .db
+        .create_api_token(
+            user_id,
+            "integration token",
+            &security::token_hash(token),
+            &[],
+            now,
+        )
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let accepted = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    let last_used_at: Option<i64> =
+        sqlx::query_scalar("SELECT last_used_at FROM api_token WHERE token_hash = ?")
+            .bind(security::token_hash(token).as_slice())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert!(last_used_at.is_some_and(|last_used| last_used >= now));
+
+    sqlx::query("UPDATE api_token SET revoked_at = ? WHERE token_hash = ?")
+        .bind(now_ms())
+        .bind(security::token_hash(token).as_slice())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let revoked = router
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn probes_and_openapi_are_available_without_scan_readiness() {
     let (_temp, mut config, state) = test_app().await;
     config.allowed_origins = vec!["http://127.0.0.1:9180".parse().unwrap()];
@@ -613,6 +674,7 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
     let music = config.data_dir.join("route-music");
     std::fs::create_dir_all(&music).unwrap();
     write_test_wav(&music.join("Private.wav"));
+    write_test_wav(&music.join("Private 2.wav"));
     let root = std::fs::canonicalize(&music).unwrap();
     let library_id = state
         .db
@@ -650,7 +712,34 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
         .await
         .unwrap();
     assert_eq!(owner_response.status(), StatusCode::OK);
-    assert_eq!(json_body(owner_response).await.as_array().unwrap().len(), 1);
+    assert_eq!(json_body(owner_response).await.as_array().unwrap().len(), 2);
+
+    let page = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v2/libraries/{library_id}/tracks?limit=1&offset=1"
+            ))
+            .header("authorization", format!("Bearer {owner_token}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    assert_eq!(json_body(page).await.as_array().unwrap().len(), 1);
+
+    let invalid_page = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/libraries/{library_id}/tracks?limit=501"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_page.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     for method in ["GET", "POST"] {
         let uri = if method == "GET" {
@@ -1020,6 +1109,40 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(ping_xml.contains("status=\"ok\""));
     assert!(!ping_xml.contains("<ping"));
 
+    let symfonium_probe = router
+        .clone()
+        .oneshot(
+            Request::get("/rest/ping.view?u=test&p=test&v=1.13.0&c=Symfonium&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(symfonium_probe.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(symfonium_probe).await["subsonic-response"]["status"],
+        "ok"
+    );
+
+    for path in [
+        "/rest/getMusicFolders.view?u=test&p=test&v=1.13.0&c=Symfonium&f=json",
+        "/rest/ping.view?u=test&p=test&v=1.13.0&c=another-client&f=json",
+        "/rest/ping.view?u=test&p=test&apiKey=invalid&v=1.13.0&c=Symfonium&f=json",
+        "/rest/ping.view?u=test&u=another&p=test&v=1.13.0&c=Symfonium&f=json",
+    ] {
+        let rejected = router
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(
+            json_body(rejected).await["subsonic-response"]["error"]["code"],
+            40,
+            "{path}"
+        );
+    }
+
     let salt = "golden-salt";
     let mut digest = Md5::new();
     digest.update(subsonic_password.as_bytes());
@@ -1068,6 +1191,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let cases = [
         ("getLicense", String::new()),
         ("getOpenSubsonicExtensions", String::new()),
+        ("getBookmarks", String::new()),
         ("getIndexes", format!("&musicFolderId={library}")),
         ("getArtists", format!("&musicFolderId={library}")),
         ("getArtist", format!("&id={artist}")),
@@ -1097,7 +1221,22 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             );
             assert!(extensions.as_array().unwrap().is_empty());
         }
+        if method == "getBookmarks" {
+            assert!(response["subsonic-response"]["bookmarks"].is_object());
+        }
     }
+    let match_all_search = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=%22%22&artistCount=500&albumCount=500&songCount=500",
+    )
+    .await;
+    let match_all = &match_all_search["subsonic-response"]["searchResult3"];
+    assert!(!match_all["artist"].as_array().unwrap().is_empty());
+    assert!(!match_all["album"].as_array().unwrap().is_empty());
+    assert!(!match_all["song"].as_array().unwrap().is_empty());
+
     let exhausted_search = subsonic_json(
         &router,
         "search3",
