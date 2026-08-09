@@ -1,13 +1,34 @@
 name: Bug report
-description: Something is broken or behaving wrong in waveflow-web.
+description: Something is broken or behaving wrong in waveflow-server (server or embedded web player).
 title: '[Bug] '
-labels: ['type:bug']
+labels: ['type: fix', 'needs triage']
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for filing a bug. Please fill in as much as you can — the more
         precise the repro, the faster the fix.
+
+        **Redact secrets before posting.** Logs, console output, network traces
+        and screenshots from a server or auth flow routinely contain access
+        tokens, cookies, signed URLs and personal data — strip them from
+        everything you paste below.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Where does the bug surface?
+      options:
+        - Server (Rust)
+        - Embedded web player
+        - Subsonic / OpenSubsonic API
+        - Native /api/v2
+        - Sync
+        - Streaming / transcoding
+        - Not sure
+    validations:
+      required: true
 
   - type: textarea
     id: what-happened
@@ -43,27 +64,32 @@ body:
     id: browser
     attributes:
       label: Browser + version
+      description: Only relevant for the web player — leave blank for server-side issues.
       placeholder: 'Firefox 144 / Chrome 132 / Safari 18.2'
     validations:
-      required: true
+      required: false
 
   - type: input
     id: os
     attributes:
       label: Operating system
+      description: The server host OS, or your OS for a web-player bug.
       placeholder: 'macOS 15.2 / Windows 11 / Fedora 41'
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: console
     attributes:
-      label: Console / network errors
-      description: Paste any relevant errors from the browser DevTools console.
+      label: Console / network / server errors
+      description: |
+        Paste any relevant errors — browser DevTools console for web bugs,
+        server logs for backend bugs. **Redact tokens, cookies, signed URLs
+        and personal data first.**
       render: text
 
   - type: textarea
     id: notes
     attributes:
       label: Anything else
-      description: Screenshots, related issues, anything you tried.
+      description: Screenshots, related issues, anything you tried. Redact anything sensitive before attaching.
