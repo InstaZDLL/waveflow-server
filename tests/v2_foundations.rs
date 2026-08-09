@@ -3943,13 +3943,28 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         1
     );
     state.db.finish_scan_job(empty_scan, 1).await.unwrap();
-    assert!(state
+    let updated_playlist = state
         .services
-        .playlist(owner, aggregate_playlist.id)
+        .update_playlist(
+            owner,
+            aggregate_playlist.id,
+            Some("Unavailable aggregate renamed"),
+            None,
+            None,
+            &[],
+            &[],
+        )
         .await
-        .unwrap()
-        .songs
-        .is_empty());
+        .unwrap();
+    assert_eq!(updated_playlist.name, "Unavailable aggregate renamed");
+    assert!(updated_playlist.songs.is_empty());
+    let persisted_playlist_tracks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM playlist_track WHERE playlist_id=?")
+            .bind(aggregate_playlist.id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(persisted_playlist_tracks, 1);
     assert!(state
         .services
         .queue(owner)

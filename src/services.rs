@@ -864,7 +864,20 @@ impl DomainServices {
         user_id: Uuid,
         playlist_id: Uuid,
     ) -> Result<Vec<SongItem>, ServiceError> {
-        let ids = sqlx::query_scalar::<_, String>(
+        let ids = self
+            .playlist_track_ids_on(connection, user_id, playlist_id)
+            .await?;
+        self.songs_by_ids_lenient_on(connection, user_id, &ids)
+            .await
+    }
+
+    async fn playlist_track_ids_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        playlist_id: Uuid,
+    ) -> Result<Vec<Uuid>, ServiceError> {
+        sqlx::query_scalar::<_, String>(
             "SELECT pt.track_id FROM playlist_track pt JOIN playlist p ON p.id=pt.playlist_id \
              WHERE p.id=? AND p.owner_user_id=? ORDER BY pt.position",
         )
@@ -874,9 +887,8 @@ impl DomainServices {
         .await?
         .into_iter()
         .map(parse_uuid)
-        .collect::<Result<Vec<_>, _>>()?;
-        self.songs_by_ids_lenient_on(connection, user_id, &ids)
-            .await
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
     }
 
     pub async fn create_playlist(
@@ -1017,7 +1029,7 @@ impl DomainServices {
             validate_name(name)?;
         }
         self.songs_by_ids_on(&mut tx, user_id, add).await?;
-        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
+        let mut ids = self.playlist_track_ids_on(&mut tx, user_id, id).await?;
         for index in removes {
             if index >= ids.len() {
                 return Err(ServiceError::Invalid);
