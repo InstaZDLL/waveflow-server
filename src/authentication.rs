@@ -210,12 +210,14 @@ impl AuthService {
 
     pub async fn authenticate(&self, access_token: &str) -> Result<AuthUser, AuthError> {
         let hash = security::token_hash(access_token);
-        let account = self
-            .db
-            .account_by_access_hash(&hash, now_ms())
-            .await
-            .map_err(db_unavailable)?
-            .ok_or(AuthError::InvalidCredentials)?;
+        let now = now_ms();
+        let account = if access_token.starts_with("wfapi_") {
+            self.db.account_by_api_token_hash(&hash, now).await
+        } else {
+            self.db.account_by_access_hash(&hash, now).await
+        }
+        .map_err(db_unavailable)?
+        .ok_or(AuthError::InvalidCredentials)?;
         Ok(AuthUser {
             id: account.user_id,
             username: account.username,

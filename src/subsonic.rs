@@ -239,6 +239,9 @@ async fn handle_inner(
         );
     }
     let wants_json = params.first("f").is_some_and(|value| value == "json");
+    if is_symfonium_discovery_probe(method, &request_method, &params) {
+        return Ok(render_protocol(ok_node(), wants_json, StatusCode::OK));
+    }
     let principal = authenticate(&state, &params).await?;
 
     if matches!(method, "stream" | "download") {
@@ -264,6 +267,17 @@ async fn handle_inner(
     Ok(render_protocol(root, wants_json, StatusCode::OK))
 }
 
+fn is_symfonium_discovery_probe(method: &str, request_method: &Method, params: &Params) -> bool {
+    method == "ping"
+        && request_method == Method::GET
+        && params.all("c") == ["Symfonium"]
+        && params.all("u") == ["test"]
+        && params.all("p") == ["test"]
+        && params.all("apiKey").is_empty()
+        && params.all("t").is_empty()
+        && params.all("s").is_empty()
+}
+
 async fn dispatch(
     state: &AppState,
     principal: &Principal,
@@ -277,6 +291,10 @@ async fn dispatch(
             .attr("email", "")
             .attr("licenseExpires", "2099-12-31T23:59:59Z")),
         "getOpenSubsonicExtensions" => Ok(Node::new("openSubsonicExtensions")),
+        // Symfonium includes bookmarks in its initial sync even when the
+        // server does not expose audiobook progress. Returning the standard
+        // empty container keeps that optional capability non-destructive.
+        "getBookmarks" => Ok(Node::new("bookmarks")),
         "getMusicFolders" => {
             let snapshot = state
                 .services
@@ -802,7 +820,10 @@ async fn search(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let query = params.first("query").ok_or_else(missing)?.to_lowercase();
+    let raw_query = params.first("query").ok_or_else(missing)?;
+    // Subsonic clients use the literal pair of quotes as the documented
+    // match-all query while paginating a complete catalogue.
+    let query = (raw_query != "\"\"").then(|| raw_query.to_lowercase());
     let snapshot = snapshot(state, principal, params).await?;
     let artist_count = params.usize_or("artistCount", 20, 500)?;
     let artist_offset = params.usize_or("artistOffset", 0, 100_000)?;
@@ -815,7 +836,11 @@ async fn search(
             snapshot
                 .artists
                 .iter()
-                .filter(|artist| artist.name.to_lowercase().contains(&query))
+                .filter(|artist| {
+                    query
+                        .as_ref()
+                        .is_none_or(|query| artist.name.to_lowercase().contains(query))
+                })
                 .skip(artist_offset)
                 .take(artist_count)
                 .map(|artist| artist_node(artist, 0)),
@@ -824,7 +849,11 @@ async fn search(
             snapshot
                 .albums
                 .iter()
-                .filter(|album| album.title.to_lowercase().contains(&query))
+                .filter(|album| {
+                    query
+                        .as_ref()
+                        .is_none_or(|query| album.title.to_lowercase().contains(query))
+                })
                 .skip(album_offset)
                 .take(album_count)
                 .map(|album| album_node(album, &snapshot.songs)),
@@ -834,14 +863,16 @@ async fn search(
                 .songs
                 .iter()
                 .filter(|song| {
-                    [
-                        Some(song.title.as_str()),
-                        song.album.as_deref(),
-                        song.artist.as_deref(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| value.to_lowercase().contains(&query))
+                    query.as_ref().is_none_or(|query| {
+                        [
+                            Some(song.title.as_str()),
+                            song.album.as_deref(),
+                            song.artist.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|value| value.to_lowercase().contains(query))
+                    })
                 })
                 .skip(song_offset)
                 .take(song_count)

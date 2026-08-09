@@ -2,7 +2,7 @@
 
 WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the catalogue and user data; FFmpeg streaming, OpenSubsonic compatibility, WaveFlow Desktop sync and the embedded web player land through independently verified milestones.
 
-> **Status:** M0, M1 and M2 pass their release gates. M3 is implemented and its automated protocol suite passes. Feishin 1.15.1, Substreamer 8.0.91 and DSub 5.5.3 have completed the real-client matrix; Symfonium still needs a publicly trusted HTTPS test endpoint before the beta can be tagged.
+> **Status:** M0 through M3 pass their release gates. The OpenSubsonic facade has completed its real-client matrix with Feishin 1.15.1, Substreamer 8.0.91, DSub 5.5.3 and Symfonium 14.1.0. M4 is implemented; no release tag is created without an explicit operator request.
 
 The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The v1 PostgreSQL/JWKS implementation has been removed; it remains available in git history.
 
@@ -24,6 +24,9 @@ cargo run -- library remove-member --actor admin --library-id "LIBRARY_UUID" --u
 $env:WAVEFLOW_SUBSONIC_PASSWORD = "a-different-app-password"
 cargo run -- credential set --actor admin --username admin
 
+# Optional long-lived bearer token for a native/API client.
+cargo run -- token create --actor admin --username admin --name "Desktop"
+
 cargo run
 ```
 
@@ -37,7 +40,7 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 - `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating local sessions.
 - `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
 - `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
-- `GET /api/v2/libraries/{id}/tracks?q=...`: tenant-scoped catalogue/FTS search.
+- `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.
 - `GET /api/v2/tracks/{id}/stream?format=raw|mp3|opus&bitrate=...&offsetMs=...`: authorized playback. Byte ranges apply to originals and completed cache entries; live transcodes use temporal seek and chunked transfer.
 - `/rest/<method>` and `/rest/<method>.view`: Subsonic/OpenSubsonic XML or `f=json`, via GET or form POST.
 - `/share/{token}`: public metadata plus token-scoped stream URLs for an unexpired share.
