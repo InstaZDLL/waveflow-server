@@ -59,6 +59,7 @@ struct MediaInner {
     cache_locks: DashMap<String, Arc<Mutex<()>>>,
     cache_access: DashMap<PathBuf, SystemTime>,
     active_transcodes: AtomicUsize,
+    transcoding_available: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -113,6 +114,7 @@ impl MediaService {
                 cache_locks: DashMap::new(),
                 cache_access: DashMap::new(),
                 active_transcodes: AtomicUsize::new(0),
+                transcoding_available: true,
             }),
         })
     }
@@ -123,6 +125,12 @@ impl MediaService {
 
     pub fn active_transcodes(&self) -> usize {
         self.inner.active_transcodes.load(Ordering::Relaxed)
+    }
+
+    /// The service is only constructed after both FFmpeg tools pass startup
+    /// detection, so an initialized instance is the capability signal.
+    pub fn transcoding_available(&self) -> bool {
+        self.inner.transcoding_available
     }
 
     pub async fn serve(
@@ -934,6 +942,7 @@ mod tests {
             cache_locks: DashMap::new(),
             cache_access: access,
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
+            transcoding_available: true,
         };
         prune_cache(&inner).await;
         assert!(!old.exists());

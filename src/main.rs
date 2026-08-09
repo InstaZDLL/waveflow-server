@@ -26,6 +26,11 @@ async fn main() -> anyhow::Result<()> {
 
 async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Result<()> {
     let bind_addr = config.bind_addr;
+    if config.public_url.is_none() {
+        tracing::warn!(
+            "WAVEFLOW_PUBLIC_URL is not configured; browser origin validation falls back to the request Host header and cookies cannot be marked Secure"
+        );
+    }
     state.scanner.spawn_background(config.scan_interval);
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);

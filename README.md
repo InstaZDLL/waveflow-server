@@ -37,7 +37,15 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 - `GET /health`: process liveness;
 - `GET /ready`: SQLite readiness, independent of scan progress;
 - `GET /openapi.json` and `GET /reference`: API contract;
-- `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating local sessions.
+- `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating native sessions;
+- `/api/v2/web/auth/*`: memory-only browser access token plus HttpOnly rotating
+  refresh cookie, origin validation and CSRF protection;
+- `/api/v2/sync/snapshot`, `/changes`, `/ack`, `/socket`: idempotent user-data
+  synchronization defined by `docs/rfcs/RFC-003-waveflow-sync-v2.md`;
+- `/api/v2/admin/users`, `/libraries`, `/transcode/status`: native server
+  administration and dedicated Subsonic credential rotation;
+- `PUT|DELETE /api/v2/admin/users/{username}/subsonic-credential`: rotate or
+  revoke the dedicated Subsonic password and API key;
 - `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
 - `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
 - `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.
@@ -47,7 +55,7 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 
 For browser-hosted clients such as Feishin, list every trusted origin explicitly, for example `WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com`. Wildcards are rejected so credential-bearing Subsonic requests cannot be opened to arbitrary sites.
 
-Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind the reverse proxy so `createShare` returns absolute, externally usable URLs. When it is omitted, share URLs remain relative to the server origin.
+Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind the reverse proxy so `createShare` returns an absolute, externally usable URL at creation. An authenticated idempotent retry of that creation returns the same URL, but later share reads and sync snapshots omit it because only its hash is persisted. When the setting is absent, the creation response uses a URL relative to the server origin.
 
 Create or restore a coherent database/key bundle:
 

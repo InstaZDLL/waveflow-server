@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Row, SqlitePool,
+    Row, SqliteConnection, SqlitePool,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use utoipa::ToSchema;
@@ -168,7 +168,59 @@ pub struct AuthorizationRecord {
     pub device_name: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct SyncOperationReplayRecord {
+    pub result_entity_id: Option<String>,
+    pub event_cursor: i64,
+    pub intent_hash: Option<Vec<u8>>,
+    pub entity_type: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum SyncOperationReservation {
+    InvalidOriginDevice,
+    New,
+    Incomplete,
+    Replayed(SyncOperationReplayRecord),
+}
+
 impl Database {
+    pub async fn setup_required(&self) -> Result<bool, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM account")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count == 0)
+    }
+
+    pub async fn bootstrap_admin(
+        &self,
+        username: &str,
+        password_hash: &str,
+        now_ms: i64,
+    ) -> Result<Option<Uuid>, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let id = Uuid::new_v4();
+        let inserted = sqlx::query(
+            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+             SELECT ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM account)",
+        )
+        .bind(id.to_string())
+        .bind(username.trim())
+        .bind(password_hash)
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if inserted {
+            insert_audit(&mut tx, Some(id), "instance.bootstrapped", Some(id), now_ms).await?;
+        }
+        tx.commit().await?;
+        Ok(inserted.then_some(id))
+    }
+
     pub async fn open(config: &Config) -> anyhow::Result<Self> {
         tokio::fs::create_dir_all(&config.data_dir).await?;
         let options = SqliteConnectOptions::new()
@@ -296,6 +348,70 @@ impl Database {
 
     pub(crate) async fn writer_guard(&self) -> OwnedMutexGuard<()> {
         Arc::clone(&self.writer).lock_owned().await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn reserve_sync_operation(
+        &self,
+        _writer_guard: &OwnedMutexGuard<()>,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        operation_id: Uuid,
+        origin_device_id: Option<Uuid>,
+        intent_hash: &[u8],
+        created_at: i64,
+    ) -> Result<SyncOperationReservation, sqlx::Error> {
+        if let Some(device_id) = origin_device_id {
+            let owned = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM device \
+                 WHERE id=? AND user_id=? AND revoked_at IS NULL)",
+            )
+            .bind(device_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_one(&mut *connection)
+            .await?;
+            if !owned {
+                return Ok(SyncOperationReservation::InvalidOriginDevice);
+            }
+        }
+
+        let inserted = sqlx::query(
+            "INSERT INTO sync_operation \
+             (user_id, operation_id, origin_device_id, intent_hash, created_at) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT (user_id, operation_id) DO NOTHING",
+        )
+        .bind(user_id.to_string())
+        .bind(operation_id.to_string())
+        .bind(origin_device_id.map(|id| id.to_string()))
+        .bind(intent_hash)
+        .bind(created_at)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if inserted == 1 {
+            return Ok(SyncOperationReservation::New);
+        }
+
+        let row = sqlx::query(
+            "SELECT so.result_entity_id, so.event_cursor, so.intent_hash, se.entity_type \
+             FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor AND se.user_id=so.user_id \
+             WHERE so.user_id=? AND so.operation_id=? AND so.applied_at IS NOT NULL",
+        )
+        .bind(user_id.to_string())
+        .bind(operation_id.to_string())
+        .fetch_optional(&mut *connection)
+        .await?;
+        let Some(row) = row else {
+            return Ok(SyncOperationReservation::Incomplete);
+        };
+        Ok(SyncOperationReservation::Replayed(
+            SyncOperationReplayRecord {
+                result_entity_id: row.try_get("result_entity_id")?,
+                event_cursor: row.try_get("event_cursor")?,
+                intent_hash: row.try_get("intent_hash")?,
+                entity_type: row.try_get("entity_type")?,
+            },
+        ))
     }
 
     pub async fn create_account(
@@ -628,6 +744,23 @@ impl Database {
         )
         .bind(now_ms)
         .bind(access_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn revoke_session_by_refresh_hash(
+        &self,
+        refresh_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE session SET revoked_at = ? \
+             WHERE refresh_token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(now_ms)
+        .bind(refresh_hash)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() == 1)

@@ -2,16 +2,21 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use futures_util::StreamExt;
 use http_body_util::BodyExt;
 use sqlx::Row;
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 use uuid::Uuid;
 use waveflow_server::{
     authentication::now_ms,
     catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
     database::{AccountRole, LibraryRole, LibraryVisibility},
-    security, Config,
+    security,
+    services::{ServiceError, MAX_HISTORY_LIMIT, MAX_QUEUE_TRACKS, MAX_SHARE_TRACKS},
+    sync::{MutationContext, SyncError, MAX_SYNC_LIMIT},
+    Config,
 };
 
 async fn test_app() -> (TempDir, Config, waveflow_server::AppState) {
@@ -186,6 +191,346 @@ async fn login_refresh_rotation_and_logout_work() {
 }
 
 #[tokio::test]
+async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
+    let (_temp, config, state) = test_app().await;
+    let password = Uuid::new_v4().to_string();
+    let password_hash = security::hash_password(&password).unwrap();
+    state
+        .db
+        .create_account("web-listener", &password_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+
+    let mut request = json_request(
+        "/api/v2/web/auth/login",
+        serde_json::json!({
+            "username": "web-listener",
+            "password": &password,
+            "device_name": "Embedded web player"
+        }),
+    );
+    request
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let refresh_cookie = cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-refresh="))
+        .unwrap();
+    assert!(refresh_cookie.contains("HttpOnly"));
+    assert!(refresh_cookie.contains("SameSite=Strict"));
+    assert!(refresh_cookie.contains("Path=/api/v2/web/auth"));
+    let refresh_pair = refresh_cookie.split(';').next().unwrap().to_owned();
+    let csrf_pair = cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-csrf="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let csrf = csrf_pair.split_once('=').unwrap().1.to_owned();
+    let body = json_body(response).await;
+    assert!(body["access_token"].as_str().unwrap().starts_with("wfa_"));
+    assert!(body.get("refresh_token").is_none());
+
+    let missing_csrf = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(missing_csrf).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let wrong_csrf = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .header("x-waveflow-csrf", "wfcsrf_wrong")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(wrong_csrf).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let refresh = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .header("x-waveflow-csrf", csrf)
+        .body(Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(refresh).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed_cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let refreshed_refresh = refreshed_cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-refresh="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let refreshed_csrf = refreshed_cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-csrf="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let refreshed_csrf_value = refreshed_csrf.split_once('=').unwrap().1;
+
+    let logout = Request::post("/api/v2/web/auth/logout")
+        .header("origin", "http://waveflow.test/")
+        .header("host", "ignored.invalid")
+        .header("cookie", format!("{refreshed_refresh}; {refreshed_csrf}"))
+        .header("x-waveflow-csrf", refreshed_csrf_value)
+        .body(Body::empty())
+        .unwrap();
+    let logout = router.clone().oneshot(logout).await.unwrap();
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    let expired = logout
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(expired.len(), 2);
+    assert!(expired.iter().all(|cookie| cookie.contains("Max-Age=0")));
+    assert!(expired.iter().any(|cookie| {
+        cookie.starts_with("waveflow-refresh=")
+            && cookie.contains("Path=/api/v2/web/auth")
+            && cookie.contains("HttpOnly")
+    }));
+
+    let logout_without_refresh = Request::post("/api/v2/web/auth/logout")
+        .header("origin", "http://waveflow.test")
+        .header("cookie", &refreshed_csrf)
+        .header("x-waveflow-csrf", refreshed_csrf_value)
+        .body(Body::empty())
+        .unwrap();
+    let logout_without_refresh = router
+        .clone()
+        .oneshot(logout_without_refresh)
+        .await
+        .unwrap();
+    assert_eq!(logout_without_refresh.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        logout_without_refresh
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .count(),
+        2
+    );
+
+    let mut foreign = json_request(
+        "/api/v2/web/auth/login",
+        serde_json::json!({
+            "username": "web-listener",
+            "password": &password,
+            "device_name": "Foreign page"
+        }),
+    );
+    foreign
+        .headers_mut()
+        .insert("origin", "https://attacker.invalid".parse().unwrap());
+    foreign
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.oneshot(foreign).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn setup_and_native_administration_cover_users_credentials_and_libraries() {
+    let (_temp, config, state) = test_app().await;
+    let admin_password = Uuid::new_v4().to_string();
+    let listener_password = Uuid::new_v4().to_string();
+    let music = config.data_dir.join("admin-library");
+    std::fs::create_dir_all(&music).unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let status = router
+        .clone()
+        .oneshot(Request::get("/api/v2/setup").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json_body(status).await["required"], true);
+
+    let missing_origin = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "first-admin",
+            "password": &admin_password
+        }),
+    );
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(missing_origin)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let mut request = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "first-admin",
+            "password": &admin_password
+        }),
+    );
+    request
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::CREATED
+    );
+
+    let mut repeated = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "second-admin",
+            "password": &admin_password
+        }),
+    );
+    repeated
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    repeated
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.clone().oneshot(repeated).await.unwrap().status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let admin_token = login_token(&router, "first-admin", &admin_password).await;
+    let create_user = Request::post("/api/v2/admin/users")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "username": "native-listener",
+                "web_password": &listener_password,
+                "role": "user"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(create_user).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let listener_id = Uuid::parse_str(json_body(response).await["id"].as_str().unwrap()).unwrap();
+
+    let credential = Request::put("/api/v2/admin/users/native-listener/subsonic-credential")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "password": "dedicated subsonic password" }).to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(credential).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let api_key = json_body(response).await["api_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(api_key.starts_with("wfsk_"));
+    assert!(state
+        .services
+        .credential_by_api_key(&api_key)
+        .await
+        .unwrap()
+        .is_some());
+
+    let create_library = Request::post("/api/v2/libraries")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "name": "Native library",
+                "path": std::fs::canonicalize(&music).unwrap().to_string_lossy(),
+                "visibility": "shared"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(create_library).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let library_id =
+        Uuid::parse_str(json_body(response).await["library_id"].as_str().unwrap()).unwrap();
+
+    let set_member = Request::put(format!(
+        "/api/v2/libraries/{library_id}/members/{listener_id}"
+    ))
+    .header("authorization", format!("Bearer {admin_token}"))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({ "role": "listener" }).to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        router.clone().oneshot(set_member).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let listener_token = login_token(&router, "native-listener", &listener_password).await;
+    let libraries = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/libraries")
+                .header("authorization", format!("Bearer {listener_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let libraries = json_body(libraries).await;
+    assert_eq!(libraries.as_array().unwrap().len(), 1);
+    assert_eq!(libraries[0]["id"], library_id.to_string());
+
+    let forbidden = router
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {listener_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     let (_temp, config, state) = test_app().await;
     let now = now_ms();
@@ -304,6 +649,19 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     assert_eq!(openapi.status(), StatusCode::OK);
     let document = json_body(openapi).await;
     assert!(document["paths"]["/api/v2/auth/login"].is_object());
+    for path in [
+        "/api/v2/setup",
+        "/api/v2/web/auth/login",
+        "/api/v2/libraries",
+        "/api/v2/admin/users",
+        "/api/v2/sync/snapshot",
+        "/api/v2/sync/changes",
+        "/api/v2/sync/ack",
+        "/api/v2/sync/socket",
+        "/api/v2/transcode/status",
+    ] {
+        assert!(document["paths"][path].is_object(), "missing {path}");
+    }
 }
 
 #[tokio::test]
@@ -1529,10 +1887,11 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await
         .unwrap();
     assert_eq!(foreign_public_stream.status(), StatusCode::NOT_FOUND);
-    assert_eq!(
-        subsonic_json(&router, "getShares", api_key, "").await["subsonic-response"]["status"],
-        "ok"
-    );
+    let listed_shares = subsonic_json(&router, "getShares", api_key, "").await;
+    assert_eq!(listed_shares["subsonic-response"]["status"], "ok");
+    assert!(listed_shares["subsonic-response"]["shares"]["share"][0]
+        .get("url")
+        .is_none());
     assert_eq!(
         subsonic_json(
             &router,
@@ -1543,6 +1902,19 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await["subsonic-response"]["status"],
         "ok"
     );
+    let journal_entities = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT entity_type FROM sync_event WHERE user_id=? ORDER BY entity_type",
+    )
+    .bind(admin.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert!(journal_entities.contains(&"playlist".to_owned()));
+    assert!(journal_entities.contains(&"favorite".to_owned()));
+    assert!(journal_entities.contains(&"rating".to_owned()));
+    assert!(journal_entities.contains(&"scrobble".to_owned()));
+    assert!(journal_entities.contains(&"queue".to_owned()));
+    assert!(journal_entities.contains(&"share".to_owned()));
 
     let default_user = subsonic_json(
         &router,
@@ -1561,6 +1933,33 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .collect::<Vec<_>>();
     assert!(default_folders.contains(&library.to_string()));
     assert!(default_folders.contains(&secondary_library.to_string()));
+
+    let unicode_username = subsonic_json(
+        &router,
+        "createUser",
+        api_key,
+        "&username=%C3%A9lodie&password=unicode-user-secret&email=unicode@example.invalid",
+    )
+    .await;
+    assert_eq!(unicode_username["subsonic-response"]["status"], "ok");
+    assert!(state
+        .db
+        .account_by_username("élodie")
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        subsonic_json(&router, "deleteUser", api_key, "&username=%C3%A9lodie").await
+            ["subsonic-response"]["status"],
+        "ok"
+    );
+    assert!(state
+        .db
+        .account_by_username("élodie")
+        .await
+        .unwrap()
+        .is_none());
+
     assert_eq!(
         subsonic_json(&router, "deleteUser", api_key, "&username=sub-default").await
             ["subsonic-response"]["status"],
@@ -2613,7 +3012,7 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     }
     state.db.finish_scan_job(scan_id, 0).await.unwrap();
 
-    let router = waveflow_server::app(&config, state);
+    let router = waveflow_server::app(&config, state.clone());
     let owner_token = login_token(&router, "data-owner", password).await;
     let intruder_token = login_token(&router, "data-intruder", password).await;
 
@@ -2650,6 +3049,26 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let detail = json_body(detail).await;
     let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
     let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
+
+    // Individual tracks can be resolved for favorites and queue hydration,
+    // while the same public id remains opaque to another tenant.
+    let track = send(
+        "GET",
+        format!("/api/v2/tracks/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(track.status(), StatusCode::OK);
+    assert_eq!(json_body(track).await["id"], first);
+    let foreign_track = send(
+        "GET",
+        format!("/api/v2/tracks/{first}"),
+        intruder_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(foreign_track.status(), StatusCode::NOT_FOUND);
 
     // Playlists: create, read back, mutate, then delete.
     let created = send(
@@ -2741,6 +3160,21 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     .await;
     assert_eq!(unknown_kind.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    for invalid_time in [-1, now_ms().saturating_add(10 * 60 * 1_000)] {
+        let invalid = send(
+            "POST",
+            "/api/v2/scrobbles".into(),
+            owner_token.clone(),
+            Some(serde_json::json!({
+                "track_id": first,
+                "submission": true,
+                "played_at": invalid_time
+            })),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     let scrobbled = send(
         "POST",
         "/api/v2/scrobbles".into(),
@@ -2749,6 +3183,12 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     )
     .await;
     assert_eq!(scrobbled.status(), StatusCode::NO_CONTENT);
+    for invalid_limit in [-1, MAX_HISTORY_LIMIT + 1] {
+        assert!(matches!(
+            state.services.history(owner, invalid_limit).await,
+            Err(ServiceError::Invalid)
+        ));
+    }
 
     // The queue survives a write/read round-trip.
     let saved = send(
@@ -2769,6 +3209,50 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     assert_eq!(queue["position_ms"], 4200);
     assert_eq!(queue["current"], first);
     assert_eq!(queue["songs"].as_array().unwrap().len(), 2);
+
+    // Multiple shares retain their independent track ordering when the
+    // aggregate loader batches all share rows.
+    for track_ids in [vec![second.clone(), first.clone()], vec![first.clone()]] {
+        let share = send(
+            "POST",
+            "/api/v2/shares".into(),
+            owner_token.clone(),
+            Some(serde_json::json!({ "track_ids": track_ids })),
+        )
+        .await;
+        assert_eq!(share.status(), StatusCode::CREATED);
+        assert!(json_body(share).await["url"].as_str().is_some());
+    }
+    let shares = send("GET", "/api/v2/shares".into(), owner_token.clone(), None).await;
+    let shares = json_body(shares).await;
+    assert!(shares
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|share| share.get("url").is_none()));
+    let song_orders = shares
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|share| {
+            share["track_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|track_id| track_id.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert!(song_orders.contains(&vec![second.to_string(), first.to_string()]));
+    assert!(song_orders.contains(&vec![first.to_string()]));
+    let share_columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('share')")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert!(share_columns.contains(&"token_hash".to_owned()));
+    assert!(!share_columns.contains(&"token_nonce".to_owned()));
+    assert!(!share_columns.contains(&"token_ciphertext".to_owned()));
 
     // A foreign tenant can neither read nor mutate any of it.
     let foreign_playlists = send(
@@ -2816,6 +3300,753 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     )
     .await;
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
+    let (_temp, config, state) = test_app().await;
+    let password = Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("sync-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("sync-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("sync-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Sync library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library,
+            scan,
+            &browse_input(
+                0,
+                "Synchronized Song",
+                "Remote Album",
+                "Remote Artist",
+                Some(1),
+                Some(1),
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+
+    let mut notices = state.sync.subscribe();
+    let router = waveflow_server::app(&config, state.clone());
+    let login = |username: &'static str| {
+        let router = router.clone();
+        let password = password.clone();
+        async move {
+            let response = router
+                .oneshot(json_request(
+                    "/api/v2/auth/login",
+                    serde_json::json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": format!("{username} desktop")
+                    }),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
+        }
+    };
+    let owner_login = login("sync-owner").await;
+    let owner_token = owner_login["access_token"].as_str().unwrap().to_owned();
+    let device_id = owner_login["device_id"].as_str().unwrap().to_owned();
+    let intruder_login = login("sync-intruder").await;
+    let intruder_token = intruder_login["access_token"].as_str().unwrap().to_owned();
+    let intruder_device_id = intruder_login["device_id"].as_str().unwrap().to_owned();
+
+    for invalid_limit in [0, MAX_SYNC_LIMIT + 1, i64::MAX] {
+        assert!(matches!(
+            state.sync.changes(owner, 0, invalid_limit).await,
+            Err(SyncError::Invalid)
+        ));
+    }
+    assert!(matches!(
+        state.sync.changes(owner, -1, 1).await,
+        Err(SyncError::Invalid)
+    ));
+    let direct_foreign_device = state
+        .services
+        .set_star_with_context(
+            owner,
+            "track",
+            track,
+            true,
+            MutationContext {
+                operation_id: Uuid::new_v4(),
+                origin_device_id: Some(Uuid::parse_str(&intruder_device_id).unwrap()),
+            },
+        )
+        .await;
+    assert!(matches!(direct_foreign_device, Err(ServiceError::Invalid)));
+
+    let mutate =
+        |method: &'static str, uri: String, operation_id: Uuid, body: Option<serde_json::Value>| {
+            let router = router.clone();
+            let owner_token = owner_token.clone();
+            let device_id = device_id.clone();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {owner_token}"))
+                    .header("x-waveflow-operation-id", operation_id.to_string())
+                    .header("x-waveflow-device-id", device_id);
+                let request = match body {
+                    Some(body) => request
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                    None => request.body(Body::empty()).unwrap(),
+                };
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+    // Retrying a mutation with the same operation UUID must neither duplicate
+    // the business row nor append another event.
+    let favorite_operation = Uuid::new_v4();
+    for _ in 0..2 {
+        let response = mutate(
+            "PUT",
+            format!("/api/v2/favorites/track/{track}"),
+            favorite_operation,
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let star_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_star WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(star_count, 1);
+
+    let mismatched_replay = mutate(
+        "POST",
+        "/api/v2/playlists".into(),
+        favorite_operation,
+        Some(serde_json::json!({ "name": "Wrong replay type", "track_ids": [track] })),
+    )
+    .await;
+    assert_eq!(mismatched_replay.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let inverted_favorite = mutate(
+        "DELETE",
+        format!("/api/v2/favorites/track/{track}"),
+        favorite_operation,
+        None,
+    )
+    .await;
+    assert_eq!(inverted_favorite.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let star_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_star WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(star_count, 1);
+
+    let scrobble_operation = Uuid::new_v4();
+    for _ in 0..2 {
+        let response = mutate(
+            "POST",
+            "/api/v2/scrobbles".into(),
+            scrobble_operation,
+            Some(serde_json::json!({ "track_id": track, "submission": true })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let play_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play_event WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(play_count, 1, "a retried scrobble must stay idempotent");
+
+    let create_operation = Uuid::new_v4();
+    let mut playlist_ids = Vec::new();
+    for _ in 0..2 {
+        let response = mutate(
+            "POST",
+            "/api/v2/playlists".into(),
+            create_operation,
+            Some(serde_json::json!({ "name": "Synced", "track_ids": [track] })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        playlist_ids.push(json_body(response).await["id"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(playlist_ids[0], playlist_ids[1]);
+    let different_playlist = mutate(
+        "POST",
+        "/api/v2/playlists".into(),
+        create_operation,
+        Some(serde_json::json!({
+            "name": "Different playlist",
+            "track_ids": [track]
+        })),
+    )
+    .await;
+    assert_eq!(
+        different_playlist.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let playlist_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE owner_user_id=?")
+            .bind(owner.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(playlist_count, 1);
+
+    let share_operation = Uuid::new_v4();
+    let share_request = || {
+        mutate(
+            "POST",
+            "/api/v2/shares".into(),
+            share_operation,
+            Some(serde_json::json!({
+                "track_ids": [track],
+                "description": "Synchronized share"
+            })),
+        )
+    };
+    let lost_response = share_request().await;
+    assert_eq!(lost_response.status(), StatusCode::CREATED);
+    drop(lost_response);
+
+    let replayed_share = share_request().await;
+    assert_eq!(replayed_share.status(), StatusCode::CREATED);
+    let replayed_share = json_body(replayed_share).await;
+    let share_id = replayed_share["id"].as_str().unwrap();
+    let share_url = replayed_share["url"].as_str().unwrap();
+    let public_share = router
+        .clone()
+        .oneshot(Request::get(share_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(public_share.status(), StatusCode::OK);
+
+    let listed_shares = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/shares")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let listed_shares = json_body(listed_shares).await;
+    assert_eq!(listed_shares[0]["id"], share_id);
+    assert!(listed_shares[0].get("url").is_none());
+
+    let mut notice_cursors = Vec::new();
+    for _ in 0..4 {
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(1), notices.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(notice.0, owner);
+        notice_cursors.push(notice.1.cursor);
+    }
+    assert!(notice_cursors.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(matches!(
+        notices.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+
+    let mut after = 0;
+    let mut paged_changes = Vec::new();
+    loop {
+        let changes = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/sync/changes?after={after}&limit=1"))
+                    .header("authorization", format!("Bearer {owner_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changes.status(), StatusCode::OK);
+        let page = json_body(changes).await;
+        let page_changes = page["changes"].as_array().unwrap();
+        if page_changes.is_empty() {
+            assert!(!page["has_more"].as_bool().unwrap());
+            break;
+        }
+        let returned_cursor = page_changes[0]["cursor"].as_i64().unwrap();
+        assert_eq!(page["next_cursor"], returned_cursor);
+        paged_changes.push(page_changes[0].clone());
+        after = returned_cursor;
+        if !page["has_more"].as_bool().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(paged_changes.len(), 4);
+    assert_eq!(
+        paged_changes[0]["operation_id"],
+        favorite_operation.to_string()
+    );
+
+    // The real WebSocket route sends the durable cursor immediately when a
+    // reconnecting client is behind. The lagged-receiver branch is covered by
+    // the focused `http` unit test using the same serve-path helper.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_router = router.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_router).await.unwrap();
+    });
+    let mut socket_request = format!("ws://{address}/api/v2/sync/socket?after=0")
+        .into_client_request()
+        .unwrap();
+    socket_request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {owner_token}").parse().unwrap(),
+    );
+    let (mut socket, response) = tokio_tungstenite::connect_async(socket_request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let notice: serde_json::Value = serde_json::from_str(notice.to_text().unwrap()).unwrap();
+    assert_eq!(notice["cursor"], paged_changes[3]["cursor"]);
+    socket.close(None).await.unwrap();
+    server.abort();
+
+    let snapshot = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/snapshot")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = json_body(snapshot).await;
+    assert_eq!(snapshot["favorites"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["history"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["playlists"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["shares"].as_array().unwrap().len(), 1);
+    assert!(snapshot["shares"][0].get("url").is_none());
+    let cursor = snapshot["cursor"].as_i64().unwrap();
+
+    let ack = router
+        .clone()
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "device_id": device_id, "cursor": cursor }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ack.status(), StatusCode::NO_CONTENT);
+
+    let future_ack = router
+        .clone()
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "device_id": device_id,
+                        "cursor": cursor + 1_000
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(future_ack.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let foreign_device = Request::put(format!("/api/v2/favorites/track/{track}"))
+        .header("authorization", format!("Bearer {owner_token}"))
+        .header("x-waveflow-operation-id", Uuid::new_v4().to_string())
+        .header("x-waveflow-device-id", intruder_device_id)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(foreign_device)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let foreign = router
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0")
+                .header("authorization", format!("Bearer {intruder_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(json_body(foreign).await["changes"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password(&Uuid::new_v4().to_string()).unwrap();
+    let owner = state
+        .db
+        .create_account("claim-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let listener = state
+        .db
+        .create_account("claim-listener", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("claim-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Claim library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library,
+            scan,
+            &browse_input(
+                0,
+                "Claimed Song",
+                "Claimed Album",
+                "Claimed Artist",
+                Some(1),
+                Some(1),
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+
+    let playlist_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    let playlist = state
+        .services
+        .create_playlist_with_context(owner, "Claimed playlist", &[track], playlist_context)
+        .await
+        .unwrap();
+    state
+        .services
+        .delete_playlist(owner, playlist.id)
+        .await
+        .unwrap();
+    let missing_playlist_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    assert!(matches!(
+        state
+            .services
+            .update_playlist_with_context(
+                owner,
+                playlist.id,
+                Some("Changed after deletion"),
+                None,
+                None,
+                &[],
+                &[],
+                missing_playlist_context,
+            )
+            .await,
+        Err(ServiceError::NotFound)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .update_playlist_with_context(
+                owner,
+                playlist.id,
+                Some("Divergent replay after deletion"),
+                None,
+                None,
+                &[],
+                &[],
+                playlist_context,
+            )
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+
+    state
+        .db
+        .add_library_member(owner, library, listener, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let inaccessible_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    state
+        .services
+        .set_star_with_context(listener, "track", track, true, inaccessible_context)
+        .await
+        .unwrap();
+    assert!(state
+        .db
+        .remove_library_member(owner, library, listener, now_ms())
+        .await
+        .unwrap());
+    state
+        .services
+        .set_star_with_context(listener, "track", track, true, inaccessible_context)
+        .await
+        .unwrap();
+    // The row survives the replay, but a revoked membership must stop exposing
+    // it: favourites are filtered by visibility exactly like ratings are.
+    assert!(state
+        .services
+        .starred_ids(listener)
+        .await
+        .unwrap()
+        .iter()
+        .all(|(_, entity_id, _)| *entity_id != track));
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(listener, "track", track, 5, inaccessible_context)
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+    let fresh_inaccessible_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(listener, "track", track, 5, fresh_inaccessible_context)
+            .await,
+        Err(ServiceError::NotFound)
+    ));
+
+    let invalid_replay_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    state
+        .services
+        .set_rating_with_context(owner, "track", track, 5, invalid_replay_context)
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(owner, "track", track, 4, invalid_replay_context)
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+
+    let rolled_back_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
+    assert!(matches!(
+        state
+            .services
+            .set_rating_with_context(owner, "track", track, 6, rolled_back_context)
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    let reservation_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_operation WHERE user_id=? AND operation_id=?",
+    )
+    .bind(owner.to_string())
+    .bind(rolled_back_context.operation_id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(reservation_count, 0);
+    state
+        .services
+        .set_rating_with_context(owner, "track", track, 4, rolled_back_context)
+        .await
+        .unwrap();
+
+    let oversized_queue = vec![track; MAX_QUEUE_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .save_queue(owner, &oversized_queue, Some(track), 0, Some("limit-test"))
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    let oversized_share = vec![track; MAX_SHARE_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .create_share(owner, &oversized_share, Some("limit-test"), None)
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+
+    state
+        .services
+        .save_queue(
+            owner,
+            &[track, track],
+            Some(track),
+            0,
+            Some("duplicate-test"),
+        )
+        .await
+        .unwrap();
+    let duplicate_queue = state.services.queue(owner).await.unwrap().unwrap();
+    assert_eq!(
+        duplicate_queue
+            .songs
+            .iter()
+            .map(|song| song.id)
+            .collect::<Vec<_>>(),
+        vec![track, track]
+    );
+    let positions = sqlx::query_scalar::<_, i64>(
+        "SELECT position FROM play_queue_track WHERE user_id=? ORDER BY position",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(positions, vec![0, 1]);
+
+    let aggregate_playlist = state
+        .services
+        .create_playlist(owner, "Unavailable aggregate", &[track])
+        .await
+        .unwrap();
+    let aggregate_share = state
+        .services
+        .create_share(owner, &[track], Some("Unavailable aggregate"), None)
+        .await
+        .unwrap();
+    let empty_scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(empty_scan, 1).await.unwrap();
+    assert_eq!(
+        state
+            .db
+            .mark_unseen_unavailable(library, empty_scan)
+            .await
+            .unwrap(),
+        1
+    );
+    state.db.finish_scan_job(empty_scan, 1).await.unwrap();
+    let updated_playlist = state
+        .services
+        .update_playlist(
+            owner,
+            aggregate_playlist.id,
+            Some("Unavailable aggregate renamed"),
+            None,
+            None,
+            &[],
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_playlist.name, "Unavailable aggregate renamed");
+    assert!(updated_playlist.songs.is_empty());
+    let persisted_playlist_tracks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM playlist_track WHERE playlist_id=?")
+            .bind(aggregate_playlist.id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(persisted_playlist_tracks, 1);
+    assert!(state
+        .services
+        .queue(owner)
+        .await
+        .unwrap()
+        .unwrap()
+        .songs
+        .is_empty());
+    assert!(state
+        .services
+        .shares(owner)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|share| share.id == aggregate_share.id)
+        .unwrap()
+        .songs
+        .is_empty());
+    state.services.sync_snapshot(owner, 100).await.unwrap();
 }
 
 #[tokio::test]

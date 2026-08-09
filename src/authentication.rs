@@ -208,6 +208,15 @@ impl AuthService {
         Ok(())
     }
 
+    pub async fn revoke_refresh(&self, refresh_token: &str) -> Result<(), AuthError> {
+        let hash = security::token_hash(refresh_token);
+        self.db
+            .revoke_session_by_refresh_hash(&hash, now_ms())
+            .await
+            .map_err(db_unavailable)?;
+        Ok(())
+    }
+
     pub async fn authenticate(&self, access_token: &str) -> Result<AuthUser, AuthError> {
         let hash = security::token_hash(access_token);
         let now = now_ms();

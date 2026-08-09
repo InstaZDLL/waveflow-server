@@ -61,6 +61,24 @@ button:hover {
   border-color: var(--accent);
 }
 
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button.danger {
+  color: #ff8585;
+}
+
 button.link,
 button.star {
   background: none;
@@ -113,6 +131,9 @@ nav {
   top: 0;
   background: var(--bg);
   z-index: 2;
+  min-height: 3.7rem;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .brand {
@@ -222,6 +243,11 @@ main {
   border-collapse: collapse;
 }
 
+.songs-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .songs td {
   padding: 0.5rem 0.4rem;
   border-bottom: 1px solid var(--line);
@@ -314,4 +340,190 @@ main {
   display: flex;
   gap: 0.7rem;
   margin-top: 1.2rem;
+}
+
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+}
+
+.page-header h2,
+.page-header p,
+.collection h3,
+.admin-panel h3 {
+  margin: 0;
+}
+
+.inline-form,
+.actions,
+.credential-form {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.inline-form {
+  margin-bottom: 1.2rem;
+}
+
+.inline-form input {
+  flex: 1 1 16rem;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.collection,
+.admin-panel,
+.user-row,
+.empty-state {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.collection-header,
+.user-row > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.collection-header > div:first-child,
+.user-row header > div {
+  display: grid;
+}
+
+.section-actions {
+  margin-bottom: 1rem;
+}
+
+.queue-list,
+.resource-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.queue-list li,
+.resource-list li {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 0.7fr) auto auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-list li.active {
+  color: var(--accent);
+}
+
+.queue-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-list li {
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+}
+
+.resource-list li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.resource-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-state {
+  color: var(--muted);
+  min-height: 9rem;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.stacked-form {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.9rem 0;
+}
+
+.compact li {
+  grid-template-columns: minmax(10rem, 1fr) auto;
+}
+
+.credential-form input {
+  flex: 1 1 16rem;
+}
+
+.secret-output {
+  flex-basis: 100%;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.notice {
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  nav {
+    padding-inline: 1rem;
+  }
+
+  .brand {
+    margin-right: 0.4rem;
+  }
+
+  main {
+    padding: 1rem 1rem 9rem;
+  }
+
+  .page-header,
+  .collection-header,
+  .user-row > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-list li,
+  .resource-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .queue-list li .muted:first-of-type,
+  .resource-list li > div {
+    grid-column: 1 / -1;
+  }
+
+  .credential-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
