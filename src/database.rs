@@ -658,6 +658,23 @@ impl Database {
         Ok(id)
     }
 
+    pub async fn revoke_api_token_by_hash(
+        &self,
+        token_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE api_token SET revoked_at = ? \
+             WHERE token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(now_ms)
+        .bind(token_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn create_library(
         &self,
         owner_id: Uuid,
