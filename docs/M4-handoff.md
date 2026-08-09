@@ -39,17 +39,25 @@ la façade Subsonic.
 
 ```text
 GET  /api/v2/albums · /albums/{id} · /artists · /artists/{id} · /search
+GET  /api/v2/tracks/{id}
 GET  /api/v2/playlists · POST · PATCH · DELETE
 GET  /api/v2/favorites · PUT|DELETE /favorites/{kind}/{id}
 PUT  /api/v2/ratings/{kind}/{id} · POST /scrobbles · GET /now-playing
 GET|PUT /api/v2/queue
+GET|POST|PATCH|DELETE /api/v2/shares
+GET|POST /api/v2/libraries · PUT|DELETE /libraries/{id}/members
+GET|POST|PATCH /api/v2/users · PUT|DELETE /users/{name}/subsonic-credential
+GET /api/v2/sync/snapshot · /changes · WS /sync/socket · POST /sync/ack
 POST /api/v2/oauth/authorize · POST /api/v2/oauth/token
 POST /api/v2/tracks/{id}/stream-ticket · GET /api/v2/stream/{ticket}
 ```
 
 **Client web embarqué** (`webapp/`, Vite + React + TanStack Router), compilé
 dans le binaire par `rust_embed`. Connexion, albums, artistes, recherche,
-favoris, lecture, écran de consentement OAuth.
+favoris, playlists, file d'attente persistante, partages, lecture, écran de
+consentement OAuth et administration des bibliothèques, scans, comptes et
+identifiants Subsonic. Le lecteur n'est monté qu'après authentification afin de
+charger la file du bon compte à chaque nouvelle session.
 
 **Retrait de la v1** : `src/api/*`, `db.rs`, `apply.rs`, `sync.rs`, les
 migrations PostgreSQL et 21 fichiers de tests. Tout était déjà mort (non déclaré
@@ -105,10 +113,11 @@ régression.
 ## Ce qui reste
 
 1. **Valider puis fusionner le complément serveur M4.** Il ajoute le journal de
-   synchronisation documenté par RFC-003, complète l'administration native et
-   ferme la dette de session navigateur. Le workflow DCO accepte désormais
-   l'adresse de signature réellement émise par Dependabot, sans dérogation
-   manuelle aux protections de branche.
+   synchronisation documenté par RFC-003, complète l'administration native,
+   ferme la dette de session navigateur et livre tous les parcours fonctionnels
+   du client web prévus pour M4. Le workflow DCO accepte désormais l'adresse de
+   signature réellement émise par Dependabot, sans dérogation manuelle aux
+   protections de branche.
 2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
    validation Symfonium sont terminés ; aucune action de compatibilité ne reste
    ouverte pour cette porte.
@@ -130,9 +139,11 @@ vérifié.
 ## Dettes identifiées, non traitées
 
 - `search3` n'exploite pas FTS5 (voir ci-dessus).
-- `webapp/` n'a pas de test de composant ni de parcours : la suite couvre les
-  gardes de redirection et les design tokens. La CI web lint (biome), construit
-  et lance vitest.
+- `webapp/` n'a pas encore de test de composant ou de parcours automatisé. La
+  suite couvre les gardes de redirection et les design tokens ; un smoke test
+  navigateur manuel sur installation vide valide setup, session, rôles,
+  playlists, favoris, queue, partages, bibliothèques, scans, comptes et rotation
+  d'identifiant Subsonic. La CI web lint (Biome), construit et lance Vitest.
 - La dette de session navigateur est fermée par le complément M4 : access token
   court en mémoire, refresh rotatif dans un cookie HttpOnly/SameSite, contrôle
   d'origine et double-submit CSRF sur refresh/logout. Aucun secret de session

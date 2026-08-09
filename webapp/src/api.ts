@@ -6,7 +6,17 @@
  * additionally require a double-submit CSRF value.
  */
 
-export type WebSession = { access_token: string };
+export type SessionUser = {
+  id: string;
+  username: string;
+  role: "admin" | "user";
+};
+
+export type WebSession = {
+  access_token: string;
+  user: SessionUser;
+  device_id: string;
+};
 
 let session: WebSession | null = null;
 
@@ -60,6 +70,58 @@ export type SearchResult = {
   songs: Song[];
 };
 
+export type Playlist = {
+  id: string;
+  name: string;
+  comment: string | null;
+  public: boolean;
+  created_at: number;
+  updated_at: number;
+  songs: Song[];
+};
+
+export type Favorite = {
+  entity_type: string;
+  entity_id: string;
+  starred_at: number;
+};
+
+export type Queue = {
+  current: string | null;
+  position_ms: number;
+  changed_by: string | null;
+  updated_at: number;
+  songs: Song[];
+};
+
+export type Share = {
+  id: string;
+  url: string;
+  description: string | null;
+  expires_at: number | null;
+  created_at: number;
+  visit_count: number;
+  track_ids: string[];
+};
+
+export type Library = {
+  id: string;
+  name: string;
+  visibility: "private" | "shared";
+  role: "owner" | "manager" | "listener";
+  last_scan_started_at: number | null;
+  last_scan_completed_at: number | null;
+};
+
+export type User = {
+  id: string;
+  username: string;
+  role: "admin" | "user";
+  disabled: boolean;
+  has_subsonic_credential: boolean;
+  folder_ids: string[];
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -71,6 +133,10 @@ export class ApiError extends Error {
 
 export function hasSession(): boolean {
   return session !== null;
+}
+
+export function currentUser(): SessionUser | null {
+  return session?.user ?? null;
 }
 
 async function parse<T>(response: Response): Promise<T> {
@@ -210,6 +276,83 @@ export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 export const search = (query: string) =>
   call<SearchResult>(`/api/v2/search?q=${encodeURIComponent(query)}`);
+export const getTrack = (id: string) => call<Song>(`/api/v2/tracks/${id}`);
+
+export const listPlaylists = () => call<Playlist[]>("/api/v2/playlists");
+export const createPlaylist = (name: string, trackIds: string[] = []) =>
+  call<Playlist>("/api/v2/playlists", {
+    method: "POST",
+    body: JSON.stringify({ name, track_ids: trackIds }),
+  });
+export const deletePlaylist = (id: string) =>
+  call<void>(`/api/v2/playlists/${id}`, { method: "DELETE" });
+export const appendToPlaylist = (id: string, trackIds: string[]) =>
+  call<Playlist>(`/api/v2/playlists/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ add: trackIds }),
+  });
+
+export const listFavorites = () => call<Favorite[]>("/api/v2/favorites");
+export const getQueue = () => call<Queue | null>("/api/v2/queue");
+export const saveQueue = (
+  songs: Song[],
+  current: string | null,
+  positionMs: number,
+) =>
+  call<void>("/api/v2/queue", {
+    method: "PUT",
+    body: JSON.stringify({
+      track_ids: songs.map((song) => song.id),
+      current,
+      position_ms: positionMs,
+      client: "WaveFlow Web",
+    }),
+  });
+
+export const listShares = () => call<Share[]>("/api/v2/shares");
+export const createShare = (trackIds: string[], description: string) =>
+  call<Share>("/api/v2/shares", {
+    method: "POST",
+    body: JSON.stringify({ track_ids: trackIds, description }),
+  });
+export const deleteShare = (id: string) =>
+  call<void>(`/api/v2/shares/${id}`, { method: "DELETE" });
+
+export const listLibraries = () => call<Library[]>("/api/v2/libraries");
+export const addLibrary = (
+  name: string,
+  path: string,
+  visibility: "private" | "shared",
+) =>
+  call<{ library_id: string; scan_id: string }>("/api/v2/libraries", {
+    method: "POST",
+    body: JSON.stringify({ name, path, visibility }),
+  });
+export const startScan = (libraryId: string) =>
+  call<{ scan_id: string }>(`/api/v2/libraries/${libraryId}/scans`, {
+    method: "POST",
+  });
+
+export const listUsers = () => call<User[]>("/api/v2/admin/users");
+export const createUser = (
+  username: string,
+  webPassword: string,
+  role: "admin" | "user",
+) =>
+  call<User>("/api/v2/admin/users", {
+    method: "POST",
+    body: JSON.stringify({ username, web_password: webPassword, role }),
+  });
+export const setUserDisabled = (username: string, disabled: boolean) =>
+  call<User>(`/api/v2/admin/users/${encodeURIComponent(username)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ disabled }),
+  });
+export const setSubsonicCredential = (username: string, password: string) =>
+  call<{ api_key: string }>(
+    `/api/v2/admin/users/${encodeURIComponent(username)}/subsonic-credential`,
+    { method: "PUT", body: JSON.stringify({ password }) },
+  );
 
 export const setFavorite = (kind: string, id: string, on: boolean) =>
   call<void>(`/api/v2/favorites/${kind}/${id}`, {

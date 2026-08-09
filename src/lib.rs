@@ -84,6 +84,7 @@ pub struct AppState {
         http::scan_status,
         http::scan_events,
         http::list_tracks,
+        http::get_track,
         http::list_albums,
         http::get_album,
         http::list_artists,

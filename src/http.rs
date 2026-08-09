@@ -326,6 +326,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}", get(scan_status))
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
+        .route("/api/v2/tracks/{track_id}", get(get_track))
         .route("/api/v2/albums", get(list_albums))
         .route("/api/v2/albums/{album_id}", get(get_album))
         .route("/api/v2/artists", get(list_artists))
@@ -820,6 +821,24 @@ pub async fn list_tracks(
         .await
         .map_err(db_error)?;
     Ok(Json(tracks))
+}
+
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::SongItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_track(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::SongItem>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .songs_by_ids(user.id, &[track_id])
+        .await
+        .map_err(service_error)?
+        .into_iter()
+        .next()
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 #[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]

@@ -2927,6 +2927,26 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
     let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
 
+    // Individual tracks can be resolved for favorites and queue hydration,
+    // while the same public id remains opaque to another tenant.
+    let track = send(
+        "GET",
+        format!("/api/v2/tracks/{first}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(track.status(), StatusCode::OK);
+    assert_eq!(json_body(track).await["id"], first);
+    let foreign_track = send(
+        "GET",
+        format!("/api/v2/tracks/{first}"),
+        intruder_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(foreign_track.status(), StatusCode::NOT_FOUND);
+
     // Playlists: create, read back, mutate, then delete.
     let created = send(
         "POST",
