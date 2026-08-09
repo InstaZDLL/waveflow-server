@@ -98,23 +98,22 @@ régression.
 - **SQLite trie les `NULL` en premier.** Deux bugs déjà corrigés ainsi (pistes
   sans numéro, albums sans année) : penser à `NULLS LAST` sur tout tri où une
   métadonnée absente passerait devant.
-- **Les migrations sont immuables une fois fusionnées** — mais celles de la PR
-  #83 ne le sont pas encore tant qu'elle n'est pas mergée.
+- **Les migrations sont immuables une fois fusionnées.** Celles de M4 sont
+  désormais sur `main` ; toute évolution ajoute une nouvelle migration datée.
 - **Toutes les tables utilisent `STRICT`.** En SQLite non-STRICT, une colonne
   `PRIMARY KEY` accepte encore `NULL` : déclarer `NOT NULL` explicitement.
 
 ## Ce qui reste
 
-1. **Fusionner la PR #83** après relecture.
-2. **Clore M3** : valider Symfonium. Le certificat n'est plus l'obstacle — un
-   tunnel HTTPS à certificat reconnu a été vérifié de bout en bout le
-   2026-08-03. Il manque un **Android** exécutant l'application (appareil
-   physique, ou image d'émulateur `google_apis_playstore` + licence Symfonium).
-   Procédure détaillée dans `docs/M3-symfonium-validation.md`.
-3. **Taguer `v2.0-beta`** — ⚠️ jamais sans demande explicite du user.
-4. **Trancher le sort de `web/`** (notamment le package design-tokens).
-5. **M5** : réconciliation locale/serveur conservatrice.
-6. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+1. **Fusionner la PR #84** pour retirer l'ancien `web/`, après avoir conservé
+   les design tokens utiles dans `webapp/` et résolu sa revue en attente.
+2. **Trancher la sécurité de session navigateur avant `v2.0` stable**, comme
+   détaillé dans les dettes ci-dessous.
+3. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
+   validation Symfonium sont terminés ; aucune action de compatibilité ne reste
+   ouverte pour cette porte.
+4. **M5** : réconciliation locale/serveur conservatrice.
+5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
 
 ## Dettes identifiées, non traitées
 

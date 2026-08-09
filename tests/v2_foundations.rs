@@ -229,12 +229,11 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
             .unwrap();
     assert!(last_used_at.is_some_and(|last_used| last_used >= now));
 
-    sqlx::query("UPDATE api_token SET revoked_at = ? WHERE token_hash = ?")
-        .bind(now_ms())
-        .bind(security::token_hash(&token).as_slice())
-        .execute(state.db.pool())
+    assert!(state
+        .db
+        .revoke_api_token_by_hash(&security::token_hash(&token), now_ms())
         .await
-        .unwrap();
+        .unwrap());
     let revoked = router
         .oneshot(
             Request::get("/api/v2/albums")
@@ -757,6 +756,95 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
         let response = router.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+}
+
+#[tokio::test]
+async fn track_pages_are_stable_when_titles_and_fts_ranks_match() {
+    let (_temp, config, state) = test_app().await;
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("stable-pages", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("stable-pages");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Stable pages",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    for index in 0..2 {
+        state
+            .db
+            .apply_catalog_track(
+                library_id,
+                scan_id,
+                &browse_input(
+                    10_000 + index,
+                    "Mirror Signal",
+                    "Stable Paging",
+                    "Deterministic Artist",
+                    Some(index as i64 + 1),
+                    Some(1),
+                ),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let token = login_token(&router, "stable-pages", &password).await;
+    let page_id = |query: &'static str| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::get(format!("/api/v2/libraries/{library_id}/tracks?{query}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = json_body(response).await;
+            let page = body.as_array().unwrap();
+            assert_eq!(page.len(), 1);
+            page[0]["id"].as_str().unwrap().to_owned()
+        }
+    };
+
+    let normal = vec![
+        page_id("limit=1&offset=0").await,
+        page_id("limit=1&offset=1").await,
+    ];
+    let fts = vec![
+        page_id("q=Mirror%20Signal&limit=1&offset=0").await,
+        page_id("q=Mirror%20Signal&limit=1&offset=1").await,
+    ];
+    let mut expected = normal.clone();
+    expected.sort();
+    assert_eq!(normal, expected, "title ties use the UUID as final order");
+    assert_eq!(fts, expected, "FTS rank ties use the UUID as final order");
+    assert_ne!(expected[0], expected[1]);
 }
 
 #[tokio::test]
