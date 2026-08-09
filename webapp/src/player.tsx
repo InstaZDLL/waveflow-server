@@ -1,15 +1,15 @@
 import {
   createContext,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 
-import { formatDuration, scrobble, streamUrl, type Song } from "./api";
+import { formatDuration, type Song, scrobble, streamUrl } from "./api";
 
 type PlayerState = {
   queue: Song[];
@@ -58,7 +58,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Stop on the last track rather than stepping past it: an out-of-range
     // index empties `current` and the player bar vanishes mid-listen.
     const onEnd = () =>
-      setIndex((value) => Math.min(value + 1, Math.max(queueLength.current - 1, 0)));
+      setIndex((value) =>
+        Math.min(value + 1, Math.max(queueLength.current - 1, 0)),
+      );
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     element.addEventListener("timeupdate", onTime);
@@ -159,16 +161,21 @@ export function PlayerBar() {
         <span>{player.current.artist ?? "Unknown artist"}</span>
       </div>
       <div className="player-controls">
-        <button onClick={player.previous} aria-label="Previous track">
+        <button
+          type="button"
+          onClick={player.previous}
+          aria-label="Previous track"
+        >
           ⏮
         </button>
         <button
+          type="button"
           onClick={player.toggle}
           aria-label={player.playing ? "Pause" : "Play"}
         >
           {player.playing ? "⏸" : "▶"}
         </button>
-        <button onClick={player.next} aria-label="Next track">
+        <button type="button" onClick={player.next} aria-label="Next track">
           ⏭
         </button>
       </div>

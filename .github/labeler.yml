@@ -19,13 +19,14 @@
           - 'Cargo.toml'
           - 'Cargo.lock'
           - 'src/**'
-          - 'migrations/**'
+          - 'migrations-v2/**'
+          - 'build.rs'
           - 'tests/**'
 
 'scope: web':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/**'
+          - 'webapp/**'
 
 # ─────────────────────────────────────────────────────────────
 # Server-side fine scopes (inside src/).
@@ -34,75 +35,59 @@
 'scope: api':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/api/**'
+          - 'src/http.rs'
+          - 'src/services.rs'
           - 'src/lib.rs'
 
 'scope: db':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/db.rs'
-          - 'src/db/**'
-          - 'migrations/**'
+          - 'src/database.rs'
+          - 'src/catalog.rs'
+          - 'migrations-v2/**'
 
 'scope: auth':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/auth.rs'
-          - 'src/middleware.rs'
-          - 'web/src/auth/**'
-          - 'web/src/lib/auth.ts'
-          - 'web/src/lib/auth-client.ts'
-          # `sign-in.tsx` / `sign-up.tsx` are FILES at the root of
-          # `web/src/routes/`, not directories. minimatch's
-          # `{a,b}` brace expansion gives us a clean union of the
-          # two real shapes: the literal `.tsx` file today and a
-          # future `sign-in/` subtree (e.g. `sign-in.callback.tsx`,
-          # `sign-in/index.tsx`). The earlier `{,/**}` shape only
-          # produced `sign-in` (no extension, doesn't exist) and
-          # `sign-in/**`, missing the actual `.tsx` file.
-          - 'web/src/routes/sign-in{.tsx,/**}'
-          - 'web/src/routes/sign-up{.tsx,/**}'
-          - 'web/src/routes/api/auth/**'
+          - 'src/authentication.rs'
+          - 'src/oauth.rs'
+          - 'src/security.rs'
 
-'scope: sync':
+'scope: subsonic':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/api/sync.rs'
-          - 'src/apply.rs'
-          - 'src/apply/**'
+          - 'src/subsonic.rs'
+          - 'docs/subsonic-compatibility.md'
 
 'scope: streaming':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/api/stream.rs'
-          - 'src/stream_token.rs'
+          - 'src/media.rs'
+          - 'src/stream_ticket.rs'
 
-'scope: artwork':
+'scope: scanner':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/api/artwork.rs'
-          - 'src/artwork_pipeline.rs'
-          - 'src/artwork_jobs.rs'
-          - 'src/storage.rs'
+          - 'src/scanner.rs'
 
 # ─────────────────────────────────────────────────────────────
-# Web fine scopes (inside web/src/).
+# Web fine scopes (inside webapp/src/).
 # ─────────────────────────────────────────────────────────────
 
 'scope: routes':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/src/routes/**'
+          - 'webapp/src/main.tsx'
 
 'scope: components':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/src/components/**'
+          - 'webapp/src/pages.tsx'
 
 'scope: design-tokens':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/packages/design-tokens/**'
+          - 'webapp/src/design-tokens/**'
 
 # ─────────────────────────────────────────────────────────────
 # Cross-cutting.
@@ -112,19 +97,16 @@
   - changed-files:
       - any-glob-to-any-file:
           - '.github/**'
-          - 'web/.husky/**'
-          - 'web/eslint.config.js'
-          - 'web/.prettierrc.json'
-          - 'web/.commitlintrc.cjs'
-          - 'web/vite.config.ts'
-          - 'web/vitest.config.ts'
-          - 'web/tsconfig.json'
+          - 'webapp/vite.config.ts'
+          - 'webapp/vitest.config.ts'
+          - 'webapp/tsconfig.json'
 
 'scope: deps':
   - changed-files:
       - any-glob-to-any-file:
-          - 'web/package.json'
-          - 'web/bun.lock'
+          - 'webapp/biome.json'
+          - 'webapp/package.json'
+          - 'webapp/bun.lock'
           - 'Cargo.toml'
           - 'Cargo.lock'
 

@@ -10,8 +10,8 @@
 - **M0, M1, M2 : fermés.**
 - **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
   lecture native/transcodée, favoris, scrobbles et playlists.
-- **M4 : fusionné** (`14aec76`). Le nettoyage de `web/` reste porté par la PR
-  #84 tant qu'elle n'est pas fusionnée.
+- **M4 : fusionné** (`14aec76`). L'ancien `web/` est retiré par la PR #84 après
+  extraction de ses design tokens utiles.
 - **M5, M6 : non commencés.**
 
 ## Validation sur bibliothèque réelle (2026-08-09)
@@ -60,14 +60,11 @@ dans `lib.rs` / `Cargo.toml`).
 Ces choix ont été pris délibérément ; les « corriger » sans contexte serait une
 régression.
 
-- **Symfonium conditionne le tag `v2.0-beta`, et lui seul.** La dérogation
-  approuvée par le user le 2026-08-03 couvre **le démarrage et la fusion de
-  M4** : le travail M4 avance et se fusionne sans attendre M3. Ce qui reste
-  bloqué, c'est le tag `v2.0-beta`, rien d'autre. C'est une dérogation
-  explicite à la règle « pas de milestone suivant avant la porte précédente »
-  d'`AGENTS.md`, consignée en tête de `docs/M3-symfonium-validation.md`.
-  Quatre revues automatisées ont demandé de l'annuler ; c'est à écarter en s'y
-  référant.
+- **La validation Symfonium a fermé M3 après la fusion de M4.** La dérogation
+  approuvée le 2026-08-03 autorisait explicitement le démarrage et la fusion de
+  M4 avant cette validation, sans autoriser le tag `v2.0-beta`. Elle expliquait
+  l'écart temporaire avec l'ordre des jalons d'`AGENTS.md` ; elle est désormais
+  historique puisque la porte M3 est fermée.
 - **Un code d'autorisation est dépensé à la première présentation**, quelle que
   soit l'issue. Un verifier erroné brûle le code. Cela ferme le devinage et suit
   la règle de révocation-sur-réutilisation d'OAuth 2.1 ; un client qui rate son
@@ -82,8 +79,10 @@ régression.
 - **Le contrat Subsonic est gelé.** `search3` filtre encore en mémoire sans
   utiliser l'index FTS5 — dette assumée : y toucher risquerait une régression
   sur les trois clients validés.
-- **`web/` reste dans l'arbre**, hors de toute CI, en attendant qu'on décide
-  quoi en récupérer. Il n'est ni construit, ni servi, ni testé.
+- **`web/` a été supprimé** (décision user du 2026-08-08) après extraction de
+  `packages/design-tokens` vers `webapp/src/design-tokens/`. Le reste était
+  arrimé à la hiérarchie profil/bibliothèque de la v1 et aux server functions
+  Better Auth : git en garde l'historique.
 
 ## Pièges connus
 
@@ -105,22 +104,32 @@ régression.
 
 ## Ce qui reste
 
-1. **Fusionner la PR #84** pour retirer l'ancien `web/`, après avoir conservé
-   les design tokens utiles dans `webapp/` et résolu sa revue en attente.
-2. **Trancher la sécurité de session navigateur avant `v2.0` stable**, comme
+1. **Trancher la sécurité de session navigateur avant `v2.0` stable**, comme
    détaillé dans les dettes ci-dessous.
-3. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
+2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
    validation Symfonium sont terminés ; aucune action de compatibilité ne reste
    ouverte pour cette porte.
-4. **M5** : réconciliation locale/serveur conservatrice.
-5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+3. **M5** : réconciliation locale/serveur conservatrice.
+4. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+
+## Outillage front
+
+`webapp/` utilise **Biome** (lint + format en une passe) plutôt qu'eslint +
+prettier : `bun run lint`, `bun run format`. La suite vitest tourne sous jsdom,
+nécessaire aux design tokens qui écrivent sur `document.documentElement`. La CI
+web lint, construit et teste.
+
+La directive `biome-ignore` de `useAsync` (`src/pages.tsx`) est placée **juste
+avant `}, deps)`**, pas avant `useEffect` : la règle se déclenche sur
+l'argument de dépendances, et déplacée plus haut elle ne supprime plus rien —
+vérifié.
 
 ## Dettes identifiées, non traitées
 
 - `search3` n'exploite pas FTS5 (voir ci-dessus).
-- `webapp/` n'a pas de linter. Les tests se limitent aux gardes de redirection
-  (`isAllowedRedirect`, `safeInternalPath`) : aucun test de composant ni de
-  parcours. La CI web installe, construit et lance ce vitest.
+- `webapp/` n'a pas de test de composant ni de parcours : la suite couvre les
+  gardes de redirection et les design tokens. La CI web lint (biome), construit
+  et lance vitest.
 - Les jetons de session vivent en `localStorage`, donc exposés à une XSS. C'est
   le compromis SPA habituel ; un cookie éviterait cela mais ajouterait une
   authentification ambiante et une surface CSRF à une API sinon purement par

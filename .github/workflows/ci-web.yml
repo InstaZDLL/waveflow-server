@@ -69,6 +69,10 @@ jobs:
         # instead of silently regenerating against the registry.
         run: bun install --frozen-lockfile
 
+      # Biome covers formatting and linting in one pass.
+      - name: Lint
+        run: bun run lint
+
       # `bun run build` typechecks before bundling, so this covers both.
       - name: Build
         run: bun run build
