@@ -46,6 +46,23 @@ pub struct EncryptedSecret {
 }
 
 impl SecretBox {
+    /// Loads an instance key from `path`, creating and securely storing a random key when the file does not exist.
+    ///
+    /// If multiple processes create the file concurrently, all callers use the key ultimately stored at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key cannot be read or created, or if the stored key is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::fs;
+    /// # let path = std::env::temp_dir().join(format!("instance-key-{}", std::process::id()));
+    /// let secret_box = SecretBox::load_or_create(&path)?;
+    /// # fs::remove_file(path)?;
+    /// # Ok::<(), SecurityError>(())
+    /// ```
     pub fn load_or_create(path: &Path) -> Result<Self, SecurityError> {
         let key = match std::fs::read(path) {
             Ok(bytes) => bytes,
@@ -63,6 +80,20 @@ impl SecretBox {
         Self::from_key_bytes(&key)
     }
 
+    /// Creates a secret box from a 32-byte instance key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecurityError::InvalidInstanceKey`] when `key` is not exactly 32 bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let secret_box = SecretBox::from_key_bytes(&[0u8; 32])?;
+    /// # let _ = secret_box;
+    /// # Ok::<(), SecurityError>(())
+    /// ```
+    pub fn from_key_bytes(key: &[u8]) -> Result<Self, SecurityError> {
     pub fn from_key_bytes(key: &[u8]) -> Result<Self, SecurityError> {
         let key: [u8; INSTANCE_KEY_BYTES] = key
             .try_into()
@@ -74,9 +105,22 @@ impl SecretBox {
         })
     }
 
-    /// Derives a stable, unforgeable bearer token without persisting any
-    /// reversible token material. The domain label prevents reuse for another
-    /// keyed purpose from producing the same output.
+    /// Derives a stable, URL-safe bearer token for a share.
+    ///
+    /// The token is deterministically bound to both the instance key and the share
+    /// identifier, without requiring token material to be persisted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let secret_box = SecretBox::from_key_bytes(&[7u8; 32]).unwrap();
+    /// let share_id = uuid::Uuid::nil();
+    ///
+    /// let token = secret_box.derive_share_token(share_id);
+    ///
+    /// assert!(token.starts_with("wfs_"));
+    /// assert_eq!(token, secret_box.derive_share_token(share_id));
+    /// ```
     pub fn derive_share_token(&self, share_id: uuid::Uuid) -> String {
         let mut hasher = blake3::Hasher::new_keyed(&self.key);
         hasher.update(b"waveflow/share-token/v1\0");
@@ -87,6 +131,21 @@ impl SecretBox {
         )
     }
 
+    /// Encrypts plaintext into an authenticated secret containing a random nonce.
+    ///
+    /// # Returns
+    ///
+    /// The encrypted secret, or a [`SecurityError`] if encryption fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let secret_box = SecretBox::from_key_bytes(&[0u8; 32]).unwrap();
+    /// let encrypted = secret_box.encrypt(b"secret data").unwrap();
+    ///
+    /// assert!(!encrypted.ciphertext.is_empty());
+    /// ```
+    pub fn encrypt
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedSecret, SecurityError> {
         let mut nonce = [0u8; NONCE_BYTES];
         OsRng.fill_bytes(&mut nonce);

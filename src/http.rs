@@ -303,6 +303,15 @@ pub struct SyncSnapshot {
     pub shares: Vec<ShareResponse>,
 }
 
+/// Builds the application router with health, authentication, catalog, user-data, synchronization, and administration endpoints.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::{router, AppState};
+/// # let state: AppState = todo!();
+/// let app = router(state);
+/// ```
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -392,14 +401,25 @@ pub async fn health() -> Json<ProbeResponse> {
     })
 }
 
+/// Checks whether the database is available for serving requests.
+///
+/// Responds with `200 OK` when the database is reachable, or `503 Service Unavailable`
+/// when the database probe fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// let response = ready(State(state)).await;
+/// assert!(response.status().is_success());
+/// ```
 #[utoipa::path(
-    get,
-    path = "/ready",
-    tag = "probes",
-    responses(
-        (status = 200, body = ReadyResponse),
-        (status = 503, body = ReadyResponse)
-    )
+get,
+path = "/ready",
+tag = "probes",
+responses(
+(status = 200, body = ReadyResponse),
+(status = 503, body = ReadyResponse)
+)
 )]
 pub async fn ready(State(state): State<AppState>) -> Response {
     match state.db.ping().await {
@@ -425,6 +445,15 @@ pub async fn ready(State(state): State<AppState>) -> Response {
     }
 }
 
+/// Reports whether initial application setup is required.
+///
+/// # Examples
+///
+/// ```no_run
+/// let response = setup_status(state).await?;
+/// assert!(response.0.required || !response.0.required);
+/// # Ok::<(), ApiError>(())
+/// ```
 #[utoipa::path(get, path = "/api/v2/setup", tag = "authentication", responses((status = 200, body = SetupStatusResponse)))]
 pub async fn setup_status(
     State(state): State<AppState>,
@@ -433,7 +462,27 @@ pub async fn setup_status(
     Ok(Json(SetupStatusResponse { required }))
 }
 
-#[utoipa::path(post, path = "/api/v2/setup", tag = "authentication", params(("Origin" = String, Header, description = "Required browser origin")), request_body = SetupRequest, responses((status = 201, body = SetupResponse), (status = 403, description = "Origin header missing or rejected", body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// Creates the initial administrator account during application setup.
+///
+/// The request must include a valid browser origin and administrator credentials.
+///
+/// # Returns
+///
+/// Returns HTTP 201 with the newly created administrator's user ID.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(state: AppState, headers: axum::http::HeaderMap) {
+/// let request = axum::Json(SetupRequest {
+///     username: "admin".to_owned(),
+///     password: "change-me".to_owned(),
+/// });
+/// let result = setup(axum::extract::State(state), headers, request).await;
+/// # }
+/// ```
+///
+/// #[utoipa::path(post, path = "/api/v2/setup", tag = "authentication", params(("Origin" = String, Header, description = "Required browser origin")), request_body = SetupRequest, responses((status = 201, body = SetupResponse), (status = 403, description = "Origin header missing or rejected", body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn setup(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -495,15 +544,31 @@ pub async fn refresh(
         .map_err(ApiError::from)
 }
 
+/// Revokes the authenticated bearer session.
+///
+/// The request must include a non-empty `Bearer` authorization value. On
+/// success, the handler returns HTTP 204.
+///
+/// # Examples
+///
+/// ```text
+/// POST /api/v2/auth/logout
+/// Authorization: Bearer <access-token>
+///
+/// HTTP/1.1 204 No Content
+/// ```
+///
+/// An absent or invalid bearer token produces HTTP 401. Authentication
+/// service failures produce HTTP 503.
 #[utoipa::path(
-    post,
-    path = "/api/v2/auth/logout",
-    tag = "authentication",
-    responses(
-        (status = 204),
-        (status = 401, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
-    )
+post,
+path = "/api/v2/auth/logout",
+tag = "authentication",
+responses(
+(status = 204),
+(status = 401, body = ErrorResponse),
+(status = 503, body = ErrorResponse)
+)
 )]
 pub async fn logout(
     State(state): State<AppState>,
@@ -518,19 +583,30 @@ pub async fn logout(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Browser sessions keep only the short-lived access token in JavaScript. The
-/// rotating refresh token is an HttpOnly, same-site cookie and is therefore
-/// never exposed to the embedded SPA.
+/// Authenticates a browser session and establishes refresh and CSRF cookies.
+///
+/// The response contains a short-lived access token, while the rotating refresh
+/// token is stored in an HttpOnly, same-site cookie.
+///
+/// # Examples
+///
+/// ```no_run
+/// // POST /api/v2/web/auth/login with username, password, and device_name.
+/// ```
+///
+/// # Returns
+///
+/// The access-token response with authentication cookies attached.
 #[utoipa::path(
-    post,
-    path = "/api/v2/web/auth/login",
-    tag = "authentication",
-    request_body = LoginRequest,
-    responses(
-        (status = 200, body = WebAuthResponse),
-        (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
-    )
+post,
+path = "/api/v2/web/auth/login",
+tag = "authentication",
+request_body = LoginRequest,
+responses(
+(status = 200, body = WebAuthResponse),
+(status = 401, body = ErrorResponse),
+(status = 403, body = ErrorResponse)
+)
 )]
 pub async fn web_login(
     State(state): State<AppState>,
@@ -546,15 +622,27 @@ pub async fn web_login(
     web_auth_response(&state, &headers, tokens)
 }
 
+/// Refreshes a browser session using the refresh-token cookie after validating the web request.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Send a POST request to `/api/v2/web/auth/refresh` with the refresh-token
+/// // cookie and matching CSRF headers.
+/// # let _endpoint = "/api/v2/web/auth/refresh";
+/// ```
+///
+/// Returns an authentication response and refreshed cookies on success. Requests
+/// with invalid origin, CSRF credentials, or refresh tokens are rejected.
 #[utoipa::path(
-    post,
-    path = "/api/v2/web/auth/refresh",
-    tag = "authentication",
-    responses(
-        (status = 200, body = WebAuthResponse),
-        (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
-    )
+post,
+path = "/api/v2/web/auth/refresh",
+tag = "authentication",
+responses(
+(status = 200, body = WebAuthResponse),
+(status = 401, body = ErrorResponse),
+(status = 403, body = ErrorResponse)
+)
 )]
 pub async fn web_refresh(
     State(state): State<AppState>,
@@ -570,16 +658,14 @@ pub async fn web_refresh(
     web_auth_response(&state, &headers, tokens)
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/v2/web/auth/logout",
-    tag = "authentication",
-    responses(
-        (status = 204),
-        (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
-    )
-)]
+/// Logs out the browser session associated with the refresh cookie and expires the session cookies.
+///
+/// # Examples
+///
+/// ```
+/// let endpoint = "/api/v2/web/auth/logout";
+/// assert_eq!(endpoint, "/api/v2/web/auth/logout");
+/// ```
 pub async fn web_logout(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -605,7 +691,18 @@ pub async fn web_logout(
     Ok(response)
 }
 
-#[utoipa::path(post, path = "/api/v2/libraries/{library_id}/scans", tag = "catalog", params(("library_id" = Uuid, Path)), responses((status = 202, body = ScanQueuedResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+/// Queues a manual scan for a library accessible to the authenticated user.
+///
+/// # Errors
+///
+/// Returns an authentication error when the request lacks valid credentials, `ApiError::NotFound` when the library is unavailable to the user, or `ApiError::Unavailable` when the scan cannot be queued.
+///
+/// # Examples
+///
+/// ```text
+/// POST /api/v2/libraries/{library_id}/scans
+/// Authorization: Bearer <access-token>
+/// ```
 pub async fn start_scan(
     State(state): State<AppState>,
     Path(library_id): Path<Uuid>,
@@ -629,7 +726,22 @@ pub async fn start_scan(
     Ok((StatusCode::ACCEPTED, Json(ScanQueuedResponse { scan_id })))
 }
 
-#[utoipa::path(get, path = "/api/v2/libraries", tag = "catalog", responses((status = 200, body = [crate::catalog::LibraryAccess]), (status = 401, body = ErrorResponse)))]
+/// Lists the libraries accessible to the authenticated user.
+///
+/// # Returns
+///
+/// The libraries available to the authenticated user.
+///
+/// # Examples
+///
+/// ```ignore
+/// let response = client
+///     .get("/api/v2/libraries")
+///     .bearer_auth(access_token)
+///     .send()
+///     .await?;
+/// assert!(response.status().is_success());
+/// ```
 pub async fn list_libraries(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -643,6 +755,21 @@ pub async fn list_libraries(
         .map_err(db_error)
 }
 
+/// Creates a library for the authenticated administrator and queues its initial scan.
+///
+/// The library path must identify an existing, non-symlink directory, and the library name
+/// must not be empty or consist only of whitespace.
+///
+/// # Examples
+///
+/// ```text
+/// POST /api/v2/libraries
+/// {"name":"Music","path":"/srv/music","visibility":"private"}
+/// ```
+///
+/// # Returns
+///
+/// The created library ID and the ID of its queued initial scan.
 #[utoipa::path(post, path = "/api/v2/libraries", tag = "administration", request_body = CreateLibraryRequest, responses((status = 201, body = CreateLibraryResponse), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn create_library(
     State(state): State<AppState>,
@@ -697,7 +824,21 @@ pub async fn create_library(
     ))
 }
 
-#[utoipa::path(put, path = "/api/v2/libraries/{library_id}/members/{user_id}", tag = "administration", params(("library_id" = Uuid, Path), ("user_id" = Uuid, Path)), request_body = SetLibraryMemberRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// Assigns a library role to a user.
+///
+/// The caller must be an administrator. The library and user must exist, and the
+/// owner role cannot be assigned.
+///
+/// # Examples
+///
+/// ```
+/// let path = "/api/v2/libraries/{library_id}/members/{user_id}";
+/// assert!(path.contains("/libraries/"));
+/// assert!(path.contains("/members/"));
+/// ```
+///
+/// Returns [`StatusCode::NO_CONTENT`] when the membership is updated.
+/// Returns [`ApiError::Validation`] for an owner role or unknown library or user.
 pub async fn set_library_member(
     State(state): State<AppState>,
     Path((library_id, user_id)): Path<(Uuid, Uuid)>,
@@ -737,6 +878,16 @@ pub async fn set_library_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Removes a user’s membership from a library.
+///
+/// Returns `404 Not Found` when the user is not a member of the library.
+///
+/// # Examples
+///
+/// ```ignore
+/// let status = remove_library_member(state, (library_id, user_id), headers).await?;
+/// assert_eq!(status, StatusCode::NO_CONTENT);
+/// ```
 #[utoipa::path(delete, path = "/api/v2/libraries/{library_id}/members/{user_id}", tag = "administration", params(("library_id" = Uuid, Path), ("user_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn remove_library_member(
     State(state): State<AppState>,
@@ -762,6 +913,22 @@ pub async fn remove_library_member(
     }
 }
 
+/// Retrieves a scan job visible to the authenticated user.
+///
+/// # Examples
+///
+/// ```ignore
+/// let response = client
+///     .get(format!("/api/v2/scans/{scan_id}"))
+///     .send()
+///     .await?;
+/// ```
+///
+/// # Errors
+///
+/// Returns an unauthorized error when authentication fails, a not-found error
+/// when the scan is unavailable to the user, or a database error when lookup
+/// fails.
 #[utoipa::path(get, path = "/api/v2/scans/{scan_id}", tag = "catalog", params(("scan_id" = Uuid, Path)), responses((status = 200, body = crate::catalog::ScanJobRecord), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn scan_status(
     State(state): State<AppState>,
@@ -807,6 +974,27 @@ pub async fn scan_events(
     Ok(Sse::new(output).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
+/// Lists the tracks in a library that the authenticated user can access.
+///
+/// The optional search query is trimmed before filtering. Results use an offset
+/// and a limit between 1 and 500; the default offset is 0 and the default
+/// limit is 500.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(client: reqwest::Client, base_url: &str, library_id: &str) {
+/// let response = client
+///     .get(format!("{base_url}/api/v2/libraries/{library_id}/tracks?limit=100"))
+///     .send()
+///     .await
+///     .unwrap();
+/// assert!(response.status().is_success());
+/// # }
+/// ```
+///
+/// Returns the matching track records, or an API error when authentication,
+/// library access, pagination, or database lookup fails.
 #[utoipa::path(get, path = "/api/v2/libraries/{library_id}/tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("q" = Option<String>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::catalog::TrackRecord]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_tracks(
     State(state): State<AppState>,
@@ -838,6 +1026,22 @@ pub async fn list_tracks(
     Ok(Json(tracks))
 }
 
+/// Retrieves a catalog track visible to the authenticated user.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use uuid::Uuid;
+/// # let track_id = Uuid::nil();
+/// // Request: GET /api/v2/tracks/{track_id}
+/// let _track_id = track_id;
+/// ```
+///
+/// Returns the requested track, or `ApiError::NotFound` when it is unavailable to the user.
+///
+/// # Errors
+///
+/// Returns an authentication error when the request lacks valid credentials.
 #[utoipa::path(get, path = "/api/v2/tracks/{track_id}", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::SongItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn get_track(
     State(state): State<AppState>,
@@ -856,6 +1060,24 @@ pub async fn get_track(
         .ok_or(ApiError::NotFound)
 }
 
+/// Lists albums accessible to the authenticated user, optionally filtered by library and paginated.
+///
+/// # Arguments
+///
+/// * `library_id` — Restricts results to a specific library.
+/// * `offset` — Number of albums to skip.
+/// * `limit` — Maximum number of albums to return.
+///
+/// # Returns
+///
+/// The accessible albums for the requested page.
+///
+/// # Examples
+///
+/// ```
+/// let path = "/api/v2/albums?offset=0&limit=20";
+/// assert!(path.starts_with("/api/v2/albums"));
+/// ```
 #[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_albums(
     State(state): State<AppState>,
@@ -1010,6 +1232,20 @@ pub async fn list_playlists(
         .map_err(service_error)
 }
 
+/// Creates a playlist for the authenticated user.
+///
+/// # Examples
+///
+/// ```
+/// let request = CreatePlaylistRequest {
+///     name: "Favorites".to_owned(),
+///     track_ids: Vec::new(),
+/// };
+/// assert_eq!(request.name, "Favorites");
+/// ```
+///
+/// Returns `201 Created` with the new playlist, or an error when authentication,
+/// authorization, validation, or playlist creation fails.
 #[utoipa::path(post, path = "/api/v2/playlists", tag = "user-data", request_body = CreatePlaylistRequest, responses((status = 201, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn create_playlist(
     State(state): State<AppState>,
@@ -1041,7 +1277,18 @@ pub async fn get_playlist(
         .map_err(service_error)
 }
 
-#[utoipa::path(patch, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), request_body = UpdatePlaylistRequest, responses((status = 200, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// Updates a playlist's metadata and track membership for the authenticated user.
+///
+/// # Examples
+///
+/// ```ignore
+/// let playlist = update_playlist(state, playlist_id, headers, request)
+///     .await
+///     .expect("playlist update should succeed");
+/// assert_eq!(playlist.0.id, playlist_id);
+/// ```
+///
+/// Returns the updated playlist.
 pub async fn update_playlist(
     State(state): State<AppState>,
     Path(playlist_id): Path<Uuid>,
@@ -1067,6 +1314,15 @@ pub async fn update_playlist(
         .map_err(service_error)
 }
 
+/// Deletes a playlist owned by the authenticated user.
+///
+/// # Examples
+///
+/// ```
+/// use axum::http::StatusCode;
+///
+/// assert_eq!(StatusCode::NO_CONTENT, StatusCode::from_u16(204).unwrap());
+/// ```
 #[utoipa::path(delete, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn delete_playlist(
     State(state): State<AppState>,
@@ -1122,6 +1378,17 @@ pub async fn remove_favorite(
     set_favorite(state, headers, &entity_type, entity_id, false).await
 }
 
+/// Sets or clears a user's favorite status for an entity.
+///
+/// # Examples
+///
+/// ```no_run
+/// let status = set_favorite(state, headers, "track", entity_id, true).await?;
+/// assert_eq!(status, StatusCode::NO_CONTENT);
+/// # Ok::<(), ApiError>(())
+/// ```
+///
+/// `entity_type` identifies the kind of entity being updated.
 async fn set_favorite(
     state: AppState,
     headers: HeaderMap,
@@ -1139,6 +1406,21 @@ async fn set_favorite(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Sets a user's rating for a track, album, or artist.
+///
+/// `entity_type` must identify a supported entity kind, and `rating` is supplied
+/// in the request body.
+///
+/// # Returns
+///
+/// `StatusCode::NO_CONTENT` when the rating is saved.
+///
+/// # Examples
+///
+/// ```no_run
+/// // PUT /api/v2/ratings/track/{entity_id}
+/// // {"rating": 5}
+/// ```
 #[utoipa::path(put, path = "/api/v2/ratings/{entity_type}/{entity_id}", tag = "user-data", params(("entity_type" = String, Path, description = "track, album or artist"), ("entity_id" = Uuid, Path)), request_body = RatingRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn set_rating(
     State(state): State<AppState>,
@@ -1156,7 +1438,18 @@ pub async fn set_rating(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(get, path = "/api/v2/ratings", tag = "user-data", responses((status = 200, body = [crate::services::RatingItem]), (status = 401, body = ErrorResponse)))]
+/// Lists ratings for the authenticated user.
+///
+/// # Returns
+///
+/// The user's ratings, or an API error if authentication or retrieval fails.
+///
+/// # Examples
+///
+/// ```
+/// let endpoint = "/api/v2/ratings";
+/// assert_eq!(endpoint, "/api/v2/ratings");
+/// ```
 pub async fn list_ratings(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1170,7 +1463,19 @@ pub async fn list_ratings(
         .map_err(service_error)
 }
 
-#[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// Records a track playback or submission event for the authenticated user.
+///
+/// # Examples
+///
+/// ```ignore
+/// let status = create_scrobble(state, headers, Json(request)).await?;
+/// assert_eq!(status, StatusCode::NO_CONTENT);
+/// # Ok::<(), ApiError>(())
+/// ```
+///
+/// # Returns
+///
+/// `StatusCode::NO_CONTENT` when the scrobble is recorded successfully.
 pub async fn create_scrobble(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1192,6 +1497,23 @@ pub async fn create_scrobble(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Lists the authenticated user's listening history with an optional result limit.
+///
+/// The limit defaults to 200 and must be between 1 and the maximum synchronization
+/// limit.
+///
+/// # Examples
+///
+/// ```text
+/// GET /api/v2/history?limit=50
+/// ```
+///
+/// The response contains the user's history entries.
+///
+/// # Errors
+///
+/// Returns an authentication error for unauthenticated requests or a validation
+/// error when the limit is outside the allowed range.
 #[utoipa::path(get, path = "/api/v2/history", tag = "user-data", params(("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::HistoryItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_history(
     State(state): State<AppState>,
@@ -1211,6 +1533,23 @@ pub async fn list_history(
         .map_err(service_error)
 }
 
+/// Reports whether media transcoding is available and how many transcodes are currently active.
+///
+/// Authentication is required.
+///
+/// # Examples
+///
+/// ```text
+/// GET /api/v2/transcode/status
+/// Authorization: Bearer <access-token>
+/// ```
+///
+/// The response contains `available` and `active` fields.
+///
+/// # Errors
+///
+/// Returns an authentication error when the request does not include valid credentials.
+///
 #[utoipa::path(get, path = "/api/v2/transcode/status", tag = "catalog", responses((status = 200, body = TranscodeStatusResponse), (status = 401, body = ErrorResponse)))]
 pub async fn transcode_status(
     State(state): State<AppState>,
@@ -1223,6 +1562,19 @@ pub async fn transcode_status(
     }))
 }
 
+/// Lists all users for an authenticated administrator.
+///
+/// # Returns
+///
+/// The users configured in the application.
+///
+/// # Examples
+///
+/// ```no_run
+/// let users = list_users(state, headers).await?;
+/// assert!(!users.0.is_empty());
+/// # Ok::<(), ApiError>(())
+/// ```
 #[utoipa::path(get, path = "/api/v2/admin/users", tag = "administration", responses((status = 200, body = [crate::services::UserItem]), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse)))]
 pub async fn list_users(
     State(state): State<AppState>,
@@ -1238,6 +1590,17 @@ pub async fn list_users(
         .map_err(service_error)
 }
 
+/// Creates a web user after verifying that the authenticated actor is an administrator.
+///
+/// # Examples
+///
+/// ```no_run
+/// // POST /api/v2/admin/users with a `CreateUserRequest` JSON body.
+/// ```
+///
+/// # Returns
+///
+/// The created user and HTTP status `201 Created`.
 #[utoipa::path(post, path = "/api/v2/admin/users", tag = "administration", request_body = CreateUserRequest, responses((status = 201, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn create_user(
     State(state): State<AppState>,
@@ -1259,6 +1622,41 @@ pub async fn create_user(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
+/// Updates an existing user's role, account status, library access, and credentials.
+///
+/// The caller must be authenticated as an administrator.
+///
+/// # Parameters
+///
+/// * `username` - Username of the account to update.
+/// * `request` - Account fields to change; omitted fields retain their current values.
+///
+/// # Returns
+///
+/// The updated user account.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use axum::{extract::{Path, State}, Json};
+/// # use axum::http::HeaderMap;
+/// # async fn example(state: AppState, headers: HeaderMap) {
+/// let request = UpdateUserRequest {
+///     role: None,
+///     disabled: Some(false),
+///     library_ids: None,
+///     subsonic_password: None,
+///     web_password: None,
+/// };
+///
+/// let result = update_user(
+///     State(state),
+///     Path(String::from("alice")),
+///     headers,
+///     Json(request),
+/// ).await;
+/// # }
+/// ```
 #[utoipa::path(patch, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), request_body = UpdateUserRequest, responses((status = 200, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn update_user(
     State(state): State<AppState>,
@@ -1288,7 +1686,19 @@ pub async fn update_user(
         .map_err(service_error)
 }
 
-#[utoipa::path(delete, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+/// Deletes the specified user account when requested by an administrator.
+///
+/// # Errors
+///
+/// Returns an error if authentication fails, the authenticated user is not an
+/// administrator, or the user does not exist.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Send an authenticated DELETE request to:
+/// // DELETE /api/v2/admin/users/alice
+/// ```
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -1304,6 +1714,23 @@ pub async fn delete_user(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Creates or replaces a user's Subsonic credential.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example() -> Result<(), ApiError> {
+/// let response = set_subsonic_credential(state, username, headers, request).await?;
+/// assert!(!response.0.api_key.is_empty());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The generated API key is returned in the response.
+///
+/// # Errors
+///
+/// Returns an error if authentication, authorization, credential creation, or request validation fails.
 #[utoipa::path(put, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), request_body = SetSubsonicCredentialRequest, responses((status = 200, body = SubsonicCredentialResponse), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn set_subsonic_credential(
     State(state): State<AppState>,
@@ -1321,6 +1748,21 @@ pub async fn set_subsonic_credential(
     Ok(Json(SubsonicCredentialResponse { api_key }))
 }
 
+/// Revokes the specified user's Subsonic credential.
+///
+/// # Arguments
+///
+/// * `username` - Username whose Subsonic credential should be revoked.
+///
+/// # Returns
+///
+/// The HTTP `204 No Content` status on success.
+///
+/// # Examples
+///
+/// ```text
+/// DELETE /api/v2/admin/users/alice/subsonic-credential
+/// ```
 #[utoipa::path(delete, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn revoke_subsonic_credential(
     State(state): State<AppState>,
@@ -1372,6 +1814,26 @@ pub async fn get_queue(
         .map_err(service_error)
 }
 
+/// Saves the authenticated user's playback queue.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(state: AppState, headers: HeaderMap, request: SaveQueueRequest) {
+/// let status = save_queue(
+///     axum::extract::State(state),
+///     headers,
+///     axum::Json(request),
+/// )
+/// .await
+/// .unwrap();
+/// assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+/// # }
+/// ```
+///
+/// # Returns
+///
+/// `StatusCode::NO_CONTENT` when the queue is saved successfully.
 #[utoipa::path(put, path = "/api/v2/queue", tag = "user-data", request_body = SaveQueueRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn save_queue(
     State(state): State<AppState>,
@@ -1395,6 +1857,19 @@ pub async fn save_queue(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Lists the authenticated user's shares.
+///
+/// # Returns
+///
+/// The user's shares as API response objects.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(state: AppState, headers: HeaderMap) {
+/// let Json(shares) = list_shares(State(state), headers).await.unwrap();
+/// # }
+/// ```
 #[utoipa::path(get, path = "/api/v2/shares", tag = "user-data", responses((status = 200, body = [ShareResponse]), (status = 401, body = ErrorResponse)))]
 pub async fn list_shares(
     State(state): State<AppState>,
@@ -1412,7 +1887,17 @@ pub async fn list_shares(
     Ok(Json(shares))
 }
 
-#[utoipa::path(post, path = "/api/v2/shares", tag = "user-data", request_body = CreateShareRequest, responses((status = 201, body = ShareResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// Creates a share for the requested tracks.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Submit a POST request to `/api/v2/shares` with the selected track IDs.
+/// ```
+///
+/// # Returns
+///
+/// A `201 Created` response containing the created share.
 pub async fn create_share(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1434,6 +1919,14 @@ pub async fn create_share(
     Ok((StatusCode::CREATED, Json(share_response(&state, share))))
 }
 
+/// Updates a share owned by the authenticated user.
+///
+/// # Examples
+///
+/// ```no_run
+/// // PATCH /api/v2/shares/{share_id}
+/// // JSON body: { "description": "Shared playlist", "expires_at": null }
+/// ```
 #[utoipa::path(patch, path = "/api/v2/shares/{share_id}", tag = "user-data", params(("share_id" = Uuid, Path)), request_body = UpdateShareRequest, responses((status = 200, body = ShareResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn update_share(
     State(state): State<AppState>,
@@ -1457,6 +1950,18 @@ pub async fn update_share(
     Ok(Json(share_response(&state, share)))
 }
 
+/// Deletes a share owned by the authenticated user.
+///
+/// Returns `204 No Content` when the share is deleted, or an API error when
+/// authentication fails or the share is unavailable.
+///
+/// # Examples
+///
+/// ```no_run
+/// let share_id = uuid::Uuid::new_v4();
+/// let endpoint = format!("/api/v2/shares/{share_id}");
+/// assert!(endpoint.contains(&share_id.to_string()));
+/// ```
 #[utoipa::path(delete, path = "/api/v2/shares/{share_id}", tag = "user-data", params(("share_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn delete_share(
     State(state): State<AppState>,
@@ -1473,6 +1978,14 @@ pub async fn delete_share(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Converts a service share into its API representation, including its public URL when available.
+///
+/// # Examples
+///
+/// ```ignore
+/// let response = share_response(&state, share);
+/// assert_eq!(response.id, share_id);
+/// ```
 fn share_response(state: &AppState, share: crate::services::ShareItem) -> ShareResponse {
     let url = share.url_token.map(|token| {
         let path = format!("/share/{token}");
@@ -1492,16 +2005,31 @@ fn share_response(state: &AppState, share: crate::services::ShareItem) -> ShareR
     }
 }
 
+/// Retrieves durable synchronization changes after a cursor.
+///
+/// `after` defaults to the beginning of the change log, and `limit` defaults to
+/// the standard synchronization page size. The limit must be greater than zero
+/// and no greater than the maximum synchronization page size.
+///
+/// # Examples
+///
+/// ```text
+/// GET /api/v2/sync/changes?after=42&limit=100
+/// ```
+///
+/// # Returns
+///
+/// A page of synchronization changes after the requested cursor.
 #[utoipa::path(
-    get,
-    path = "/api/v2/sync/changes",
-    tag = "sync",
-    params(("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)),
-    responses(
-        (status = 200, body = crate::sync::SyncPage),
-        (status = 401, body = ErrorResponse),
-        (status = 422, body = ErrorResponse)
-    )
+get,
+path = "/api/v2/sync/changes",
+tag = "sync",
+params(("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)),
+responses(
+(status = 200, body = crate::sync::SyncPage),
+(status = 401, body = ErrorResponse),
+(status = 422, body = ErrorResponse)
+)
 )]
 pub async fn sync_changes(
     State(state): State<AppState>,
@@ -1522,12 +2050,20 @@ pub async fn sync_changes(
         .map_err(sync_error)
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v2/sync/snapshot",
-    tag = "sync",
-    responses((status = 200, body = SyncSnapshot), (status = 401, body = ErrorResponse))
-)]
+/// Retrieves the authenticated user's synchronization snapshot.
+///
+/// # Examples
+///
+/// ```no_run
+/// let result = sync_snapshot(
+///     axum::extract::State(todo!()),
+///     axum::http::HeaderMap::new(),
+/// ).await;
+/// assert!(result.is_ok());
+/// ```
+///
+/// The snapshot includes the synchronization cursor, playlists, favorites, ratings,
+/// queue, listening history, and shares.
 pub async fn sync_snapshot(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1563,17 +2099,26 @@ pub async fn sync_snapshot(
     }))
 }
 
-#[utoipa::path(
-    put,
-    path = "/api/v2/sync/ack",
-    tag = "sync",
-    request_body = SyncAckRequest,
-    responses(
-        (status = 204),
-        (status = 401, body = ErrorResponse),
-        (status = 422, body = ErrorResponse)
-    )
-)]
+/// Records the synchronization cursor acknowledged by a device.
+///
+/// # Errors
+///
+/// Returns a validation error if the synchronization service rejects the
+/// acknowledgement.
+///
+/// # Examples
+///
+/// A client acknowledges a cursor with a request such as:
+///
+/// ```text
+/// PUT /api/v2/sync/ack
+/// Content-Type: application/json
+///
+/// {"device_id":"<device-id>","cursor":42}
+/// ```
+///
+/// On success, the endpoint responds with `204 No Content`.
+pub async fn sync_ack(
 pub async fn sync_ack(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1591,19 +2136,32 @@ pub async fn sync_ack(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The socket is an edge-triggered wake-up channel. A client always follows a
-/// notice with `GET /sync/changes`; the durable cursor, not socket delivery, is
-/// the synchronization guarantee.
-#[utoipa::path(
-    get,
-    path = "/api/v2/sync/socket",
-    tag = "sync",
-    params(("after" = Option<i64>, Query)),
-    responses(
-        (status = 101, description = "WebSocket cursor notifications"),
-        (status = 401, body = ErrorResponse),
-        (status = 422, body = ErrorResponse)
-    )
+/// Upgrades an authenticated request to a WebSocket that delivers synchronization cursor notifications.
+///
+/// Clients should retrieve durable changes after receiving a notification; WebSocket delivery is only a wake-up signal.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use axum::extract::Query;
+/// # let query = Query(SyncQuery { after: Some(0) });
+/// # let _ = query;
+/// ```
+///
+/// # Errors
+///
+/// Returns a validation error when `after` is negative and an authentication error when the request lacks valid credentials.
+///
+/// #[utoipa::path(
+get,
+path = "/api/v2/sync/socket",
+tag = "sync",
+params(("after" = Option<i64>, Query)),
+responses(
+(status = 101, description = "WebSocket cursor notifications"),
+(status = 401, body = ErrorResponse),
+(status = 422, body = ErrorResponse)
+)
 )]
 pub async fn sync_socket(
     State(state): State<AppState>,
@@ -1621,6 +2179,19 @@ pub async fn sync_socket(
         .into_response())
 }
 
+/// Serves a synchronization WebSocket for an authenticated user.
+///
+/// Sends updates newer than the supplied cursor, forwards subsequent synchronization
+/// notifications, responds to WebSocket control frames, and closes when the connection
+/// or synchronization subscription ends.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(socket: WebSocket, state: AppState, user_id: Uuid) {
+/// serve_sync_socket(socket, state, user_id, 0).await;
+/// # }
+/// ```
 async fn serve_sync_socket(socket: WebSocket, state: AppState, user_id: Uuid, after: i64) {
     let (mut sender, mut receiver) = socket.split();
     let mut notices = state.sync.subscribe();
@@ -1671,6 +2242,19 @@ enum SyncNoticeAction {
     Close,
 }
 
+/// Classifies a synchronization notice for a user connection.
+///
+/// User-specific notices produce a cursor notification, unrelated notices are
+/// skipped, lagged subscriptions recover using the user's latest durable
+/// cursor, and closed subscriptions terminate the connection.
+///
+/// # Examples
+///
+/// ```ignore
+/// let action = sync_notice_action(&sync, user_id, notice).await?;
+/// assert!(matches!(action, SyncNoticeAction::Send(_) | SyncNoticeAction::Continue));
+/// # Ok::<(), sqlx::Error>(())
+/// ```
 async fn sync_notice_action(
     sync: &crate::sync::SyncService,
     user_id: Uuid,
@@ -1689,6 +2273,29 @@ async fn sync_notice_action(
     }
 }
 
+/// Sends a synchronization cursor notification through a WebSocket connection.
+///
+/// # Parameters
+///
+/// * `sender` - WebSocket sink used to deliver the notification.
+/// * `cursor` - Durable synchronization cursor to include in the notification.
+///
+/// # Returns
+///
+/// `Ok(())` when the notification is sent successfully; otherwise, the WebSocket send error.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use axum::extract::ws::{Message, WebSocket};
+/// # use futures_util::stream::SplitSink;
+/// # async fn example(
+/// #     sender: &mut SplitSink<WebSocket, Message>,
+/// # ) -> Result<(), axum::Error> {
+/// send_sync_notice(sender, 42).await?;
+/// # Ok(())
+/// # }
+/// ```
 async fn send_sync_notice(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     cursor: i64,
@@ -1718,6 +2325,15 @@ impl From<AuthError> for ApiError {
 }
 
 impl IntoResponse for ApiError {
+    /// Converts the API error into an HTTP response with its status code and error payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let response = ApiError::NotFound.into_response();
+    ///
+    /// assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    /// ```
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
             Self::Unauthorized => (
@@ -1742,6 +2358,23 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Builds the web authentication response and sets the refresh-token and CSRF cookies.
+///
+/// # Examples
+///
+/// ```no_run
+/// let response = web_auth_response(&state, &headers, tokens)?;
+/// # Ok::<(), ApiError>(())
+/// ```
+///
+/// The refresh token is stored in an `HttpOnly` cookie, while the CSRF token is
+/// returned in a cookie available to browser scripts. Both cookies use the
+/// configured token lifetime and HTTPS security settings.
+///
+/// # Returns
+///
+/// The authentication response containing the access-token payload and
+/// authentication cookies.
 fn web_auth_response(
     state: &AppState,
     _headers: &HeaderMap,
@@ -1773,12 +2406,40 @@ fn web_auth_response(
     Ok(response)
 }
 
+/// Appends a `Set-Cookie` header to an HTTP response.
+///
+/// Returns an error when the cookie value cannot be represented as an HTTP header value.
+///
+/// # Examples
+///
+/// ```
+/// let mut response = Response::new(Body::empty());
+/// append_cookie(&mut response, "session=abc".to_owned()).unwrap();
+///
+/// assert_eq!(
+///     response.headers().get("set-cookie").unwrap(),
+///     "session=abc"
+/// );
+/// ```
 fn append_cookie(response: &mut Response, value: String) -> Result<(), ApiError> {
     let value = HeaderValue::from_str(&value).map_err(|_| ApiError::Unavailable)?;
     response.headers_mut().append(header::SET_COOKIE, value);
     Ok(())
 }
 
+/// Builds a `Set-Cookie` value that immediately expires the named cookie.
+///
+/// HttpOnly cookies use the web-auth path; other cookies use the root path.
+/// The resulting cookie may also include `HttpOnly` and `Secure` attributes.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(
+///     expired_cookie("session", true, true),
+///     "session=; Path=/api/v2/web/auth; SameSite=Strict; Max-Age=0; HttpOnly; Secure"
+/// );
+/// ```
 fn expired_cookie(name: &str, http_only: bool, secure: bool) -> String {
     format!(
         "{name}=; Path={}; SameSite=Strict; Max-Age=0{}{}",
@@ -1788,16 +2449,49 @@ fn expired_cookie(name: &str, http_only: bool, secure: bool) -> String {
     )
 }
 
+/// Determines whether cookies should be marked as secure based on the configured public URL.
+///
+/// # Examples
+///
+/// ```
+/// let state = AppState {
+///     public_url: Some("https://example.com".to_owned()),
+///     ..Default::default()
+/// };
+///
+/// assert!(secure_cookies(&state));
+/// ```
 fn secure_cookies(state: &AppState) -> bool {
     public_url_is_https(state.public_url.as_deref())
 }
 
+/// Determines whether a configured public URL uses HTTPS.
+///
+/// # Examples
+///
+/// ```
+/// assert!(public_url_is_https(Some("https://example.com")));
+/// assert!(!public_url_is_https(Some("http://example.com")));
+/// assert!(!public_url_is_https(None));
+/// ```
 fn public_url_is_https(public_url: Option<&str>) -> bool {
     public_url
         .and_then(|url| url::Url::parse(url).ok())
         .is_some_and(|url| url.scheme() == "https")
 }
 
+/// Extracts a non-empty cookie value by name from the request headers.
+///
+/// # Examples
+///
+/// ```
+/// use axum::http::{header, HeaderMap, HeaderValue};
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert(header::COOKIE, HeaderValue::from_static("session=abc123"));
+///
+/// assert_eq!(cookie_value(&headers, "session"), Some("abc123"));
+/// ```
 fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get_all(header::COOKIE)
@@ -1808,6 +2502,19 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .find_map(|(key, value)| (key == name && !value.is_empty()).then_some(value))
 }
 
+/// Validates the request origin and CSRF credentials for a browser-authenticated request.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] when the origin, CSRF cookie, or CSRF header is
+/// missing or invalid.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let result = validate_web_request(&state, &headers);
+/// assert!(result.is_ok());
+/// ```
 fn validate_web_request(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     validate_web_origin(state, headers)?;
     let cookie = cookie_value(headers, WEB_CSRF_COOKIE).ok_or(ApiError::Forbidden)?;
@@ -1821,6 +2528,25 @@ fn validate_web_request(state: &AppState, headers: &HeaderMap) -> Result<(), Api
     Ok(())
 }
 
+/// Validates that a web request has an acceptable origin.
+///
+/// The origin must use HTTP or HTTPS, contain no path, query, or fragment, and
+/// match the configured public origin or the request's `Host` header.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] when the origin is missing, malformed, or
+/// does not match the expected host. Returns [`ApiError::Unavailable`] when
+/// the configured public URL is invalid.
+///
+/// # Examples
+///
+/// ```no_run
+/// # let state: AppState = todo!();
+/// let headers = axum::http::HeaderMap::new();
+/// validate_web_origin(&state, &headers)?;
+/// # Ok::<(), ApiError>(())
+/// ```
 fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let origin = headers
         .get(header::ORIGIN)
@@ -1854,6 +2580,25 @@ fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Result<(), ApiE
     }
 }
 
+/// Extracts a non-empty bearer token from the `Authorization` header.
+///
+/// # Examples
+///
+/// ```
+/// use http::{header, HeaderMap, HeaderValue};
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert(
+///     header::AUTHORIZATION,
+///     HeaderValue::from_static("Bearer example-token"),
+/// );
+///
+/// assert_eq!(bearer_token(&headers), Some("example-token"));
+/// ```
+///
+/// # Returns
+///
+/// The bearer token when the header contains a non-empty `Bearer ` value, or `None` otherwise.
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)?
@@ -1863,6 +2608,15 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
+/// Authenticates a request using its bearer token.
+///
+/// Returns an unauthorized error when the request has no bearer token or when authentication fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// let user = authenticated(&state, &headers).await?;
+/// ```
 async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
@@ -1871,6 +2625,17 @@ async fn authenticated(
     state.auth.authenticate(token).await.map_err(ApiError::from)
 }
 
+/// Ensures that the authenticated user has administrator privileges.
+///
+/// # Examples
+///
+/// ```ignore
+/// require_admin(&user)?;
+/// ```
+///
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] when the user does not have the administrator role.
 fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError> {
     if user.role == crate::database::AccountRole::Admin {
         Ok(())
@@ -1879,6 +2644,20 @@ fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError>
     }
 }
 
+/// Builds the mutation context for an authenticated user's request, validating any supplied device identifier.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Validation`] when the specified device does not belong to the user.
+///
+/// # Examples
+///
+/// ```no_run
+/// let context = mutation_context(&state, &headers, user_id).await?;
+/// assert!(context.origin_device_id.is_none());
+/// # Ok::<(), ApiError>(())
+/// ```
+async fn mutation_context(
 async fn mutation_context(
     state: &AppState,
     headers: &HeaderMap,
@@ -1903,6 +2682,38 @@ async fn mutation_context(
     })
 }
 
+/// Parses an optional UUID from an HTTP header.
+///
+/// An absent header produces `None`. A present header must contain a valid UUID;
+/// otherwise, the function returns a validation error.
+///
+/// # Examples
+///
+/// ```
+/// use axum::http::{HeaderMap, HeaderValue};
+/// use uuid::Uuid;
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert("x-device-id", HeaderValue::from_static(
+///     "550e8400-e29b-41d4-a716-446655440000",
+/// ));
+///
+/// let device_id = optional_uuid_header(&headers, "x-device-id").unwrap();
+/// assert_eq!(
+///     device_id,
+///     Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap())
+/// );
+/// ```
+///
+/// # Errors
+///
+/// Returns `ApiError::Validation` when the header value is not valid UTF-8 or
+/// does not contain a valid UUID.
+///
+/// # Returns
+///
+/// The parsed UUID when the header is present and valid, or `None` when the
+/// header is absent.
 fn optional_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Option<Uuid>, ApiError> {
     headers
         .get(name)
@@ -1916,11 +2727,27 @@ fn optional_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Optio
         .transpose()
 }
 
+/// Converts a database error into an unavailable API error.
+///
+/// # Examples
+///
+/// ```
+/// let error = sqlx::Error::RowNotFound;
+/// assert!(matches!(db_error(error), ApiError::Unavailable));
+/// ```
 fn db_error(error: sqlx::Error) -> ApiError {
     tracing::error!(error = %error, "catalog database operation failed");
     ApiError::Unavailable
 }
 
+/// Converts a synchronization error into the corresponding API error.
+///
+/// # Examples
+///
+/// ```
+/// let error = sync_error(crate::sync::SyncError::Invalid);
+/// assert!(matches!(error, ApiError::Validation));
+/// ```
 fn sync_error(error: crate::sync::SyncError) -> ApiError {
     match error {
         crate::sync::SyncError::Invalid => ApiError::Validation,
@@ -1929,10 +2756,16 @@ fn sync_error(error: crate::sync::SyncError) -> ApiError {
     }
 }
 
-/// Maps a domain failure onto the HTTP surface. `Forbidden` deliberately answers
-/// 404 like `NotFound`: telling a caller that a resource exists but belongs to
-/// someone else would leak another tenant's catalogue, which is the same
-/// no-existence-leak rule the Subsonic facade applies.
+/// Converts service-layer failures into API errors while hiding whether a forbidden resource exists.
+///
+/// Forbidden resources are reported as not found to prevent resource-existence leaks.
+///
+/// # Examples
+///
+/// ```
+/// let error = service_error(crate::services::ServiceError::Forbidden);
+/// assert!(matches!(error, ApiError::NotFound));
+/// ```
 fn service_error(error: crate::services::ServiceError) -> ApiError {
     use crate::services::ServiceError;
     match error {

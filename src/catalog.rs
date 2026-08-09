@@ -132,6 +132,27 @@ pub struct TrackRecord {
 }
 
 impl Database {
+    /// Lists the libraries accessible to a user, ordered case-insensitively by name and then by ID.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(database: &Database, user_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+    /// let libraries = database.libraries_for_user(user_id).await?;
+    /// for library in libraries {
+    ///     println!("{}", library.name);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - The user whose library memberships are queried.
+    ///
+    /// # Returns
+    ///
+    /// The user's accessible libraries and their membership details.
     pub async fn libraries_for_user(
         &self,
         user_id: Uuid,
@@ -163,6 +184,16 @@ impl Database {
             .collect()
     }
 
+    /// Lists all libraries in creation order.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(database: &Database) -> Result<(), sqlx::Error> {
+    /// let libraries = database.all_libraries().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn all_libraries(&self) -> Result<Vec<LibraryRecord>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, name, root_path FROM library ORDER BY created_at")
             .fetch_all(self.pool())

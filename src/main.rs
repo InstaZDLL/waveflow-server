@@ -24,6 +24,24 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Starts the WaveFlow HTTP server and its background maintenance tasks.
+///
+/// # Errors
+///
+/// Returns an error if the listener cannot bind, its local address cannot be
+/// determined, or the HTTP server fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(
+/// #     config: Config,
+/// #     state: waveflow_server::AppState,
+/// # ) -> anyhow::Result<()> {
+/// serve(config, state).await?;
+/// # Ok(())
+/// # }
+/// ```
 async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Result<()> {
     let bind_addr = config.bind_addr;
     if config.public_url.is_none() {

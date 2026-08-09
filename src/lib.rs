@@ -192,6 +192,22 @@ pub struct AppState {
 )]
 pub struct ApiDoc;
 
+/// Initializes the application state from the supplied configuration.
+///
+/// Opens and migrates the database, verifies the instance key, and initializes
+/// the authentication, scanning, media, synchronization, and domain services.
+/// Returns an error if initialization fails or if the instance key does not
+/// match the database.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(config: &Config) -> anyhow::Result<()> {
+/// let state = initialize(config).await?;
+/// # let _ = state;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
     db.migrate().await?;
@@ -233,6 +249,20 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     })
 }
 
+/// Builds the application router with API, media, Subsonic, OpenAPI, and web client routes.
+///
+/// The router applies request tracing, request-ID propagation, body-size limits, timeouts,
+/// and optional CORS configuration from `config`.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::{app, AppState, Config};
+/// # let config: Config = unimplemented!();
+/// # let state: AppState = unimplemented!();
+/// let router = app(&config, state);
+/// # let _ = router;
+/// ```
 pub fn app(config: &Config, state: AppState) -> Router {
     let openapi = ApiDoc::openapi();
     let openapi_for_route = openapi.clone();

@@ -72,6 +72,9 @@ function Loading({ error }: { error: string | null }) {
   return <p className="muted">{error ? `Failed: ${error}` : "Loading…"}</p>;
 }
 
+/**
+ * Provides administrator setup and user authentication, then redirects to the requested internal path or the home page.
+ */
 export function LoginPage() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
@@ -177,6 +180,11 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
   );
 }
 
+/**
+ * Displays the available albums with loading and error states.
+ *
+ * @returns The albums page content.
+ */
 export function AlbumsPage() {
   const { value, error } = useAsync(listAlbums, []);
   if (!value) return <Loading error={error} />;
@@ -188,6 +196,11 @@ export function AlbumsPage() {
   );
 }
 
+/**
+ * Renders a table of songs with playback controls, metadata, and favourite toggles.
+ *
+ * @param songs - The songs to display.
+ */
 export function SongTable({ songs }: { songs: Song[] }) {
   const player = usePlayer();
   const [stars, setStars] = useState<Record<string, boolean>>({});
@@ -243,6 +256,11 @@ export function SongTable({ songs }: { songs: Song[] }) {
   );
 }
 
+/**
+ * Displays the signed-in user's favourite tracks.
+ *
+ * @returns The favourites page content.
+ */
 export function FavoritesPage() {
   const { value, error } = useAsync(async () => {
     const favorites = await listFavorites();
@@ -267,6 +285,11 @@ export function FavoritesPage() {
   );
 }
 
+/**
+ * Displays playlists and provides controls to create, play, update, and delete them.
+ *
+ * @returns The playlists page content.
+ */
 export function PlaylistsPage() {
   const player = usePlayer();
   const [revision, setRevision] = useState(0);
@@ -373,6 +396,9 @@ export function PlaylistsPage() {
   );
 }
 
+/**
+ * Displays the synchronized playback queue and provides controls to play, clear, or remove tracks.
+ */
 export function QueuePage() {
   const player = usePlayer();
   const queueKeys = useMemo(() => {
@@ -430,6 +456,9 @@ export function QueuePage() {
   );
 }
 
+/**
+ * Displays and manages public links for the current music queue.
+ */
 export function SharesPage() {
   const player = usePlayer();
   const [description, setDescription] = useState("");
@@ -534,6 +563,11 @@ export function SharesPage() {
   );
 }
 
+/**
+ * Provides a form for rotating a user's dedicated Subsonic credential.
+ *
+ * @param user - The user whose credential will be rotated
+ */
 function CredentialForm({ user }: { user: User }) {
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -571,6 +605,9 @@ function CredentialForm({ user }: { user: User }) {
   );
 }
 
+/**
+ * Provides administrative controls for managing libraries, scans, and user accounts.
+ */
 export function AdminPage() {
   const signedInUser = currentUser();
   const [revision, setRevision] = useState(0);
@@ -753,6 +790,12 @@ export function AdminPage() {
   );
 }
 
+/**
+ * Displays a page heading with supporting detail text.
+ *
+ * @param title - The page heading
+ * @param detail - The supporting text displayed below the heading
+ */
 function PageHeader({ title, detail }: { title: string; detail: string }) {
   return (
     <header className="page-header">
@@ -762,6 +805,11 @@ function PageHeader({ title, detail }: { title: string; detail: string }) {
   );
 }
 
+/**
+ * Displays a message for an empty content state.
+ *
+ * @param message - The message to display
+ */
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="empty-state">
@@ -900,11 +948,11 @@ export function SearchPage() {
 }
 
 /**
- * Consent screen for the native Authorization Code + PKCE flow.
+ * Presents a consent screen for an Authorization Code + PKCE request.
  *
- * The desktop application opens this URL in the system browser with its PKCE
- * parameters; approving posts them back with the browser session attached and
- * follows the redirect the server computes.
+ * Validates the request parameters and trusted redirect, then either approves
+ * the request and follows the server-provided redirect or redirects with an
+ * `access_denied` error.
  */
 export function AuthorizePage() {
   const params = new URLSearchParams(window.location.search);

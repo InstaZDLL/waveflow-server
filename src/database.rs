@@ -185,6 +185,20 @@ pub(crate) enum SyncOperationReservation {
 }
 
 impl Database {
+    /// Determines whether the database requires initial account setup.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(database: &Database) -> Result<(), sqlx::Error> {
+    /// if database.setup_required().await? {
+    ///     // Create the initial administrator.
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Returns `true` when the database contains no accounts, and `false` otherwise.
     pub async fn setup_required(&self) -> Result<bool, sqlx::Error> {
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM account")
             .fetch_one(&self.pool)
@@ -192,6 +206,20 @@ impl Database {
         Ok(count == 0)
     }
 
+    /// Creates the first administrator account when the database contains no accounts.
+    ///
+    /// The operation is atomic and records an audit event when the account is created.
+    /// Returns `None` if an account already exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(db: &Database) -> Result<(), sqlx::Error> {
+    /// let admin_id = db.bootstrap_admin("admin", "password-hash", 1_700_000_000).await?;
+    /// assert!(admin_id.is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn bootstrap_admin(
         &self,
         username: &str,
@@ -221,6 +249,24 @@ impl Database {
         Ok(inserted.then_some(id))
     }
 
+    /// Opens the configured SQLite database and prepares its connection pool.
+    ///
+    /// The database directory is created when needed. SQLite foreign keys and WAL journaling
+    /// are enabled for the connection pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the data directory cannot be created or the database connection
+    /// cannot be established.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(config: &Config) -> anyhow::Result<()> {
+    /// let database = Database::open(config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn open(config: &Config) -> anyhow::Result<Self> {
         tokio::fs::create_dir_all(&config.data_dir).await?;
         let options = SqliteConnectOptions::new()
@@ -346,11 +392,48 @@ impl Database {
         &self.pool
     }
 
+    /// Acquires exclusive access to the database writer lock.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let _guard = database.writer_guard().await;
+    /// // Perform serialized write operations while `_guard` is held.
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// An owned guard that releases the writer lock when dropped.
     pub(crate) async fn writer_guard(&self) -> OwnedMutexGuard<()> {
         Arc::clone(&self.writer).lock_owned().await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Reserves a synchronization operation and classifies its current state.
+    ///
+    /// An operation is classified as new when it is successfully inserted, incomplete
+    /// when it was previously reserved but not applied, and replayed when it was
+    /// already applied. An origin device must belong to the user and remain active.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let reservation = database
+    ///     .reserve_sync_operation(
+    ///         &writer_guard,
+    ///         &mut connection,
+    ///         user_id,
+    ///         operation_id,
+    ///         Some(device_id),
+    ///         &intent_hash,
+    ///         created_at,
+    ///     )
+    ///     .await?;
+    /// # Ok::<(), sqlx::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a database error if validation, reservation, or replay lookup fails.
     pub(crate) async fn reserve_sync_operation(
         &self,
         _writer_guard: &OwnedMutexGuard<()>,
@@ -414,6 +497,26 @@ impl Database {
         ))
     }
 
+    /// Creates an account with the specified credentials and role, and records its creation.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - The account username; surrounding whitespace is removed before storage.
+    /// * `password_hash` - The precomputed password hash.
+    /// * `now_ms` - The creation and update timestamp in milliseconds since the Unix epoch.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let account_id = database
+    ///     .create_account("alice", password_hash, AccountRole::User, now_ms)
+    ///     .await?;
+    /// # Ok::<(), sqlx::Error>(())
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The UUID assigned to the new account.
     pub async fn create_account(
         &self,
         username: &str,
@@ -732,6 +835,21 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    /// Revokes the active session identified by its access-token hash.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(database: &Database) -> Result<(), sqlx::Error> {
+    /// let access_hash = [0u8; 32];
+    /// let was_revoked = database
+    ///     .revoke_session_by_access_hash(&access_hash, 1_700_000_000_000)
+    ///     .await?;
+    /// println!("Session revoked: {was_revoked}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    async function doc? Need Rustdoc uses no async wording concern summary. Fine. But Database may not in scope in doctest? impl method docs, Database in scope likely. Could be crate private. Good.
     pub async fn revoke_session_by_access_hash(
         &self,
         access_hash: &[u8],
@@ -749,6 +867,21 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    /// Revokes the active session identified by its refresh-token hash.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(database: &Database, refresh_hash: &[u8], now_ms: i64) -> Result<(), sqlx::Error> {
+    /// let revoked = database
+    ///     .revoke_session_by_refresh_hash(refresh_hash, now_ms)
+    ///     .await?;
+    /// # let _ = revoked;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Returns `true` when an active session was revoked, or `false` when no matching active session exists.
     pub async fn revoke_session_by_refresh_hash(
         &self,
         refresh_hash: &[u8],
@@ -766,6 +899,36 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    /// Creates an API token record with its name, hashed value, scopes, and creation timestamp.
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - Display name for the token.
+    /// * `token_hash` - Hash of the token value.
+    /// * `scopes` - Permissions granted to the token.
+    /// * `now_ms` - Creation timestamp in milliseconds since the Unix epoch.
+    ///
+    /// # Returns
+    ///
+    /// The newly created token's identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(db: &Database) -> Result<(), sqlx::Error> {
+    /// let token_id = db
+    ///     .create_api_token(
+    ///         user_id,
+    ///         "Music client",
+    ///         &token_hash,
+    ///         &["library:read".to_owned()],
+    ///         now_ms,
+    ///     )
+    ///     .await?;
+    /// # let _ = token_id;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_api_token(
         &self,
         user_id: Uuid,

@@ -199,6 +199,20 @@ impl AuthService {
         })
     }
 
+    /// Revokes the session associated with an access token.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(service: &AuthService) -> Result<(), AuthError> {
+    /// service.logout("access-token").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after revoking the session, or `AuthError::Unavailable` if the database operation fails.
     pub async fn logout(&self, access_token: &str) -> Result<(), AuthError> {
         let hash = security::token_hash(access_token);
         self.db
@@ -208,6 +222,16 @@ impl AuthService {
         Ok(())
     }
 
+    /// Revokes the session associated with a refresh token.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(service: &AuthService) -> Result<(), AuthError> {
+    /// service.revoke_refresh("refresh-token").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn revoke_refresh(&self, refresh_token: &str) -> Result<(), AuthError> {
         let hash = security::token_hash(refresh_token);
         self.db
@@ -217,6 +241,23 @@ impl AuthService {
         Ok(())
     }
 
+    /// Authenticates a user with an access token or API token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidCredentials`] when the token is missing, invalid,
+    /// or expired. Returns [`AuthError::Unavailable`] when the database cannot be
+    /// reached.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(service: &AuthService) -> Result<(), AuthError> {
+    /// let user = service.authenticate("access-token").await?;
+    /// assert!(!user.username.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn authenticate(&self, access_token: &str) -> Result<AuthUser, AuthError> {
         let hash = security::token_hash(access_token);
         let now = now_ms();

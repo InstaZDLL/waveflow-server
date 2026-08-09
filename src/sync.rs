@@ -32,6 +32,20 @@ pub enum SyncError {
 pub struct MutationIntent([u8; 32]);
 
 impl MutationIntent {
+    /// Creates a deterministic mutation intent from an action, target, and JSON payload.
+    ///
+    /// Object key order in the payload does not affect the resulting intent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use serde_json::json;
+    ///
+    /// let first = MutationIntent::new("update", "profile", &json!({"name": "Ada", "active": true}));
+    /// let second = MutationIntent::new("update", "profile", &json!({"active": true, "name": "Ada"}));
+    ///
+    /// assert_eq!(first, second);
+    /// ```
     pub fn new(action: &str, target: &str, payload: &Value) -> Self {
         let payload = canonical_json(payload);
         let payload = serde_json::to_vec(&payload).expect("JSON values always serialize");
@@ -44,6 +58,14 @@ impl MutationIntent {
         Self(*hasher.finalize().as_bytes())
     }
 
+    /// Provides the intent hash as a byte slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let intent = MutationIntent::new("update", "item", &serde_json::json!({}));
+    /// assert_eq!(intent.as_bytes().len(), 32);
+    /// ```
     fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -56,6 +78,14 @@ pub struct MutationContext {
 }
 
 impl MutationContext {
+    /// Creates a mutation context with a new operation ID and no originating device.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let context = MutationContext::server_generated();
+    /// assert!(context.origin_device_id.is_none());
+    /// ```
     pub fn server_generated() -> Self {
         Self {
             operation_id: Uuid::new_v4(),
@@ -111,15 +141,52 @@ pub struct SyncService {
 }
 
 impl SyncService {
+    /// Creates a synchronization service backed by the specified database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let service = SyncService::new(db);
+    /// ```
     pub fn new(db: Database) -> Self {
         let (notices, _) = broadcast::channel(256);
         Self { db, notices }
     }
 
+    /// Creates a receiver for synchronization notices published by the service.
+    ///
+    /// Each received item contains the affected user's ID and the new synchronization cursor.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let mut receiver = service.subscribe();
+    /// let (user_id, notice) = receiver.recv().await?;
+    /// assert_eq!(notice.cursor, 1);
+    /// # Ok::<(), tokio::sync::broadcast::error::RecvError>(())
+    /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<(Uuid, SyncNotice)> {
         self.notices.subscribe()
     }
 
+    /// Reserves a mutation operation and identifies whether it is new or a safe replay.
+    ///
+    /// An existing operation with a different intent returns [`SyncError::Conflict`].
+    /// Operations from invalid origin devices and incomplete reservations are rejected.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let claim = service
+    ///     .claim_operation(&writer_guard, &mut connection, user_id, context, intent)
+    ///     .await?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::Invalid`] for an invalid origin device, [`SyncError::Conflict`]
+    /// when a reused operation ID has a different intent, or [`SyncError::Database`] when
+    /// the reservation or replay receipt cannot be read.
     pub(crate) async fn claim_operation(
         &self,
         writer_guard: &OwnedMutexGuard<()>,
@@ -177,6 +244,26 @@ impl SyncService {
         }
     }
 
+    /// Completes a mutation by recording its synchronization event and associated result.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let receipt = service
+    ///     .complete_operation(
+    ///         &mut connection,
+    ///         user_id,
+    ///         context,
+    ///         "task",
+    ///         task_id,
+    ///         "updated",
+    ///         &payload,
+    ///         Some(task_id),
+    ///     )
+    ///     .await?;
+    /// assert!(!receipt.replayed);
+    /// # Ok::<(), sqlx::Error>(())
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn complete_operation(
         &self,
@@ -228,6 +315,15 @@ impl SyncService {
         })
     }
 
+    /// Publishes a synchronization notice for a newly completed mutation.
+    ///
+    /// Replayed mutation receipts do not produce a notice.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// service.publish(user_id, receipt);
+    /// ```
     pub(crate) fn publish(&self, user_id: Uuid, receipt: MutationReceipt) {
         if !receipt.replayed {
             let _ = self.notices.send((
@@ -239,6 +335,22 @@ impl SyncService {
         }
     }
 
+    /// Retrieves a page of changes after the specified cursor.
+    ///
+    /// The page contains at most `limit` changes, reports whether additional changes
+    /// are available, and provides the cursor to use for the next request. The
+    /// cursor must be non-negative, and `limit` must be between 1 and
+    /// `MAX_SYNC_LIMIT`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(service: &SyncService, user_id: Uuid) -> Result<(), SyncError> {
+    /// let page = service.changes(user_id, 0, 100).await?;
+    /// assert!(page.next_cursor >= 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn changes(
         &self,
         user_id: Uuid,
@@ -272,6 +384,23 @@ impl SyncService {
         })
     }
 
+    /// Retrieves the highest synchronization cursor recorded for a user, or zero when no changes exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns a database error if the cursor cannot be queried.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), sqlx::Error> {
+    /// # let service = todo!();
+    /// # let user_id = uuid::Uuid::nil();
+    /// let cursor = service.latest_cursor(user_id).await?;
+    /// assert!(cursor >= 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn latest_cursor(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event WHERE user_id=?")
             .bind(user_id.to_string())
@@ -279,6 +408,27 @@ impl SyncService {
             .await
     }
 
+    /// Checks whether a device belongs to a user and remains active.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # async fn example(service: &crate::sync::SyncService, user_id: Uuid, device_id: Uuid) {
+    /// let belongs = service
+    ///     .device_belongs_to_user(user_id, device_id)
+    ///     .await
+    ///     .unwrap();
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a database error if the device membership cannot be queried.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the device belongs to the user and has not been revoked, `false` otherwise.
     pub async fn device_belongs_to_user(
         &self,
         user_id: Uuid,
@@ -294,6 +444,28 @@ impl SyncService {
         .await
     }
 
+    /// Records the highest synchronization cursor acknowledged by an active device.
+    ///
+    /// Cursors below zero or beyond the user's latest cursor are rejected without modifying
+    /// the acknowledgment.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     service: &SyncService,
+    /// #     user_id: uuid::Uuid,
+    /// #     device_id: uuid::Uuid,
+    /// # ) -> Result<(), sqlx::Error> {
+    /// let recorded = service.acknowledge(user_id, device_id, 42).await?;
+    /// println!("Acknowledgment recorded: {recorded}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `true` if the acknowledgment was recorded for an active device, `false` otherwise.
     pub async fn acknowledge(
         &self,
         user_id: Uuid,
@@ -323,6 +495,18 @@ impl SyncService {
     }
 }
 
+/// Produces a recursively canonicalized JSON value with object keys sorted while preserving array order.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+///
+/// let value = json!({"b": 2, "a": {"d": 4, "c": 3}});
+/// let canonical = canonical_json(&value);
+///
+/// assert_eq!(canonical, json!({"a": {"c": 3, "d": 4}, "b": 2}));
+/// ```
 fn canonical_json(value: &Value) -> Value {
     match value {
         Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
@@ -339,6 +523,15 @@ fn canonical_json(value: &Value) -> Value {
     }
 }
 
+/// Converts a SQLite journal row into a [`SyncChange`], decoding UUIDs and JSON payloads.
+///
+/// # Examples
+///
+/// ```ignore
+/// let change = change_from_row(row)?;
+/// assert_eq!(change.entity_type, "note");
+/// # Ok::<(), sqlx::Error>(())
+/// ```
 fn change_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncChange, sqlx::Error> {
     let payload: String = row.try_get("payload_json")?;
     Ok(SyncChange {
@@ -358,6 +551,14 @@ fn change_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncChange, sqlx::Err
     })
 }
 
+/// Parses a string into a UUID, converting invalid input into a SQLx decode error.
+///
+/// # Examples
+///
+/// ```
+/// let uuid = parse_uuid("550e8400-e29b-41d4-a716-446655440000".to_owned()).unwrap();
+/// assert_eq!(uuid.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+/// ```
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::parse_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }

@@ -40,18 +40,36 @@ type PlayerProgress = {
 const PlayerContext = createContext<PlayerState | null>(null);
 const PlayerProgressContext = createContext<PlayerProgress | null>(null);
 
+/**
+ * Provides access to player state within a `PlayerProvider`.
+ *
+ * @returns The current player state
+ * @throws If called outside a `PlayerProvider`
+ */
 export function usePlayer(): PlayerState {
   const player = useContext(PlayerContext);
   if (!player) throw new Error("usePlayer requires PlayerProvider");
   return player;
 }
 
+/**
+ * Provides playback progress from the nearest player provider.
+ *
+ * @returns The current playback position and duration
+ * @throws If called outside a `PlayerProvider`
+ */
 function usePlayerProgress(): PlayerProgress {
   const progress = useContext(PlayerProgressContext);
   if (!progress) throw new Error("usePlayerProgress requires PlayerProvider");
   return progress;
 }
 
+/**
+ * Provides playback state, progress, and controls to descendant components.
+ *
+ * @param children - The components rendered within the player contexts
+ * @returns The descendant components wrapped with player contexts
+ */
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [queue, setQueue] = useState<Song[]>([]);
@@ -363,6 +381,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Renders playback controls and progress for the currently selected track.
+ *
+ * @returns The player bar, or `null` when no track is selected.
+ */
 export function PlayerBar() {
   const player = usePlayer();
   const progress = usePlayerProgress();

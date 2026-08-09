@@ -91,6 +91,17 @@ pub enum MediaError {
 }
 
 impl MediaService {
+    /// Initializes the media service and prepares its transcoding environment.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(config: Config) -> anyhow::Result<()> {
+    /// let service = MediaService::initialize(&config).await?;
+    /// # let _ = service;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn initialize(config: &Config) -> anyhow::Result<Self> {
         check_tool(&config.ffmpeg_path, "ffmpeg").await?;
         check_tool(&config.ffprobe_path, "ffprobe").await?;
@@ -123,16 +134,64 @@ impl MediaService {
         &self.inner.ffprobe
     }
 
+    /// Reports the number of transcodings currently in progress.
+    ///
+    /// # Returns
+    ///
+    /// The number of active transcoding operations.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # let service: MediaService = todo!();
+    /// let active = service.active_transcodes();
+    /// assert_eq!(active, 0);
+    /// ```
     pub fn active_transcodes(&self) -> usize {
         self.inner.active_transcodes.load(Ordering::Relaxed)
     }
 
-    /// The service is only constructed after both FFmpeg tools pass startup
-    /// detection, so an initialized instance is the capability signal.
+    /// Indicates whether FFmpeg-based transcoding is available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example(service: &MediaService) {
+    /// let available = service.transcoding_available();
+    /// assert_eq!(available, service.transcoding_available());
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `true` if transcoding is available, `false` otherwise.
     pub fn transcoding_available(&self) -> bool {
         self.inner.transcoding_available
     }
 
+    /// Serves an available track as its original file or a transcoded audio stream.
+    ///
+    /// Transcoded streams may begin at the requested offset. Byte ranges are supported
+    /// for original files and completed transcoded files.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(service: &MediaService, user_id: Uuid, track: StreamTrack, query: StreamQuery) {
+    /// let response = service.serve(user_id, track, query, None).await?;
+    /// # let _: Response = response;
+    /// # Ok::<(), MediaError>(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the track is unavailable, its path is invalid, the
+    /// requested output parameters are invalid, or the requested range cannot be served.
+    ///
+    /// # Returns
+    ///
+    /// The HTTP response containing the requested media stream.
     pub async fn serve(
         &self,
         user_id: Uuid,

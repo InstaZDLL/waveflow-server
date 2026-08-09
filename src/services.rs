@@ -308,6 +308,14 @@ pub enum ServiceError {
 }
 
 impl From<crate::sync::SyncError> for ServiceError {
+    /// Converts a synchronization error into the corresponding service error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let error: ServiceError = crate::sync::SyncError::Invalid.into();
+    /// assert!(matches!(error, ServiceError::Invalid));
+    /// ```
     fn from(error: crate::sync::SyncError) -> Self {
         match error {
             crate::sync::SyncError::Invalid => Self::Invalid,
@@ -318,6 +326,17 @@ impl From<crate::sync::SyncError> for ServiceError {
 }
 
 impl DomainServices {
+    /// Creates domain services backed by the database, secret-management service, and synchronization service.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let services = DomainServices::new(
+    ///     todo!(),                    // Database
+    ///     std::sync::Arc::new(todo!()), // SecretBox
+    ///     todo!(),                    // SyncService
+    /// );
+    /// ```
     pub fn new(db: Database, secret_box: Arc<SecretBox>, sync: SyncService) -> Self {
         Self {
             db,
@@ -326,6 +345,29 @@ impl DomainServices {
         }
     }
 
+    /// Creates the initial administrator account.
+    ///
+    /// The username must be valid and the password must contain at least 12
+    /// characters. This operation fails if an administrator has already been
+    /// created.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Invalid` for invalid credentials,
+    /// `ServiceError::Unavailable` if password hashing cannot complete, or
+    /// `ServiceError::Conflict` if initialization has already occurred.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices) -> Result<(), ServiceError> {
+    /// let admin_id = services
+    ///     .bootstrap_admin("admin", "a-secure-password")
+    ///     .await?;
+    /// # let _ = admin_id;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn bootstrap_admin(
         &self,
         username: &str,
@@ -345,6 +387,27 @@ impl DomainServices {
             .ok_or(ServiceError::Conflict)
     }
 
+    /// Finds the enabled Subsonic credential associated with a username.
+    ///
+    /// Username matching is case-insensitive.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - The username to search for.
+    ///
+    /// # Returns
+    ///
+    /// The matching credential record, or `None` when no enabled account has that username.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices) -> Result<(), ServiceError> {
+    /// let credential = services.credential_by_username("alice").await?;
+    /// assert!(credential.is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn credential_by_username(
         &self,
         username: &str,
@@ -692,6 +755,21 @@ impl DomainServices {
         ))
     }
 
+    /// Loads songs by ID for a user, requiring every requested song to be visible and available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let songs = services.songs_by_ids(user_id, &song_ids).await?;
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `ids` — The song IDs to load.
+    ///
+    /// # Returns
+    ///
+    /// The requested songs in the order returned by the service.
     pub async fn songs_by_ids(
         &self,
         user_id: Uuid,
@@ -701,6 +779,28 @@ impl DomainServices {
         self.songs_by_ids_on(&mut connection, user_id, ids).await
     }
 
+    /// Creates a consistent synchronization snapshot for a user.
+    ///
+    /// The snapshot includes the current synchronization cursor, playlists, favorites,
+    /// ratings, queue, playback history, and shares visible to the user.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - The user whose synchronization data is collected.
+    /// * `history_limit` - The maximum number of history entries to include.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let snapshot = services.sync_snapshot(user_id, 100).await?;
+    /// println!("Synchronization cursor: {}", snapshot.cursor);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn sync_snapshot(
         &self,
         user_id: Uuid,
@@ -730,6 +830,29 @@ impl DomainServices {
         })
     }
 
+    /// Retrieves all requested songs visible and available to the user.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::NotFound`] if any requested song is unavailable or
+    /// inaccessible.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     connection: &mut SqliteConnection,
+    /// #     user_id: Uuid,
+    /// #     song_id: Uuid,
+    /// # ) {
+    /// let songs = services
+    ///     .songs_by_ids_on(connection, user_id, &[song_id])
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(songs.len(), 1);
+    /// # }
+    /// ```
     async fn songs_by_ids_on(
         &self,
         connection: &mut SqliteConnection,
@@ -746,6 +869,16 @@ impl DomainServices {
         }
     }
 
+    /// Loads the requested songs that are visible and available to the user, skipping
+    /// missing or inaccessible songs while preserving the requested order.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let songs = services
+    ///     .songs_by_ids_lenient_on(&mut connection, user_id, &track_ids)
+    ///     .await?;
+    /// ```
     async fn songs_by_ids_lenient_on(
         &self,
         connection: &mut SqliteConnection,
@@ -777,6 +910,26 @@ impl DomainServices {
             .collect())
     }
 
+    /// Retrieves artwork metadata for an entity or artwork hash visible to a user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # use crate::services::DomainServices;
+    /// # async fn example(services: &DomainServices, user_id: Uuid) {
+    /// let artwork = services
+    ///     .artwork_for_user(user_id, "artwork-hash")
+    ///     .await
+    ///     .unwrap();
+    ///
+    /// assert!(artwork.is_some());
+    /// # }
+    /// ```
+    ///
+    /// The returned tuple contains the artwork hash and format.
+    ///
+    /// Returns `None` when the identifier does not resolve to artwork accessible to the user.
     pub async fn artwork_for_user(
         &self,
         user_id: Uuid,
@@ -799,11 +952,37 @@ impl DomainServices {
             .map_err(Into::into)
     }
 
+    /// Lists the playlists owned by a user.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - The user whose playlists are returned.
+    ///
+    /// # Returns
+    ///
+    /// The user's playlists, including their ordered tracks.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, user_id: Uuid) -> Result<(), ServiceError> {
+    /// let playlists = services.playlists(user_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn playlists(&self, user_id: Uuid) -> Result<Vec<PlaylistItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.playlists_on(&mut connection, user_id).await
     }
 
+    /// Loads the playlists owned by a user, including their ordered songs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let playlists = services.playlists_on(&mut connection, user_id).await?;
+    /// # Ok::<(), ServiceError>(())
+    /// ```
     async fn playlists_on(
         &self,
         connection: &mut SqliteConnection,
@@ -832,11 +1011,62 @@ impl DomainServices {
         Ok(result)
     }
 
+    /// Retrieves a playlist owned by the specified user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// #     playlist_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let playlist = services.playlist(user_id, playlist_id).await?;
+    /// assert_eq!(playlist.id, playlist_id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::NotFound` when the playlist does not exist or is not
+    /// owned by the specified user.
     pub async fn playlist(&self, user_id: Uuid, id: Uuid) -> Result<PlaylistItem, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.playlist_on(&mut connection, user_id, id).await
     }
 
+    /// Retrieves a playlist owned by the specified user, including its songs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::NotFound`] when the playlist does not exist or is
+    /// owned by another user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     connection: &mut SqliteConnection,
+    /// #     user_id: Uuid,
+    /// #     playlist_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let playlist = services
+    ///     .playlist_on(connection, user_id, playlist_id)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `user_id` identifies the playlist owner.
+    /// * `id` identifies the playlist.
+    ///
+    /// # Returns
+    ///
+    /// The owned playlist and its ordered songs.
     async fn playlist_on(
         &self,
         connection: &mut SqliteConnection,
@@ -863,6 +1093,14 @@ impl DomainServices {
         })
     }
 
+    /// Retrieves the songs in a playlist that are visible to a user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let songs = services.playlist_songs_on(&mut connection, user_id, playlist_id).await?;
+    /// # Ok::<(), ServiceError>(())
+    /// ```
     async fn playlist_songs_on(
         &self,
         connection: &mut SqliteConnection,
@@ -876,6 +1114,33 @@ impl DomainServices {
             .await
     }
 
+    /// Lists the tracks in a playlist owned by the specified user, preserving playlist order.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_id` identifies the playlist owner.
+    /// * `playlist_id` identifies the playlist to inspect.
+    ///
+    /// # Returns
+    ///
+    /// The ordered track identifiers belonging to the playlist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     connection: &mut SqliteConnection,
+    /// #     user_id: Uuid,
+    /// #     playlist_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let track_ids = services
+    ///     .playlist_track_ids_on(connection, user_id, playlist_id)
+    ///     .await?;
+    /// assert!(track_ids.is_empty() || !track_ids.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn playlist_track_ids_on(
         &self,
         connection: &mut SqliteConnection,
@@ -896,6 +1161,32 @@ impl DomainServices {
         .map_err(Into::into)
     }
 
+    /// Creates a playlist for a user with the specified name and tracks.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_id` — The user who owns the playlist.
+    /// * `name` — The playlist name.
+    /// * `track_ids` — The tracks to add in their requested order.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let playlist = services
+    ///     .create_playlist(user_id, "Favorites", &[])
+    ///     .await?;
+    /// assert_eq!(playlist.name, "Favorites");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The newly created playlist.
     pub async fn create_playlist(
         &self,
         user_id: Uuid,
@@ -911,6 +1202,37 @@ impl DomainServices {
         .await
     }
 
+    /// Creates a playlist for a user with the specified tracks.
+    ///
+    /// The playlist and its ordered tracks are stored transactionally. Replayed mutation
+    /// contexts return the previously created playlist.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_id` — The user who owns the playlist.
+    /// * `name` — The playlist name.
+    /// * `track_ids` — The tracks to add in their desired order.
+    /// * `context` — Mutation context used for deduplication and synchronization.
+    ///
+    /// # Returns
+    ///
+    /// The created or previously persisted playlist.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     context: MutationContext,
+    /// # ) -> Result<(), ServiceError> {
+    /// let playlist = services
+    ///     .create_playlist_with_context(user_id, "Favorites", &[], context)
+    ///     .await?;
+    /// assert_eq!(playlist.name, "Favorites");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_playlist_with_context(
         &self,
         user_id: Uuid,
@@ -967,7 +1289,38 @@ impl DomainServices {
         self.playlist(user_id, id).await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Updates an owned playlist's metadata and track ordering.
+    ///
+    /// Added tracks are appended in the given order, while tracks at the specified
+    /// indexes are removed before additions are applied.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     playlist_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let playlist = services
+    ///     .update_playlist(
+    ///         user_id,
+    ///         playlist_id,
+    ///         Some("Favorites"),
+    ///         None,
+    ///         Some(false),
+    ///         &[],
+    ///         &[],
+    ///     )
+    ///     .await?;
+    /// # let _ = playlist;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The updated playlist.
     pub async fn update_playlist(
         &self,
         user_id: Uuid,
@@ -991,7 +1344,34 @@ impl DomainServices {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Updates a playlist's metadata and ordered tracks for its owner.
+    ///
+    /// Added tracks must be visible to the user. Removal indexes are applied to the
+    /// playlist's existing track order, and invalid indexes cause the operation to
+    /// fail. Replayed mutations return the current playlist without applying changes.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// #[tokio::test]
+    /// async fn update_playlist() -> Result<(), ServiceError> {
+    ///     let playlist = services
+    ///         .update_playlist_with_context(
+    ///             user_id,
+    ///             playlist_id,
+    ///             Some("Favorites"),
+    ///             None,
+    ///             Some(false),
+    ///             &[],
+    ///             &[],
+    ///             context,
+    ///         )
+    ///         .await?;
+    ///
+    ///     assert_eq!(playlist.name, "Favorites");
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn update_playlist_with_context(
         &self,
         user_id: Uuid,
@@ -1085,11 +1465,50 @@ impl DomainServices {
         self.playlist(user_id, id).await
     }
 
+    /// Deletes a playlist owned by the specified user.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_id` - The playlist owner's user ID.
+    /// * `id` - The playlist ID to delete.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     playlist_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// services.delete_playlist(user_id, playlist_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn delete_playlist(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
         self.delete_playlist_with_context(user_id, id, MutationContext::server_generated())
             .await
     }
 
+    /// Deletes a playlist owned by the specified user.
+    ///
+    /// Replayed deletion requests are treated as successful without performing the deletion. Returns
+    /// `ServiceError::NotFound` when the playlist does not exist or is owned by another user.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// #     playlist_id: uuid::Uuid,
+    /// #     context: MutationContext,
+    /// # ) -> Result<(), ServiceError> {
+    /// services
+    ///     .delete_playlist_with_context(user_id, playlist_id, context)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn delete_playlist_with_context(
         &self,
         user_id: Uuid,
@@ -1138,6 +1557,29 @@ impl DomainServices {
         }
     }
 
+    /// Sets or removes a user's favorite marker for a visible track, album, or artist.
+    ///
+    /// # Arguments
+    ///
+    /// * `entity_type` identifies the entity as a track, album, or artist.
+    /// * `starred` determines whether the favorite marker is added or removed.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the favorite state is updated; otherwise, a [`ServiceError`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     track_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// services.set_star(user_id, "track", track_id, true).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_star(
         &self,
         user_id: Uuid,
@@ -1155,6 +1597,26 @@ impl DomainServices {
         .await
     }
 
+    /// Adds or removes a user's star for an authorized catalog entity.
+    ///
+    /// # Arguments
+    ///
+    /// * `entity_type` — The entity category, such as a song, album, or artist.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// services
+    ///     .set_star_with_context(
+    ///         user_id,
+    ///         "song",
+    ///         song_id,
+    ///         true,
+    ///         context,
+    ///     )
+    ///     .await?;
+    /// ```
+    pub async fn set_star_with_context(
     pub async fn set_star_with_context(
         &self,
         user_id: Uuid,
@@ -1254,6 +1716,21 @@ impl DomainServices {
         })
     }
 
+    /// Lists the entities starred by a user that remain visible to that user.
+    ///
+    /// # Returns
+    ///
+    /// A list of tuples containing each entity's kind, ID, and star timestamp.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(services: &DomainServices, user_id: Uuid) -> Result<(), ServiceError> {
+    /// let starred = services.starred_ids(user_id).await?;
+    /// let _ = starred;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn starred_ids(
         &self,
         user_id: Uuid,
@@ -1262,6 +1739,23 @@ impl DomainServices {
         self.starred_ids_on(&mut connection, user_id).await
     }
 
+    /// Lists the entities starred by a user that remain visible in the user's libraries.
+    ///
+    /// # Returns
+    ///
+    /// Each tuple contains the entity type, entity identifier, and timestamp when it was starred,
+    /// ordered from newest to oldest.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let starred = services.starred_ids_on(&mut connection, user_id).await?;
+    /// ```
+    async fn starred_ids_on(
+    &self,
+    connection: &mut SqliteConnection,
+    user_id: Uuid,
+    ) -> Result<Vec<(String, Uuid, i64)>, ServiceError> {
     async fn starred_ids_on(
         &self,
         connection: &mut SqliteConnection,
@@ -1280,11 +1774,50 @@ impl DomainServices {
             .collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
     }
 
+    /// Lists a user's ratings for entities that remain visible to that user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let ratings = services.ratings(user_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The user's visible ratings, or a service error if the ratings cannot be loaded.
     pub async fn ratings(&self, user_id: Uuid) -> Result<Vec<RatingItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.ratings_on(&mut connection, user_id).await
     }
 
+    /// Lists the user's ratings for entities they can currently access, ordered by most recent update.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let ratings = services.ratings_on(&mut connection, user_id).await?;
+    /// assert!(ratings.iter().all(|rating| rating.rating <= 5));
+    /// # Ok::<(), ServiceError>(())
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `connection` - Database connection used to load the ratings.
+    /// * `user_id` - User whose visible ratings are requested.
+    ///
+    /// # Returns
+    ///
+    /// The user's visible ratings, ordered by update time descending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails or a stored identifier cannot be parsed as a UUID.
     async fn ratings_on(
         &self,
         connection: &mut SqliteConnection,
@@ -1314,6 +1847,24 @@ impl DomainServices {
         .map_err(Into::into)
     }
 
+    /// Sets or removes a user's rating for a visible catalog entity.
+    ///
+    /// A rating from 1 through 5 is stored, while a rating of 0 removes the
+    /// existing rating. The operation fails if the rating is outside this range
+    /// or the entity is unavailable to the user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     album_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// services.set_rating(user_id, "album", album_id, 5).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_rating(
         &self,
         user_id: Uuid,
@@ -1331,6 +1882,31 @@ impl DomainServices {
         .await
     }
 
+    /// Sets or removes a user's rating for a visible entity and records the mutation.
+    ///
+    /// A rating of `0` removes the existing rating; ratings from `1` through `5` are
+    /// stored. The operation is idempotent when replayed with the same mutation
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::Invalid`] when `rating` is outside the range `0..=5`,
+    /// or when the entity is unavailable to the user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// #     context: MutationContext,
+    /// # ) -> Result<(), ServiceError> {
+    /// services
+    ///     .set_rating_with_context(user_id, "track", uuid::Uuid::new_v4(), 5, context)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_rating_with_context(
         &self,
         user_id: Uuid,
@@ -1395,6 +1971,23 @@ impl DomainServices {
         Ok(())
     }
 
+    /// Records a track playback event or updates the user's now-playing state.
+    ///
+    /// A submission records completed playback, while a non-submission updates now-playing
+    /// information. An optional playback timestamp may be provided.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     track_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// services.scrobble(user_id, track_id, true, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn scrobble(
         &self,
         user_id: Uuid,
@@ -1412,6 +2005,32 @@ impl DomainServices {
         .await
     }
 
+    /// Records a track playback event or updates the user's now-playing state.
+    ///
+    /// A submission removes the user's existing now-playing state; otherwise, the
+    /// track becomes the user's current now-playing item. The optional timestamp
+    /// must be nonnegative and no more than five minutes in the future.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// #     track_id: uuid::Uuid,
+    /// #     context: MutationContext,
+    /// # ) -> Result<(), ServiceError> {
+    /// services
+    ///     .scrobble_with_context(user_id, track_id, true, None, context)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track is inaccessible, the timestamp is invalid,
+    /// or the operation cannot be persisted.
     pub async fn scrobble_with_context(
         &self,
         user_id: Uuid,
@@ -1488,6 +2107,51 @@ impl DomainServices {
         Ok(())
     }
 
+    /// Lists currently playing tracks from enabled accounts that are visible to a user.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```no_run
+    
+    /// # async fn example(
+    
+    /// #     services: &DomainServices,
+    
+    /// #     user_id: uuid::Uuid,
+    
+    /// # ) -> Result<(), ServiceError> {
+    
+    /// let playing = services.now_playing(user_id).await?;
+    
+    /// # let _ = playing;
+    
+    /// # Ok(())
+    
+    /// # }
+    
+    /// ```
+    
+    ///
+    
+    /// # Arguments
+    
+    ///
+    
+    /// * `user_id` - User whose library visibility determines which tracks are included.
+    
+    ///
+    
+    /// # Returns
+    
+    ///
+    
+    /// A list of `(username, song, started_at)` tuples ordered by playback start time,
+    
+    /// with the newest activity first.
     pub async fn now_playing(
         &self,
         user_id: Uuid,
@@ -1514,6 +2178,28 @@ impl DomainServices {
         Ok(result)
     }
 
+    /// Lists the user's visible playback history in reverse chronological order.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Identifies the user whose history is requested.
+    /// * `limit` - Maximum number of history entries to return; must be between 1 and 500.
+    ///
+    /// # Returns
+    ///
+    /// The user's visible history entries, ordered from newest to oldest.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let entries = services.history(user_id, 100).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn history(
         &self,
         user_id: Uuid,
@@ -1523,6 +2209,34 @@ impl DomainServices {
         self.history_on(&mut connection, user_id, limit).await
     }
 
+    /// Retrieves a user's play history for tracks in libraries they can access.
+    ///
+    /// Results are ordered from newest to oldest. The limit must be between 0 and
+    /// [`MAX_HISTORY_LIMIT`], inclusive.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` — The user whose play history is requested.
+    /// * `limit` — The maximum number of history entries to return.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::Invalid`] when `limit` is outside the permitted
+    /// range, or a database error when the history cannot be loaded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     connection: &mut SqliteConnection,
+    /// #     user_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let history = services.history_on(connection, user_id, 20).await?;
+    /// assert!(history.len() <= 20);
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn history_on(
         &self,
         connection: &mut SqliteConnection,
@@ -1554,6 +2268,24 @@ impl DomainServices {
         .map_err(Into::into)
     }
 
+    /// Replaces the user's playback queue with the specified tracks.
+    ///
+    /// The queue position must be nonnegative, and every track must be visible to the user.
+    ///
+    /// # Parameters
+    ///
+    /// * `current` — The track currently being played, if any.
+    /// * `position_ms` — The playback position of the current track in milliseconds.
+    /// * `client` — An optional client identifier associated with the queue.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// services
+    ///     .save_queue(user_id, &track_ids, Some(current_track), 30_000, Some("web"))
+    ///     .await?;
+    /// # Ok::<(), ServiceError>(())
+    /// ```
     pub async fn save_queue(
         &self,
         user_id: Uuid,
@@ -1573,7 +2305,26 @@ impl DomainServices {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Saves a user's playback queue and its current track position.
+    ///
+    /// The queue may contain up to 400 tracks, all of which must be visible to the
+    /// user. The position must be greater than or equal to zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::Invalid`] when the queue is too large, the position
+    /// is negative, or a track is unavailable or inaccessible.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, user_id: Uuid) -> Result<(), ServiceError> {
+    /// services
+    ///     .save_queue_with_context(user_id, &[], None, 0, None, todo!())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn save_queue_with_context(
         &self,
         user_id: Uuid,
@@ -1654,11 +2405,44 @@ impl DomainServices {
         Ok(())
     }
 
+    /// Loads the current playback queue visible to a user.
+    ///
+    /// Inaccessible tracks are omitted from the queue.
+    ///
+    /// # Returns
+    ///
+    /// The user's queue, or `None` if no queue has been saved.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, user_id: uuid::Uuid) -> Result<(), ServiceError> {
+    /// let queue = services.queue(user_id).await?;
+    /// if let Some(queue) = queue {
+    ///     println!("Queue loaded: {queue:?}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn queue(&self, user_id: Uuid) -> Result<Option<QueueItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.queue_on(&mut connection, user_id).await
     }
 
+    /// Loads a user's queue and its currently visible songs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     service: &DomainServices,
+    /// #     connection: &mut SqliteConnection,
+    /// #     user_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let queue = service.queue_on(connection, user_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn queue_on(
         &self,
         connection: &mut SqliteConnection,
@@ -1692,11 +2476,42 @@ impl DomainServices {
         }))
     }
 
+    /// Lists the shares created by a user.
+    ///
+    /// Persisted share records do not include bearer tokens.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let shares = services.shares(user_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     pub async fn shares(&self, user_id: Uuid) -> Result<Vec<ShareItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.shares_on(&mut connection, user_id).await
     }
 
+    /// Loads the shares owned by a user, including only songs still visible to that user.
+    ///
+    /// Persistent reads omit share bearer tokens. Shares are ordered by creation time,
+    /// with their accessible songs preserved in stored order.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let shares = services.shares_on(&mut connection, user_id).await?;
+    /// ```
+    async fn shares_on(
+    &self,
+    connection: &mut SqliteConnection,
+    user_id: Uuid,
+    ) -> Result<Vec<ShareItem>, ServiceError> {
     async fn shares_on(
         &self,
         connection: &mut SqliteConnection,
@@ -1751,6 +2566,28 @@ impl DomainServices {
         Ok(shares)
     }
 
+    /// Creates a share containing the specified tracks for a user.
+    ///
+    /// The tracks must be visible to the user. The share may include an optional
+    /// description and expiration timestamp; its access token is returned only in
+    /// the creation result.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     track_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let share = services
+    ///     .create_share(user_id, &[track_id], Some("Favourite track"), None)
+    ///     .await?;
+    ///
+    /// assert!(share.url_token.is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_share(
         &self,
         user_id: Uuid,
@@ -1768,6 +2605,27 @@ impl DomainServices {
         .await
     }
 
+    /// Creates a share containing the specified tracks for a user.
+    ///
+    /// The returned share includes its bearer token, which is available only from
+    /// this creation result. The tracks must be visible to the user, and the list
+    /// must contain between one and [`MAX_SHARE_TRACKS`] tracks.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() {
+    /// # let services: DomainServices = todo!();
+    /// # let user_id = Uuid::new_v4();
+    /// # let ids = vec![Uuid::new_v4()];
+    /// # let context = todo!();
+    /// let share = services
+    ///     .create_share_with_context(user_id, &ids, Some("Favorites"), None, context)
+    ///     .await
+    ///     .unwrap();
+    /// assert!(share.url_token.is_some());
+    /// # }
+    /// ```
     pub async fn create_share_with_context(
         &self,
         user_id: Uuid,
@@ -1856,6 +2714,20 @@ impl DomainServices {
         })
     }
 
+    /// Retrieves a public share using its bearer token and records a visit.
+    ///
+    /// Expired or revoked shares return [`ServiceError::NotFound`]. The returned
+    /// share omits its bearer token and includes only songs still visible to the
+    /// share owner.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let share = services.public_share(token).await?;
+    /// assert!(share.url_token.is_none());
+    /// # Ok::<(), ServiceError>(())
+    /// ```
+    pub async fn public_share(&self, token: &str) -> Result<ShareItem, ServiceError> {
     pub async fn public_share(&self, token: &str) -> Result<ShareItem, ServiceError> {
         let hash = security::token_hash(token);
         let row = sqlx::query("SELECT id, owner_user_id, description, expires_at, created_at, visit_count FROM share WHERE token_hash=? AND (expires_at IS NULL OR expires_at>?)")
@@ -1898,6 +2770,23 @@ impl DomainServices {
         })
     }
 
+    /// Updates the description and expiration time of an owned share.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: uuid::Uuid,
+    /// #     share_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let share = services
+    ///     .update_share(user_id, share_id, Some("Shared playlist"), None)
+    ///     .await?;
+    /// assert_eq!(share.description.as_deref(), Some("Shared playlist"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_share(
         &self,
         user_id: Uuid,
@@ -1915,6 +2804,31 @@ impl DomainServices {
         .await
     }
 
+    /// Updates an owner's share description and expiration, preserving fields whose values are omitted.
+    ///
+    /// Returns the updated share. Returns [`ServiceError::NotFound`] when the share does not belong to the user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     share_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let updated = services
+    ///     .update_share_with_context(
+    ///         user_id,
+    ///         share_id,
+    ///         Some("Shared music"),
+    ///         None,
+    ///         todo!(),
+    ///     )
+    ///     .await?;
+    /// # let _ = updated;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_share_with_context(
         &self,
         user_id: Uuid,
@@ -1983,11 +2897,47 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)
     }
 
+    /// Deletes a share owned by the user.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, user_id: Uuid, share_id: Uuid) {
+    /// services.delete_share(user_id, share_id).await.unwrap();
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::NotFound`] when the share does not exist or is owned by another user.
     pub async fn delete_share(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
         self.delete_share_with_context(user_id, id, MutationContext::server_generated())
             .await
     }
 
+    /// Deletes a share owned by the specified user and records the deletion for synchronization.
+    ///
+    /// Replayed deletion requests are treated as successful without applying the deletion again.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     user_id: Uuid,
+    /// #     share_id: Uuid,
+    /// #     context: MutationContext,
+    /// # ) -> Result<(), ServiceError> {
+    /// services
+    ///     .delete_share_with_context(user_id, share_id, context)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::NotFound` when the share does not exist or is owned by another user.
     pub async fn delete_share_with_context(
         &self,
         user_id: Uuid,
@@ -2035,6 +2985,26 @@ impl DomainServices {
         }
     }
 
+    /// Lists all users, including their roles, status, Subsonic credential state, and library memberships.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// # ) -> Result<(), ServiceError> {
+    /// let users = services.users(Uuid::new_v4()).await?;
+    /// assert!(users.iter().all(|user| !user.username.is_empty()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Requires the requesting account to be an enabled administrator.
+    ///
+    /// # Returns
+    ///
+    /// A list of users ordered by username.
     pub async fn users(&self, actor_id: Uuid) -> Result<Vec<UserItem>, ServiceError> {
         self.require_admin(actor_id).await?;
         let mut users = sqlx::query("SELECT a.id, a.username, a.role, a.disabled, c.user_id IS NOT NULL AS has_credential FROM account a LEFT JOIN subsonic_credential c ON c.user_id=a.id ORDER BY a.username COLLATE NOCASE")
@@ -2054,6 +3024,24 @@ impl DomainServices {
         Ok(users)
     }
 
+    /// Creates a web user after validating administrator authorization and account credentials.
+    ///
+    /// The password must contain at least 12 characters. Duplicate usernames produce a conflict error.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     actor_id: uuid::Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let user = services
+    ///     .create_web_user(actor_id, "reader", "a-password-with-12-chars", AccountRole::User)
+    ///     .await?;
+    /// # let _ = user;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_web_user(
         &self,
         actor_id: Uuid,
@@ -2088,8 +3076,31 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)
     }
 
-    /// Sets a dedicated Subsonic password and rotates the API key. The clear
-    /// API key is returned once; only its hash is persisted.
+    /// Sets a dedicated Subsonic password and rotates the account's API key.
+    ///
+    /// The clear API key is returned only from this operation; its hash is persisted.
+    /// Requires administrator authorization and a password of at least 12 bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     admin_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// let api_key = services
+    ///     .set_subsonic_credential(admin_id, "user", "a-secure-password")
+    ///     .await?;
+    /// assert!(!api_key.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Invalid` for passwords shorter than 12 bytes,
+    /// `ServiceError::NotFound` when the account does not exist, or an error when
+    /// the caller is not an administrator or credential persistence fails.
     pub async fn set_subsonic_credential(
         &self,
         actor_id: Uuid,
@@ -2114,6 +3125,24 @@ impl DomainServices {
         Ok(api_key)
     }
 
+    /// Revokes the Subsonic credential for a user.
+    ///
+    /// The caller must be an enabled administrator. Returns `NotFound` when the
+    /// user or an existing Subsonic credential cannot be found.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     actor_id: Uuid,
+    /// # ) -> Result<(), ServiceError> {
+    /// services
+    ///     .revoke_subsonic_credential(actor_id, "alice")
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn revoke_subsonic_credential(
         &self,
         actor_id: Uuid,
@@ -2136,6 +3165,30 @@ impl DomainServices {
         }
     }
 
+    /// Creates a Subsonic user and assigns access to the requested libraries.
+    ///
+    /// The caller must be an enabled administrator. The username must be valid and
+    /// the Subsonic password must be non-empty. The account may be created as an
+    /// administrator, and library access defaults to all libraries when no IDs are
+    /// provided.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, actor_id: Uuid) -> Result<(), ServiceError> {
+    /// let user = services
+    ///     .create_subsonic_user(actor_id, "listener", "secret", false, None)
+    ///     .await?;
+    /// assert_eq!(user.username, "listener");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `ServiceError::Invalid` for an invalid username or empty password,
+    /// `ServiceError::Conflict` when the username already exists, or another
+    /// service error when creation fails.
     pub async fn create_subsonic_user(
         &self,
         actor_id: Uuid,
@@ -2225,6 +3278,40 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)
     }
 
+    /// Updates an existing user's account settings and returns the resulting user.
+    ///
+    /// The update may change the user's role, disabled state, web password, Subsonic
+    /// password, and listener library memberships. Administrators cannot disable or
+    /// demote themselves, and changing a web password revokes the user's active
+    /// sessions.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(services: &DomainServices, actor_id: uuid::Uuid) -> Result<(), ServiceError> {
+    /// let user = services
+    ///     .update_user(
+    ///         actor_id,
+    ///         "listener",
+    ///         UserUpdate {
+    ///             admin: Some(false),
+    ///             disabled: Some(false),
+    ///             web_password: None,
+    ///             subsonic_password: None,
+    ///             folder_ids: None,
+    ///         },
+    ///     )
+    ///     .await?;
+    /// # let _ = user;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the actor is not an administrator, the target user does
+    /// not exist, a supplied password or library selection is invalid, or the
+    /// requested update cannot be applied.
     pub async fn update_user(
         &self,
         actor_id: Uuid,
@@ -2377,6 +3464,27 @@ impl DomainServices {
         }
     }
 
+    /// Resolves requested library identifiers against the libraries available to the service.
+    ///
+    /// When no identifiers are requested, returns all available libraries. Requested identifiers
+    /// are validated, deduplicated, and returned in their original order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::NotFound`] if a requested library does not exist.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     services: &DomainServices,
+    /// #     requested: Option<&[Uuid]>,
+    /// # ) -> Result<(), ServiceError> {
+    /// let library_ids = services.resolve_library_ids(requested).await?;
+    /// # let _ = library_ids;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn resolve_library_ids(
         &self,
         requested: Option<&[Uuid]>,
@@ -2402,6 +3510,21 @@ impl DomainServices {
         Ok(unique)
     }
 
+    /// Verifies that a user can access the specified catalog entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::Invalid`] for an unsupported entity kind and
+    /// [`ServiceError::NotFound`] when the entity is missing or inaccessible to
+    /// the user.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// services
+    ///     .authorize_entity_on(&mut connection, user_id, "track", track_id)
+    ///     .await?;
+    /// ```
     async fn authorize_entity_on(
         &self,
         connection: &mut SqliteConnection,
@@ -2559,6 +3682,22 @@ async fn replace_playlist_tracks(
     Ok(())
 }
 
+/// Validates that a name contains between 1 and 200 non-whitespace characters.
+///
+/// # Examples
+///
+/// ```
+/// assert!(validate_name("My playlist").is_ok());
+/// assert!(validate_name("   ").is_err());
+/// ```
+///
+/// # Errors
+///
+/// Returns `ServiceError::Invalid` when the trimmed name is empty or exceeds 200 characters.
+///
+/// # Returns
+///
+/// `Ok(())` when the name is valid; otherwise, `Err(ServiceError::Invalid)`.
 fn validate_name(name: &str) -> Result<(), ServiceError> {
     if (1..=200).contains(&name.trim().chars().count()) {
         Ok(())
@@ -2567,6 +3706,20 @@ fn validate_name(name: &str) -> Result<(), ServiceError> {
     }
 }
 
+/// Validates that a mutation receipt represents the expected entity type.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let receipt = MutationReceipt::default();
+/// assert!(validate_replay_type(&receipt, "playlist").is_ok());
+/// ```
+///
+/// # Errors
+///
+/// Returns [`ServiceError::Conflict`] when the receipt's entity type differs
+/// from the expected type.
+fn validate_replay_type...
 fn validate_replay_type(receipt: &MutationReceipt, expected: &str) -> Result<(), ServiceError> {
     if receipt.entity_type == expected {
         Ok(())
@@ -2575,6 +3728,18 @@ fn validate_replay_type(receipt: &MutationReceipt, expected: &str) -> Result<(),
     }
 }
 
+/// Validates a username after trimming surrounding whitespace.
+///
+/// A valid username contains 3–64 ASCII alphanumeric characters, hyphens,
+/// underscores, or periods.
+///
+/// # Examples
+///
+/// ```
+/// assert!(validate_username("alice_01").is_ok());
+/// assert!(validate_username("ab").is_err());
+/// ```
+fn validate_username(username: &str) -> Result<(), ServiceError>
 fn validate_username(username: &str) -> Result<(), ServiceError> {
     let username = username.trim();
     if !(3..=64).contains(&username.len())
@@ -2588,6 +3753,15 @@ fn validate_username(username: &str) -> Result<(), ServiceError> {
     }
 }
 
+/// Parses a string into a UUID and represents parsing failures as SQLx decode errors.
+///
+/// # Examples
+///
+/// ```
+/// let id = parse_uuid("550e8400-e29b-41d4-a716-446655440000".to_owned())
+///     .expect("valid UUID");
+/// assert_eq!(id, Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap());
+/// ```
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::from_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }

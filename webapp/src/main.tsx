@@ -29,6 +29,9 @@ import {
 import { PlayerBar, PlayerProvider } from "./player";
 import "./styles.css";
 
+/**
+ * Renders the authenticated application shell with navigation, routed content, and the player bar.
+ */
 function Shell() {
   const navigate = useNavigate();
   const user = currentUser();

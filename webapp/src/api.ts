@@ -131,14 +131,29 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Determines whether an authenticated session is available.
+ *
+ * @returns `true` if a session exists, `false` otherwise.
+ */
 export function hasSession(): boolean {
   return session !== null;
 }
 
+/**
+ * Retrieves the currently authenticated user.
+ *
+ * @returns The current session user, or `null` when no session exists.
+ */
 export function currentUser(): SessionUser | null {
   return session?.user ?? null;
 }
 
+/**
+ * Parses a response body as JSON when content is available.
+ *
+ * @returns The parsed JSON value, or `undefined` for empty and `204 No Content` responses.
+ */
 async function parse<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -155,6 +170,11 @@ async function parse<T>(response: Response): Promise<T> {
  */
 let pendingRefresh: Promise<boolean> | null = null;
 
+/**
+ * Refreshes the current session.
+ *
+ * @returns `true` if the session refresh succeeds, `false` otherwise.
+ */
 function refresh(): Promise<boolean> {
   if (!pendingRefresh) {
     pendingRefresh = performRefresh().finally(() => {
@@ -164,6 +184,11 @@ function refresh(): Promise<boolean> {
   return pendingRefresh;
 }
 
+/**
+ * Attempts to refresh the current web session using the CSRF cookie.
+ *
+ * @returns `true` if the session was refreshed successfully, `false` otherwise.
+ */
 async function performRefresh(): Promise<boolean> {
   const hadSession = session !== null;
   const csrf = cookieValue("waveflow-csrf");
@@ -188,6 +213,11 @@ async function performRefresh(): Promise<boolean> {
   }
 }
 
+/**
+ * Clears the current session after a refresh failure and redirects authenticated users to the login page.
+ *
+ * @param hadSession - Whether a session existed before the refresh attempt
+ */
 function handleRefreshFailure(hadSession: boolean): void {
   session = null;
   if (hadSession && window.location.pathname !== "/login") {
@@ -195,10 +225,22 @@ function handleRefreshFailure(hadSession: boolean): void {
   }
 }
 
+/**
+ * Confirms that an active session exists or attempts to refresh the session.
+ *
+ * @returns `true` if a session is available or successfully refreshed, `false` otherwise.
+ */
 export async function ensureSession(): Promise<boolean> {
   return hasSession() || refresh();
 }
 
+/**
+ * Performs an authenticated API request and retries once after refreshing the session when the request receives an unauthorized response.
+ *
+ * @param path - The API request path
+ * @param init - Request options for the API call
+ * @returns The parsed API response
+ */
 async function call<T>(
   path: string,
   init: RequestInit = {},
@@ -217,6 +259,13 @@ async function call<T>(
   return parse<T>(response);
 }
 
+/**
+ * Authenticates a user and stores the resulting web session.
+ *
+ * @param username - The user's login name
+ * @param password - The user's password
+ * @throws ApiError if authentication fails
+ */
 export async function login(username: string, password: string): Promise<void> {
   const response = await fetch("/api/v2/web/auth/login", {
     method: "POST",
@@ -238,6 +287,12 @@ export const setupRequired = () =>
     (status) => status.required,
   );
 
+/**
+ * Creates the initial administrator account during application setup.
+ *
+ * @param username - The administrator's username
+ * @param password - The administrator's password
+ */
 export async function bootstrapAdmin(
   username: string,
   password: string,
@@ -252,6 +307,11 @@ export async function bootstrapAdmin(
   }
 }
 
+/**
+ * Logs out the current session.
+ *
+ * The in-memory session is cleared regardless of whether the logout request succeeds.
+ */
 export async function logout(): Promise<void> {
   try {
     const csrf = cookieValue("waveflow-csrf");
@@ -264,6 +324,12 @@ export async function logout(): Promise<void> {
   }
 }
 
+/**
+ * Retrieves the value of a named browser cookie.
+ *
+ * @param name - The cookie name
+ * @returns The cookie value, or `null` if the cookie is not present
+ */
 function cookieValue(name: string): string | null {
   const prefix = `${name}=`;
   for (const part of document.cookie.split(";")) {

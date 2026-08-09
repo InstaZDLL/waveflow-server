@@ -1298,6 +1298,19 @@ async fn shares(
     }
 }
 
+/// Handles administrator-only user-management operations such as listing, creating, updating, deleting, and changing user credentials.
+///
+/// # Examples
+///
+/// ```ignore
+/// let user = admin(&state, &principal, "getUser", &params).await?;
+/// ```
+async fn admin(
+state: &AppState,
+principal: &Principal,
+method: &str,
+params: &Params,
+) -> Result<Node, ProtocolError> {
 async fn admin(
     state: &AppState,
     principal: &Principal,
@@ -1485,6 +1498,15 @@ fn playlist_node(playlist: &PlaylistItem) -> Node {
         .attr("changed", iso_time(playlist.updated_at))
 }
 
+/// Builds a Subsonic user response node with account roles and assigned folders.
+///
+/// # Examples
+///
+/// ```
+/// # let user: &crate::services::UserItem = todo!();
+/// let node = user_node(user);
+/// let _ = node;
+/// ```
 fn user_node(user: &crate::services::UserItem) -> Node {
     Node::new("user")
         .attr("username", user.username.clone())
@@ -1508,6 +1530,18 @@ fn user_node(user: &crate::services::UserItem) -> Node {
         )
 }
 
+/// Builds a response node containing share metadata and its shared song entries.
+///
+/// The public share URL is included only when the share has a token and a public
+/// base URL is available.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let node = share_node(&share, Some("https://music.example"));
+/// assert_eq!(node.name(), "share");
+/// ```
+fn share_node(share: &crate::services::ShareItem, public_url: Option<&str>) -> Node
 fn share_node(share: &crate::services::ShareItem, public_url: Option<&str>) -> Node {
     let url = share.url_token.as_ref().map(|token| {
         let path = format!("/share/{token}");
