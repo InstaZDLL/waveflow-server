@@ -1871,17 +1871,22 @@ impl DomainServices {
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
-        // The rows above were read outside the writer gate, so the share may
-        // have been revoked in between. Let the UPDATE arbitrate: no row means
-        // it is gone, and a visitor must not see what an owner just deleted.
+        // The rows above were read outside the writer gate, and acquiring it can
+        // block behind a scan. Re-check both revocation and expiry at write
+        // time: no affected row means the share died during that wait, and a
+        // visitor must not see what an owner deleted or let expire.
         let _writer = self.db.writer_guard().await;
-        let visited =
-            sqlx::query("UPDATE share SET visit_count=visit_count+1, last_visited_at=? WHERE id=?")
-                .bind(now_ms())
-                .bind(id.to_string())
-                .execute(self.db.pool())
-                .await?
-                .rows_affected();
+        let visited_at = now_ms();
+        let visited = sqlx::query(
+            "UPDATE share SET visit_count=visit_count+1, last_visited_at=? \
+             WHERE id=? AND (expires_at IS NULL OR expires_at>?)",
+        )
+        .bind(visited_at)
+        .bind(id.to_string())
+        .bind(visited_at)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
         drop(_writer);
         if visited == 0 {
             return Err(ServiceError::NotFound);
