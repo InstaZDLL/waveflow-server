@@ -1,18 +1,22 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-09. **M4 est fusionné** (`14aec76`). La
-> validation réelle Symfonium est terminée et ferme M3. Ce document décrit ce
-> qui est fait, les décisions non évidentes à ne pas défaire, et ce qui reste.
-> Aucun tag de release ne doit être créé sans demande explicite.
+> Note de suivi mise à jour le 2026-08-09 en fin de journée. **M4 est complet** :
+> le socle est fusionné en `14aec76`, son complément serveur en `6716df9`
+> (PR #94). La validation réelle Symfonium est terminée et ferme M3. Ce document
+> décrit ce qui est fait, les décisions non évidentes à ne pas défaire, et ce
+> qui reste. Aucun tag de release ne doit être créé sans demande explicite.
 
 ## Où on en est
 
 - **M0, M1, M2 : fermés.**
 - **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
   lecture native/transcodée, favoris, scrobbles et playlists.
-- **M4 : fusionné** (`14aec76`). L'ancien `web/` est retiré par la PR #84 après
-  extraction de ses design tokens utiles.
+- **M4 : fermé.** Socle en `14aec76`, complément serveur en `6716df9`. L'ancien
+  `web/` est retiré par la PR #84 après extraction de ses design tokens utiles.
 - **M5, M6 : non commencés.**
+
+`main` est vert sur les deux runners et aucune PR n'est ouverte au moment de
+cette note.
 
 ## Validation sur bibliothèque réelle (2026-08-09)
 
@@ -66,6 +70,17 @@ charger la file du bon compte à chaque nouvelle session.
 migrations PostgreSQL et 21 fichiers de tests. Tout était déjà mort (non déclaré
 dans `lib.rs` / `Cargo.toml`).
 
+**Synchronisation des données utilisateur** (`src/sync.rs`), spécifiée par
+[RFC-003](rfcs/RFC-003-waveflow-sync-v2.md). Le serveur reste l'autorité du
+catalogue ; le protocole ne synchronise que l'état possédé par le compte —
+playlists, favoris, notes, historique, file d'attente et partages. Il n'importe
+jamais une piste serveur dans le catalogue local et ne devine jamais une
+correspondance locale/serveur : cette réconciliation est M5 et exige son propre
+RFC. REST est la source durable, le WebSocket n'est qu'une notification qu'un
+curseur plus récent existe peut-être. Les mutations portent un
+`X-WaveFlow-Operation-Id` qui rend le rejeu sûr, et un `X-WaveFlow-Device-Id`
+que le serveur refuse s'il appartient à un autre compte.
+
 ## Décisions à ne pas défaire
 
 Ces choix ont été pris délibérément ; les « corriger » sans contexte serait une
@@ -99,8 +114,14 @@ régression.
 
 - **Les tests exigent `ffmpeg` et `ffprobe` sur le `PATH`.** `test_app()`
   démarre un vrai `MediaService` qui refuse de se lancer sans eux ; leur absence
-  fait échouer 18 tests sur 19 d'un coup. La CI ne les installait pas, d'où un
-  `main` rouge du 2026-08-02 au 2026-08-07.
+  fait échouer la quasi-totalité de la suite d'un coup. La CI ne les installait
+  pas, d'où un `main` rouge du 2026-08-02 au 2026-08-07. Une seconde variante a
+  frappé le 2026-08-09 : `choco install` sort avec le code 0 quand le dépôt
+  Chocolatey répond 503, donc l'étape Windows était verte en n'installant rien
+  et l'échec ne se voyait que cinq minutes plus tard. Le job réessaie
+  désormais, puis exige que `ffmpeg -version` et `ffprobe -version` répondent.
+  **Devant un échec massif de la suite, vérifier d'abord la présence de FFmpeg
+  avant de chercher une régression.**
 - **Ordre de build : `webapp` puis `cargo`.** `rust_embed` capture
   `webapp/dist` à la compilation. `bun run build` à la racine est séquentiel
   pour cette raison. `cargo build` seul fonctionne : `build.rs` met en scène un
@@ -112,19 +133,33 @@ régression.
   désormais sur `main` ; toute évolution ajoute une nouvelle migration datée.
 - **Toutes les tables utilisent `STRICT`.** En SQLite non-STRICT, une colonne
   `PRIMARY KEY` accepte encore `NULL` : déclarer `NOT NULL` explicitement.
+- **La visibilité se filtre dans la requête, jamais après.** `ratings_on` et
+  `starred_ids_on` portent chacun leurs prédicats `EXISTS` contre
+  `library_member`. Toute nouvelle projection de données utilisateur doit faire
+  de même : l'oubli ne casse aucun test fonctionnel et ne se voit qu'à la
+  relecture.
+- **Le writer gate est un verrou d'écriture global au processus.** L'attendre
+  peut prendre du temps derrière un scan. Ne rien lire de coûteux en le tenant
+  (`drop(_writer)` juste après `tx.commit()`), et considérer qu'un état lu avant
+  de l'acquérir a pu changer depuis.
+- **`@vitejs/plugin-react` 6 exige Vite ≥ 7** — il importe `vite/internal`, qui
+  n'existe pas avant. Les bumps front se testent ensemble : pris isolément,
+  celui du plugin échoue au build.
 
 ## Ce qui reste
 
-1. **Valider puis fusionner le complément serveur M4.** Il ajoute le journal de
-   synchronisation documenté par RFC-003, complète l'administration native,
-   ferme la dette de session navigateur et livre tous les parcours fonctionnels
-   du client web prévus pour M4. Le workflow DCO accepte désormais l'adresse de
-   signature réellement émise par Dependabot, sans dérogation manuelle aux
-   protections de branche.
+1. **Valider l'intégration WaveFlow Desktop** contre `/api/v2`, Authorization
+   Code + PKCE et les tickets de lecture : catalogue distant, streaming,
+   playlists, favoris, notes, historique, file d'attente et partages, plus la
+   reconnexion, la rotation/révocation des refresh tokens et la reprise de
+   synchronisation. C'est le vrai test de convergence : la bibliothèque réelle
+   avait déjà révélé deux défauts qu'aucun test ne voyait.
 2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
    validation Symfonium sont terminés ; aucune action de compatibilité ne reste
    ouverte pour cette porte.
-3. **M5** : réconciliation locale/serveur conservatrice.
+3. **M5** : réconciliation locale/serveur conservatrice. **Commencer par un
+   RFC** — liaison automatique sur hash complet unique seulement, MBID en
+   suggestion à confirmer, aucun rapprochement flou par titre/artiste/durée.
 4. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
 
 ## Outillage front
@@ -132,7 +167,11 @@ régression.
 `webapp/` utilise **Biome** (lint + format en une passe) plutôt qu'eslint +
 prettier : `bun run lint`, `bun run format`. La suite vitest tourne sous jsdom,
 nécessaire aux design tokens qui écrivent sur `document.documentElement`. La CI
-web lint, construit et teste.
+web lint, construit et teste. La chaîne est sur Vite 8, TypeScript 7 et React 19.
+
+`webapp/src/vite-env.d.ts` déclare `/// <reference types="vite/client" />`. Ce
+fichier n'est pas décoratif : sans lui, TypeScript 7 rejette l'import
+side-effect de `./styles.css` (TS2882). TypeScript 5 le tolérait.
 
 La directive `biome-ignore` de `useAsync` (`src/pages.tsx`) est placée **juste
 avant `}, deps)`**, pas avant `useEffect` : la règle se déclenche sur
@@ -147,7 +186,47 @@ vérifié.
   navigateur manuel sur installation vide valide setup, session, rôles,
   playlists, favoris, queue, partages, bibliothèques, scans, comptes et rotation
   d'identifiant Subsonic. La CI web lint (Biome), construit et lance Vitest.
-- La dette de session navigateur est fermée par le complément M4 : access token
+
+## Dettes fermées, à ne pas rouvrir par erreur
+
+- **La session navigateur ne dépend plus de `localStorage`** : access token
   court en mémoire, refresh rotatif dans un cookie HttpOnly/SameSite, contrôle
-  d'origine et double-submit CSRF sur refresh/logout. Aucun secret de session
-  n'est conservé dans `localStorage`.
+  d'origine et double-submit CSRF sur refresh/logout. Les deux `removeItem`
+  restants dans `webapp/src/api.ts` ne font que purger les entrées héritées de
+  la première version de M4 ; ce ne sont pas des lectures de session. Cette
+  dette conditionnait le tag `v2.0` stable : elle est levée.
+- **Le DCO n'exige plus de dérogation pour Dependabot.** Le workflow accepte
+  l'adresse de signature réellement émise par le bot, différente de celle sous
+  laquelle il committe. Les sept bumps du 2026-08-09 sont passés sans override
+  du contrôle DCO.
+
+## Correctifs de sécurité postérieurs à la fusion (2026-08-09)
+
+Trois défauts trouvés en relecture après la fusion de #94, tous corrigés sur
+`main` :
+
+- `starred_ids_on` renvoyait toutes les lignes `user_star` sans filtre de
+  visibilité, là où `ratings_on` restreignait déjà les siennes. Un auditeur
+  retiré d'une bibliothèque continuait de voir ses favoris hors périmètre, via
+  `/api/v2/favorites`, `getStarred` et le journal de synchronisation. Couvert
+  par une assertion de non-régression, vérifiée comme échouant sans le
+  correctif.
+- `public_share` servait un partage supprimé ou expiré pendant l'attente du
+  writer gate. L'`UPDATE` arbitre désormais révocation et expiration : aucune
+  ligne affectée signifie 404.
+- `create_subsonic_user` et `update_user` tenaient le writer gate pendant
+  `self.users()`, une lecture complète des comptes.
+
+## État des dépendances (2026-08-09)
+
+Toutes les mises à jour en attente ont été fusionnées : `base64` 0.23, `md-5`
+0.11, `chacha20poly1305` 0.11, le groupe `cargo-patch-and-minor`, puis Vite 8,
+TypeScript 7 et `@vitejs/plugin-react` 6 côté front.
+
+**`chacha20poly1305` 0.11 mérite une note.** `SecretBox` chiffre le mot de passe
+Subsonic *au repos*. La compatibilité du format a été vérifiée avant fusion en
+scellant un secret avec 0.10 puis en le déchiffrant avec 0.11 : le format reste
+celui de la RFC 8439, nonce et ciphertext étant stockés séparément par
+`src/security.rs`. Sauvegarder malgré tout `data/waveflow.db` et
+`data/instance.key` **ensemble** avant le prochain déploiement — une valeur
+chiffrée est irrécupérable sans sa clé.
