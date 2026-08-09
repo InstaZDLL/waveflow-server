@@ -11,6 +11,7 @@ use crate::{
     authentication::now_ms,
     database::{AccountRecord, AccountRole, Database},
     security::{self, EncryptedSecret, SecretBox},
+    sync::{MutationContext, OperationClaim, SyncService},
 };
 
 /// Tenant-filtered projections shared by the Subsonic facade and the native
@@ -218,6 +219,21 @@ pub struct QueueItem {
     pub songs: Vec<SongItem>,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RatingItem {
+    pub entity_type: String,
+    pub entity_id: Uuid,
+    pub rating: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct HistoryItem {
+    pub track_id: Uuid,
+    pub submission: bool,
+    pub played_at: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShareItem {
     pub id: Uuid,
@@ -230,7 +246,7 @@ pub struct ShareItem {
     pub songs: Vec<SongItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UserItem {
     pub id: Uuid,
     pub username: String,
@@ -240,10 +256,19 @@ pub struct UserItem {
     pub folder_ids: Vec<Uuid>,
 }
 
+pub struct UserUpdate<'a> {
+    pub admin: Option<bool>,
+    pub disabled: Option<bool>,
+    pub folder_ids: Option<&'a [Uuid]>,
+    pub subsonic_password: Option<&'a str>,
+    pub web_password: Option<&'a str>,
+}
+
 #[derive(Clone)]
 pub struct DomainServices {
     db: Database,
     secret_box: Arc<SecretBox>,
+    sync: SyncService,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -263,8 +288,31 @@ pub enum ServiceError {
 }
 
 impl DomainServices {
-    pub fn new(db: Database, secret_box: Arc<SecretBox>) -> Self {
-        Self { db, secret_box }
+    pub fn new(db: Database, secret_box: Arc<SecretBox>, sync: SyncService) -> Self {
+        Self {
+            db,
+            secret_box,
+            sync,
+        }
+    }
+
+    pub async fn bootstrap_admin(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Uuid, ServiceError> {
+        validate_username(username)?;
+        if password.len() < 12 {
+            return Err(ServiceError::Invalid);
+        }
+        let password = password.to_owned();
+        let password_hash = tokio::task::spawn_blocking(move || security::hash_password(&password))
+            .await
+            .map_err(|_| ServiceError::Invalid)??;
+        self.db
+            .bootstrap_admin(username, &password_hash, now_ms())
+            .await?
+            .ok_or(ServiceError::Conflict)
     }
 
     pub async fn credential_by_username(
@@ -713,17 +761,58 @@ impl DomainServices {
         name: &str,
         track_ids: &[Uuid],
     ) -> Result<PlaylistItem, ServiceError> {
+        self.create_playlist_with_context(
+            user_id,
+            name,
+            track_ids,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn create_playlist_with_context(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        track_ids: &[Uuid],
+        context: MutationContext,
+    ) -> Result<PlaylistItem, ServiceError> {
         validate_name(name)?;
         self.songs_by_ids(user_id, track_ids).await?;
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(receipt) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
+            return self.playlist(user_id, id).await;
+        }
         let id = Uuid::new_v4();
         let now = now_ms();
         sqlx::query("INSERT INTO playlist (id, owner_user_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
             .bind(id.to_string()).bind(user_id.to_string()).bind(name.trim()).bind(now).bind(now)
             .execute(&mut *tx).await?;
         replace_playlist_tracks(&mut tx, id, track_ids, now).await?;
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "playlist",
+                id,
+                "upsert",
+                &serde_json::json!({
+                    "id": id,
+                    "name": name.trim(),
+                    "track_ids": track_ids,
+                }),
+                Some(id),
+            )
+            .await?;
         tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         self.playlist(user_id, id).await
     }
 
@@ -737,6 +826,31 @@ impl DomainServices {
         public: Option<bool>,
         add: &[Uuid],
         remove_indexes: &[usize],
+    ) -> Result<PlaylistItem, ServiceError> {
+        self.update_playlist_with_context(
+            user_id,
+            id,
+            name,
+            comment,
+            public,
+            add,
+            remove_indexes,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_playlist_with_context(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        name: Option<&str>,
+        comment: Option<&str>,
+        public: Option<bool>,
+        add: &[Uuid],
+        remove_indexes: &[usize],
+        context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
         let current = self.playlist(user_id, id).await?;
         if let Some(name) = name {
@@ -756,6 +870,13 @@ impl DomainServices {
         ids.extend_from_slice(add);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return self.playlist(user_id, id).await;
+        }
+        let changed_at = now_ms();
         sqlx::query(
             "UPDATE playlist SET name=COALESCE(?, name), comment=COALESCE(?, comment), \
              public=COALESCE(?, public), updated_at=? WHERE id=? AND owner_user_id=?",
@@ -763,7 +884,7 @@ impl DomainServices {
         .bind(name.map(str::trim))
         .bind(comment)
         .bind(public.map(i64::from))
-        .bind(now_ms())
+        .bind(changed_at)
         .bind(id.to_string())
         .bind(user_id.to_string())
         .execute(&mut *tx)
@@ -772,22 +893,75 @@ impl DomainServices {
             .bind(id.to_string())
             .execute(&mut *tx)
             .await?;
-        replace_playlist_tracks(&mut tx, id, &ids, now_ms()).await?;
+        replace_playlist_tracks(&mut tx, id, &ids, changed_at).await?;
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "playlist",
+                id,
+                "upsert",
+                &serde_json::json!({
+                    "id": id,
+                    "name": name.map(str::trim).unwrap_or(&current.name),
+                    "comment": comment.or(current.comment.as_deref()),
+                    "public": public.unwrap_or(current.public),
+                    "track_ids": ids,
+                }),
+                Some(id),
+            )
+            .await?;
         tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         self.playlist(user_id, id).await
     }
 
     pub async fn delete_playlist(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
+        self.delete_playlist_with_context(user_id, id, MutationContext::server_generated())
+            .await
+    }
+
+    pub async fn delete_playlist_with_context(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        context: MutationContext,
+    ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         let changed = sqlx::query("DELETE FROM playlist WHERE id=? AND owner_user_id=?")
             .bind(id.to_string())
             .bind(user_id.to_string())
-            .execute(self.db.pool())
+            .execute(&mut *tx)
             .await?
             .rows_affected();
         if changed == 0 {
+            tx.rollback().await?;
             Err(ServiceError::NotFound)
         } else {
+            let receipt = self
+                .sync
+                .complete_operation(
+                    &mut tx,
+                    user_id,
+                    context,
+                    "playlist",
+                    id,
+                    "delete",
+                    &serde_json::json!({}),
+                    Some(id),
+                )
+                .await?;
+            tx.commit().await?;
+            self.sync.publish(user_id, receipt);
             Ok(())
         }
     }
@@ -799,21 +973,65 @@ impl DomainServices {
         entity_id: Uuid,
         starred: bool,
     ) -> Result<(), ServiceError> {
+        self.set_star_with_context(
+            user_id,
+            entity_type,
+            entity_id,
+            starred,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn set_star_with_context(
+        &self,
+        user_id: Uuid,
+        entity_type: &str,
+        entity_id: Uuid,
+        starred: bool,
+        context: MutationContext,
+    ) -> Result<(), ServiceError> {
         self.authorize_entity(user_id, entity_type, entity_id)
             .await?;
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         if starred {
             sqlx::query("INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET starred_at=excluded.starred_at")
                 .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(now_ms())
-                .execute(self.db.pool()).await?;
+                .execute(&mut *tx).await?;
         } else {
             sqlx::query("DELETE FROM user_star WHERE user_id=? AND entity_type=? AND entity_id=?")
                 .bind(user_id.to_string())
                 .bind(entity_type)
                 .bind(entity_id.to_string())
-                .execute(self.db.pool())
+                .execute(&mut *tx)
                 .await?;
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "favorite",
+                entity_id,
+                if starred { "upsert" } else { "delete" },
+                &serde_json::json!({
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "starred": starred,
+                }),
+                Some(entity_id),
+            )
+            .await?;
+        tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         Ok(())
     }
 
@@ -866,6 +1084,31 @@ impl DomainServices {
             .collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
     }
 
+    pub async fn ratings(&self, user_id: Uuid) -> Result<Vec<RatingItem>, ServiceError> {
+        sqlx::query(
+            "SELECT r.entity_type, r.entity_id, r.rating, r.updated_at FROM user_rating r \
+             WHERE r.user_id=? AND ( \
+               (r.entity_type='track' AND EXISTS (SELECT 1 FROM track e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=r.entity_id AND m.user_id=r.user_id)) OR \
+               (r.entity_type='album' AND EXISTS (SELECT 1 FROM album e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=r.entity_id AND m.user_id=r.user_id)) OR \
+               (r.entity_type='artist' AND EXISTS (SELECT 1 FROM artist e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=r.entity_id AND m.user_id=r.user_id)) \
+             ) ORDER BY r.updated_at DESC, r.entity_type, r.entity_id",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(RatingItem {
+                entity_type: row.try_get("entity_type")?,
+                entity_id: parse_uuid(row.try_get("entity_id")?)?,
+                rating: row.try_get("rating")?,
+                updated_at: row.try_get("updated_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+    }
+
     pub async fn set_rating(
         &self,
         user_id: Uuid,
@@ -873,12 +1116,37 @@ impl DomainServices {
         entity_id: Uuid,
         rating: i64,
     ) -> Result<(), ServiceError> {
+        self.set_rating_with_context(
+            user_id,
+            entity_type,
+            entity_id,
+            rating,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn set_rating_with_context(
+        &self,
+        user_id: Uuid,
+        entity_type: &str,
+        entity_id: Uuid,
+        rating: i64,
+        context: MutationContext,
+    ) -> Result<(), ServiceError> {
         if !(0..=5).contains(&rating) {
             return Err(ServiceError::Invalid);
         }
         self.authorize_entity(user_id, entity_type, entity_id)
             .await?;
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         if rating == 0 {
             sqlx::query(
                 "DELETE FROM user_rating WHERE user_id=? AND entity_type=? AND entity_id=?",
@@ -886,12 +1154,31 @@ impl DomainServices {
             .bind(user_id.to_string())
             .bind(entity_type)
             .bind(entity_id.to_string())
-            .execute(self.db.pool())
+            .execute(&mut *tx)
             .await?;
         } else {
             sqlx::query("INSERT INTO user_rating (user_id, entity_type, entity_id, rating, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET rating=excluded.rating, updated_at=excluded.updated_at")
-                .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(rating).bind(now_ms()).execute(self.db.pool()).await?;
+                .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(rating).bind(now_ms()).execute(&mut *tx).await?;
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "rating",
+                entity_id,
+                if rating == 0 { "delete" } else { "upsert" },
+                &serde_json::json!({
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "rating": rating,
+                }),
+                Some(entity_id),
+            )
+            .await?;
+        tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         Ok(())
     }
 
@@ -902,10 +1189,34 @@ impl DomainServices {
         submission: bool,
         time: Option<i64>,
     ) -> Result<(), ServiceError> {
+        self.scrobble_with_context(
+            user_id,
+            track_id,
+            submission,
+            time,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn scrobble_with_context(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+        submission: bool,
+        time: Option<i64>,
+        context: MutationContext,
+    ) -> Result<(), ServiceError> {
         self.authorize_entity(user_id, "track", track_id).await?;
         let now = time.unwrap_or_else(now_ms);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         sqlx::query(
             "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
         )
@@ -924,7 +1235,25 @@ impl DomainServices {
             sqlx::query("INSERT INTO now_playing (user_id, track_id, started_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET track_id=excluded.track_id, started_at=excluded.started_at, updated_at=excluded.updated_at")
                 .bind(user_id.to_string()).bind(track_id.to_string()).bind(now).bind(now_ms()).execute(&mut *tx).await?;
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "scrobble",
+                track_id,
+                if submission { "append" } else { "upsert" },
+                &serde_json::json!({
+                    "track_id": track_id,
+                    "submission": submission,
+                    "played_at": now,
+                }),
+                Some(track_id),
+            )
+            .await?;
         tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         Ok(())
     }
 
@@ -954,6 +1283,33 @@ impl DomainServices {
         Ok(result)
     }
 
+    pub async fn history(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<HistoryItem>, ServiceError> {
+        sqlx::query(
+            "SELECT p.track_id, p.submission, p.played_at FROM play_event p \
+             JOIN track t ON t.id=p.track_id JOIN library_member m ON m.library_id=t.library_id \
+             WHERE p.user_id=? AND m.user_id=? ORDER BY p.played_at DESC, p.id DESC LIMIT ?",
+        )
+        .bind(user_id.to_string())
+        .bind(user_id.to_string())
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(HistoryItem {
+                track_id: parse_uuid(row.try_get("track_id")?)?,
+                submission: row.try_get::<i64, _>("submission")? != 0,
+                played_at: row.try_get("played_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(Into::into)
+    }
+
     pub async fn save_queue(
         &self,
         user_id: Uuid,
@@ -961,6 +1317,27 @@ impl DomainServices {
         current: Option<Uuid>,
         position_ms: i64,
         client: Option<&str>,
+    ) -> Result<(), ServiceError> {
+        self.save_queue_with_context(
+            user_id,
+            ids,
+            current,
+            position_ms,
+            client,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_queue_with_context(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        current: Option<Uuid>,
+        position_ms: i64,
+        client: Option<&str>,
+        context: MutationContext,
     ) -> Result<(), ServiceError> {
         if position_ms < 0 {
             return Err(ServiceError::Invalid);
@@ -971,6 +1348,12 @@ impl DomainServices {
         }
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
             .bind(user_id.to_string()).bind(current.map(|id| id.to_string())).bind(position_ms).bind(client).bind(now_ms()).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM play_queue_track WHERE user_id=?")
@@ -987,7 +1370,26 @@ impl DomainServices {
             .execute(&mut *tx)
             .await?;
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "queue",
+                user_id,
+                "upsert",
+                &serde_json::json!({
+                    "track_ids": ids,
+                    "current": current,
+                    "position_ms": position_ms,
+                    "client": client,
+                }),
+                Some(user_id),
+            )
+            .await?;
         tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         Ok(())
     }
 
@@ -1058,6 +1460,24 @@ impl DomainServices {
         description: Option<&str>,
         expires_at: Option<i64>,
     ) -> Result<ShareItem, ServiceError> {
+        self.create_share_with_context(
+            user_id,
+            ids,
+            description,
+            expires_at,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn create_share_with_context(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        description: Option<&str>,
+        expires_at: Option<i64>,
+        context: MutationContext,
+    ) -> Result<ShareItem, ServiceError> {
         if ids.is_empty() {
             return Err(ServiceError::Invalid);
         }
@@ -1069,6 +1489,18 @@ impl DomainServices {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(receipt) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
+            return self
+                .shares(user_id)
+                .await?
+                .into_iter()
+                .find(|share| share.id == id)
+                .ok_or(ServiceError::NotFound);
+        }
         sqlx::query("INSERT INTO share (id, owner_user_id, token_hash, token_nonce, token_ciphertext, description, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(id.to_string()).bind(user_id.to_string()).bind(token_hash.as_slice()).bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(description).bind(expires_at).bind(now).bind(now).execute(&mut *tx).await?;
         for (position, track) in ids.iter().enumerate() {
@@ -1079,7 +1511,26 @@ impl DomainServices {
                 .execute(&mut *tx)
                 .await?;
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "share",
+                id,
+                "upsert",
+                &serde_json::json!({
+                    "id": id,
+                    "track_ids": ids,
+                    "description": description,
+                    "expires_at": expires_at,
+                }),
+                Some(id),
+            )
+            .await?;
         tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         self.shares(user_id)
             .await?
             .into_iter()
@@ -1134,12 +1585,62 @@ impl DomainServices {
         description: Option<&str>,
         expires_at: Option<i64>,
     ) -> Result<ShareItem, ServiceError> {
+        self.update_share_with_context(
+            user_id,
+            id,
+            description,
+            expires_at,
+            MutationContext::server_generated(),
+        )
+        .await
+    }
+
+    pub async fn update_share_with_context(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        description: Option<&str>,
+        expires_at: Option<i64>,
+        context: MutationContext,
+    ) -> Result<ShareItem, ServiceError> {
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return self
+                .shares(user_id)
+                .await?
+                .into_iter()
+                .find(|share| share.id == id)
+                .ok_or(ServiceError::NotFound);
+        }
         let changed = sqlx::query("UPDATE share SET description=COALESCE(?, description), expires_at=COALESCE(?, expires_at), updated_at=? WHERE id=? AND owner_user_id=?")
-            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).execute(self.db.pool()).await?.rows_affected();
+            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).execute(&mut *tx).await?.rows_affected();
         if changed == 0 {
+            tx.rollback().await?;
             return Err(ServiceError::NotFound);
         }
+        let receipt = self
+            .sync
+            .complete_operation(
+                &mut tx,
+                user_id,
+                context,
+                "share",
+                id,
+                "upsert",
+                &serde_json::json!({
+                    "id": id,
+                    "description": description,
+                    "expires_at": expires_at,
+                }),
+                Some(id),
+            )
+            .await?;
+        tx.commit().await?;
+        self.sync.publish(user_id, receipt);
         self.shares(user_id)
             .await?
             .into_iter()
@@ -1148,16 +1649,49 @@ impl DomainServices {
     }
 
     pub async fn delete_share(&self, user_id: Uuid, id: Uuid) -> Result<(), ServiceError> {
+        self.delete_share_with_context(user_id, id, MutationContext::server_generated())
+            .await
+    }
+
+    pub async fn delete_share_with_context(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        context: MutationContext,
+    ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        if let OperationClaim::Replayed(_) =
+            self.sync.claim_operation(&mut tx, user_id, context).await?
+        {
+            tx.rollback().await?;
+            return Ok(());
+        }
         let changed = sqlx::query("DELETE FROM share WHERE id=? AND owner_user_id=?")
             .bind(id.to_string())
             .bind(user_id.to_string())
-            .execute(self.db.pool())
+            .execute(&mut *tx)
             .await?
             .rows_affected();
         if changed == 0 {
+            tx.rollback().await?;
             Err(ServiceError::NotFound)
         } else {
+            let receipt = self
+                .sync
+                .complete_operation(
+                    &mut tx,
+                    user_id,
+                    context,
+                    "share",
+                    id,
+                    "delete",
+                    &serde_json::json!({}),
+                    Some(id),
+                )
+                .await?;
+            tx.commit().await?;
+            self.sync.publish(user_id, receipt);
             Ok(())
         }
     }
@@ -1179,6 +1713,88 @@ impl DomainServices {
             }
         }
         Ok(users)
+    }
+
+    pub async fn create_web_user(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        password: &str,
+        role: AccountRole,
+    ) -> Result<UserItem, ServiceError> {
+        self.require_admin(actor_id).await?;
+        validate_username(username)?;
+        if password.len() < 12 {
+            return Err(ServiceError::Invalid);
+        }
+        let password = password.to_owned();
+        let password_hash = tokio::task::spawn_blocking(move || security::hash_password(&password))
+            .await
+            .map_err(|_| ServiceError::Invalid)??;
+        let id = self
+            .db
+            .create_account(username.trim(), &password_hash, role, now_ms())
+            .await
+            .map_err(|error| {
+                if matches!(error, sqlx::Error::Database(ref db) if db.is_unique_violation()) {
+                    ServiceError::Conflict
+                } else {
+                    ServiceError::Database(error)
+                }
+            })?;
+        self.users(actor_id)
+            .await?
+            .into_iter()
+            .find(|user| user.id == id)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    /// Sets a dedicated Subsonic password and rotates the API key. The clear
+    /// API key is returned once; only its hash is persisted.
+    pub async fn set_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        password: &str,
+    ) -> Result<String, ServiceError> {
+        self.require_admin(actor_id).await?;
+        if password.len() < 12 {
+            return Err(ServiceError::Invalid);
+        }
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        let encrypted = self.secret_box.encrypt(password.as_bytes())?;
+        let api_key = security::generate_token("wfsk_");
+        let api_key_hash = security::token_hash(&api_key);
+        self.db
+            .set_subsonic_credential(actor_id, account.id, &encrypted, &api_key_hash, now_ms())
+            .await?;
+        Ok(api_key)
+    }
+
+    pub async fn revoke_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+    ) -> Result<(), ServiceError> {
+        self.require_admin(actor_id).await?;
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        if self
+            .db
+            .revoke_subsonic_credential(actor_id, account.id, now_ms())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(ServiceError::NotFound)
+        }
     }
 
     pub async fn create_subsonic_user(
@@ -1270,13 +1886,14 @@ impl DomainServices {
         &self,
         actor_id: Uuid,
         username: &str,
-        admin: Option<bool>,
-        disabled: Option<bool>,
-        folder_ids: Option<&[Uuid]>,
-        password: Option<&str>,
+        update: UserUpdate<'_>,
     ) -> Result<UserItem, ServiceError> {
         self.require_admin(actor_id).await?;
-        if password.is_some_and(str::is_empty) {
+        if update.subsonic_password.is_some_and(str::is_empty)
+            || update
+                .web_password
+                .is_some_and(|password| password.len() < 12)
+        {
             return Err(ServiceError::Invalid);
         }
         let account = self
@@ -1284,17 +1901,40 @@ impl DomainServices {
             .account_by_username(username)
             .await?
             .ok_or(ServiceError::NotFound)?;
-        let requested_folders = match folder_ids {
+        if account.id == actor_id && (update.admin == Some(false) || update.disabled == Some(true))
+        {
+            return Err(ServiceError::Forbidden);
+        }
+        let requested_folders = match update.folder_ids {
             Some(ids) => Some(self.resolve_library_ids(Some(ids)).await?),
             None => None,
         };
-        let encrypted = password
+        let encrypted = update
+            .subsonic_password
             .map(|password| self.secret_box.encrypt(password.as_bytes()))
             .transpose()?;
+        let web_password_hash = if let Some(password) = update.web_password {
+            let password = password.to_owned();
+            Some(
+                tokio::task::spawn_blocking(move || security::hash_password(&password))
+                    .await
+                    .map_err(|_| ServiceError::Invalid)??,
+            )
+        } else {
+            None
+        };
+        let revoke_sessions = web_password_hash.is_some();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        sqlx::query("UPDATE account SET role=COALESCE(?, role), disabled=COALESCE(?, disabled), updated_at=? WHERE id=?")
-            .bind(admin.map(|value| if value { "admin" } else { "user" })).bind(disabled.map(i64::from)).bind(now_ms()).bind(account.id.to_string()).execute(&mut *tx).await?;
+        sqlx::query("UPDATE account SET role=COALESCE(?, role), disabled=COALESCE(?, disabled), password_hash=COALESCE(?, password_hash), updated_at=? WHERE id=?")
+            .bind(update.admin.map(|value| if value { "admin" } else { "user" })).bind(update.disabled.map(i64::from)).bind(web_password_hash.as_deref()).bind(now_ms()).bind(account.id.to_string()).execute(&mut *tx).await?;
+        if revoke_sessions {
+            sqlx::query("UPDATE session SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL")
+                .bind(now_ms())
+                .bind(account.id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
         if let Some(encrypted) = encrypted {
             let changed = sqlx::query(
                 "UPDATE subsonic_credential SET password_nonce=?, password_ciphertext=?, updated_at=? WHERE user_id=?",
@@ -1579,6 +2219,19 @@ fn validate_name(name: &str) -> Result<(), ServiceError> {
         Ok(())
     } else {
         Err(ServiceError::Invalid)
+    }
+}
+
+fn validate_username(username: &str) -> Result<(), ServiceError> {
+    let username = username.trim();
+    if !(3..=64).contains(&username.len())
+        || !username.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        Err(ServiceError::Invalid)
+    } else {
+        Ok(())
     }
 }
 

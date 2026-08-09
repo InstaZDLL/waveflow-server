@@ -7,6 +7,7 @@ import {
   type Artist,
   type ArtistDetail,
   authorize,
+  bootstrapAdmin,
   formatDuration,
   getAlbum,
   getArtist,
@@ -19,6 +20,7 @@ import {
   safeInternalPath,
   search,
   setFavorite,
+  setupRequired,
 } from "./api";
 import { usePlayer } from "./player";
 
@@ -56,6 +58,11 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [setup, setSetup] = useState(false);
+
+  useEffect(() => {
+    void setupRequired().then(setSetup, () => setSetup(false));
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -63,11 +70,14 @@ export function LoginPage() {
     setError(null);
     try {
       try {
+        if (setup) await bootstrapAdmin(username, password);
         await login(username, password);
       } catch {
-        // Only a failed sign-in means bad credentials. Anything after it is a
-        // different problem and must not be reported as one.
-        setError("Wrong username or password.");
+        setError(
+          setup
+            ? "Setup failed. Use a valid username and at least 12 password characters."
+            : "Wrong username or password.",
+        );
         return;
       }
       const next = safeInternalPath(
@@ -84,7 +94,12 @@ export function LoginPage() {
   return (
     <main className="centered">
       <form className="card" onSubmit={submit}>
-        <h1>WaveFlow</h1>
+        <h1>{setup ? "Create the administrator" : "WaveFlow"}</h1>
+        {setup ? (
+          <p className="muted">
+            This is a new server. Choose the first administrator account.
+          </p>
+        ) : null}
         <label>
           Username
           <input
@@ -100,13 +115,13 @@ export function LoginPage() {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
+            autoComplete={setup ? "new-password" : "current-password"}
             required
           />
         </label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Please wait…" : setup ? "Create and sign in" : "Sign in"}
         </button>
       </form>
     </main>

@@ -13,6 +13,7 @@ pub mod security;
 pub mod services;
 pub mod stream_ticket;
 pub mod subsonic;
+pub mod sync;
 pub mod webui;
 
 use std::{sync::Arc, time::Duration};
@@ -46,10 +47,12 @@ pub struct AppState {
     pub scanner: scanner::ScanManager,
     pub media: media::MediaService,
     pub services: services::DomainServices,
+    pub sync: sync::SyncService,
     pub artwork_dir: std::path::PathBuf,
     pub instance_key_path: std::path::PathBuf,
     pub public_url: Option<String>,
     pub stream_ticket_ttl: std::time::Duration,
+    pub refresh_token_ttl: std::time::Duration,
 }
 
 #[derive(OpenApi)]
@@ -63,12 +66,21 @@ pub struct AppState {
     paths(
         http::health,
         http::ready,
+        http::setup_status,
+        http::setup,
         http::login,
         http::refresh,
         http::logout,
+        http::web_login,
+        http::web_refresh,
+        http::web_logout,
         http::oauth_authorize,
         http::oauth_token,
         http::start_scan,
+        http::list_libraries,
+        http::create_library,
+        http::set_library_member,
+        http::remove_library_member,
         http::scan_status,
         http::scan_events,
         http::list_tracks,
@@ -86,10 +98,27 @@ pub struct AppState {
         http::add_favorite,
         http::remove_favorite,
         http::set_rating,
+        http::list_ratings,
         http::create_scrobble,
+        http::list_history,
         http::list_now_playing,
         http::get_queue,
         http::save_queue,
+        http::list_shares,
+        http::create_share,
+        http::update_share,
+        http::delete_share,
+        http::sync_changes,
+        http::sync_snapshot,
+        http::sync_ack,
+        http::sync_socket,
+        http::transcode_status,
+        http::list_users,
+        http::create_user,
+        http::update_user,
+        http::delete_user,
+        http::set_subsonic_credential,
+        http::revoke_subsonic_credential,
         media::stream_track,
         media::create_stream_ticket,
         media::stream_with_ticket
@@ -97,8 +126,12 @@ pub struct AppState {
     components(schemas(
         http::ProbeResponse,
         http::ReadyResponse,
+        http::SetupStatusResponse,
+        http::SetupRequest,
+        http::SetupResponse,
         http::LoginRequest,
         http::RefreshRequest,
+        http::WebAuthResponse,
         http::ErrorResponse,
         authentication::AuthTokens,
         authentication::AuthUser,
@@ -106,6 +139,7 @@ pub struct AppState {
         http::ScanQueuedResponse,
         catalog::ScanJobRecord,
         catalog::TrackRecord,
+        catalog::LibraryAccess,
         services::AlbumItem,
         services::ArtistItem,
         services::SongItem,
@@ -115,16 +149,34 @@ pub struct AppState {
         services::SearchResult,
         services::PlaylistItem,
         services::QueueItem,
+        services::RatingItem,
+        services::HistoryItem,
+        services::UserItem,
         http::CreatePlaylistRequest,
         http::UpdatePlaylistRequest,
         http::RatingRequest,
         http::ScrobbleRequest,
         http::SaveQueueRequest,
+        http::CreateShareRequest,
+        http::UpdateShareRequest,
+        http::ShareResponse,
         http::AuthorizeRequest,
         http::AuthorizeResponse,
         http::TokenRequest,
         http::StarredEntry,
         http::NowPlayingEntry,
+        http::SyncAckRequest,
+        http::SyncSnapshot,
+        http::TranscodeStatusResponse,
+        http::CreateUserRequest,
+        http::UpdateUserRequest,
+        http::SetSubsonicCredentialRequest,
+        http::SubsonicCredentialResponse,
+        http::CreateLibraryRequest,
+        http::CreateLibraryResponse,
+        http::SetLibraryMemberRequest,
+        sync::SyncChange,
+        sync::SyncPage,
         media::StreamTicketResponse,
         scanner::ScanProgress
     )),
@@ -132,6 +184,9 @@ pub struct AppState {
         (name = "probes", description = "Process and SQLite health"),
         (name = "authentication", description = "Local WaveFlow sessions")
         ,(name = "catalog", description = "Authoritative library scans and catalogue reads")
+        ,(name = "user-data", description = "Cross-protocol playlists and playback state")
+        ,(name = "sync", description = "Durable WaveFlow Desktop user-data synchronization")
+        ,(name = "administration", description = "Administrative user and credential management")
     )
 )]
 pub struct ApiDoc;
@@ -159,7 +214,8 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         config.scan_parallelism,
     );
     let media = media::MediaService::initialize(config).await?;
-    let services = services::DomainServices::new(db.clone(), Arc::clone(&secret_box));
+    let sync = sync::SyncService::new(db.clone());
+    let services = services::DomainServices::new(db.clone(), Arc::clone(&secret_box), sync.clone());
     Ok(AppState {
         db,
         auth,
@@ -167,10 +223,12 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         scanner,
         media,
         services,
+        sync,
         artwork_dir: config.artwork_dir.clone(),
         instance_key_path: config.instance_key_path.clone(),
         public_url: config.public_url.clone(),
         stream_ticket_ttl: config.stream_ticket_ttl,
+        refresh_token_ttl: config.refresh_token_ttl,
     })
 }
 
@@ -236,12 +294,17 @@ pub fn app(config: &Config, state: AppState) -> Router {
                 .allow_methods([
                     axum::http::Method::GET,
                     axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::PATCH,
+                    axum::http::Method::DELETE,
                     axum::http::Method::OPTIONS,
                 ])
                 .allow_headers([
                     axum::http::header::AUTHORIZATION,
                     axum::http::header::CONTENT_TYPE,
                     axum::http::header::RANGE,
+                    axum::http::HeaderName::from_static("x-waveflow-operation-id"),
+                    axum::http::HeaderName::from_static("x-waveflow-device-id"),
                 ])
                 .expose_headers([
                     axum::http::header::ACCEPT_RANGES,

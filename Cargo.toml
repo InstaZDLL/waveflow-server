@@ -21,7 +21,7 @@ legacy-v1 = []
 anyhow = "1"
 async-stream = "0.3"
 argon2 = { version = "0.5", features = ["std"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 blake3 = "1"
 bytes = "1"

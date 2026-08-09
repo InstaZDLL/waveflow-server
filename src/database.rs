@@ -169,6 +169,42 @@ pub struct AuthorizationRecord {
 }
 
 impl Database {
+    pub async fn setup_required(&self) -> Result<bool, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM account")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count == 0)
+    }
+
+    pub async fn bootstrap_admin(
+        &self,
+        username: &str,
+        password_hash: &str,
+        now_ms: i64,
+    ) -> Result<Option<Uuid>, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let id = Uuid::new_v4();
+        let inserted = sqlx::query(
+            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+             SELECT ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM account)",
+        )
+        .bind(id.to_string())
+        .bind(username.trim())
+        .bind(password_hash)
+        .bind(now_ms)
+        .bind(now_ms)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if inserted {
+            insert_audit(&mut tx, Some(id), "instance.bootstrapped", Some(id), now_ms).await?;
+        }
+        tx.commit().await?;
+        Ok(inserted.then_some(id))
+    }
+
     pub async fn open(config: &Config) -> anyhow::Result<Self> {
         tokio::fs::create_dir_all(&config.data_dir).await?;
         let options = SqliteConnectOptions::new()

@@ -104,8 +104,11 @@ régression.
 
 ## Ce qui reste
 
-1. **Trancher la sécurité de session navigateur avant `v2.0` stable**, comme
-   détaillé dans les dettes ci-dessous.
+1. **Valider puis fusionner le complément serveur M4.** Il ajoute le journal de
+   synchronisation documenté par RFC-003, complète l'administration native et
+   ferme la dette de session navigateur. Le workflow DCO accepte désormais
+   l'adresse de signature réellement émise par Dependabot, sans dérogation
+   manuelle aux protections de branche.
 2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
    validation Symfonium sont terminés ; aucune action de compatibilité ne reste
    ouverte pour cette porte.
@@ -130,10 +133,7 @@ vérifié.
 - `webapp/` n'a pas de test de composant ni de parcours : la suite couvre les
   gardes de redirection et les design tokens. La CI web lint (biome), construit
   et lance vitest.
-- Les jetons de session vivent en `localStorage`, donc exposés à une XSS. C'est
-  le compromis SPA habituel ; un cookie éviterait cela mais ajouterait une
-  authentification ambiante et une surface CSRF à une API sinon purement par
-  en-tête. **Porte de sortie : trancher avant le tag `v2.0` stable** (pas avant
-  la beta) — soit adopter un cookie `httpOnly` + protection CSRF, soit acter le
-  risque par écrit dans ce document avec la justification retenue. Ne pas taguer
-  la stable tant que l'une des deux branches n'est pas tranchée.
+- La dette de session navigateur est fermée par le complément M4 : access token
+  court en mémoire, refresh rotatif dans un cookie HttpOnly/SameSite, contrôle
+  d'origine et double-submit CSRF sur refresh/logout. Aucun secret de session
+  n'est conservé dans `localStorage`.

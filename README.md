@@ -37,7 +37,13 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 - `GET /health`: process liveness;
 - `GET /ready`: SQLite readiness, independent of scan progress;
 - `GET /openapi.json` and `GET /reference`: API contract;
-- `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating local sessions.
+- `POST /api/v2/auth/login`, `/refresh`, `/logout`: rotating native sessions;
+- `/api/v2/web/auth/*`: memory-only browser access token plus HttpOnly rotating
+  refresh cookie, origin validation and CSRF protection;
+- `/api/v2/sync/snapshot`, `/changes`, `/ack`, `/socket`: idempotent user-data
+  synchronization defined by `docs/rfcs/RFC-003-waveflow-sync-v2.md`;
+- `/api/v2/admin/users`, `/libraries`, `/transcode/status`: native server
+  administration and dedicated Subsonic credential rotation;
 - `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
 - `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
 - `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.

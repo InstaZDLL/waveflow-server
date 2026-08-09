@@ -1363,10 +1363,13 @@ async fn admin(
                 .update_user(
                     principal.id,
                     params.first("username").ok_or_else(missing)?,
-                    params.bool_optional("adminRole")?,
-                    params.bool_optional("locked")?,
-                    folders.as_deref(),
-                    password.as_deref(),
+                    crate::services::UserUpdate {
+                        admin: params.bool_optional("adminRole")?,
+                        disabled: params.bool_optional("locked")?,
+                        folder_ids: folders.as_deref(),
+                        subsonic_password: password.as_deref(),
+                        web_password: None,
+                    },
                 )
                 .await
                 .map_err(service_protocol)?;

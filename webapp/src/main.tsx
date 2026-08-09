@@ -11,7 +11,7 @@ import {
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { logout, storedTokens } from "./api";
+import { ensureSession, logout } from "./api";
 import {
   AlbumPage,
   AlbumsPage,
@@ -64,8 +64,8 @@ const loginRoute = createRoute({
 const authedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "authed",
-  beforeLoad: () => {
-    if (!storedTokens()) {
+  beforeLoad: async () => {
+    if (!(await ensureSession())) {
       // Remember where the user was headed so a desktop authorisation link
       // survives the detour through sign-in instead of dropping its PKCE
       // parameters and forcing the client to start over.
