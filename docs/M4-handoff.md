@@ -1,9 +1,8 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi (2026-08-07). **M4 est implémenté et livré dans la PR #83**
-> (branche `feat/native-catalog-api`, 14 commits, CI verte, non fusionnée à la
-> rédaction). Ce document décrit ce qui est fait, les décisions non évidentes à
-> ne pas défaire, et ce qui reste. Voir aussi `docs/M3-symfonium-validation.md`,
+> Note de suivi (2026-08-08). **M4 est fusionné** (PR #83, commit `14aec76`).
+> Ce document décrit ce qui est fait, les décisions non évidentes à ne pas
+> défaire, et ce qui reste. Voir aussi `docs/M3-symfonium-validation.md`,
 > toujours d'actualité pour la porte `v2.0-beta`.
 
 ## Où on en est
@@ -11,8 +10,11 @@
 - **M0, M1, M2 : fermés.**
 - **M3 : implémenté, suite verte, porte ouverte** — seule la validation
   **Symfonium** manque. Elle bloque le **tag `v2.0-beta`**, pas le reste.
-- **M4 : implémenté** (PR #83), en attente de relecture / fusion.
+- **M4 : fusionné** (`14aec76`).
 - **M5, M6 : non commencés.**
+
+`main` est vert sur les deux runners depuis le 2026-08-07 — il était rouge
+depuis le 2026-08-02 (voir « Pièges connus »).
 
 ## Ce que M4 a livré
 
@@ -90,15 +92,26 @@ régression.
 
 ## Ce qui reste
 
-1. **Fusionner la PR #83** après relecture.
-2. **Clore M3** : valider Symfonium. Le certificat n'est plus l'obstacle — un
+1. **Clore M3** : valider Symfonium. Le certificat n'est plus l'obstacle — un
    tunnel HTTPS à certificat reconnu a été vérifié de bout en bout le
    2026-08-03. Il manque un **Android** exécutant l'application (appareil
    physique, ou image d'émulateur `google_apis_playstore` + licence Symfonium).
    Procédure détaillée dans `docs/M3-symfonium-validation.md`.
-3. **Taguer `v2.0-beta`** — ⚠️ jamais sans demande explicite du user.
-4. **M5** : réconciliation locale/serveur conservatrice.
-5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+2. **Taguer `v2.0-beta`** — ⚠️ jamais sans demande explicite du user.
+3. **M5** : réconciliation locale/serveur conservatrice.
+4. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+
+## Outillage front
+
+`webapp/` utilise **Biome** (lint + format en une passe) plutôt qu'eslint +
+prettier : `bun run lint`, `bun run format`. La suite vitest tourne sous jsdom,
+nécessaire aux design tokens qui écrivent sur `document.documentElement`. La CI
+web lint, construit et teste.
+
+La directive `biome-ignore` de `useAsync` (`src/pages.tsx`) est placée **juste
+avant `}, deps)`**, pas avant `useEffect` : la règle se déclenche sur
+l'argument de dépendances, et déplacée plus haut elle ne supprime plus rien —
+vérifié.
 
 ## Dettes identifiées, non traitées
 

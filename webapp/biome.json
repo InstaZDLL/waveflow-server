@@ -6,11 +6,7 @@
     "useIgnoreFile": false
   },
   "files": {
-    "includes": [
-      "src/**",
-      "*.ts",
-      "*.json"
-    ]
+    "includes": ["src/**", "*.ts", "*.json"]
   },
   "formatter": {
     "enabled": true,
@@ -21,7 +17,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "useExhaustiveDependencies": "warn"
       }
