@@ -73,6 +73,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const resumePosition = useRef(0);
   const resumeTrack = useRef<string | null>(null);
   const autoplay = useRef(false);
+  const suppressPausePersistence = useRef(false);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
 
   const current = queue[index] ?? null;
@@ -123,6 +124,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Stop on the last track rather than stepping past it: an out-of-range
     // index empties `current` and the player bar vanishes mid-listen.
     const onEnd = () => {
+      localMutation.current = true;
       setIndex((value) => {
         const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
         autoplay.current = next !== value;
@@ -132,6 +134,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onPlay = () => setPlaying(true);
     const onPause = () => {
       setPlaying(false);
+      if (suppressPausePersistence.current) {
+        suppressPausePersistence.current = false;
+        return;
+      }
       if (!hydrated) return;
       const songs = queueRef.current;
       const selected = songs[indexRef.current] ?? null;
@@ -166,7 +172,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     positionRef.current = resumeSeconds;
     setPosition(resumeSeconds);
     setDuration(0);
-    if (!element || !current) return;
+    if (!element) return;
+    if (!element.paused) suppressPausePersistence.current = true;
+    element.pause();
+    element.removeAttribute("src");
+    element.load();
+    if (!current) return;
     let cancelled = false;
     submitted.current = null;
     const shouldAutoplay = autoplay.current;
@@ -224,7 +235,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !localMutation.current) return;
     const timeout = window.setTimeout(() => {
       persistQueue(
         queue,
@@ -247,6 +258,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [current]);
 
   const next = useCallback(() => {
+    localMutation.current = true;
     setIndex((value) => {
       const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
       autoplay.current = next !== value;
@@ -255,6 +267,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const previous = useCallback(() => {
+    localMutation.current = true;
     setIndex((value) => {
       const previous = Math.max(value - 1, 0);
       autoplay.current = previous !== value;
@@ -296,7 +309,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       next,
       previous,
       seek: (seconds: number) => {
-        if (audio.current) audio.current.currentTime = seconds;
+        if (audio.current) {
+          localMutation.current = true;
+          audio.current.currentTime = seconds;
+        }
       },
     }),
     [

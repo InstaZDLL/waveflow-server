@@ -10,7 +10,10 @@ use tokio::sync::broadcast;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{authentication::now_ms, database::Database};
+use crate::{
+    authentication::now_ms,
+    database::{Database, SyncOperationReservation},
+};
 
 pub const DEFAULT_SYNC_LIMIT: i64 = 100;
 pub const MAX_SYNC_LIMIT: i64 = 500;
@@ -124,73 +127,52 @@ impl SyncService {
         context: MutationContext,
         intent: MutationIntent,
     ) -> Result<OperationClaim, SyncError> {
-        if let Some(device_id) = context.origin_device_id {
-            let owned = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM device \
-                 WHERE id=? AND user_id=? AND revoked_at IS NULL)",
+        let reservation = self
+            .db
+            .reserve_sync_operation(
+                connection,
+                user_id,
+                context.operation_id,
+                context.origin_device_id,
+                intent.as_bytes(),
+                now_ms(),
             )
-            .bind(device_id.to_string())
-            .bind(user_id.to_string())
-            .fetch_one(&mut *connection)
             .await?;
-            if !owned {
+        match reservation {
+            SyncOperationReservation::InvalidOriginDevice => {
+                let device_id = context
+                    .origin_device_id
+                    .expect("invalid reservation includes an origin device");
                 tracing::warn!(
                     %user_id,
                     operation_id = %context.operation_id,
                     %device_id,
                     "sync mutation rejected for an invalid origin device"
                 );
-                return Err(SyncError::Invalid);
+                Err(SyncError::Invalid)
+            }
+            SyncOperationReservation::New => Ok(OperationClaim::New),
+            SyncOperationReservation::Incomplete => {
+                tracing::error!(
+                    %user_id,
+                    operation_id = %context.operation_id,
+                    "sync operation exists but has no completed event"
+                );
+                Err(sqlx::Error::Protocol("sync operation is incomplete".into()).into())
+            }
+            SyncOperationReservation::Replayed(record) => {
+                if record.intent_hash.as_deref() != Some(intent.as_bytes()) {
+                    return Err(SyncError::Conflict);
+                }
+                Ok(OperationClaim::Replayed(MutationReceipt {
+                    operation_id: context.operation_id,
+                    result_entity_id: record.result_entity_id.map(parse_uuid).transpose()?,
+                    entity_type: record.entity_type,
+                    cursor: record.event_cursor,
+                    replayed: true,
+                }))
             }
         }
-        let inserted = sqlx::query(
-            "INSERT INTO sync_operation \
-             (user_id, operation_id, origin_device_id, intent_hash, created_at) VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT (user_id, operation_id) DO NOTHING",
-        )
-        .bind(user_id.to_string())
-        .bind(context.operation_id.to_string())
-        .bind(context.origin_device_id.map(|id| id.to_string()))
-        .bind(intent.as_bytes())
-        .bind(now_ms())
-        .execute(&mut *connection)
-        .await?
-        .rows_affected();
-        if inserted == 1 {
-            return Ok(OperationClaim::New);
-        }
-
-        let row = sqlx::query(
-            "SELECT so.result_entity_id, so.event_cursor, so.intent_hash, se.entity_type \
-             FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor \
-             WHERE so.user_id=? AND so.operation_id=? AND so.applied_at IS NOT NULL",
-        )
-        .bind(user_id.to_string())
-        .bind(context.operation_id.to_string())
-        .fetch_optional(&mut *connection)
-        .await?;
-        let Some(row) = row else {
-            tracing::error!(
-                %user_id,
-                operation_id = %context.operation_id,
-                "sync operation exists but has no completed event"
-            );
-            return Err(sqlx::Error::Protocol("sync operation is incomplete".into()).into());
-        };
-        let stored_intent: Option<Vec<u8>> = row.try_get("intent_hash")?;
-        if stored_intent.as_deref() != Some(intent.as_bytes()) {
-            return Err(SyncError::Conflict);
-        }
-        Ok(OperationClaim::Replayed(MutationReceipt {
-            operation_id: context.operation_id,
-            result_entity_id: row
-                .try_get::<Option<String>, _>("result_entity_id")?
-                .map(parse_uuid)
-                .transpose()?,
-            entity_type: row.try_get("entity_type")?,
-            cursor: row.try_get("event_cursor")?,
-            replayed: true,
-        }))
     }
 
     #[allow(clippy::too_many_arguments)]

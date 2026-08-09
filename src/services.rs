@@ -880,8 +880,6 @@ impl DomainServices {
         track_ids: &[Uuid],
         context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
-        validate_name(name)?;
-        self.songs_by_ids(user_id, track_ids).await?;
         let intent = MutationIntent::new(
             "create",
             "playlist",
@@ -900,6 +898,8 @@ impl DomainServices {
             drop(_writer);
             return self.playlist(user_id, id).await;
         }
+        validate_name(name)?;
+        self.songs_by_ids_on(&mut tx, user_id, track_ids).await?;
         let id = Uuid::new_v4();
         let now = now_ms();
         sqlx::query("INSERT INTO playlist (id, owner_user_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -965,11 +965,6 @@ impl DomainServices {
         remove_indexes: &[usize],
         context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
-        let current = self.playlist(user_id, id).await?;
-        if let Some(name) = name {
-            validate_name(name)?;
-        }
-        self.songs_by_ids(user_id, add).await?;
         let mut removes = remove_indexes.to_vec();
         removes.sort_unstable_by(|a, b| b.cmp(a));
         removes.dedup();
@@ -984,14 +979,6 @@ impl DomainServices {
                 "remove_indexes": &removes,
             }),
         );
-        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
-        for index in removes {
-            if index >= ids.len() {
-                return Err(ServiceError::Invalid);
-            }
-            ids.remove(index);
-        }
-        ids.extend_from_slice(add);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
@@ -1004,6 +991,19 @@ impl DomainServices {
             drop(_writer);
             return self.playlist(user_id, id).await;
         }
+        let current = self.playlist_on(&mut tx, user_id, id).await?;
+        if let Some(name) = name {
+            validate_name(name)?;
+        }
+        self.songs_by_ids_on(&mut tx, user_id, add).await?;
+        let mut ids = current.songs.iter().map(|song| song.id).collect::<Vec<_>>();
+        for index in removes {
+            if index >= ids.len() {
+                return Err(ServiceError::Invalid);
+            }
+            ids.remove(index);
+        }
+        ids.extend_from_slice(add);
         let changed_at = now_ms();
         sqlx::query(
             "UPDATE playlist SET name=COALESCE(?, name), comment=COALESCE(?, comment), \
@@ -1125,8 +1125,6 @@ impl DomainServices {
         starred: bool,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
-        self.authorize_entity(user_id, entity_type, entity_id)
-            .await?;
         let intent = MutationIntent::new(
             if starred { "star" } else { "unstar" },
             &format!("{entity_type}:{entity_id}"),
@@ -1143,6 +1141,8 @@ impl DomainServices {
             validate_replay_type(&receipt, "favorite")?;
             return Ok(());
         }
+        self.authorize_entity_on(&mut tx, user_id, entity_type, entity_id)
+            .await?;
         if starred {
             sqlx::query("INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET starred_at=excluded.starred_at")
                 .bind(user_id.to_string()).bind(entity_type).bind(entity_id.to_string()).bind(now_ms())
@@ -1294,11 +1294,6 @@ impl DomainServices {
         rating: i64,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
-        if !(0..=5).contains(&rating) {
-            return Err(ServiceError::Invalid);
-        }
-        self.authorize_entity(user_id, entity_type, entity_id)
-            .await?;
         let intent = MutationIntent::new(
             "set-rating",
             &format!("{entity_type}:{entity_id}"),
@@ -1315,6 +1310,11 @@ impl DomainServices {
             validate_replay_type(&receipt, "rating")?;
             return Ok(());
         }
+        if !(0..=5).contains(&rating) {
+            return Err(ServiceError::Invalid);
+        }
+        self.authorize_entity_on(&mut tx, user_id, entity_type, entity_id)
+            .await?;
         if rating == 0 {
             sqlx::query(
                 "DELETE FROM user_rating WHERE user_id=? AND entity_type=? AND entity_id=?",
@@ -1375,13 +1375,6 @@ impl DomainServices {
         time: Option<i64>,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
-        self.authorize_entity(user_id, "track", track_id).await?;
-        let current_time = now_ms();
-        let now = time.unwrap_or(current_time);
-        const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
-        if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
-            return Err(ServiceError::Invalid);
-        }
         let intent = MutationIntent::new(
             if submission {
                 "scrobble"
@@ -1401,6 +1394,14 @@ impl DomainServices {
             tx.rollback().await?;
             validate_replay_type(&receipt, "scrobble")?;
             return Ok(());
+        }
+        self.authorize_entity_on(&mut tx, user_id, "track", track_id)
+            .await?;
+        let current_time = now_ms();
+        let now = time.unwrap_or(current_time);
+        const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
+        if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
+            return Err(ServiceError::Invalid);
         }
         sqlx::query(
             "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
@@ -1534,13 +1535,6 @@ impl DomainServices {
         client: Option<&str>,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
-        if position_ms < 0 {
-            return Err(ServiceError::Invalid);
-        }
-        self.songs_by_ids(user_id, ids).await?;
-        if let Some(current) = current {
-            self.songs_by_ids(user_id, &[current]).await?;
-        }
         let intent = MutationIntent::new(
             "save",
             &format!("queue:{user_id}"),
@@ -1561,6 +1555,13 @@ impl DomainServices {
             tx.rollback().await?;
             validate_replay_type(&receipt, "queue")?;
             return Ok(());
+        }
+        if position_ms < 0 {
+            return Err(ServiceError::Invalid);
+        }
+        self.songs_by_ids_on(&mut tx, user_id, ids).await?;
+        if let Some(current) = current {
+            self.songs_by_ids_on(&mut tx, user_id, &[current]).await?;
         }
         sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
             .bind(user_id.to_string()).bind(current.map(|id| id.to_string())).bind(position_ms).bind(client).bind(now_ms()).execute(&mut *tx).await?;
@@ -1717,10 +1718,6 @@ impl DomainServices {
         expires_at: Option<i64>,
         context: MutationContext,
     ) -> Result<ShareItem, ServiceError> {
-        if ids.is_empty() {
-            return Err(ServiceError::Invalid);
-        }
-        self.songs_by_ids(user_id, ids).await?;
         let intent = MutationIntent::new(
             "create",
             "share",
@@ -1748,6 +1745,10 @@ impl DomainServices {
                 .find(|share| share.id == id)
                 .ok_or(ServiceError::NotFound);
         }
+        if ids.is_empty() {
+            return Err(ServiceError::Invalid);
+        }
+        self.songs_by_ids_on(&mut tx, user_id, ids).await?;
         let token = security::generate_token("wfs_");
         let token_hash = security::token_hash(&token);
         let encrypted = self.secret_box.encrypt(token.as_bytes())?;
@@ -2330,8 +2331,9 @@ impl DomainServices {
         Ok(unique)
     }
 
-    async fn authorize_entity(
+    async fn authorize_entity_on(
         &self,
+        connection: &mut SqliteConnection,
         user_id: Uuid,
         kind: &str,
         id: Uuid,
@@ -2345,7 +2347,7 @@ impl DomainServices {
         let exists = sqlx::query_scalar::<_, i64>(query)
             .bind(id.to_string())
             .bind(user_id.to_string())
-            .fetch_optional(self.db.pool())
+            .fetch_optional(&mut *connection)
             .await?;
         if exists.is_some() {
             Ok(())
