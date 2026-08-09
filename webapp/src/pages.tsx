@@ -437,7 +437,22 @@ export function SharesPage() {
   const [revision, setRevision] = useState(0);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const { value, error } = useAsync(listShares, [revision]);
-  if (!value) return <Loading error={error} />;
+  const createdShareNotice = createdShare?.url ? (
+    <p>
+      This link is shown only once:{" "}
+      <a className="resource-url" href={createdShare.url}>
+        {createdShare.url}
+      </a>
+    </p>
+  ) : null;
+  if (!value) {
+    return (
+      <>
+        {createdShareNotice}
+        <Loading error={error} />
+      </>
+    );
+  }
 
   async function shareQueue(event: FormEvent) {
     event.preventDefault();
@@ -459,6 +474,7 @@ export function SharesPage() {
     setMutationError(null);
     try {
       await deleteShare(id);
+      setCreatedShare((current) => (current?.id === id ? null : current));
       setRevision((value) => value + 1);
     } catch {
       setMutationError("The share could not be deleted.");
@@ -487,14 +503,7 @@ export function SharesPage() {
         <p className="muted">Add tracks to the queue before creating a link.</p>
       ) : null}
       {mutationError ? <p className="error">{mutationError}</p> : null}
-      {createdShare?.url ? (
-        <p>
-          This link is shown only once:{" "}
-          <a className="resource-url" href={createdShare.url}>
-            {createdShare.url}
-          </a>
-        </p>
-      ) : null}
+      {createdShareNotice}
       {value.length ? (
         <ul className="resource-list">
           {value.map((share) => (
