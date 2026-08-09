@@ -669,6 +669,23 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    pub async fn revoke_session_by_refresh_hash(
+        &self,
+        refresh_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE session SET revoked_at = ? \
+             WHERE refresh_token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(now_ms)
+        .bind(refresh_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn create_api_token(
         &self,
         user_id: Uuid,

@@ -165,18 +165,29 @@ function refresh(): Promise<boolean> {
 }
 
 async function performRefresh(): Promise<boolean> {
+  const hadSession = session !== null;
   const csrf = cookieValue("waveflow-csrf");
-  if (!csrf) return false;
+  if (!csrf) {
+    handleRefreshFailure(hadSession);
+    return false;
+  }
   const response = await fetch("/api/v2/web/auth/refresh", {
     method: "POST",
     headers: { "x-waveflow-csrf": csrf },
   });
   if (!response.ok) {
-    session = null;
+    handleRefreshFailure(hadSession);
     return false;
   }
   session = await parse<WebSession>(response);
   return true;
+}
+
+function handleRefreshFailure(hadSession: boolean): void {
+  session = null;
+  if (hadSession && window.location.pathname !== "/login") {
+    window.location.assign("/login");
+  }
 }
 
 export async function ensureSession(): Promise<boolean> {

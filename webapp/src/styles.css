@@ -241,13 +241,11 @@ main {
 .songs {
   width: 100%;
   border-collapse: collapse;
-  display: block;
-  overflow-x: auto;
 }
 
-.songs tbody {
-  display: table;
+.songs-scroll {
   width: 100%;
+  overflow-x: auto;
 }
 
 .songs td {
@@ -500,7 +498,7 @@ main {
   }
 
   main {
-    padding: 1rem;
+    padding: 1rem 1rem 9rem;
   }
 
   .page-header,

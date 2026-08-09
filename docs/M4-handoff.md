@@ -44,12 +44,15 @@ GET  /api/v2/playlists · POST · PATCH · DELETE
 GET  /api/v2/favorites · PUT|DELETE /favorites/{kind}/{id}
 PUT  /api/v2/ratings/{kind}/{id} · POST /scrobbles · GET /now-playing
 GET|PUT /api/v2/queue
-GET|POST|PATCH|DELETE /api/v2/shares
-GET|POST /api/v2/libraries · PUT|DELETE /libraries/{id}/members
-GET|POST|PATCH /api/v2/users · PUT|DELETE /users/{name}/subsonic-credential
-GET /api/v2/sync/snapshot · /changes · WS /sync/socket · POST /sync/ack
+GET|POST /api/v2/shares · PATCH|DELETE /api/v2/shares/{share_id}
+GET|POST /api/v2/libraries
+PUT|DELETE /api/v2/libraries/{library_id}/members/{user_id}
+GET|POST /api/v2/admin/users · PATCH|DELETE /api/v2/admin/users/{username}
+PUT|DELETE /api/v2/admin/users/{username}/subsonic-credential
+GET /api/v2/sync/snapshot · /changes · WS /sync/socket · PUT /sync/ack
 POST /api/v2/oauth/authorize · POST /api/v2/oauth/token
-POST /api/v2/tracks/{id}/stream-ticket · GET /api/v2/stream/{ticket}
+GET /api/v2/tracks/{track_id}/stream
+POST /api/v2/tracks/{track_id}/stream-ticket · GET /api/v2/stream/{ticket}
 ```
 
 **Client web embarqué** (`webapp/`, Vite + React + TanStack Router), compilé

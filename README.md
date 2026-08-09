@@ -44,6 +44,8 @@ The server listens on `127.0.0.1:4533` by default and exposes:
   synchronization defined by `docs/rfcs/RFC-003-waveflow-sync-v2.md`;
 - `/api/v2/admin/users`, `/libraries`, `/transcode/status`: native server
   administration and dedicated Subsonic credential rotation;
+- `PUT|DELETE /api/v2/admin/users/{username}/subsonic-credential`: rotate or
+  revoke the dedicated Subsonic password and API key;
 - `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
 - `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
 - `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.

@@ -1,9 +1,9 @@
 //! Shared v2 domain services and tenant-filtered read models.
 
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc};
 
 use serde::Serialize;
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ use crate::{
     authentication::now_ms,
     database::{AccountRecord, AccountRole, Database},
     security::{self, EncryptedSecret, SecretBox},
-    sync::{MutationContext, OperationClaim, SyncService},
+    sync::{MutationContext, MutationReceipt, OperationClaim, SyncService},
 };
 
 /// Tenant-filtered projections shared by the Subsonic facade and the native
@@ -264,6 +264,16 @@ pub struct UserUpdate<'a> {
     pub web_password: Option<&'a str>,
 }
 
+pub struct SyncSnapshotData {
+    pub cursor: i64,
+    pub playlists: Vec<PlaylistItem>,
+    pub favorites: Vec<(String, Uuid, i64)>,
+    pub ratings: Vec<RatingItem>,
+    pub queue: Option<QueueItem>,
+    pub history: Vec<HistoryItem>,
+    pub shares: Vec<ShareItem>,
+}
+
 #[derive(Clone)]
 pub struct DomainServices {
     db: Database,
@@ -281,6 +291,8 @@ pub enum ServiceError {
     Invalid,
     #[error("conflict")]
     Conflict,
+    #[error("service unavailable")]
+    Unavailable,
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]
@@ -308,7 +320,7 @@ impl DomainServices {
         let password = password.to_owned();
         let password_hash = tokio::task::spawn_blocking(move || security::hash_password(&password))
             .await
-            .map_err(|_| ServiceError::Invalid)??;
+            .map_err(|_| ServiceError::Unavailable)??;
         self.db
             .bootstrap_admin(username, &password_hash, now_ms())
             .await?
@@ -667,19 +679,67 @@ impl DomainServices {
         user_id: Uuid,
         ids: &[Uuid],
     ) -> Result<Vec<SongItem>, ServiceError> {
-        let mut songs = Vec::new();
-        for id in ids {
-            if let Some(song) = fetch_songs(&self.db, user_id, None, Some(*id))
-                .await?
-                .into_iter()
-                .next()
-            {
-                songs.push(song);
-            } else {
-                return Err(ServiceError::NotFound);
-            }
+        let mut connection = self.db.pool().acquire().await?;
+        self.songs_by_ids_on(&mut connection, user_id, ids).await
+    }
+
+    pub async fn sync_snapshot(
+        &self,
+        user_id: Uuid,
+        history_limit: i64,
+    ) -> Result<SyncSnapshotData, ServiceError> {
+        let mut tx = self.db.pool().begin().await?;
+        let cursor =
+            sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event WHERE user_id=?")
+                .bind(user_id.to_string())
+                .fetch_one(&mut *tx)
+                .await?;
+        let playlists = self.playlists_on(&mut tx, user_id).await?;
+        let favorites = self.starred_ids_on(&mut tx, user_id).await?;
+        let ratings = self.ratings_on(&mut tx, user_id).await?;
+        let queue = self.queue_on(&mut tx, user_id).await?;
+        let history = self.history_on(&mut tx, user_id, history_limit).await?;
+        let shares = self.shares_on(&mut tx, user_id).await?;
+        tx.commit().await?;
+        Ok(SyncSnapshotData {
+            cursor,
+            playlists,
+            favorites,
+            ratings,
+            queue,
+            history,
+            shares,
+        })
+    }
+
+    async fn songs_by_ids_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(songs)
+        let ids_json = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
+        let rows = sqlx::query(concat!(
+            song_select!(),
+            " AND t.id IN (SELECT value FROM json_each(?))"
+        ))
+        .bind(user_id.to_string())
+        .bind(ids_json)
+        .fetch_all(&mut *connection)
+        .await?;
+        let available = rows
+            .into_iter()
+            .map(song_from_row)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|song| (song.id, song))
+            .collect::<HashMap<_, _>>();
+        ids.iter()
+            .map(|id| available.get(id).cloned().ok_or(ServiceError::NotFound))
+            .collect()
     }
 
     pub async fn artwork_for_user(
@@ -705,12 +765,21 @@ impl DomainServices {
     }
 
     pub async fn playlists(&self, user_id: Uuid) -> Result<Vec<PlaylistItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.playlists_on(&mut connection, user_id).await
+    }
+
+    async fn playlists_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+    ) -> Result<Vec<PlaylistItem>, ServiceError> {
         let rows = sqlx::query(
             "SELECT id, name, comment, public, created_at, updated_at FROM playlist \
              WHERE owner_user_id=? ORDER BY updated_at DESC, id",
         )
         .bind(user_id.to_string())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?;
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
@@ -722,7 +791,7 @@ impl DomainServices {
                 public: row.try_get::<i64, _>("public")? != 0,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
-                songs: self.playlist_songs(user_id, id).await?,
+                songs: self.playlist_songs_on(connection, user_id, id).await?,
             });
         }
         Ok(result)
@@ -736,8 +805,9 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)
     }
 
-    async fn playlist_songs(
+    async fn playlist_songs_on(
         &self,
+        connection: &mut SqliteConnection,
         user_id: Uuid,
         playlist_id: Uuid,
     ) -> Result<Vec<SongItem>, ServiceError> {
@@ -747,12 +817,12 @@ impl DomainServices {
         )
         .bind(playlist_id.to_string())
         .bind(user_id.to_string())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
-        self.songs_by_ids(user_id, &ids).await
+        self.songs_by_ids_on(connection, user_id, &ids).await
     }
 
     pub async fn create_playlist(
@@ -785,7 +855,9 @@ impl DomainServices {
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "playlist")?;
             let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
+            drop(_writer);
             return self.playlist(user_id, id).await;
         }
         let id = Uuid::new_v4();
@@ -812,6 +884,7 @@ impl DomainServices {
             )
             .await?;
         tx.commit().await?;
+        drop(_writer);
         self.sync.publish(user_id, receipt);
         self.playlist(user_id, id).await
     }
@@ -870,10 +943,12 @@ impl DomainServices {
         ids.extend_from_slice(add);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "playlist")?;
+            drop(_writer);
             return self.playlist(user_id, id).await;
         }
         let changed_at = now_ms();
@@ -914,6 +989,7 @@ impl DomainServices {
             )
             .await?;
         tx.commit().await?;
+        drop(_writer);
         self.sync.publish(user_id, receipt);
         self.playlist(user_id, id).await
     }
@@ -931,10 +1007,11 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "playlist")?;
             return Ok(());
         }
         let changed = sqlx::query("DELETE FROM playlist WHERE id=? AND owner_user_id=?")
@@ -995,10 +1072,11 @@ impl DomainServices {
             .await?;
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "favorite")?;
             return Ok(());
         }
         if starred {
@@ -1078,13 +1156,31 @@ impl DomainServices {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<(String, Uuid, i64)>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.starred_ids_on(&mut connection, user_id).await
+    }
+
+    async fn starred_ids_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+    ) -> Result<Vec<(String, Uuid, i64)>, ServiceError> {
         sqlx::query("SELECT entity_type, entity_id, starred_at FROM user_star WHERE user_id=? ORDER BY starred_at DESC")
-            .bind(user_id.to_string()).fetch_all(self.db.pool()).await?
+            .bind(user_id.to_string()).fetch_all(&mut *connection).await?
             .into_iter().map(|row| Ok((row.try_get("entity_type")?, parse_uuid(row.try_get("entity_id")?)?, row.try_get("starred_at")?)))
             .collect::<Result<Vec<_>, sqlx::Error>>().map_err(Into::into)
     }
 
     pub async fn ratings(&self, user_id: Uuid) -> Result<Vec<RatingItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.ratings_on(&mut connection, user_id).await
+    }
+
+    async fn ratings_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+    ) -> Result<Vec<RatingItem>, ServiceError> {
         sqlx::query(
             "SELECT r.entity_type, r.entity_id, r.rating, r.updated_at FROM user_rating r \
              WHERE r.user_id=? AND ( \
@@ -1094,7 +1190,7 @@ impl DomainServices {
              ) ORDER BY r.updated_at DESC, r.entity_type, r.entity_id",
         )
         .bind(user_id.to_string())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(|row| {
@@ -1141,10 +1237,11 @@ impl DomainServices {
             .await?;
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "rating")?;
             return Ok(());
         }
         if rating == 0 {
@@ -1208,13 +1305,19 @@ impl DomainServices {
         context: MutationContext,
     ) -> Result<(), ServiceError> {
         self.authorize_entity(user_id, "track", track_id).await?;
-        let now = time.unwrap_or_else(now_ms);
+        let current_time = now_ms();
+        let now = time.unwrap_or(current_time);
+        const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
+        if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
+            return Err(ServiceError::Invalid);
+        }
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "scrobble")?;
             return Ok(());
         }
         sqlx::query(
@@ -1288,6 +1391,16 @@ impl DomainServices {
         user_id: Uuid,
         limit: i64,
     ) -> Result<Vec<HistoryItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.history_on(&mut connection, user_id, limit).await
+    }
+
+    async fn history_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<HistoryItem>, ServiceError> {
         sqlx::query(
             "SELECT p.track_id, p.submission, p.played_at FROM play_event p \
              JOIN track t ON t.id=p.track_id JOIN library_member m ON m.library_id=t.library_id \
@@ -1296,7 +1409,7 @@ impl DomainServices {
         .bind(user_id.to_string())
         .bind(user_id.to_string())
         .bind(limit)
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(|row| {
@@ -1348,10 +1461,11 @@ impl DomainServices {
         }
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "queue")?;
             return Ok(());
         }
         sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
@@ -1394,8 +1508,17 @@ impl DomainServices {
     }
 
     pub async fn queue(&self, user_id: Uuid) -> Result<Option<QueueItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.queue_on(&mut connection, user_id).await
+    }
+
+    async fn queue_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+    ) -> Result<Option<QueueItem>, ServiceError> {
         let row = sqlx::query("SELECT current_track_id, position_ms, changed_by, updated_at FROM play_queue WHERE user_id=?")
-            .bind(user_id.to_string()).fetch_optional(self.db.pool()).await?;
+            .bind(user_id.to_string()).fetch_optional(&mut *connection).await?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -1403,7 +1526,7 @@ impl DomainServices {
             "SELECT track_id FROM play_queue_track WHERE user_id=? ORDER BY position",
         )
         .bind(user_id.to_string())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(parse_uuid)
@@ -1416,13 +1539,22 @@ impl DomainServices {
             position_ms: row.try_get("position_ms")?,
             changed_by: row.try_get("changed_by")?,
             updated_at: row.try_get("updated_at")?,
-            songs: self.songs_by_ids(user_id, &ids).await?,
+            songs: self.songs_by_ids_on(connection, user_id, &ids).await?,
         }))
     }
 
     pub async fn shares(&self, user_id: Uuid) -> Result<Vec<ShareItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.shares_on(&mut connection, user_id).await
+    }
+
+    async fn shares_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+    ) -> Result<Vec<ShareItem>, ServiceError> {
         let rows = sqlx::query("SELECT id, token_nonce, token_ciphertext, description, expires_at, created_at, visit_count FROM share WHERE owner_user_id=? ORDER BY created_at DESC")
-            .bind(user_id.to_string()).fetch_all(self.db.pool()).await?;
+            .bind(user_id.to_string()).fetch_all(&mut *connection).await?;
         let mut shares = Vec::new();
         for row in rows {
             let id = parse_uuid(row.try_get("id")?)?;
@@ -1434,7 +1566,7 @@ impl DomainServices {
                 "SELECT track_id FROM share_track WHERE share_id=? ORDER BY position",
             )
             .bind(id.to_string())
-            .fetch_all(self.db.pool())
+            .fetch_all(&mut *connection)
             .await?
             .into_iter()
             .map(parse_uuid)
@@ -1447,7 +1579,9 @@ impl DomainServices {
                 expires_at: row.try_get("expires_at")?,
                 created_at: row.try_get("created_at")?,
                 visit_count: row.try_get("visit_count")?,
-                songs: self.songs_by_ids(user_id, &track_ids).await?,
+                songs: self
+                    .songs_by_ids_on(connection, user_id, &track_ids)
+                    .await?,
             });
         }
         Ok(shares)
@@ -1493,7 +1627,9 @@ impl DomainServices {
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "share")?;
             let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
+            drop(_writer);
             return self
                 .shares(user_id)
                 .await?
@@ -1530,6 +1666,7 @@ impl DomainServices {
             )
             .await?;
         tx.commit().await?;
+        drop(_writer);
         self.sync.publish(user_id, receipt);
         self.shares(user_id)
             .await?
@@ -1605,10 +1742,12 @@ impl DomainServices {
     ) -> Result<ShareItem, ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "share")?;
+            drop(_writer);
             return self
                 .shares(user_id)
                 .await?
@@ -1616,12 +1755,14 @@ impl DomainServices {
                 .find(|share| share.id == id)
                 .ok_or(ServiceError::NotFound);
         }
-        let changed = sqlx::query("UPDATE share SET description=COALESCE(?, description), expires_at=COALESCE(?, expires_at), updated_at=? WHERE id=? AND owner_user_id=?")
-            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).execute(&mut *tx).await?.rows_affected();
-        if changed == 0 {
+        let persisted = sqlx::query("UPDATE share SET description=COALESCE(?, description), expires_at=COALESCE(?, expires_at), updated_at=? WHERE id=? AND owner_user_id=? RETURNING description, expires_at")
+            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).fetch_optional(&mut *tx).await?;
+        let Some(persisted) = persisted else {
             tx.rollback().await?;
             return Err(ServiceError::NotFound);
-        }
+        };
+        let persisted_description: Option<String> = persisted.try_get("description")?;
+        let persisted_expires_at: Option<i64> = persisted.try_get("expires_at")?;
         let receipt = self
             .sync
             .complete_operation(
@@ -1633,13 +1774,14 @@ impl DomainServices {
                 "upsert",
                 &serde_json::json!({
                     "id": id,
-                    "description": description,
-                    "expires_at": expires_at,
+                    "description": persisted_description,
+                    "expires_at": persisted_expires_at,
                 }),
                 Some(id),
             )
             .await?;
         tx.commit().await?;
+        drop(_writer);
         self.sync.publish(user_id, receipt);
         self.shares(user_id)
             .await?
@@ -1661,10 +1803,11 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        if let OperationClaim::Replayed(_) =
+        if let OperationClaim::Replayed(receipt) =
             self.sync.claim_operation(&mut tx, user_id, context).await?
         {
             tx.rollback().await?;
+            validate_replay_type(&receipt, "share")?;
             return Ok(());
         }
         let changed = sqlx::query("DELETE FROM share WHERE id=? AND owner_user_id=?")
@@ -1730,7 +1873,7 @@ impl DomainServices {
         let password = password.to_owned();
         let password_hash = tokio::task::spawn_blocking(move || security::hash_password(&password))
             .await
-            .map_err(|_| ServiceError::Invalid)??;
+            .map_err(|_| ServiceError::Unavailable)??;
         let id = self
             .db
             .create_account(username.trim(), &password_hash, role, now_ms())
@@ -1806,7 +1949,7 @@ impl DomainServices {
         folder_ids: Option<&[Uuid]>,
     ) -> Result<UserItem, ServiceError> {
         self.require_admin(actor_id).await?;
-        validate_name(username)?;
+        validate_username(username)?;
         if password.is_empty() {
             return Err(ServiceError::Invalid);
         }
@@ -1918,7 +2061,7 @@ impl DomainServices {
             Some(
                 tokio::task::spawn_blocking(move || security::hash_password(&password))
                     .await
-                    .map_err(|_| ServiceError::Invalid)??,
+                    .map_err(|_| ServiceError::Unavailable)??,
             )
         } else {
             None
@@ -2219,6 +2362,14 @@ fn validate_name(name: &str) -> Result<(), ServiceError> {
         Ok(())
     } else {
         Err(ServiceError::Invalid)
+    }
+}
+
+fn validate_replay_type(receipt: &MutationReceipt, expected: &str) -> Result<(), ServiceError> {
+    if receipt.entity_type == expected {
+        Ok(())
+    } else {
+        Err(ServiceError::Conflict)
     }
 }
 

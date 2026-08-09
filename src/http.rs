@@ -24,7 +24,9 @@ use crate::{authentication::AuthError, AppState};
 
 const WEB_REFRESH_COOKIE: &str = "waveflow-refresh";
 const WEB_CSRF_COOKIE: &str = "waveflow-csrf";
-const WEB_CSRF_HEADER: &str = "x-waveflow-csrf";
+pub const WEB_CSRF_HEADER: &str = "x-waveflow-csrf";
+pub const OPERATION_ID_HEADER: &str = "x-waveflow-operation-id";
+pub const DEVICE_ID_HEADER: &str = "x-waveflow-device-id";
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -430,7 +432,7 @@ pub async fn setup_status(
     Ok(Json(SetupStatusResponse { required }))
 }
 
-#[utoipa::path(post, path = "/api/v2/setup", tag = "authentication", request_body = SetupRequest, responses((status = 201, body = SetupResponse), (status = 403, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/setup", tag = "authentication", params(("Origin" = String, Header, description = "Required browser origin")), request_body = SetupRequest, responses((status = 201, body = SetupResponse), (status = 403, description = "Origin header missing or rejected", body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn setup(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -582,15 +584,23 @@ pub async fn web_logout(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     validate_web_request(&state, &headers)?;
-    let access_token = bearer_token(&headers).ok_or(ApiError::Unauthorized)?;
-    state
-        .auth
-        .logout(access_token)
-        .await
-        .map_err(ApiError::from)?;
-    let mut response = StatusCode::NO_CONTENT.into_response();
-    append_cookie(&mut response, expired_cookie(WEB_REFRESH_COOKIE, true))?;
-    append_cookie(&mut response, expired_cookie(WEB_CSRF_COOKIE, false))?;
+    let result = match cookie_value(&headers, WEB_REFRESH_COOKIE) {
+        Some(refresh_token) => state.auth.revoke_refresh(refresh_token).await,
+        None => Err(AuthError::InvalidRefreshToken),
+    };
+    let mut response = match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => ApiError::from(error).into_response(),
+    };
+    let secure = secure_cookies(&state);
+    append_cookie(
+        &mut response,
+        expired_cookie(WEB_REFRESH_COOKIE, true, secure),
+    )?;
+    append_cookie(
+        &mut response,
+        expired_cookie(WEB_CSRF_COOKIE, false, secure),
+    )?;
     Ok(response)
 }
 
@@ -641,11 +651,15 @@ pub async fn create_library(
     let actor = authenticated(&state, &headers).await?;
     require_admin(&actor)?;
     let path = std::path::PathBuf::from(&request.path);
-    let metadata = std::fs::symlink_metadata(&path).map_err(|_| ApiError::Validation)?;
+    let metadata = tokio::fs::symlink_metadata(&path)
+        .await
+        .map_err(|_| ApiError::Validation)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() || request.name.trim().is_empty() {
         return Err(ApiError::Validation);
     }
-    let canonical = std::fs::canonicalize(&path).map_err(|_| ApiError::Validation)?;
+    let canonical = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|_| ApiError::Validation)?;
     let library_id = state
         .db
         .create_library(
@@ -1155,7 +1169,7 @@ pub async fn list_ratings(
         .map_err(service_error)
 }
 
-#[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn create_scrobble(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1203,17 +1217,18 @@ pub async fn transcode_status(
 ) -> Result<Json<TranscodeStatusResponse>, ApiError> {
     authenticated(&state, &headers).await?;
     Ok(Json(TranscodeStatusResponse {
-        available: true,
+        available: state.media.transcoding_available(),
         active: state.media.active_transcodes(),
     }))
 }
 
-#[utoipa::path(get, path = "/api/v2/admin/users", tag = "administration", responses((status = 200, body = [crate::services::UserItem]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/admin/users", tag = "administration", responses((status = 200, body = [crate::services::UserItem]), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse)))]
 pub async fn list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::UserItem>>, ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     state
         .services
         .users(actor.id)
@@ -1222,13 +1237,14 @@ pub async fn list_users(
         .map_err(service_error)
 }
 
-#[utoipa::path(post, path = "/api/v2/admin/users", tag = "administration", request_body = CreateUserRequest, responses((status = 201, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/admin/users", tag = "administration", request_body = CreateUserRequest, responses((status = 201, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn create_user(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<crate::services::UserItem>), ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     let user = state
         .services
         .create_web_user(
@@ -1242,7 +1258,7 @@ pub async fn create_user(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-#[utoipa::path(patch, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), request_body = UpdateUserRequest, responses((status = 200, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(patch, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), request_body = UpdateUserRequest, responses((status = 200, body = crate::services::UserItem), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn update_user(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -1250,6 +1266,7 @@ pub async fn update_user(
     Json(request): Json<UpdateUserRequest>,
 ) -> Result<Json<crate::services::UserItem>, ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     state
         .services
         .update_user(
@@ -1270,13 +1287,14 @@ pub async fn update_user(
         .map_err(service_error)
 }
 
-#[utoipa::path(delete, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/admin/users/{username}", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     state
         .services
         .delete_user(actor.id, &username)
@@ -1285,7 +1303,7 @@ pub async fn delete_user(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(put, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), request_body = SetSubsonicCredentialRequest, responses((status = 200, body = SubsonicCredentialResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(put, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), request_body = SetSubsonicCredentialRequest, responses((status = 200, body = SubsonicCredentialResponse), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn set_subsonic_credential(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -1293,6 +1311,7 @@ pub async fn set_subsonic_credential(
     Json(request): Json<SetSubsonicCredentialRequest>,
 ) -> Result<Json<SubsonicCredentialResponse>, ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     let api_key = state
         .services
         .set_subsonic_credential(actor.id, &username, &request.password)
@@ -1301,13 +1320,14 @@ pub async fn set_subsonic_credential(
     Ok(Json(SubsonicCredentialResponse { api_key }))
 }
 
-#[utoipa::path(delete, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/admin/users/{username}/subsonic-credential", tag = "administration", params(("username" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn revoke_subsonic_credential(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
     state
         .services
         .revoke_subsonic_credential(actor.id, &username)
@@ -1510,20 +1530,13 @@ pub async fn sync_snapshot(
     headers: HeaderMap,
 ) -> Result<Json<SyncSnapshot>, ApiError> {
     let user = authenticated(&state, &headers).await?;
-    // No service mutation can commit while this gate is held, so every read in
-    // the bootstrap describes the same journal cursor.
-    let _writer = state.db.writer_guard().await;
-    let cursor = state.sync.latest_cursor(user.id).await.map_err(db_error)?;
-    let playlists = state
+    let snapshot = state
         .services
-        .playlists(user.id)
+        .sync_snapshot(user.id, crate::sync::MAX_SYNC_LIMIT)
         .await
         .map_err(service_error)?;
-    let favorites = state
-        .services
-        .starred_ids(user.id)
-        .await
-        .map_err(service_error)?
+    let favorites = snapshot
+        .favorites
         .into_iter()
         .map(|(entity_type, entity_id, starred_at)| StarredEntry {
             entity_type,
@@ -1531,32 +1544,18 @@ pub async fn sync_snapshot(
             starred_at,
         })
         .collect();
-    let ratings = state
-        .services
-        .ratings(user.id)
-        .await
-        .map_err(service_error)?;
-    let queue = state.services.queue(user.id).await.map_err(service_error)?;
-    let history = state
-        .services
-        .history(user.id, crate::sync::MAX_SYNC_LIMIT)
-        .await
-        .map_err(service_error)?;
-    let shares = state
-        .services
-        .shares(user.id)
-        .await
-        .map_err(service_error)?
+    let shares = snapshot
+        .shares
         .into_iter()
         .map(|share| share_response(&state, share))
         .collect();
     Ok(Json(SyncSnapshot {
-        cursor,
-        playlists,
+        cursor: snapshot.cursor,
+        playlists: snapshot.playlists,
         favorites,
-        ratings,
-        queue,
-        history,
+        ratings: snapshot.ratings,
+        queue: snapshot.queue,
+        history: snapshot.history,
         shares,
     }))
 }
@@ -1633,23 +1632,41 @@ async fn serve_sync_socket(socket: WebSocket, state: AppState, user_id: Uuid, af
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => {}
             },
-            notice = notices.recv() => match notice {
-                Ok((notice_user, notice)) if notice_user == user_id => {
-                    if send_sync_notice(&mut sender, notice.cursor).await.is_err() {
+            notice = notices.recv() => match sync_notice_action(&state.sync, user_id, notice).await {
+                Ok(SyncNoticeAction::Send(cursor)) => {
+                    if send_sync_notice(&mut sender, cursor).await.is_err() {
                         break;
                     }
                 }
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    match state.sync.latest_cursor(user_id).await {
-                        Ok(cursor) if send_sync_notice(&mut sender, cursor).await.is_err() => break,
-                        Ok(_) => {}
-                        Err(_) => break,
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Ok(SyncNoticeAction::Continue) => {}
+                Ok(SyncNoticeAction::Close) | Err(_) => break,
             }
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SyncNoticeAction {
+    Send(i64),
+    Continue,
+    Close,
+}
+
+async fn sync_notice_action(
+    sync: &crate::sync::SyncService,
+    user_id: Uuid,
+    notice: Result<(Uuid, crate::sync::SyncNotice), tokio::sync::broadcast::error::RecvError>,
+) -> Result<SyncNoticeAction, sqlx::Error> {
+    match notice {
+        Ok((notice_user, notice)) if notice_user == user_id => {
+            Ok(SyncNoticeAction::Send(notice.cursor))
+        }
+        Ok(_) => Ok(SyncNoticeAction::Continue),
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => sync
+            .latest_cursor(user_id)
+            .await
+            .map(SyncNoticeAction::Send),
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => Ok(SyncNoticeAction::Close),
     }
 }
 
@@ -1708,18 +1725,11 @@ impl IntoResponse for ApiError {
 
 fn web_auth_response(
     state: &AppState,
-    headers: &HeaderMap,
+    _headers: &HeaderMap,
     tokens: crate::authentication::AuthTokens,
 ) -> Result<Response, ApiError> {
     let csrf_token = crate::security::generate_token("wfcsrf_");
-    let secure = headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|origin| origin.starts_with("https://"))
-        || state
-            .public_url
-            .as_deref()
-            .is_some_and(|url| url.starts_with("https://"));
+    let secure = secure_cookies(state);
     let refresh_cookie = format!(
         "{WEB_REFRESH_COOKIE}={}; Path=/api/v2/web/auth; HttpOnly; SameSite=Strict; Max-Age={}{}",
         tokens.refresh_token,
@@ -1750,12 +1760,20 @@ fn append_cookie(response: &mut Response, value: String) -> Result<(), ApiError>
     Ok(())
 }
 
-fn expired_cookie(name: &str, http_only: bool) -> String {
+fn expired_cookie(name: &str, http_only: bool, secure: bool) -> String {
     format!(
-        "{name}=; Path={}; SameSite=Strict; Max-Age=0{}",
+        "{name}=; Path={}; SameSite=Strict; Max-Age=0{}{}",
         if http_only { "/api/v2/web/auth" } else { "/" },
-        if http_only { "; HttpOnly" } else { "" }
+        if http_only { "; HttpOnly" } else { "" },
+        if secure { "; Secure" } else { "" }
     )
+}
+
+fn secure_cookies(state: &AppState) -> bool {
+    state
+        .public_url
+        .as_deref()
+        .is_some_and(|url| url.starts_with("https://"))
 }
 
 fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -1786,9 +1804,6 @@ fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Result<(), ApiE
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .ok_or(ApiError::Forbidden)?;
-    if state.public_url.as_deref() == Some(origin) {
-        return Ok(());
-    }
     let parsed = url::Url::parse(origin).map_err(|_| ApiError::Forbidden)?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.path() != "/"
@@ -1796,6 +1811,14 @@ fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Result<(), ApiE
         || parsed.fragment().is_some()
     {
         return Err(ApiError::Forbidden);
+    }
+    if let Some(public_url) = state.public_url.as_deref() {
+        let expected = url::Url::parse(public_url).map_err(|_| ApiError::Unavailable)?;
+        return if parsed.origin() == expected.origin() {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden)
+        };
     }
     let authority = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
     let host = headers
@@ -1839,27 +1862,9 @@ async fn mutation_context(
     headers: &HeaderMap,
     user_id: Uuid,
 ) -> Result<crate::sync::MutationContext, ApiError> {
-    let operation_id = headers
-        .get("x-waveflow-operation-id")
-        .map(|value| {
-            value
-                .to_str()
-                .ok()
-                .and_then(|value| Uuid::parse_str(value).ok())
-                .ok_or(ApiError::Validation)
-        })
-        .transpose()?
-        .unwrap_or_else(Uuid::new_v4);
-    let origin_device_id = headers
-        .get("x-waveflow-device-id")
-        .map(|value| {
-            value
-                .to_str()
-                .ok()
-                .and_then(|value| Uuid::parse_str(value).ok())
-                .ok_or(ApiError::Validation)
-        })
-        .transpose()?;
+    let operation_id =
+        optional_uuid_header(headers, OPERATION_ID_HEADER)?.unwrap_or_else(Uuid::new_v4);
+    let origin_device_id = optional_uuid_header(headers, DEVICE_ID_HEADER)?;
     if let Some(device_id) = origin_device_id {
         let owned = state
             .sync
@@ -1876,6 +1881,19 @@ async fn mutation_context(
     })
 }
 
+fn optional_uuid_header(headers: &HeaderMap, name: &'static str) -> Result<Option<Uuid>, ApiError> {
+    headers
+        .get(name)
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or(ApiError::Validation)
+        })
+        .transpose()
+}
+
 fn db_error(error: sqlx::Error) -> ApiError {
     tracing::error!(error = %error, "catalog database operation failed");
     ApiError::Unavailable
@@ -1890,10 +1908,34 @@ fn service_error(error: crate::services::ServiceError) -> ApiError {
     match error {
         ServiceError::NotFound | ServiceError::Forbidden => ApiError::NotFound,
         ServiceError::Invalid | ServiceError::Conflict => ApiError::Validation,
+        ServiceError::Unavailable => ApiError::Unavailable,
         ServiceError::Database(error) => db_error(error),
         ServiceError::Security(error) => {
             tracing::error!(error = %error, "catalog security operation failed");
             ApiError::Unavailable
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sync_notice_action, SyncNoticeAction};
+
+    #[tokio::test]
+    async fn lagged_sync_socket_recovers_from_the_durable_cursor() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::Config::for_data_dir(temp.path().join("data"));
+        let db = crate::database::Database::open(&config).await.unwrap();
+        db.migrate().await.unwrap();
+        let sync = crate::sync::SyncService::new(db);
+        let action = sync_notice_action(
+            &sync,
+            uuid::Uuid::new_v4(),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(action, SyncNoticeAction::Send(0));
     }
 }

@@ -304,8 +304,9 @@ pub fn app(config: &Config, state: AppState) -> Router {
                     axum::http::header::AUTHORIZATION,
                     axum::http::header::CONTENT_TYPE,
                     axum::http::header::RANGE,
-                    axum::http::HeaderName::from_static("x-waveflow-operation-id"),
-                    axum::http::HeaderName::from_static("x-waveflow-device-id"),
+                    axum::http::HeaderName::from_static(http::WEB_CSRF_HEADER),
+                    axum::http::HeaderName::from_static(http::OPERATION_ID_HEADER),
+                    axum::http::HeaderName::from_static(http::DEVICE_ID_HEADER),
                 ])
                 .expose_headers([
                     axum::http::header::ACCEPT_RANGES,
