@@ -159,6 +159,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // stale response overwriting a newer selection.
   useEffect(() => {
     const element = audio.current;
+    const resumeSeconds =
+      current && resumeTrack.current === current.id
+        ? resumePosition.current
+        : 0;
+    positionRef.current = resumeSeconds;
+    setPosition(resumeSeconds);
+    setDuration(0);
     if (!element || !current) return;
     let cancelled = false;
     submitted.current = null;
@@ -169,8 +176,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const url = await streamUrl(current.id);
         if (cancelled) return;
         element.src = url;
-        if (resumeTrack.current === current.id && resumePosition.current > 0) {
-          element.currentTime = resumePosition.current;
+        if (resumeSeconds > 0) {
+          element.currentTime = resumeSeconds;
+        }
+        if (resumeTrack.current === current.id) {
           resumePosition.current = 0;
           resumeTrack.current = null;
         }
@@ -262,6 +271,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       remove: (at: number) => {
         localMutation.current = true;
+        if (at === indexRef.current) {
+          autoplay.current = false;
+          audio.current?.pause();
+        }
         setQueue((songs) => songs.filter((_, position) => position !== at));
         setIndex((value) =>
           value > at

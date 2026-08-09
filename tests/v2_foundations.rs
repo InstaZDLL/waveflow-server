@@ -1952,6 +1952,12 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             ["subsonic-response"]["status"],
         "ok"
     );
+    assert!(state
+        .db
+        .account_by_username("élodie")
+        .await
+        .unwrap()
+        .is_none());
 
     assert_eq!(
         subsonic_json(&router, "deleteUser", api_key, "&username=sub-default").await
@@ -3364,6 +3370,10 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
             Err(SyncError::Invalid)
         ));
     }
+    assert!(matches!(
+        state.sync.changes(owner, -1, 1).await,
+        Err(SyncError::Invalid)
+    ));
     let direct_foreign_device = state
         .services
         .set_star_with_context(
@@ -3431,6 +3441,21 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     .await;
     assert_eq!(mismatched_replay.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    let inverted_favorite = mutate(
+        "DELETE",
+        format!("/api/v2/favorites/track/{track}"),
+        favorite_operation,
+        None,
+    )
+    .await;
+    assert_eq!(inverted_favorite.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let star_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_star WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(star_count, 1);
+
     let scrobble_operation = Uuid::new_v4();
     for _ in 0..2 {
         let response = mutate(
@@ -3463,6 +3488,27 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         playlist_ids.push(json_body(response).await["id"].as_str().unwrap().to_owned());
     }
     assert_eq!(playlist_ids[0], playlist_ids[1]);
+    let different_playlist = mutate(
+        "POST",
+        "/api/v2/playlists".into(),
+        create_operation,
+        Some(serde_json::json!({
+            "name": "Different playlist",
+            "track_ids": [track]
+        })),
+    )
+    .await;
+    assert_eq!(
+        different_playlist.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let playlist_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE owner_user_id=?")
+            .bind(owner.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(playlist_count, 1);
 
     let share_operation = Uuid::new_v4();
     let mut share_ids = Vec::new();

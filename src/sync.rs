@@ -19,8 +19,31 @@ pub const MAX_SYNC_LIMIT: i64 = 500;
 pub enum SyncError {
     #[error("invalid synchronization input")]
     Invalid,
+    #[error("operation id was already used for another intent")]
+    Conflict,
     #[error(transparent)]
     Database(#[from] sqlx::Error),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MutationIntent([u8; 32]);
+
+impl MutationIntent {
+    pub fn new(action: &str, target: &str, payload: &Value) -> Self {
+        let payload = canonical_json(payload);
+        let payload = serde_json::to_vec(&payload).expect("JSON values always serialize");
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"waveflow-sync-intent-v1");
+        for component in [action.as_bytes(), target.as_bytes(), payload.as_slice()] {
+            hasher.update(&(component.len() as u64).to_le_bytes());
+            hasher.update(component);
+        }
+        Self(*hasher.finalize().as_bytes())
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,6 +122,7 @@ impl SyncService {
         connection: &mut SqliteConnection,
         user_id: Uuid,
         context: MutationContext,
+        intent: MutationIntent,
     ) -> Result<OperationClaim, SyncError> {
         if let Some(device_id) = context.origin_device_id {
             let owned = sqlx::query_scalar::<_, bool>(
@@ -121,12 +145,13 @@ impl SyncService {
         }
         let inserted = sqlx::query(
             "INSERT INTO sync_operation \
-             (user_id, operation_id, origin_device_id, created_at) VALUES (?, ?, ?, ?) \
+             (user_id, operation_id, origin_device_id, intent_hash, created_at) VALUES (?, ?, ?, ?, ?) \
              ON CONFLICT (user_id, operation_id) DO NOTHING",
         )
         .bind(user_id.to_string())
         .bind(context.operation_id.to_string())
         .bind(context.origin_device_id.map(|id| id.to_string()))
+        .bind(intent.as_bytes())
         .bind(now_ms())
         .execute(&mut *connection)
         .await?
@@ -136,7 +161,7 @@ impl SyncService {
         }
 
         let row = sqlx::query(
-            "SELECT so.result_entity_id, so.event_cursor, se.entity_type \
+            "SELECT so.result_entity_id, so.event_cursor, so.intent_hash, se.entity_type \
              FROM sync_operation so JOIN sync_event se ON se.cursor=so.event_cursor \
              WHERE so.user_id=? AND so.operation_id=? AND so.applied_at IS NOT NULL",
         )
@@ -152,6 +177,10 @@ impl SyncService {
             );
             return Err(sqlx::Error::Protocol("sync operation is incomplete".into()).into());
         };
+        let stored_intent: Option<Vec<u8>> = row.try_get("intent_hash")?;
+        if stored_intent.as_deref() != Some(intent.as_bytes()) {
+            return Err(SyncError::Conflict);
+        }
         Ok(OperationClaim::Replayed(MutationReceipt {
             operation_id: context.operation_id,
             result_entity_id: row
@@ -232,7 +261,7 @@ impl SyncService {
         after: i64,
         limit: i64,
     ) -> Result<SyncPage, SyncError> {
-        if !(1..=MAX_SYNC_LIMIT).contains(&limit) {
+        if after < 0 || !(1..=MAX_SYNC_LIMIT).contains(&limit) {
             return Err(SyncError::Invalid);
         }
         let rows = sqlx::query(
@@ -310,6 +339,22 @@ impl SyncService {
     }
 }
 
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
+        Value::Object(values) => {
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), canonical_json(&values[key])))
+                    .collect(),
+            )
+        }
+        value => value.clone(),
+    }
+}
+
 fn change_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncChange, sqlx::Error> {
     let payload: String = row.try_get("payload_json")?;
     Ok(SyncChange {
@@ -331,4 +376,51 @@ fn change_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncChange, sqlx::Err
 
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::parse_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MutationIntent;
+
+    #[test]
+    fn mutation_intents_are_canonical_and_scope_action_target_and_payload() {
+        let first = MutationIntent::new(
+            "update",
+            "playlist:one",
+            &serde_json::json!({ "name": "Road", "tracks": ["a", "b"] }),
+        );
+        let reordered = MutationIntent::new(
+            "update",
+            "playlist:one",
+            &serde_json::json!({ "tracks": ["a", "b"], "name": "Road" }),
+        );
+        assert_eq!(first.as_bytes(), reordered.as_bytes());
+        assert_ne!(
+            first.as_bytes(),
+            MutationIntent::new(
+                "delete",
+                "playlist:one",
+                &serde_json::json!({ "name": "Road", "tracks": ["a", "b"] }),
+            )
+            .as_bytes()
+        );
+        assert_ne!(
+            first.as_bytes(),
+            MutationIntent::new(
+                "update",
+                "playlist:two",
+                &serde_json::json!({ "name": "Road", "tracks": ["a", "b"] }),
+            )
+            .as_bytes()
+        );
+        assert_ne!(
+            first.as_bytes(),
+            MutationIntent::new(
+                "update",
+                "playlist:one",
+                &serde_json::json!({ "name": "Night", "tracks": ["a", "b"] }),
+            )
+            .as_bytes()
+        );
+    }
 }

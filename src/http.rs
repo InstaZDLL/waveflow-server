@@ -1921,6 +1921,7 @@ fn db_error(error: sqlx::Error) -> ApiError {
 fn sync_error(error: crate::sync::SyncError) -> ApiError {
     match error {
         crate::sync::SyncError::Invalid => ApiError::Validation,
+        crate::sync::SyncError::Conflict => ApiError::Validation,
         crate::sync::SyncError::Database(error) => db_error(error),
     }
 }
