@@ -1,0 +1,23 @@
+# Force LF for source files so `sqlx::migrate!` (compile-time macro) embeds
+# byte-stable migration content regardless of contributors' `core.autocrlf`
+# setting. Drifting line endings would change the SHA-384 sqlx records in
+# `_sqlx_migrations.checksum` and break existing installs at boot even though
+# the SQL is semantically identical.
+*.sql       text eol=lf
+*.rs        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+
+# Lockfiles benefit from native diff/merge but stay LF so CI on Linux runners
+# doesn't see noisy diffs against Windows contributors.
+Cargo.lock  text eol=lf
+bun.lock    text eol=lf
