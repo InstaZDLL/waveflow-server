@@ -9,7 +9,14 @@ import {
   useState,
 } from "react";
 
-import { formatDuration, type Song, scrobble, streamUrl } from "./api";
+import {
+  formatDuration,
+  getQueue,
+  type Song,
+  saveQueue,
+  scrobble,
+  streamUrl,
+} from "./api";
 
 type PlayerState = {
   queue: Song[];
@@ -19,6 +26,8 @@ type PlayerState = {
   position: number;
   duration: number;
   play: (queue: Song[], index: number) => void;
+  remove: (index: number) => void;
+  clear: () => void;
   toggle: () => void;
   next: () => void;
   previous: () => void;
@@ -46,9 +55,40 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // The ended handler is registered once, so it reads the queue length through
   // a ref rather than closing over a stale value.
   const queueLength = useRef(0);
+  const queueRef = useRef<Song[]>([]);
+  const indexRef = useRef(0);
+  const positionRef = useRef(0);
+  const hydrated = useRef(false);
+  const resumePosition = useRef(0);
 
   const current = queue[index] ?? null;
   queueLength.current = queue.length;
+  queueRef.current = queue;
+  indexRef.current = index;
+  positionRef.current = position;
+
+  useEffect(() => {
+    let cancelled = false;
+    void getQueue()
+      .then((saved) => {
+        if (cancelled || !saved) return;
+        setQueue(saved.songs);
+        const savedIndex = saved.current
+          ? saved.songs.findIndex((song) => song.id === saved.current)
+          : 0;
+        setIndex(Math.max(savedIndex, 0));
+        resumePosition.current = Math.max(saved.position_ms, 0) / 1000;
+      })
+      // A transient queue failure must not become an unhandled browser error;
+      // playback can still start a new queue and retry on its first mutation.
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) hydrated.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!audio.current) audio.current = new Audio();
@@ -62,7 +102,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         Math.min(value + 1, Math.max(queueLength.current - 1, 0)),
       );
     const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const onPause = () => {
+      setPlaying(false);
+      if (!hydrated.current) return;
+      const songs = queueRef.current;
+      const selected = songs[indexRef.current] ?? null;
+      void saveQueue(
+        songs,
+        selected?.id ?? null,
+        Math.round(positionRef.current * 1000),
+      ).catch(() => undefined);
+    };
     element.addEventListener("timeupdate", onTime);
     element.addEventListener("loadedmetadata", onDuration);
     element.addEventListener("ended", onEnd);
@@ -89,6 +139,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const url = await streamUrl(current.id);
         if (cancelled) return;
         element.src = url;
+        if (resumePosition.current > 0) {
+          element.currentTime = resumePosition.current;
+          resumePosition.current = 0;
+        }
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
       } catch {
@@ -114,6 +168,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIndex(at);
   }, []);
 
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const timeout = window.setTimeout(() => {
+      void saveQueue(
+        queue,
+        current?.id ?? null,
+        Math.round(positionRef.current * 1000),
+      ).catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [queue, current]);
+
   const toggle = useCallback(() => {
     const element = audio.current;
     if (!element || !current) return;
@@ -130,6 +196,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       position,
       duration,
       play,
+      remove: (at: number) => {
+        setQueue((songs) => songs.filter((_, position) => position !== at));
+        setIndex((value) =>
+          value > at
+            ? value - 1
+            : Math.min(value, Math.max(queue.length - 2, 0)),
+        );
+      },
+      clear: () => {
+        audio.current?.pause();
+        setQueue([]);
+        setIndex(0);
+      },
       toggle,
       next: () =>
         setIndex((value) => Math.min(value + 1, Math.max(queue.length - 1, 0))),
@@ -166,17 +245,17 @@ export function PlayerBar() {
           onClick={player.previous}
           aria-label="Previous track"
         >
-          ⏮
+          Previous
         </button>
         <button
           type="button"
           onClick={player.toggle}
           aria-label={player.playing ? "Pause" : "Play"}
         >
-          {player.playing ? "⏸" : "▶"}
+          {player.playing ? "Pause" : "Play"}
         </button>
         <button type="button" onClick={player.next} aria-label="Next track">
-          ⏭
+          Next
         </button>
       </div>
       <div className="player-progress">
