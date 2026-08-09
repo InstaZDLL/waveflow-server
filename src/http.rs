@@ -1516,7 +1516,7 @@ pub async fn sync_changes(
         .changes(user.id, after, limit)
         .await
         .map(Json)
-        .map_err(db_error)
+        .map_err(sync_error)
 }
 
 #[utoipa::path(
@@ -1626,10 +1626,20 @@ async fn serve_sync_socket(socket: WebSocket, state: AppState, user_id: Uuid, af
             return;
         }
     }
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
+    let mut awaiting_pong = false;
     loop {
         tokio::select! {
             incoming = receiver.next() => match incoming {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(Message::Pong(_))) => awaiting_pong = false,
+                Some(Ok(Message::Ping(payload))) => {
+                    if sender.send(Message::Pong(payload)).await.is_err() {
+                        break;
+                    }
+                }
                 Some(Ok(_)) => {}
             },
             notice = notices.recv() => match sync_notice_action(&state.sync, user_id, notice).await {
@@ -1640,6 +1650,12 @@ async fn serve_sync_socket(socket: WebSocket, state: AppState, user_id: Uuid, af
                 }
                 Ok(SyncNoticeAction::Continue) => {}
                 Ok(SyncNoticeAction::Close) | Err(_) => break,
+            },
+            _ = heartbeat.tick() => {
+                if awaiting_pong || sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+                awaiting_pong = true;
             }
         }
     }
@@ -1770,10 +1786,13 @@ fn expired_cookie(name: &str, http_only: bool, secure: bool) -> String {
 }
 
 fn secure_cookies(state: &AppState) -> bool {
-    state
-        .public_url
-        .as_deref()
-        .is_some_and(|url| url.starts_with("https://"))
+    public_url_is_https(state.public_url.as_deref())
+}
+
+fn public_url_is_https(public_url: Option<&str>) -> bool {
+    public_url
+        .and_then(|url| url::Url::parse(url).ok())
+        .is_some_and(|url| url.scheme() == "https")
 }
 
 fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -1899,6 +1918,13 @@ fn db_error(error: sqlx::Error) -> ApiError {
     ApiError::Unavailable
 }
 
+fn sync_error(error: crate::sync::SyncError) -> ApiError {
+    match error {
+        crate::sync::SyncError::Invalid => ApiError::Validation,
+        crate::sync::SyncError::Database(error) => db_error(error),
+    }
+}
+
 /// Maps a domain failure onto the HTTP surface. `Forbidden` deliberately answers
 /// 404 like `NotFound`: telling a caller that a resource exists but belongs to
 /// someone else would leak another tenant's catalogue, which is the same
@@ -1919,7 +1945,15 @@ fn service_error(error: crate::services::ServiceError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{sync_notice_action, SyncNoticeAction};
+    use super::{public_url_is_https, sync_notice_action, SyncNoticeAction};
+
+    #[test]
+    fn secure_cookie_detection_uses_the_parsed_url_scheme() {
+        assert!(public_url_is_https(Some("HTTPS://waveflow.test/")));
+        assert!(!public_url_is_https(Some("http://waveflow.test")));
+        assert!(!public_url_is_https(Some("not a URL")));
+        assert!(!public_url_is_https(None));
+    }
 
     #[tokio::test]
     async fn lagged_sync_socket_recovers_from_the_durable_cursor() {

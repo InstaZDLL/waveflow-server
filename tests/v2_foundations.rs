@@ -13,7 +13,10 @@ use waveflow_server::{
     authentication::now_ms,
     catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
     database::{AccountRole, LibraryRole, LibraryVisibility},
-    security, Config,
+    security,
+    services::ServiceError,
+    sync::{MutationContext, SyncError, MAX_SYNC_LIMIT},
+    Config,
 };
 
 async fn test_app() -> (TempDir, Config, waveflow_server::AppState) {
@@ -1930,26 +1933,25 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(default_folders.contains(&library.to_string()));
     assert!(default_folders.contains(&secondary_library.to_string()));
 
-    let invalid_username = router
-        .clone()
-        .oneshot(
-            Request::get(format!(
-                "/rest/createUser.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&username=%C3%A9lodie&password=invalid-user-secret&email=invalid@example.invalid"
-            ))
-            .body(Body::empty())
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(invalid_username.status(), StatusCode::BAD_REQUEST);
-    let invalid_username = json_body(invalid_username).await;
-    assert_eq!(invalid_username["subsonic-response"]["status"], "failed");
+    let unicode_username = subsonic_json(
+        &router,
+        "createUser",
+        api_key,
+        "&username=%C3%A9lodie&password=unicode-user-secret&email=unicode@example.invalid",
+    )
+    .await;
+    assert_eq!(unicode_username["subsonic-response"]["status"], "ok");
     assert!(state
         .db
         .account_by_username("élodie")
         .await
         .unwrap()
-        .is_none());
+        .is_some());
+    assert_eq!(
+        subsonic_json(&router, "deleteUser", api_key, "&username=%C3%A9lodie").await
+            ["subsonic-response"]["status"],
+        "ok"
+    );
 
     assert_eq!(
         subsonic_json(&router, "deleteUser", api_key, "&username=sub-default").await
@@ -3195,6 +3197,36 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     assert_eq!(queue["current"], first);
     assert_eq!(queue["songs"].as_array().unwrap().len(), 2);
 
+    // Multiple shares retain their independent track ordering when the
+    // aggregate loader batches all share rows.
+    for track_ids in [vec![second.clone(), first.clone()], vec![first.clone()]] {
+        let share = send(
+            "POST",
+            "/api/v2/shares".into(),
+            owner_token.clone(),
+            Some(serde_json::json!({ "track_ids": track_ids })),
+        )
+        .await;
+        assert_eq!(share.status(), StatusCode::CREATED);
+    }
+    let shares = send("GET", "/api/v2/shares".into(), owner_token.clone(), None).await;
+    let shares = json_body(shares).await;
+    let song_orders = shares
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|share| {
+            share["track_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|track_id| track_id.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert!(song_orders.contains(&vec![second.to_string(), first.to_string()]));
+    assert!(song_orders.contains(&vec![first.to_string()]));
+
     // A foreign tenant can neither read nor mutate any of it.
     let foreign_playlists = send(
         "GET",
@@ -3325,6 +3357,27 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let intruder_login = login("sync-intruder").await;
     let intruder_token = intruder_login["access_token"].as_str().unwrap().to_owned();
     let intruder_device_id = intruder_login["device_id"].as_str().unwrap().to_owned();
+
+    for invalid_limit in [0, MAX_SYNC_LIMIT + 1, i64::MAX] {
+        assert!(matches!(
+            state.sync.changes(owner, 0, invalid_limit).await,
+            Err(SyncError::Invalid)
+        ));
+    }
+    let direct_foreign_device = state
+        .services
+        .set_star_with_context(
+            owner,
+            "track",
+            track,
+            true,
+            MutationContext {
+                operation_id: Uuid::new_v4(),
+                origin_device_id: Some(Uuid::parse_str(&intruder_device_id).unwrap()),
+            },
+        )
+        .await;
+    assert!(matches!(direct_foreign_device, Err(ServiceError::Invalid)));
 
     let mutate =
         |method: &'static str, uri: String, operation_id: Uuid, body: Option<serde_json::Value>| {
