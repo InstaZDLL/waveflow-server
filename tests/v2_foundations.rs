@@ -189,7 +189,8 @@ async fn login_refresh_rotation_and_logout_work() {
 async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     let (_temp, config, state) = test_app().await;
     let now = now_ms();
-    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    let password_hash =
+        security::hash_password(&security::generate_token("test-password-")).unwrap();
     let user_id = state
         .db
         .create_account("native-token-user", &password_hash, AccountRole::User, now)
