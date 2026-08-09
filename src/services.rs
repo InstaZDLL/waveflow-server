@@ -135,6 +135,8 @@ pub const MAX_HISTORY_LIMIT: i64 = 500;
 /// Fits a UUID-only queue request below the server's 16 KiB body limit while
 /// also bounding the work performed under the global SQLite writer gate.
 pub const MAX_QUEUE_TRACKS: usize = 400;
+/// Applies the same request-size and writer-gate bound to public shares.
+pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
 /// bind it without re-checking bounds.
@@ -1796,7 +1798,7 @@ impl DomainServices {
             share.url_token = Some(self.secret_box.derive_share_token(id));
             return Ok(share);
         }
-        if ids.is_empty() {
+        if ids.is_empty() || ids.len() > MAX_SHARE_TRACKS {
             return Err(ServiceError::Invalid);
         }
         let songs = self.songs_by_ids_on(&mut tx, user_id, ids).await?;

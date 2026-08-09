@@ -14,7 +14,7 @@ use waveflow_server::{
     catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
     database::{AccountRole, LibraryRole, LibraryVisibility},
     security,
-    services::{ServiceError, MAX_HISTORY_LIMIT, MAX_QUEUE_TRACKS},
+    services::{ServiceError, MAX_HISTORY_LIMIT, MAX_QUEUE_TRACKS, MAX_SHARE_TRACKS},
     sync::{MutationContext, SyncError, MAX_SYNC_LIMIT},
     Config,
 };
@@ -3931,6 +3931,14 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         state
             .services
             .save_queue(owner, &oversized_queue, Some(track), 0, Some("limit-test"))
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    let oversized_share = vec![track; MAX_SHARE_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .create_share(owner, &oversized_share, Some("limit-test"), None)
             .await,
         Err(ServiceError::Invalid)
     ));
