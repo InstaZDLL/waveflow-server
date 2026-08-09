@@ -1,0 +1,101 @@
+# RFC-003 — WaveFlow Desktop user-data sync v2
+
+- Status: accepted
+- Date: 2026-08-09
+- Scope: WaveFlow Server v2 M4 and the future Desktop remote-source adapter
+
+## Decision
+
+The server is authoritative for its catalogue. Desktop exposes it as a separate
+remote source and synchronizes user-owned state only: playlists, favorites,
+ratings, scrobbles/history, play queue and public shares. This protocol never
+imports server tracks into the local catalogue and never guesses a local/server
+track match. Reconciliation remains M5 and requires its own RFC.
+
+All public IDs are UUIDs and all timestamps are Unix milliseconds. REST is the
+durable source of truth. The WebSocket is only an edge-triggered notification
+that a newer cursor may exist.
+
+## Authentication
+
+Desktop obtains a short-lived access token and rotating refresh token through
+Authorization Code + PKCE. A mutation may send:
+
+- `X-WaveFlow-Operation-Id: <uuid>` — stable ID for this logical mutation;
+- `X-WaveFlow-Device-Id: <uuid>` — the non-revoked device created by login or
+  the PKCE exchange.
+
+The server rejects a device owned by another account. If no operation ID is
+provided, the server generates one; clients that need retry safety must provide
+one. An operation ID is unique per user and must never be reused for another
+logical mutation.
+
+## Bootstrap and incremental reads
+
+`GET /api/v2/sync/snapshot` returns one writer-consistent representation:
+
+```json
+{
+  "cursor": 42,
+  "playlists": [],
+  "favorites": [],
+  "ratings": [],
+  "queue": null,
+  "history": [],
+  "shares": []
+}
+```
+
+The client atomically replaces its remote user-data projection, then continues
+from `cursor`.
+
+`GET /api/v2/sync/changes?after=<cursor>&limit=<1..500>` returns changes in
+strict ascending cursor order. `next_cursor` is the last returned cursor, or
+the supplied cursor for an empty page. While `has_more` is true, the client
+immediately requests the next page.
+
+Each change has `cursor`, `event_id`, `operation_id`, optional
+`origin_device_id`, `entity_type`, `entity_id`, `action`, `payload` and
+`changed_at`. Supported pairs are:
+
+| Entity | Actions | Payload |
+| --- | --- | --- |
+| `playlist` | `upsert`, `delete` | id, name/comment/public when known, ordered `track_ids` |
+| `favorite` | `upsert`, `delete` | `entity_type`, `entity_id`, `starred` |
+| `rating` | `upsert`, `delete` | `entity_type`, `entity_id`, `rating` (0 means clear) |
+| `scrobble` | `upsert`, `append` | `track_id`, `submission`, `played_at` |
+| `queue` | `upsert` | ordered `track_ids`, current track, `position_ms`, client |
+| `share` | `upsert`, `delete` | id and the changed share fields |
+
+Unknown entity types, actions and payload fields must be ignored and retained
+only if a client needs to relay diagnostic data. A client that cannot apply a
+known event discards its local projection and fetches a fresh snapshot.
+
+## Idempotency, acknowledgement and wake-up
+
+The operation reservation, domain mutation and journal append commit in one
+SQLite transaction behind the process-wide writer gate. Repeating the same
+operation ID returns the original result and never creates a second domain row
+or journal event.
+
+`PUT /api/v2/sync/ack` with `{ "device_id": "<uuid>", "cursor": 42 }`
+records a monotonic per-device acknowledgement. A cursor below the stored ACK
+does not move it backwards; a cursor beyond the user's latest event is rejected.
+ACKs are observability and future-retention inputs, not a prerequisite for
+reading later pages.
+
+`GET /api/v2/sync/socket?after=<cursor>` upgrades to WebSocket and sends JSON
+messages shaped as `{ "cursor": 43 }`. Authentication uses the same Bearer
+header as REST. On every notice, reconnect, timeout or lag, the client asks
+`/sync/changes`; it never treats socket delivery as state delivery.
+
+## Cross-protocol convergence
+
+Native, embedded-web and Subsonic mutations all call the same domain services.
+Operations initiated by web/Subsonic receive server-generated operation IDs and
+therefore appear in the same journal. Tenant filters are applied in repository
+queries before data reaches any facade.
+
+The journal is append-only in v2.0. Retention/compaction may be introduced only
+with a snapshot floor that prevents an offline client from silently skipping
+events.

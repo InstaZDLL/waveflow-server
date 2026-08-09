@@ -40,7 +40,7 @@ Audio files are always read-only. Canonical-path and symlink checks apply before
 
 The M3 beta exposes a tested Subsonic/OpenSubsonic façade. GET, form POST, XML and JSON share the same services. Only implemented extensions are advertised. Credentials in query parameters are removed from request logging.
 
-M4 adds `/api/v2`, Authorization Code with PKCE for WaveFlow Desktop, rotating native tokens and user-data-only synchronization. The server catalogue appears in Desktop as a separate remote source. Existing local and server catalogues are not automatically merged.
+M4 adds `/api/v2`, Authorization Code with PKCE for WaveFlow Desktop, rotating native tokens and user-data-only synchronization. The server catalogue appears in Desktop as a separate remote source. Existing local and server catalogues are not automatically merged. The cursor, idempotency, ACK and WebSocket contracts are frozen in [RFC-003](RFC-003-waveflow-sync-v2.md).
 
 All web, native and Subsonic writes pass through common services so playlists, favorites, ratings, queue and history converge independent of the calling protocol.
 

@@ -186,6 +186,256 @@ async fn login_refresh_rotation_and_logout_work() {
 }
 
 #[tokio::test]
+async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
+    let (_temp, config, state) = test_app().await;
+    let password_hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("web-listener", &password_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+
+    let mut request = json_request(
+        "/api/v2/web/auth/login",
+        serde_json::json!({
+            "username": "web-listener",
+            "password": "correct horse battery staple",
+            "device_name": "Embedded web player"
+        }),
+    );
+    request
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let refresh_cookie = cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-refresh="))
+        .unwrap();
+    assert!(refresh_cookie.contains("HttpOnly"));
+    assert!(refresh_cookie.contains("SameSite=Strict"));
+    let refresh_pair = refresh_cookie.split(';').next().unwrap().to_owned();
+    let csrf_pair = cookies
+        .iter()
+        .find(|cookie| cookie.starts_with("waveflow-csrf="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let csrf = csrf_pair.split_once('=').unwrap().1.to_owned();
+    let body = json_body(response).await;
+    assert!(body["access_token"].as_str().unwrap().starts_with("wfa_"));
+    assert!(body.get("refresh_token").is_none());
+
+    let missing_csrf = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(missing_csrf).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let refresh = Request::post("/api/v2/web/auth/refresh")
+        .header("origin", "http://waveflow.test")
+        .header("host", "waveflow.test")
+        .header("cookie", format!("{refresh_pair}; {csrf_pair}"))
+        .header("x-waveflow-csrf", csrf)
+        .body(Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(refresh).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter(|value| value.to_str().unwrap().starts_with("waveflow-refresh="))
+            .count(),
+        1
+    );
+
+    let mut foreign = json_request(
+        "/api/v2/web/auth/login",
+        serde_json::json!({
+            "username": "web-listener",
+            "password": "correct horse battery staple",
+            "device_name": "Foreign page"
+        }),
+    );
+    foreign
+        .headers_mut()
+        .insert("origin", "https://attacker.invalid".parse().unwrap());
+    foreign
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.oneshot(foreign).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn setup_and_native_administration_cover_users_credentials_and_libraries() {
+    let (_temp, config, state) = test_app().await;
+    let music = config.data_dir.join("admin-library");
+    std::fs::create_dir_all(&music).unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let status = router
+        .clone()
+        .oneshot(Request::get("/api/v2/setup").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json_body(status).await["required"], true);
+
+    let mut request = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "first-admin",
+            "password": "correct horse battery staple"
+        }),
+    );
+    request
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::CREATED
+    );
+
+    let mut repeated = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "second-admin",
+            "password": "correct horse battery staple"
+        }),
+    );
+    repeated
+        .headers_mut()
+        .insert("origin", "http://waveflow.test".parse().unwrap());
+    repeated
+        .headers_mut()
+        .insert("host", "waveflow.test".parse().unwrap());
+    assert_eq!(
+        router.clone().oneshot(repeated).await.unwrap().status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let admin_token = login_token(&router, "first-admin", "correct horse battery staple").await;
+    let create_user = Request::post("/api/v2/admin/users")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "username": "native-listener",
+                "web_password": "another correct horse password",
+                "role": "user"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(create_user).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let listener_id = Uuid::parse_str(json_body(response).await["id"].as_str().unwrap()).unwrap();
+
+    let credential = Request::put("/api/v2/admin/users/native-listener/subsonic-credential")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "password": "dedicated subsonic password" }).to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(credential).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let api_key = json_body(response).await["api_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(api_key.starts_with("wfsk_"));
+    assert!(state
+        .services
+        .credential_by_api_key(&api_key)
+        .await
+        .unwrap()
+        .is_some());
+
+    let create_library = Request::post("/api/v2/libraries")
+        .header("authorization", format!("Bearer {admin_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "name": "Native library",
+                "path": std::fs::canonicalize(&music).unwrap().to_string_lossy(),
+                "visibility": "shared"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(create_library).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let library_id =
+        Uuid::parse_str(json_body(response).await["library_id"].as_str().unwrap()).unwrap();
+
+    let set_member = Request::put(format!(
+        "/api/v2/libraries/{library_id}/members/{listener_id}"
+    ))
+    .header("authorization", format!("Bearer {admin_token}"))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({ "role": "listener" }).to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        router.clone().oneshot(set_member).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let listener_token =
+        login_token(&router, "native-listener", "another correct horse password").await;
+    let libraries = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/libraries")
+                .header("authorization", format!("Bearer {listener_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let libraries = json_body(libraries).await;
+    assert_eq!(libraries.as_array().unwrap().len(), 1);
+    assert_eq!(libraries[0]["id"], library_id.to_string());
+
+    let forbidden = router
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {listener_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     let (_temp, config, state) = test_app().await;
     let now = now_ms();
@@ -304,6 +554,19 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     assert_eq!(openapi.status(), StatusCode::OK);
     let document = json_body(openapi).await;
     assert!(document["paths"]["/api/v2/auth/login"].is_object());
+    for path in [
+        "/api/v2/setup",
+        "/api/v2/web/auth/login",
+        "/api/v2/libraries",
+        "/api/v2/admin/users",
+        "/api/v2/sync/snapshot",
+        "/api/v2/sync/changes",
+        "/api/v2/sync/ack",
+        "/api/v2/sync/socket",
+        "/api/v2/transcode/status",
+    ] {
+        assert!(document["paths"][path].is_object(), "missing {path}");
+    }
 }
 
 #[tokio::test]
@@ -1543,6 +1806,19 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await["subsonic-response"]["status"],
         "ok"
     );
+    let journal_entities = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT entity_type FROM sync_event WHERE user_id=? ORDER BY entity_type",
+    )
+    .bind(admin.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert!(journal_entities.contains(&"playlist".to_owned()));
+    assert!(journal_entities.contains(&"favorite".to_owned()));
+    assert!(journal_entities.contains(&"rating".to_owned()));
+    assert!(journal_entities.contains(&"scrobble".to_owned()));
+    assert!(journal_entities.contains(&"queue".to_owned()));
+    assert!(journal_entities.contains(&"share".to_owned()));
 
     let default_user = subsonic_json(
         &router,
@@ -2816,6 +3092,256 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     )
     .await;
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
+    let (_temp, config, state) = test_app().await;
+    let password = "sync integration password";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("sync-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("sync-intruder", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("sync-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Sync library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library,
+            scan,
+            &browse_input(
+                0,
+                "Synchronized Song",
+                "Remote Album",
+                "Remote Artist",
+                Some(1),
+                Some(1),
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+
+    let mut notices = state.sync.subscribe();
+    let router = waveflow_server::app(&config, state.clone());
+    let login = |username: &'static str| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(json_request(
+                    "/api/v2/auth/login",
+                    serde_json::json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": format!("{username} desktop")
+                    }),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
+        }
+    };
+    let owner_login = login("sync-owner").await;
+    let owner_token = owner_login["access_token"].as_str().unwrap().to_owned();
+    let device_id = owner_login["device_id"].as_str().unwrap().to_owned();
+    let intruder_token = login("sync-intruder").await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mutate =
+        |method: &'static str, uri: String, operation_id: Uuid, body: Option<serde_json::Value>| {
+            let router = router.clone();
+            let owner_token = owner_token.clone();
+            let device_id = device_id.clone();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {owner_token}"))
+                    .header("x-waveflow-operation-id", operation_id.to_string())
+                    .header("x-waveflow-device-id", device_id);
+                let request = match body {
+                    Some(body) => request
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                    None => request.body(Body::empty()).unwrap(),
+                };
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+    // Retrying a mutation with the same operation UUID must neither duplicate
+    // the business row nor append another event.
+    let favorite_operation = Uuid::new_v4();
+    for _ in 0..2 {
+        let response = mutate(
+            "PUT",
+            format!("/api/v2/favorites/track/{track}"),
+            favorite_operation,
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let star_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_star WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(star_count, 1);
+
+    let scrobble_operation = Uuid::new_v4();
+    for _ in 0..2 {
+        let response = mutate(
+            "POST",
+            "/api/v2/scrobbles".into(),
+            scrobble_operation,
+            Some(serde_json::json!({ "track_id": track, "submission": true })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let play_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play_event WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(play_count, 1, "a retried scrobble must stay idempotent");
+
+    let create_operation = Uuid::new_v4();
+    let mut playlist_ids = Vec::new();
+    for _ in 0..2 {
+        let response = mutate(
+            "POST",
+            "/api/v2/playlists".into(),
+            create_operation,
+            Some(serde_json::json!({ "name": "Synced", "track_ids": [track] })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        playlist_ids.push(json_body(response).await["id"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(playlist_ids[0], playlist_ids[1]);
+
+    let share_operation = Uuid::new_v4();
+    let mut share_ids = Vec::new();
+    for _ in 0..2 {
+        let response = mutate(
+            "POST",
+            "/api/v2/shares".into(),
+            share_operation,
+            Some(serde_json::json!({
+                "track_ids": [track],
+                "description": "Synchronized share"
+            })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        share_ids.push(json_body(response).await["id"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(share_ids[0], share_ids[1]);
+
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(1), notices.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(notice.0, owner);
+    assert!(notice.1.cursor > 0);
+
+    let changes = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0&limit=1")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changes.status(), StatusCode::OK);
+    let changes = json_body(changes).await;
+    assert_eq!(changes["changes"].as_array().unwrap().len(), 1);
+    assert!(changes["has_more"].as_bool().unwrap());
+    assert_eq!(
+        changes["changes"][0]["operation_id"],
+        favorite_operation.to_string()
+    );
+
+    let snapshot = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/snapshot")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = json_body(snapshot).await;
+    assert_eq!(snapshot["favorites"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["history"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["playlists"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["shares"].as_array().unwrap().len(), 1);
+    let cursor = snapshot["cursor"].as_i64().unwrap();
+
+    let ack = router
+        .clone()
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "device_id": device_id, "cursor": cursor }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ack.status(), StatusCode::NO_CONTENT);
+
+    let foreign = router
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0")
+                .header("authorization", format!("Bearer {intruder_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(json_body(foreign).await["changes"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

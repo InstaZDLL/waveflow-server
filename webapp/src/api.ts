@@ -1,16 +1,23 @@
 /**
  * Thin client over /api/v2.
  *
- * Access tokens are short-lived, so every call retries once through /refresh
- * before surfacing a 401. Tokens live in localStorage: this is a SPA with no
- * server-rendered session, and the alternative — a cookie — would add ambient
- * authentication and a CSRF surface to an API that is otherwise header-only.
+ * Access tokens are short-lived and live in memory only. The server keeps the
+ * rotating refresh token in an HttpOnly, SameSite cookie; refresh and logout
+ * additionally require a double-submit CSRF value.
  */
 
-const ACCESS_KEY = "waveflow.access";
-const REFRESH_KEY = "waveflow.refresh";
+export type WebSession = { access_token: string };
 
-export type Tokens = { access_token: string; refresh_token: string };
+let session: WebSession | null = null;
+
+// M4 originally persisted both tokens. Remove those legacy entries on upgrade
+// so an old rotating refresh token is not left readable by JavaScript.
+try {
+  localStorage.removeItem("waveflow.access");
+  localStorage.removeItem("waveflow.refresh");
+} catch {
+  // Storage may be disabled; sessions do not depend on it anymore.
+}
 
 export type Album = {
   id: string;
@@ -62,20 +69,8 @@ export class ApiError extends Error {
   }
 }
 
-export function storedTokens(): Tokens | null {
-  const access_token = localStorage.getItem(ACCESS_KEY);
-  const refresh_token = localStorage.getItem(REFRESH_KEY);
-  return access_token && refresh_token ? { access_token, refresh_token } : null;
-}
-
-function store(tokens: Tokens) {
-  localStorage.setItem(ACCESS_KEY, tokens.access_token);
-  localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-}
-
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+export function hasSession(): boolean {
+  return session !== null;
 }
 
 async function parse<T>(response: Response): Promise<T> {
@@ -104,19 +99,22 @@ function refresh(): Promise<boolean> {
 }
 
 async function performRefresh(): Promise<boolean> {
-  const tokens = storedTokens();
-  if (!tokens) return false;
-  const response = await fetch("/api/v2/auth/refresh", {
+  const csrf = cookieValue("waveflow-csrf");
+  if (!csrf) return false;
+  const response = await fetch("/api/v2/web/auth/refresh", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+    headers: { "x-waveflow-csrf": csrf },
   });
   if (!response.ok) {
-    clearTokens();
+    session = null;
     return false;
   }
-  store(await parse<Tokens>(response));
+  session = await parse<WebSession>(response);
   return true;
+}
+
+export async function ensureSession(): Promise<boolean> {
+  return hasSession() || refresh();
 }
 
 async function call<T>(
@@ -124,9 +122,8 @@ async function call<T>(
   init: RequestInit = {},
   retry = true,
 ): Promise<T> {
-  const tokens = storedTokens();
   const headers = new Headers(init.headers);
-  if (tokens) headers.set("authorization", `Bearer ${tokens.access_token}`);
+  if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   if (init.body) headers.set("content-type", "application/json");
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && retry && (await refresh())) {
@@ -139,7 +136,7 @@ async function call<T>(
 }
 
 export async function login(username: string, password: string): Promise<void> {
-  const response = await fetch("/api/v2/auth/login", {
+  const response = await fetch("/api/v2/web/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -151,15 +148,47 @@ export async function login(username: string, password: string): Promise<void> {
   if (!response.ok) {
     throw new ApiError(response.status, "login failed");
   }
-  store(await parse<Tokens>(response));
+  session = await parse<WebSession>(response);
+}
+
+export const setupRequired = () =>
+  call<{ required: boolean }>("/api/v2/setup", {}, false).then(
+    (status) => status.required,
+  );
+
+export async function bootstrapAdmin(
+  username: string,
+  password: string,
+): Promise<void> {
+  const response = await fetch("/api/v2/setup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "setup failed");
+  }
 }
 
 export async function logout(): Promise<void> {
   try {
-    await call<void>("/api/v2/auth/logout", { method: "POST" });
+    const csrf = cookieValue("waveflow-csrf");
+    await call<void>("/api/v2/web/auth/logout", {
+      method: "POST",
+      headers: csrf ? { "x-waveflow-csrf": csrf } : undefined,
+    });
   } finally {
-    clearTokens();
+    session = null;
   }
+}
+
+function cookieValue(name: string): string | null {
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split(";")) {
+    const value = part.trim();
+    if (value.startsWith(prefix)) return value.slice(prefix.length);
+  }
+  return null;
 }
 
 /** Walks the paged endpoint to completion; the server caps a page at 500. */
