@@ -3864,6 +3864,15 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .set_star_with_context(listener, "track", track, true, inaccessible_context)
         .await
         .unwrap();
+    // The row survives the replay, but a revoked membership must stop exposing
+    // it: favourites are filtered by visibility exactly like ratings are.
+    assert!(state
+        .services
+        .starred_ids(listener)
+        .await
+        .unwrap()
+        .iter()
+        .all(|(_, entity_id, _)| *entity_id != track));
     assert!(matches!(
         state
             .services
