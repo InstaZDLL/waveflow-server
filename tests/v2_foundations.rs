@@ -195,13 +195,13 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
         .create_account("native-token-user", &password_hash, AccountRole::User, now)
         .await
         .unwrap();
-    let token = "wfapi_native-token-fixture";
+    let token = security::generate_token("wfapi_");
     state
         .db
         .create_api_token(
             user_id,
             "integration token",
-            &security::token_hash(token),
+            &security::token_hash(&token),
             &[],
             now,
         )
@@ -222,7 +222,7 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     assert_eq!(accepted.status(), StatusCode::OK);
     let last_used_at: Option<i64> =
         sqlx::query_scalar("SELECT last_used_at FROM api_token WHERE token_hash = ?")
-            .bind(security::token_hash(token).as_slice())
+            .bind(security::token_hash(&token).as_slice())
             .fetch_one(state.db.pool())
             .await
             .unwrap();
@@ -230,7 +230,7 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
 
     sqlx::query("UPDATE api_token SET revoked_at = ? WHERE token_hash = ?")
         .bind(now_ms())
-        .bind(security::token_hash(token).as_slice())
+        .bind(security::token_hash(&token).as_slice())
         .execute(state.db.pool())
         .await
         .unwrap();
