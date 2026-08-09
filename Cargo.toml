@@ -22,7 +22,7 @@ anyhow = "1"
 async-stream = "0.3"
 argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["ws"] }
-base64 = "0.22"
+base64 = "0.23"
 blake3 = "1"
 bytes = "1"
 chacha20poly1305 = "0.10"
