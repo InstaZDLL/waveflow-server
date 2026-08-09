@@ -1,7 +1,7 @@
 name: Feature request
-description: Suggest a new capability for waveflow-web.
+description: Suggest a new capability for waveflow-server (server or embedded web player).
 title: '[Feature] '
-labels: ['type:feature']
+labels: ['type: feat', 'needs triage']
 body:
   - type: markdown
     attributes:
