@@ -546,6 +546,45 @@ impl Database {
         .transpose()
     }
 
+    pub async fn account_by_api_token_hash(
+        &self,
+        token_hash: &[u8],
+        now_ms: i64,
+    ) -> Result<Option<AccessRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT a.id, a.username, a.role, t.last_used_at FROM api_token t \
+             JOIN account a ON a.id = t.user_id \
+             WHERE t.token_hash = ? AND t.revoked_at IS NULL \
+               AND (t.expires_at IS NULL OR t.expires_at > ?) AND a.disabled = 0",
+        )
+        .bind(token_hash)
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let last_used_at: Option<i64> = row.try_get("last_used_at")?;
+        let account = AccessRecord {
+            user_id: parse_uuid(row.try_get("id")?)?,
+            username: row.try_get("username")?,
+            role: parse_role(row.try_get("role")?)?,
+        };
+        if last_used_at.is_none_or(|last_used| last_used <= now_ms.saturating_sub(60_000)) {
+            let _writer = self.writer_guard().await;
+            sqlx::query(
+                "UPDATE api_token SET last_used_at = ? WHERE token_hash = ? \
+                 AND revoked_at IS NULL AND (last_used_at IS NULL OR last_used_at <= ?)",
+            )
+            .bind(now_ms)
+            .bind(token_hash)
+            .bind(now_ms.saturating_sub(60_000))
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(Some(account))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn rotate_session(
         &self,

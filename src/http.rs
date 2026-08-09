@@ -57,6 +57,8 @@ pub struct ScanQueuedResponse {
 #[derive(Debug, Deserialize)]
 pub struct TrackQuery {
     pub q: Option<String>,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -389,7 +391,7 @@ pub async fn scan_events(
     Ok(Sse::new(output).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("q" = Option<String>, Query)), responses((status = 200, body = [crate::catalog::TrackRecord]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("q" = Option<String>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::catalog::TrackRecord]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_tracks(
     State(state): State<AppState>,
     Path(library_id): Path<Uuid>,
@@ -406,16 +408,17 @@ pub async fn list_tracks(
     {
         return Err(ApiError::NotFound);
     }
-    let tracks = match query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        Some(query) => {
-            state
-                .db
-                .search_tracks_for_user(user.id, library_id, query)
-                .await
-        }
-        None => state.db.list_tracks_for_user(user.id, library_id).await,
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(500);
+    if offset < 0 || !(1..=500).contains(&limit) {
+        return Err(ApiError::Validation);
     }
-    .map_err(db_error)?;
+    let query = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let tracks = state
+        .db
+        .browse_tracks_for_user(user.id, library_id, query, offset, limit)
+        .await
+        .map_err(db_error)?;
     Ok(Json(tracks))
 }
 
