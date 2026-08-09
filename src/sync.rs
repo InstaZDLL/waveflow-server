@@ -6,7 +6,7 @@
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, OwnedMutexGuard};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -122,6 +122,7 @@ impl SyncService {
 
     pub(crate) async fn claim_operation(
         &self,
+        writer_guard: &OwnedMutexGuard<()>,
         connection: &mut SqliteConnection,
         user_id: Uuid,
         context: MutationContext,
@@ -130,6 +131,7 @@ impl SyncService {
         let reservation = self
             .db
             .reserve_sync_operation(
+                writer_guard,
                 connection,
                 user_id,
                 context.operation_id,

@@ -14,7 +14,7 @@ use waveflow_server::{
     catalog::{ApplyOutcome, CatalogTrackInput, LibraryRecord},
     database::{AccountRole, LibraryRole, LibraryVisibility},
     security,
-    services::ServiceError,
+    services::{ServiceError, MAX_QUEUE_TRACKS},
     sync::{MutationContext, SyncError, MAX_SYNC_LIMIT},
     Config,
 };
@@ -3757,6 +3757,10 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .delete_playlist(owner, playlist.id)
         .await
         .unwrap();
+    let missing_playlist_context = MutationContext {
+        operation_id: Uuid::new_v4(),
+        origin_device_id: None,
+    };
     assert!(matches!(
         state
             .services
@@ -3764,6 +3768,22 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
                 owner,
                 playlist.id,
                 Some("Changed after deletion"),
+                None,
+                None,
+                &[],
+                &[],
+                missing_playlist_context,
+            )
+            .await,
+        Err(ServiceError::NotFound)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .update_playlist_with_context(
+                owner,
+                playlist.id,
+                Some("Divergent replay after deletion"),
                 None,
                 None,
                 &[],
@@ -3818,7 +3838,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
     assert!(matches!(
         state
             .services
-            .set_rating_with_context(owner, "track", track, 6, invalid_replay_context)
+            .set_rating_with_context(owner, "track", track, 4, invalid_replay_context)
             .await,
         Err(ServiceError::Conflict)
     ));
@@ -3848,6 +3868,15 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .set_rating_with_context(owner, "track", track, 4, rolled_back_context)
         .await
         .unwrap();
+
+    let oversized_queue = vec![track; MAX_QUEUE_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .save_queue(owner, &oversized_queue, Some(track), 0, Some("limit-test"))
+            .await,
+        Err(ServiceError::Invalid)
+    ));
 }
 
 #[tokio::test]
