@@ -107,11 +107,30 @@ reste une capacité et non le socle obligatoire du client :
    catalogue, recherche, lecture,       snapshot, changes, ack, socket
    user-data selon capacités
           │                                      │
-   ┌──────┴───────┐                              │
-Subsonic      WaveFlow  ────────────────────────▶┘
-(Navidrome,   (implémente MusicServer
- Airsonic…)    + SyncProvider)
+   ┌──────┴────────┐                             │
+SubsonicSource   WaveflowSource ─────────────────┘
+  /rest/*          /api/v2/*  (natif de bout en bout)
+(Navidrome,      (jamais /rest/ : la façade Subsonic de
+ Airsonic…)       WaveFlow est là pour les clients tiers)
 ```
+
+**Règle, décidée par le user.** Entre WaveFlow Desktop et WaveFlow Server, on
+passe **toujours** par la couche native `/api/v2` — y compris pour le catalogue,
+la recherche et la lecture, pas seulement pour la synchronisation. La façade
+Subsonic du serveur existe pour les lecteurs tiers (Symfonium, DSub,
+Substreamer, Feishin) ; le Desktop ne l'emprunte que face à un serveur *autre*
+que WaveFlow.
+
+`WaveflowSource` n'est donc pas un `SubsonicSource` enrichi d'une sync : c'est
+une implémentation indépendante. Le faire hériter de la branche Subsonic
+reviendrait à consommer `/rest/` contre notre propre serveur et à perdre trois
+choses acquises :
+
+- **l'idempotence** — les routes v2 lisent `X-WaveFlow-Operation-Id`, pas la
+  façade Subsonic ;
+- **la recherche FTS5** — `services::search` passe par `fts_match_query`, tandis
+  que `search3` filtre encore en mémoire (dette assumée du contrat gelé) ;
+- **la pagination native** et les projections typées de `/api/v2`.
 
 Le dénominateur commun est large : la façade Subsonic couvre **toutes** les
 mutations dont le Desktop a besoin — `star`/`unstar`, `setRating`, les playlists
@@ -153,7 +172,9 @@ ou la playlist. Les deux implémentations n'offrent pas la même garantie hors
 ligne, et la file d'attente doit le savoir :
 
 - `WaveflowSource` — rejeu sûr par `operation_id` ; la file peut réémettre
-  librement.
+  librement. C'est la raison directe de la règle ci-dessus : passer par `/rest/`
+  contre notre propre serveur reviendrait à renoncer volontairement à cette
+  garantie.
 - `SubsonicSource` — pas de rejeu aveugle. Après une réponse perdue, relire
   l'état avant de décider, ou accepter le doublon pour les entités idempotentes
   par nature (`star`, `setRating`) et s'abstenir pour celles qui ne le sont pas
