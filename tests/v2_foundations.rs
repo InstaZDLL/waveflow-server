@@ -662,6 +662,56 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     ] {
         assert!(document["paths"][path].is_object(), "missing {path}");
     }
+
+    // A client generated from this document alone must authenticate correctly
+    // and keep replay safety. Neither is inferable from the paths.
+    assert_eq!(
+        document["components"]["securitySchemes"]["bearer"]["scheme"],
+        "bearer"
+    );
+    assert_eq!(
+        document["security"][0]["bearer"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    // Endpoints carrying their own credential, or none, must opt out of the
+    // global requirement — otherwise the document claims a token is needed to
+    // log in, and that the stream ticket is not itself the credential.
+    for (path, method) in [
+        ("/health", "get"),
+        ("/api/v2/auth/login", "post"),
+        ("/api/v2/oauth/token", "post"),
+        ("/api/v2/stream/{ticket}", "get"),
+    ] {
+        assert_eq!(
+            document["paths"][path][method]["security"]
+                .as_array()
+                .map(Vec::len),
+            Some(0),
+            "{method} {path} should be documented as public"
+        );
+    }
+
+    // The two mutation headers are what the native API offers over the Subsonic
+    // facade; a document that omits them yields clients that never replay
+    // safely.
+    let headers = document["paths"]["/api/v2/scrobbles"]["post"]["parameters"]
+        .as_array()
+        .map(|parameters| {
+            parameters
+                .iter()
+                .filter_map(|parameter| parameter["name"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        headers.iter().any(|name| name == "x-waveflow-operation-id"),
+        "scrobbles should document the operation id header, got {headers:?}"
+    );
+    assert!(
+        headers.iter().any(|name| name == "x-waveflow-device-id"),
+        "scrobbles should document the device id header, got {headers:?}"
+    );
 }
 
 #[tokio::test]

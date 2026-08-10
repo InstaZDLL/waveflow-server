@@ -181,6 +181,7 @@ pub struct AppState {
         media::StreamTicketResponse,
         scanner::ScanProgress
     )),
+    modifiers(&SecurityAddon),
     tags(
         (name = "probes", description = "Process and SQLite health"),
         (name = "authentication", description = "Local WaveFlow sessions")
@@ -191,6 +192,132 @@ pub struct AppState {
     )
 )]
 pub struct ApiDoc;
+
+/// Declares the bearer scheme and the two mutation headers.
+///
+/// Without this, a client generated from the document alone authenticates
+/// nowhere and never sends `X-WaveFlow-Operation-Id` — losing replay safety,
+/// which is the one thing the native API offers over the Subsonic facade.
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            BEARER_SECURITY_SCHEME,
+            SecurityScheme::Http(
+                Http::builder()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "Access token from /api/v2/auth/login, /api/v2/auth/refresh or the \
+                         PKCE exchange, or a long-lived `wfapi_` token minted by the CLI.",
+                    ))
+                    .build(),
+            ),
+        );
+        openapi.security = Some(vec![utoipa::openapi::security::SecurityRequirement::new(
+            BEARER_SECURITY_SCHEME,
+            Vec::<String>::new(),
+        )]);
+
+        clear_security_on_public_operations(openapi);
+        annotate_mutation_headers(openapi);
+    }
+}
+
+const BEARER_SECURITY_SCHEME: &str = "bearer";
+
+/// Operations that carry their own credential, or none at all. The global
+/// requirement above would otherwise claim a token is needed to log in.
+///
+/// `/api/v2/stream/{ticket}` belongs here on purpose: the sealed ticket in the
+/// path *is* the credential, because `<audio src>` cannot send a header.
+const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
+    ("/health", "get"),
+    ("/ready", "get"),
+    ("/api/v2/setup", "get"),
+    ("/api/v2/setup", "post"),
+    ("/api/v2/auth/login", "post"),
+    ("/api/v2/auth/refresh", "post"),
+    ("/api/v2/auth/logout", "post"),
+    ("/api/v2/web/auth/login", "post"),
+    ("/api/v2/web/auth/refresh", "post"),
+    ("/api/v2/web/auth/logout", "post"),
+    ("/api/v2/oauth/token", "post"),
+    ("/api/v2/stream/{ticket}", "get"),
+];
+
+fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
+    for (path, method) in PUBLIC_OPERATIONS {
+        let Some(item) = openapi.paths.paths.get_mut(*path) else {
+            continue;
+        };
+        let operation = match *method {
+            "get" => item.get.as_mut(),
+            "post" => item.post.as_mut(),
+            _ => None,
+        };
+        if let Some(operation) = operation {
+            operation.security = Some(Vec::new());
+        }
+    }
+}
+
+/// Attaches the two optional mutation headers to every operation that reads
+/// them. `mutation_context` accepts them on any user-data write, so they are
+/// declared per operation rather than described in prose nobody generates from.
+fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
+    use utoipa::openapi::{Required, Schema, Type};
+
+    let header = |name: &str, description: &str| {
+        ParameterBuilder::new()
+            .name(name)
+            .parameter_in(ParameterIn::Header)
+            .required(Required::False)
+            .description(Some(description.to_owned()))
+            .schema(Some(Schema::Object({
+                let mut object = utoipa::openapi::Object::new();
+                object.schema_type = utoipa::openapi::schema::SchemaType::new(Type::String);
+                object.format = Some(utoipa::openapi::SchemaFormat::Custom("uuid".to_owned()));
+                object
+            })))
+            .build()
+    };
+
+    for item in openapi.paths.paths.values_mut() {
+        let operations = [
+            item.get.as_mut(),
+            item.put.as_mut(),
+            item.post.as_mut(),
+            item.delete.as_mut(),
+            item.patch.as_mut(),
+        ];
+        for operation in operations.into_iter().flatten() {
+            if !operation
+                .tags
+                .as_ref()
+                .is_some_and(|tags| tags.iter().any(|tag| tag == "user-data"))
+            {
+                continue;
+            }
+            let parameters = operation.parameters.get_or_insert_with(Vec::new);
+            parameters.push(header(
+                http::OPERATION_ID_HEADER,
+                "Stable id for this logical mutation. Repeating it replays the original \
+                 outcome instead of applying twice; reusing it for a different payload is \
+                 rejected as a conflict. Generated server-side when absent.",
+            ));
+            parameters.push(header(
+                http::DEVICE_ID_HEADER,
+                "Device originating the mutation. Rejected when it belongs to another \
+                 account. Lets other devices skip their own echo in the sync journal.",
+            ));
+        }
+    }
+}
 
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
