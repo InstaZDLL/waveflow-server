@@ -89,9 +89,75 @@ protocole ne demande plus.
 
 ## Décisions actées (2026-08-10)
 
-Ces trois points étaient ouverts au moment du relevé. Ils sont tranchés, et
-chacun a été vérifié contre le code du serveur : aucun ne demande d'ajout côté
-serveur.
+Ces points étaient ouverts au moment du relevé. Ils sont tranchés, et chacun a
+été vérifié contre le code du serveur : aucun ne demande d'ajout côté serveur.
+
+### 0. Le Desktop est un client universel
+
+**Décision (user).** Le Desktop doit pouvoir se connecter à n'importe quel
+serveur Subsonic — Navidrome, Airsonic, Gonic — et pas seulement à WaveFlow. Ce
+choix commande tous les autres : il impose une abstraction « source distante »
+avec deux implémentations, au lieu d'un client v2 unique.
+
+Deux interfaces distinctes plutôt qu'une seule, pour que la synchronisation
+reste une capacité et non le socle obligatoire du client :
+
+```text
+   MusicServer (obligatoire)            SyncProvider (optionnel)
+   catalogue, recherche, lecture,       snapshot, changes, ack, socket
+   user-data selon capacités
+          │                                      │
+   ┌──────┴───────┐                              │
+Subsonic      WaveFlow  ────────────────────────▶┘
+(Navidrome,   (implémente MusicServer
+ Airsonic…)    + SyncProvider)
+```
+
+Le dénominateur commun est large : la façade Subsonic couvre **toutes** les
+mutations dont le Desktop a besoin — `star`/`unstar`, `setRating`, les playlists
+en CRUD complet, `scrobble`, `savePlayQueue`/`getPlayQueue` et les partages.
+
+**Détection.** Toute réponse Subsonic de WaveFlow porte `type="waveflow"`,
+`serverVersion` et `openSubsonic="true"` (`src/subsonic.rs`). Un `ping` suffit
+donc à décider si `SyncProvider` peut être activé.
+
+> **Piège vérifié.** Ne pas détecter les capacités de WaveFlow par
+> `getOpenSubsonicExtensions` : cette méthode renvoie aujourd'hui un conteneur
+> **vide**. Un client qui s'y fierait conclurait que WaveFlow n'offre aucune
+> extension, alors qu'il offre l'intégralité de l'API v2. Le discriminant est
+> `type`, pas la liste d'extensions.
+
+**Ce que seul WaveFlow offre**, et qui doit donc être traité comme une capacité
+optionnelle et non comme un prérequis : le journal (`/sync/snapshot`,
+`/sync/changes`), l'ACK par appareil, le WebSocket de réveil, et surtout
+l'idempotence des mutations.
+
+**Modèle d'identifiants.** Les identifiants distants sont des **chaînes
+opaques**, jamais des UUID typés. WaveFlow sérialise ses UUID
+(`id.to_string()`), ce qui rend ses deux surfaces interchangeables sans table de
+correspondance — mais Navidrome et consorts émettent des identifiants textuels
+d'une autre forme. Le Desktop doit donc :
+
+- traiter tout identifiant distant comme `String`, sans le parser en `Uuid` ;
+- indexer localement sur la clé composée `(profile_id, remote_id)`, puisque deux
+  serveurs peuvent émettre le même identifiant sans rapport ;
+- garder le cache de catalogue distinct de l'état synchronisé, l'un étant
+  reconstructible et l'autre non ;
+- ne jamais supposer qu'une capacité est présente sans l'avoir constatée.
+
+**Conséquence sur l'idempotence.** `src/subsonic.rs` ne lit jamais
+`X-WaveFlow-Operation-Id` : ces en-têtes n'existent que sur les routes v2. Une
+mutation Subsonic n'est donc **pas rejouable sans risque**. Si la réponse se
+perd, le client ignore si le serveur a appliqué : rejouer duplique le scrobble
+ou la playlist. Les deux implémentations n'offrent pas la même garantie hors
+ligne, et la file d'attente doit le savoir :
+
+- `WaveflowSource` — rejeu sûr par `operation_id` ; la file peut réémettre
+  librement.
+- `SubsonicSource` — pas de rejeu aveugle. Après une réponse perdue, relire
+  l'état avant de décider, ou accepter le doublon pour les entités idempotentes
+  par nature (`star`, `setRating`) et s'abstenir pour celles qui ne le sont pas
+  (`scrobble`, `createPlaylist`).
 
 ### 1. Un profil Desktop = un compte serveur
 
@@ -103,12 +169,27 @@ serveur ; `profile_canonical_id` cesse d'exister dans le protocole.
 Desktop                          Serveur
 └── Profile                      └── Account
     ├── server_url                   ├── Device A
-    ├── account_id  ────────────────▶├── Device B
-    ├── device_id                    ├── Library 1
-    ├── auth tokens                  └── Library 2
-    ├── sync_cursor
+    ├── remote_identity ────────────▶├── Device B
+    ├── auth (tokens | u/p)          ├── Library 1
+    ├── sync state (si WaveFlow)     └── Library 2
     └── active_library_id (option)
 ```
+
+L'identité distante est **polymorphe**, puisque tous les serveurs n'ont pas le
+même modèle de compte :
+
+```rust
+enum RemoteIdentity {
+    Waveflow { account_id: Uuid, device_id: Uuid, cursor: u64 },
+    Subsonic { username: String },
+}
+```
+
+Un serveur Subsonic tiers n'a ni identifiant de compte en UUID, ni notion
+d'appareil, ni curseur : ces trois champs n'existent que dans la branche
+WaveFlow. Les câbler dans la structure commune obligerait à les rendre
+optionnels partout et à répandre des `unwrap` sur des cas qui ne peuvent pas
+survenir.
 
 Un profil par bibliothèque a été écarté : une bibliothèque est une ressource de
 contenu, un profil une identité et une session. Un compte donnant accès à
@@ -133,6 +214,10 @@ Attention : un code v2 est **dépensé à la première présentation**, quelle q
 soit l'issue. Un verifier erroné brûle le code et impose de relancer le flux ;
 ce n'est pas un bug à contourner par une nouvelle tentative sur le même code.
 
+PKCE ne vaut que pour la branche WaveFlow. Un serveur Subsonic tiers
+s'authentifie par `u/p`, `u/t/s` ou `apiKey` selon ce qu'il accepte : c'est une
+seconde forme d'authentification à porter, pas une dégradation de la première.
+
 ### 3. Bearer direct pour la lecture, pas de ticket
 
 Le Desktop lit par `GET /api/v2/tracks/{track_id}/stream` avec
@@ -140,6 +225,10 @@ Le Desktop lit par `GET /api/v2/tracks/{track_id}/stream` avec
 Bearer et accepte `format`, `bitrate` et `offset_ms`, avec 206/416 sur les
 `Range`. Les tickets scellés restent réservés aux consommateurs qui ne peuvent
 pas porter d'en-tête — `<audio src>` dans le navigateur.
+
+Contre un serveur tiers, la lecture passe par `/rest/stream` avec les
+identifiants Subsonic. `MusicServer` expose donc une URL de flux (et l'en-tête
+éventuel à joindre), pas une route en dur.
 
 ## Contraintes de conception de la file d'attente
 
