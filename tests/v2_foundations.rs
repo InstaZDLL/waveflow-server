@@ -1583,9 +1583,17 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             .await
             .unwrap();
         assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED, "{path}");
-        assert_eq!(
-            json_body(rejected).await["subsonic-response"]["error"]["code"],
-            40,
+        let body = json_body(rejected).await;
+        assert_eq!(body["subsonic-response"]["error"]["code"], 40, "{path}");
+        // A failed response still identifies the server. WaveFlow Desktop
+        // decides whether to enable the native /api/v2 surface from `type`
+        // alone, before it holds any credential, so this must survive a
+        // rewrite of the error envelope. getOpenSubsonicExtensions cannot
+        // serve that purpose: it returns an empty list.
+        assert_eq!(body["subsonic-response"]["type"], "waveflow", "{path}");
+        assert_eq!(body["subsonic-response"]["openSubsonic"], true, "{path}");
+        assert!(
+            body["subsonic-response"]["serverVersion"].is_string(),
             "{path}"
         );
     }
