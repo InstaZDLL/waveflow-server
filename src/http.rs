@@ -1543,6 +1543,14 @@ fn share_response(state: &AppState, share: crate::services::ShareItem) -> ShareR
     responses(
         (status = 200, body = crate::sync::SyncPage),
         (status = 401, body = ErrorResponse),
+        (
+            status = 409,
+            description = "`code` is `cursor_expired`: the cursor precedes the oldest \
+                           retained event, so the gap cannot be replayed. Discard the local \
+                           projection, take a fresh /sync/snapshot and resume from its \
+                           cursor. Distinct from `conflict`, which is about operation ids.",
+            body = ErrorResponse
+        ),
         (status = 422, body = ErrorResponse)
     )
 )]

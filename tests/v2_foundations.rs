@@ -713,6 +713,31 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         headers.iter().any(|name| name == "x-waveflow-device-id"),
         "scrobbles should document the device id header, got {headers:?}"
     );
+    // Every user-data write can fail on a replayed operation id, so the 409 is
+    // part of their contract — a client that only handles 2xx/4xx generically
+    // would retry it forever.
+    assert!(document["paths"]["/api/v2/scrobbles"]["post"]["responses"]["409"].is_object());
+    // And the sync read has its own 409, with a different code and a different
+    // recovery. Documenting one without the other would be worse than neither.
+    assert!(document["paths"]["/api/v2/sync/changes"]["get"]["responses"]["409"].is_object());
+
+    // Reads carry no operation id: annotating them would tell a generator to
+    // send headers the handler never looks at.
+    let read_parameters = document["paths"]["/api/v2/favorites"]["get"]["parameters"]
+        .as_array()
+        .map(|parameters| {
+            parameters
+                .iter()
+                .filter_map(|parameter| parameter["name"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        !read_parameters
+            .iter()
+            .any(|name| name.starts_with("x-waveflow-")),
+        "a read should not advertise mutation headers, got {read_parameters:?}"
+    );
 }
 
 #[tokio::test]
