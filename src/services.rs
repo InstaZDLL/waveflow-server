@@ -184,6 +184,10 @@ pub struct AlbumDetail {
 pub struct ArtistDetail {
     #[serde(flatten)]
     pub artist: ArtistItem,
+    /// Same field the list endpoint returns. `albums` below is unpaginated, so
+    /// its length matches — but that is an unwritten guarantee, and a client
+    /// should not have to depend on one.
+    pub album_count: i64,
     pub albums: Vec<AlbumItem>,
 }
 
@@ -578,12 +582,12 @@ impl DomainServices {
         user_id: Uuid,
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
-        let artist = sqlx::query(concat!(artist_select!(), " AND ar.id=?"))
+        let summary = sqlx::query(concat!(artist_select!(), " AND ar.id=?"))
             .bind(user_id.to_string())
             .bind(artist_id.to_string())
             .fetch_optional(self.db.pool())
             .await?
-            .map(|row| artist_summary_from_row(row).map(|summary| summary.artist))
+            .map(artist_summary_from_row)
             .transpose()?
             .ok_or(ServiceError::NotFound)?;
         let albums = sqlx::query(concat!(
@@ -598,7 +602,11 @@ impl DomainServices {
         .into_iter()
         .map(album_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-        Ok(ArtistDetail { artist, albums })
+        Ok(ArtistDetail {
+            artist: summary.artist,
+            album_count: summary.album_count,
+            albums,
+        })
     }
 
     /// Full-text search across the user's visible catalogue. Tracks are matched
