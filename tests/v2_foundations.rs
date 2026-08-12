@@ -3901,7 +3901,14 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         "a re-snapshot signal must be distinguishable from an idempotency conflict"
     );
 
-    // Resuming from the surviving floor is still served: nothing is missing.
+    // A cursor at or above the surviving floor is still served — this covers a
+    // client that never fell behind, NOT a recovery path.
+    //
+    // Recovering from `cursor_expired` by resuming at `floor + 1` would be
+    // wrong: the compacted events are gone, so the projection would stay
+    // permanently short of whatever they carried, with nothing to signal it.
+    // A full snapshot is the only correct recovery, which is what the error
+    // code asks for.
     let resumed = router
         .oneshot(
             Request::get(format!("/api/v2/sync/changes?after={}", floor + 1))

@@ -115,8 +115,14 @@ must branch on**, not the status: `conflict` means mint a new operation id and
 retry the mutation, `cursor_expired` means re-snapshot. Reacting to one as if it
 were the other either loses a write or wipes a healthy projection.
 
+Recovery is a **full snapshot**, never a resume from the surviving floor.
+Retrying at `floor + 1` succeeds — a cursor at or above the floor is served
+normally — but it silently skips whatever the compacted events carried, leaving
+the projection permanently short with nothing to signal it. That a floor cursor
+answers 200 describes a client that never fell behind; it is not a recovery
+path.
+
 The check is implemented and tested today even though it cannot fire: the
 journal is append-only, so no cursor can fall below the floor. It is specified
 now so clients write the recovery branch against a real contract rather than
-discover it the day retention lands. Resuming from the surviving floor itself
-stays a normal 200 — only a genuine gap is refused.
+discover it the day retention lands.
