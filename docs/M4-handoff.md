@@ -1,10 +1,14 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-09 en fin de journée. **M4 est complet** :
-> le socle est fusionné en `14aec76`, son complément serveur en `6716df9`
-> (PR #94). La validation réelle Symfonium est terminée et ferme M3. Ce document
-> décrit ce qui est fait, les décisions non évidentes à ne pas défaire, et ce
-> qui reste. Aucun tag de release ne doit être créé sans demande explicite.
+> Note de suivi mise à jour le 2026-08-12. **M4 est complet** : le socle est
+> fusionné en `14aec76`, son complément serveur en `6716df9` (PR #94). La
+> validation réelle Symfonium est terminée et ferme M3. Ce document décrit ce
+> qui est fait, les décisions non évidentes à ne pas défaire, et ce qui reste.
+> Aucun tag de release ne doit être créé sans demande explicite.
+>
+> **La porte M4 n'est pas encore refermée** : l'intégration WaveFlow Desktop est
+> en cours dans son propre dépôt et n'a pas tourné de bout en bout. Voir
+> [`desktop-v2-integration-gap.md`](desktop-v2-integration-gap.md).
 
 ## Où on en est
 
@@ -148,12 +152,16 @@ régression.
 
 ## Ce qui reste
 
-1. **Valider l'intégration WaveFlow Desktop** contre `/api/v2`, Authorization
-   Code + PKCE et les tickets de lecture : catalogue distant, streaming,
-   playlists, favoris, notes, historique, file d'attente et partages, plus la
-   reconnexion, la rotation/révocation des refresh tokens et la reprise de
-   synchronisation. C'est le vrai test de convergence : la bibliothèque réelle
-   avait déjà révélé deux défauts qu'aucun test ne voyait.
+1. **Valider l'intégration WaveFlow Desktop** contre `/api/v2` et Authorization
+   Code + PKCE : catalogue distant, streaming, playlists, favoris, notes,
+   historique, file d'attente et partages, plus la reconnexion, la
+   rotation/révocation des refresh tokens et la reprise de synchronisation.
+   C'est le vrai test de convergence : la bibliothèque réelle avait déjà révélé
+   deux défauts qu'aucun test ne voyait. Le portage est en cours dans le dépôt
+   Desktop ; il n'a pas encore tourné de bout en bout, et le retrait de son
+   protocole v1 attend cette exécution. **Le Desktop lit avec un `Authorization:
+   Bearer` sur `/api/v2/tracks/{id}/stream` — les tickets scellés restent
+   réservés à `<audio src>`, qui ne peut pas porter d'en-tête.**
 2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
    validation Symfonium sont terminés ; aucune action de compatibilité ne reste
    ouverte pour cette porte.
@@ -199,6 +207,57 @@ vérifié.
   l'adresse de signature réellement émise par le bot, différente de celle sous
   laquelle il committe. Les sept bumps du 2026-08-09 sont passés sans override
   du contrôle DCO.
+- **`.github/CODEOWNERS` existe.** Le ruleset « Main » exige une revue de code
+  owner ; sans ce fichier, aucun owner n'existait, la condition était donc
+  insatisfaisable et **chaque** fusion passait par un override propriétaire. Ne
+  pas le supprimer en croyant simplifier : ce serait remettre l'override
+  systématique, c'est-à-dire une protection qui ne protège plus.
+
+## Amorcer une instance de test
+
+`scripts/seed-dev-instance.sh [data-dir]` monte une instance jetable : il génère
+l'audio avec FFmpeg, crée l'admin, enregistre et scanne la bibliothèque, puis
+imprime identifiants et jeton `wfapi_`. Six pistes, trois albums, trois artistes,
+dont un crédit multi-artistes et une piste sans numéro pour exercer le tri
+`NULLS LAST`.
+
+Il existe parce qu'un catalogue vide ne permet d'exercer que les playlists :
+favoris, notes, scrobbles et file d'attente ont tous besoin d'un identifiant de
+piste réel. Deux pièges relevés en s'en servant : `POST /api/v2/auth/login` exige
+`device_name` dans le corps, et la projection `/libraries/{id}/tracks` n'expose
+ni `track_number`, ni `disc_number`, ni `year` — ils sont dans `/albums/{id}`.
+
+## Contrat d'API affiné pour le client natif (2026-08-12)
+
+Trois décisions prises à la demande de l'agent Desktop, toutes sur `/api/v2`
+uniquement — la façade Subsonic est inchangée et ses tests n'ont pas bougé.
+
+- **409 pour les conflits.** Un `operation_id` rejoué avec une charge différente
+  répond `409` / `code: "conflict"` au lieu de `422`. Les collisions de nom de
+  compte et un `setup` répété aussi. La façade Subsonic répondait déjà 409 : ce
+  changement aligne l'API native sur elle.
+- **Effacer un champ optionnel.** `PATCH` accepte `clear`, une liste nommant les
+  champs à vider : `comment` pour une playlist, `description` et `expires_at`
+  pour un partage. Un nom inconnu est **refusé** (422) et non ignoré, pour qu'un
+  `expiresAt` en camelCase ne passe pas pour un succès. L'effacement fait partie
+  de l'empreinte d'opération : poser une expiration et la retirer sont deux
+  mutations distinctes et ne peuvent pas partager un identifiant de rejeu.
+- **`cursor_expired`.** `/sync/changes` refuse un curseur antérieur au plus
+  ancien événement conservé, avec `409` et `code: "cursor_expired"`. Le statut
+  est partagé avec les conflits : **c'est le code qui commande la réaction**,
+  pas le statut. La reprise est un **snapshot complet**, jamais une reprise
+  depuis le plancher survivant — celle-ci réussirait en sautant les événements
+  compactés. Inatteignable tant que le journal reste append-only, mais
+  implémenté et testé pour que les clients écrivent leur branche de reprise
+  contre un contrat réel.
+
+**L'OpenAPI déclare enfin sa sécurité.** Schéma bearer exigé globalement, douze
+opérations explicitement publiques (celles qui portent leur propre justificatif
+ou aucun, `/api/v2/stream/{ticket}` compris), et les en-têtes
+`X-WaveFlow-Operation-Id` / `-Device-Id` documentés sur les onze écritures
+`user-data` — jamais sur les lectures, qui ne portent pas d'identifiant
+d'opération. Sans cela, un client généré depuis le document ne s'authentifiait
+nulle part et perdait la sûreté de rejeu.
 
 ## Correctifs de sécurité postérieurs à la fusion (2026-08-09)
 
