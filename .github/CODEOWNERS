@@ -1,0 +1,8 @@
+# The "Main" ruleset requires a code owner review. Without this file no such
+# owner exists, so the requirement can never be satisfied and every merge — even
+# the maintainer's own, even a Dependabot bump — has to bypass branch protection
+# with an admin override. A guard that is always overridden stops being a guard.
+#
+# One line, whole repository: the maintainer reviews everything anyway, and this
+# makes that approval actually count.
+* @InstaZDLL
