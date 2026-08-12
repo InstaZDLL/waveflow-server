@@ -122,7 +122,8 @@ pub struct AppState {
         http::revoke_subsonic_credential,
         media::stream_track,
         media::create_stream_ticket,
-        media::stream_with_ticket
+        media::stream_with_ticket,
+        media::artwork
     ),
     components(schemas(
         http::ProbeResponse,

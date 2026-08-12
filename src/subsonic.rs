@@ -1237,14 +1237,9 @@ async fn cover_art_response(
         .await
         .map_err(internal)?
         .ok_or_else(not_found)?;
-    let path = state.artwork_dir.join(format!("{hash}.{format}"));
-    let bytes = tokio::fs::read(path).await.map_err(|_| not_found())?;
-    let mime = match format.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        _ => "application/octet-stream",
-    };
+    let (mime, bytes) = crate::media::read_artwork(&state.artwork_dir, &hash, &format)
+        .await
+        .ok_or_else(not_found)?;
     Ok((
         StatusCode::OK,
         [
