@@ -464,6 +464,11 @@ pub fn router(state: AppState) -> Router {
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct StreamTicketResponse {
     /// Path to play from, already containing the ticket.
+    ///
+    /// **Always relative to this server**, never absolute — unlike a share URL,
+    /// which is prefixed with `WAVEFLOW_PUBLIC_URL` because it is meant to be
+    /// sent outside the application. Clients may safely reject an absolute or
+    /// protocol-relative value here, and are encouraged to.
     pub url: String,
     pub expires_at: i64,
 }
@@ -585,6 +590,12 @@ pub async fn create_stream_ticket(
             tracing::error!(error = %error, "stream ticket minting failed");
             MediaError::Internal
         })?;
+    // Deliberately relative, and deliberately unlike `createShare`, which does
+    // prefix WAVEFLOW_PUBLIC_URL. A share link is made to leave the
+    // application; a ticket is consumed by the client that just authenticated.
+    // Handing it an absolute URL would let the server redirect playback to a
+    // host the user never authenticated against — which is why native clients
+    // reject absolute and protocol-relative values. Do not "harmonise" the two.
     Ok(axum::Json(StreamTicketResponse {
         url: format!("/api/v2/stream/{ticket}"),
         expires_at,

@@ -4425,7 +4425,7 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
 
     // Kept before `state` moves into the router, to mint an expired ticket below.
     let secret_box = std::sync::Arc::clone(&state.secret_box);
-    let router = waveflow_server::app(&config, state);
+    let router = waveflow_server::app(&config, state.clone());
     let owner_token = login_token(&router, "ticket-owner", password).await;
     let intruder_token = login_token(&router, "ticket-intruder", password).await;
 
@@ -4468,6 +4468,34 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     let url = issued["url"].as_str().unwrap().to_owned();
     assert!(url.starts_with("/api/v2/stream/"));
     assert!(issued["expires_at"].as_i64().unwrap() > now_ms());
+
+    // The ticket URL stays relative even when a public URL is configured, and
+    // that asymmetry with createShare is deliberate: a share link is made to
+    // leave the application, a ticket is not. An absolute ticket would let the
+    // server point playback at a host the user never authenticated against, so
+    // clients are right to reject absolute or protocol-relative values — this
+    // pins the guarantee they rely on.
+    let mut public_config = config.clone();
+    public_config.public_url = Some("https://waveflow.example".to_owned());
+    let public_router = waveflow_server::app(&public_config, state.clone());
+    let public_ticket = public_router
+        .oneshot(
+            Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(public_ticket.status(), StatusCode::OK);
+    let public_url = json_body(public_ticket).await["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        public_url.starts_with("/api/v2/stream/"),
+        "ticket URL must stay relative, got {public_url}"
+    );
 
     // The ticket URL plays with no Authorization header at all.
     let played = router
