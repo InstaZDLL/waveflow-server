@@ -2198,6 +2198,69 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .unwrap()
         .starts_with("image/"));
 
+    // The same cover over the native API. Deliberately authenticated with a
+    // native session rather than the Subsonic key above: the whole point is
+    // that a native client needs no second set of credentials. Without this
+    // route a remote catalogue rendered with no covers at all — payloads carry
+    // `artwork_hash`, and only the Subsonic facade could resolve it.
+    let session = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": "sub-admin",
+                "password": web_password,
+                "device_name": "artwork-probe"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(session.status(), StatusCode::OK);
+    let native_token = json_body(session).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let native_cover = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/artwork/{artwork}"))
+                .header("authorization", format!("Bearer {native_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native_cover.status(), StatusCode::OK);
+    assert!(native_cover.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("image/"));
+    // An entity id resolves too, so a client holding only a song need not first
+    // read its hash.
+    let by_song = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/artwork/{song}"))
+                .header("authorization", format!("Bearer {native_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_song.status(), StatusCode::OK);
+    // No bearer, no cover: the image is not public just because the hash is
+    // unguessable.
+    let anonymous_cover = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/artwork/{artwork}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous_cover.status(), StatusCode::UNAUTHORIZED);
+
     let download = router
         .clone()
         .oneshot(

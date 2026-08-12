@@ -415,8 +415,40 @@ impl Drop for ActiveGuard<'_> {
     }
 }
 
+/// Content type for a stored artwork, or `None` for a format we never wrote.
+///
+/// Shared by the native route and the Subsonic facade: two copies would drift
+/// on the day a format is added, and the client that got
+/// `application/octet-stream` would simply show no cover.
+pub fn artwork_mime(format: &str) -> Option<&'static str> {
+    match format {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Reads an artwork file from the store.
+///
+/// `hash` and `format` come from the database, never from the request, so the
+/// joined path cannot escape `artwork_dir` — the caller resolves the request's
+/// id through `artwork_for_user`, which also enforces tenancy.
+pub async fn read_artwork(
+    artwork_dir: &std::path::Path,
+    hash: &str,
+    format: &str,
+) -> Option<(&'static str, Vec<u8>)> {
+    let mime = artwork_mime(format)?;
+    let bytes = tokio::fs::read(artwork_dir.join(format!("{hash}.{format}")))
+        .await
+        .ok()?;
+    Some((mime, bytes))
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/api/v2/artwork/{artwork_id}", get(artwork))
         .route("/api/v2/tracks/{track_id}/stream", get(stream_track))
         .route(
             "/api/v2/tracks/{track_id}/stream-ticket",
@@ -434,6 +466,71 @@ pub struct StreamTicketResponse {
     /// Path to play from, already containing the ticket.
     pub url: String,
     pub expires_at: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v2/artwork/{artwork_id}",
+    tag = "media",
+    params((
+        "artwork_id" = String,
+        Path,
+        description = "An `artwork_hash` from any catalogue payload, or the id of a track, \
+                       album or artist that carries one."
+    )),
+    responses(
+        (status = 200, description = "Cover image", content_type = "image/jpeg"),
+        (status = 401),
+        (status = 404)
+    )
+)]
+/// Serves a cover behind the same bearer as the rest of the native API.
+///
+/// Catalogue payloads carry `artwork_hash` but nothing resolved it: only the
+/// Subsonic facade served images, behind a separate credential. A native client
+/// therefore showed a remote catalogue with no covers at all.
+///
+/// Access is re-checked per request through `artwork_for_user`, so a hash
+/// guessed from another tenant's library answers 404 like anything else.
+pub async fn artwork(
+    State(state): State<AppState>,
+    AxumPath(artwork_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Response, MediaError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty())
+        .ok_or(MediaError::Unauthorized)?;
+    let user = state
+        .auth
+        .authenticate(token)
+        .await
+        .map_err(|_| MediaError::Unauthorized)?;
+    let (hash, format) = state
+        .services
+        .artwork_for_user(user.id, &artwork_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "artwork lookup failed");
+            MediaError::Internal
+        })?
+        .ok_or(MediaError::NotFound)?;
+    let (mime, bytes) = read_artwork(&state.artwork_dir, &hash, &format)
+        .await
+        .ok_or(MediaError::NotFound)?;
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime),
+            // Immutable in practice: the hash *is* the content. Kept private so
+            // a shared cache never serves one tenant's cover to another.
+            (header::CACHE_CONTROL, "private, max-age=86400"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 #[utoipa::path(
