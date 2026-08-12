@@ -265,12 +265,15 @@ fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
     }
 }
 
-/// Attaches the two optional mutation headers to every operation that reads
-/// them. `mutation_context` accepts them on any user-data write, so they are
-/// declared per operation rather than described in prose nobody generates from.
+/// Attaches the two optional mutation headers, and the 409 they can produce, to
+/// every user-data *write*. `mutation_context` accepts them on any such route,
+/// so they are declared per operation rather than described in prose nobody
+/// generates a client from.
+///
+/// Reads are skipped: a GET carries no operation id and cannot conflict.
 fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
     use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
-    use utoipa::openapi::{Required, Schema, Type};
+    use utoipa::openapi::{Required, ResponseBuilder, Schema, Type};
 
     let header = |name: &str, description: &str| {
         ParameterBuilder::new()
@@ -288,8 +291,8 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
     };
 
     for item in openapi.paths.paths.values_mut() {
+        // GET excluded on purpose: reads carry no operation id.
         let operations = [
-            item.get.as_mut(),
             item.put.as_mut(),
             item.post.as_mut(),
             item.delete.as_mut(),
@@ -303,6 +306,20 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
             {
                 continue;
             }
+            operation
+                .responses
+                .responses
+                .entry("409".to_owned())
+                .or_insert_with(|| {
+                    ResponseBuilder::new()
+                        .description(
+                            "Conflict. `code` is `conflict`: the operation id was already used \
+                         for a different payload. Retrying verbatim will fail again — mint \
+                         a new operation id.",
+                        )
+                        .build()
+                        .into()
+                });
             let parameters = operation.parameters.get_or_insert_with(Vec::new);
             parameters.push(header(
                 http::OPERATION_ID_HEADER,
