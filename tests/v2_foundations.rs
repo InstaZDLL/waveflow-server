@@ -429,9 +429,10 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
     repeated
         .headers_mut()
         .insert("host", "waveflow.test".parse().unwrap());
+    // Already initialised: the request is well formed, it collides with state.
     assert_eq!(
         router.clone().oneshot(repeated).await.unwrap().status(),
-        StatusCode::UNPROCESSABLE_ENTITY
+        StatusCode::CONFLICT
     );
 
     let admin_token = login_token(&router, "first-admin", &admin_password).await;
@@ -3312,6 +3313,50 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     assert!(!share_columns.contains(&"token_nonce".to_owned()));
     assert!(!share_columns.contains(&"token_ciphertext".to_owned()));
 
+    // An expiry set by mistake must be liftable. COALESCE alone made it
+    // permanent: omitting the field and sending null were the same bind, so the
+    // owner's only recourse was deleting the share and publishing a new URL.
+    let expiring = send(
+        "POST",
+        "/api/v2/shares".into(),
+        owner_token.clone(),
+        Some(serde_json::json!({
+            "track_ids": [first.clone()],
+            "expires_at": now_ms() + 3_600_000
+        })),
+    )
+    .await;
+    let expiring_id = json_body(expiring).await["id"].as_str().unwrap().to_owned();
+    let patched = send(
+        "PATCH",
+        format!("/api/v2/shares/{expiring_id}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "description": "kept" })),
+    )
+    .await;
+    // Omitting the field still leaves it alone — clearing never fires by accident.
+    assert!(json_body(patched).await["expires_at"].is_i64());
+    let cleared = send(
+        "PATCH",
+        format!("/api/v2/shares/{expiring_id}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "clear": ["expires_at"] })),
+    )
+    .await;
+    let cleared = json_body(cleared).await;
+    assert!(cleared["expires_at"].is_null(), "expiry should be liftable");
+    assert_eq!(cleared["description"], "kept", "clearing is per field");
+    // An unknown name is refused rather than silently ignored, so a client
+    // sending `expiresAt` learns it did nothing.
+    let typo = send(
+        "PATCH",
+        format!("/api/v2/shares/{expiring_id}"),
+        owner_token.clone(),
+        Some(serde_json::json!({ "clear": ["expiresAt"] })),
+    )
+    .await;
+    assert_eq!(typo.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
     // A foreign tenant can neither read nor mutate any of it.
     let foreign_playlists = send(
         "GET",
@@ -3518,7 +3563,15 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         Some(serde_json::json!({ "name": "Wrong replay type", "track_ids": [track] })),
     )
     .await;
-    assert_eq!(mismatched_replay.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    // Same operation id, different intent: a conflict, not a malformed body.
+    // The distinction matters to a client draining an offline queue — a 422
+    // means fix the payload, a 409 means mint a new operation id.
+    assert_eq!(mismatched_replay.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(mismatched_replay).await["code"],
+        "conflict",
+        "conflicts must be distinguishable from validation errors"
+    );
 
     let inverted_favorite = mutate(
         "DELETE",
@@ -3527,7 +3580,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         None,
     )
     .await;
-    assert_eq!(inverted_favorite.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(inverted_favorite.status(), StatusCode::CONFLICT);
     let star_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_star WHERE user_id=?")
         .bind(owner.to_string())
         .fetch_one(state.db.pool())
@@ -3577,10 +3630,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         })),
     )
     .await;
-    assert_eq!(
-        different_playlist.status(),
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
+    assert_eq!(different_playlist.status(), StatusCode::CONFLICT);
     let playlist_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE owner_user_id=?")
             .bind(owner.to_string())
@@ -3779,6 +3829,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     );
 
     let foreign = router
+        .clone()
         .oneshot(
             Request::get("/api/v2/sync/changes?after=0")
                 .header("authorization", format!("Bearer {intruder_token}"))
@@ -3791,6 +3842,51 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .as_array()
         .unwrap()
         .is_empty());
+
+    // Retention contract. The journal is append-only in v2.0, so this cannot
+    // happen in production — the gap is forced here by deleting the head of the
+    // journal, the way a future compaction would. A client resuming from below
+    // the surviving floor must be told to re-snapshot rather than handed the
+    // tail, which would look like a successful catch-up over skipped events.
+    let floor: i64 = sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event WHERE user_id=?")
+        .bind(owner.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM sync_event WHERE user_id=? AND cursor<=?")
+        .bind(owner.to_string())
+        .bind(floor + 1)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let expired = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(expired).await["code"],
+        "cursor_expired",
+        "a re-snapshot signal must be distinguishable from an idempotency conflict"
+    );
+
+    // Resuming from the surviving floor is still served: nothing is missing.
+    let resumed = router
+        .oneshot(
+            Request::get(format!("/api/v2/sync/changes?after={}", floor + 1))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -3876,6 +3972,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
                 None,
                 &[],
                 &[],
+                Default::default(),
                 missing_playlist_context,
             )
             .await,
@@ -3892,6 +3989,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
                 None,
                 &[],
                 &[],
+                Default::default(),
                 playlist_context,
             )
             .await,
@@ -4074,6 +4172,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
             None,
             &[],
             &[],
+            Default::default(),
         )
         .await
         .unwrap();

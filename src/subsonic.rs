@@ -916,7 +916,18 @@ async fn create_playlist(
     let playlist = if let Some(id) = params.uuid_optional("playlistId")? {
         state
             .services
-            .update_playlist(principal.id, id, None, None, None, &ids, &[])
+            // The Subsonic contract is frozen: it has no way to ask for a
+            // field to be blanked, so clearing stays off on this surface.
+            .update_playlist(
+                principal.id,
+                id,
+                None,
+                None,
+                None,
+                &ids,
+                &[],
+                Default::default(),
+            )
             .await
             .map_err(service_protocol)?
     } else {
@@ -953,6 +964,7 @@ async fn update_playlist(
             params.bool_optional("public")?,
             &params.uuids("songIdToAdd")?,
             &params.usizes("songIndexToRemove")?,
+            Default::default(),
         )
         .await
         .map_err(service_protocol)?;
@@ -1281,6 +1293,7 @@ async fn shares(
                     params.uuid("id")?,
                     params.first("description"),
                     params.first("expires").map(parse_time).transpose()?,
+                    Default::default(),
                 )
                 .await
                 .map_err(service_protocol)?;

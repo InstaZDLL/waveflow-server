@@ -112,6 +112,13 @@ pub struct UpdatePlaylistRequest {
     /// Zero-based positions removed before `add` is applied.
     #[serde(default)]
     pub remove_indexes: Vec<usize>,
+    /// Optional fields to blank out, by name. Currently `comment`.
+    ///
+    /// Omitting a field leaves it untouched, so clearing needs its own verb:
+    /// naming it here is the only way to distinguish "unchanged" from "empty",
+    /// and it cannot fire by accident on a client that simply omits the field.
+    #[serde(default)]
+    pub clear: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -150,6 +157,13 @@ pub struct CreateShareRequest {
 pub struct UpdateShareRequest {
     pub description: Option<String>,
     pub expires_at: Option<i64>,
+    /// Optional fields to blank out, by name: `description`, `expires_at`.
+    ///
+    /// Without this, an expiry set by mistake is permanent — `COALESCE` reads an
+    /// absent field and an explicit null identically, so the owner's only
+    /// recourse would be deleting the share and publishing a different URL.
+    #[serde(default)]
+    pub clear: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1041,7 +1055,34 @@ pub async fn get_playlist(
         .map_err(service_error)
 }
 
-#[utoipa::path(patch, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), request_body = UpdatePlaylistRequest, responses((status = 200, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+/// An unknown name is refused rather than ignored: a client asking to clear
+/// `expiresAt` instead of `expires_at` would otherwise be told it succeeded
+/// while the field stayed put.
+fn playlist_clear(names: &[String]) -> Result<crate::services::PlaylistClear, ApiError> {
+    let mut clear = crate::services::PlaylistClear::default();
+    for name in names {
+        match name.as_str() {
+            "comment" => clear.comment = true,
+            _ => return Err(ApiError::Validation),
+        }
+    }
+    Ok(clear)
+}
+
+/// See [`playlist_clear`].
+fn share_clear(names: &[String]) -> Result<crate::services::ShareClear, ApiError> {
+    let mut clear = crate::services::ShareClear::default();
+    for name in names {
+        match name.as_str() {
+            "description" => clear.description = true,
+            "expires_at" => clear.expires_at = true,
+            _ => return Err(ApiError::Validation),
+        }
+    }
+    Ok(clear)
+}
+
+#[utoipa::path(patch, path = "/api/v2/playlists/{playlist_id}", tag = "user-data", params(("playlist_id" = Uuid, Path)), request_body = UpdatePlaylistRequest, responses((status = 200, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn update_playlist(
     State(state): State<AppState>,
     Path(playlist_id): Path<Uuid>,
@@ -1060,6 +1101,7 @@ pub async fn update_playlist(
             request.public,
             &request.add,
             &request.remove_indexes,
+            playlist_clear(&request.clear)?,
             context,
         )
         .await
@@ -1450,6 +1492,7 @@ pub async fn update_share(
             share_id,
             request.description.as_deref(),
             request.expires_at,
+            share_clear(&request.clear)?,
             context,
         )
         .await
@@ -1703,6 +1746,16 @@ pub enum ApiError {
     Unauthorized,
     Forbidden,
     Validation,
+    /// The request is well formed but collides with existing state: an
+    /// operation id replayed with a different payload, or a name already taken.
+    /// Distinct from `Validation` so a client can tell "my request is malformed"
+    /// from "my retry is inconsistent" — both permanent, different fixes.
+    Conflict,
+    /// The sync cursor precedes the oldest retained event. Same 409 status as
+    /// `Conflict` but a distinct code, because the reactions are opposite:
+    /// a conflict means mint a new operation id, this one means discard the
+    /// local projection and take a fresh snapshot.
+    CursorExpired,
     Unavailable,
     NotFound,
 }
@@ -1730,6 +1783,16 @@ impl IntoResponse for ApiError {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation_error",
                 "The request is invalid",
+            ),
+            Self::Conflict => (
+                StatusCode::CONFLICT,
+                "conflict",
+                "The request conflicts with existing state",
+            ),
+            Self::CursorExpired => (
+                StatusCode::CONFLICT,
+                "cursor_expired",
+                "The cursor precedes the oldest retained event; take a fresh snapshot",
             ),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1924,7 +1987,8 @@ fn db_error(error: sqlx::Error) -> ApiError {
 fn sync_error(error: crate::sync::SyncError) -> ApiError {
     match error {
         crate::sync::SyncError::Invalid => ApiError::Validation,
-        crate::sync::SyncError::Conflict => ApiError::Validation,
+        crate::sync::SyncError::Conflict => ApiError::Conflict,
+        crate::sync::SyncError::CursorExpired => ApiError::CursorExpired,
         crate::sync::SyncError::Database(error) => db_error(error),
     }
 }
@@ -1937,7 +2001,8 @@ fn service_error(error: crate::services::ServiceError) -> ApiError {
     use crate::services::ServiceError;
     match error {
         ServiceError::NotFound | ServiceError::Forbidden => ApiError::NotFound,
-        ServiceError::Invalid | ServiceError::Conflict => ApiError::Validation,
+        ServiceError::Invalid => ApiError::Validation,
+        ServiceError::Conflict => ApiError::Conflict,
         ServiceError::Unavailable => ApiError::Unavailable,
         ServiceError::Database(error) => db_error(error),
         ServiceError::Security(error) => {

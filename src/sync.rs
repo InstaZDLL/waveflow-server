@@ -24,6 +24,16 @@ pub enum SyncError {
     Invalid,
     #[error("operation id was already used for another intent")]
     Conflict,
+    /// The caller resumes from a point the journal no longer covers, so the
+    /// gap cannot be replayed incrementally. The client must take a fresh
+    /// snapshot and continue from its cursor.
+    ///
+    /// Unreachable while the journal stays append-only, which is the case in
+    /// v2.0. It exists so clients can implement the recovery branch now rather
+    /// than discover it the day retention lands — RFC-003 already requires any
+    /// future compaction to keep a snapshot floor.
+    #[error("cursor precedes the oldest retained event")]
+    CursorExpired,
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 }
@@ -247,6 +257,17 @@ impl SyncService {
     ) -> Result<SyncPage, SyncError> {
         if after < 0 || !(1..=MAX_SYNC_LIMIT).contains(&limit) {
             return Err(SyncError::Invalid);
+        }
+        // A journal that starts above `after + 1` has dropped events the caller
+        // never saw. Returning the surviving tail would look like a successful
+        // catch-up while silently skipping the gap, so refuse instead.
+        let oldest: Option<i64> =
+            sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event WHERE user_id=?")
+                .bind(user_id.to_string())
+                .fetch_one(self.db.pool())
+                .await?;
+        if oldest.is_some_and(|oldest| after < oldest - 1) {
+            return Err(SyncError::CursorExpired);
         }
         let rows = sqlx::query(
             "SELECT cursor, event_id, operation_id, origin_device_id, entity_type, entity_id, \
