@@ -240,6 +240,26 @@ pub struct HistoryItem {
     pub played_at: i64,
 }
 
+/// Optional fields a share update may blank out.
+///
+/// `COALESCE(?, column)` cannot express this: an absent field and an explicit
+/// null arrive as the same bind, so "leave it alone" and "remove it" collapse.
+/// The consequence was not cosmetic — an expiry set by mistake could never be
+/// lifted, and the owner's only recourse was to delete the share and mint a new
+/// URL. Clearing is opt-in and named, so a client that merely omits a field can
+/// never erase one by accident.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShareClear {
+    pub description: bool,
+    pub expires_at: bool,
+}
+
+/// Optional fields a playlist update may blank out. See [`ShareClear`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlaylistClear {
+    pub comment: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShareItem {
     pub id: Uuid,
@@ -311,7 +331,12 @@ impl From<crate::sync::SyncError> for ServiceError {
     fn from(error: crate::sync::SyncError) -> Self {
         match error {
             crate::sync::SyncError::Invalid => Self::Invalid,
-            crate::sync::SyncError::Conflict => Self::Conflict,
+            // Mutations claim operations; they never read the journal, so
+            // CursorExpired cannot reach this conversion. Folded into Conflict
+            // rather than given a domain variant nothing would ever construct.
+            crate::sync::SyncError::Conflict | crate::sync::SyncError::CursorExpired => {
+                Self::Conflict
+            }
             crate::sync::SyncError::Database(error) => Self::Database(error),
         }
     }
@@ -977,6 +1002,7 @@ impl DomainServices {
         public: Option<bool>,
         add: &[Uuid],
         remove_indexes: &[usize],
+        clear: PlaylistClear,
     ) -> Result<PlaylistItem, ServiceError> {
         self.update_playlist_with_context(
             user_id,
@@ -986,6 +1012,7 @@ impl DomainServices {
             public,
             add,
             remove_indexes,
+            clear,
             MutationContext::server_generated(),
         )
         .await
@@ -1001,6 +1028,7 @@ impl DomainServices {
         public: Option<bool>,
         add: &[Uuid],
         remove_indexes: &[usize],
+        clear: PlaylistClear,
         context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
         let mut removes = remove_indexes.to_vec();
@@ -1015,6 +1043,7 @@ impl DomainServices {
                 "public": public,
                 "add": add,
                 "remove_indexes": &removes,
+                "clear_comment": clear.comment,
             }),
         );
         let _writer = self.db.writer_guard().await;
@@ -1044,10 +1073,12 @@ impl DomainServices {
         ids.extend_from_slice(add);
         let changed_at = now_ms();
         sqlx::query(
-            "UPDATE playlist SET name=COALESCE(?, name), comment=COALESCE(?, comment), \
+            "UPDATE playlist SET name=COALESCE(?, name), \
+             comment=CASE WHEN ? THEN NULL ELSE COALESCE(?, comment) END, \
              public=COALESCE(?, public), updated_at=? WHERE id=? AND owner_user_id=?",
         )
         .bind(name.map(str::trim))
+        .bind(clear.comment)
         .bind(comment)
         .bind(public.map(i64::from))
         .bind(changed_at)
@@ -1909,12 +1940,14 @@ impl DomainServices {
         id: Uuid,
         description: Option<&str>,
         expires_at: Option<i64>,
+        clear: ShareClear,
     ) -> Result<ShareItem, ServiceError> {
         self.update_share_with_context(
             user_id,
             id,
             description,
             expires_at,
+            clear,
             MutationContext::server_generated(),
         )
         .await
@@ -1926,14 +1959,20 @@ impl DomainServices {
         id: Uuid,
         description: Option<&str>,
         expires_at: Option<i64>,
+        clear: ShareClear,
         context: MutationContext,
     ) -> Result<ShareItem, ServiceError> {
+        // Clearing must be part of the intent: "set expiry to X" and "remove the
+        // expiry" are different mutations, and an operation id replayed across
+        // both has to be rejected rather than silently treated as the same.
         let intent = MutationIntent::new(
             "update",
             &format!("share:{id}"),
             &serde_json::json!({
                 "description": description,
                 "expires_at": expires_at,
+                "clear_description": clear.description,
+                "clear_expires_at": clear.expires_at,
             }),
         );
         let _writer = self.db.writer_guard().await;
@@ -1953,8 +1992,22 @@ impl DomainServices {
                 .find(|share| share.id == id)
                 .ok_or(ServiceError::NotFound);
         }
-        let persisted = sqlx::query("UPDATE share SET description=COALESCE(?, description), expires_at=COALESCE(?, expires_at), updated_at=? WHERE id=? AND owner_user_id=? RETURNING description, expires_at")
-            .bind(description).bind(expires_at).bind(now_ms()).bind(id.to_string()).bind(user_id.to_string()).fetch_optional(&mut *tx).await?;
+        let persisted = sqlx::query(
+            "UPDATE share SET \
+               description=CASE WHEN ? THEN NULL ELSE COALESCE(?, description) END, \
+               expires_at=CASE WHEN ? THEN NULL ELSE COALESCE(?, expires_at) END, \
+               updated_at=? \
+             WHERE id=? AND owner_user_id=? RETURNING description, expires_at",
+        )
+        .bind(clear.description)
+        .bind(description)
+        .bind(clear.expires_at)
+        .bind(expires_at)
+        .bind(now_ms())
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
         let Some(persisted) = persisted else {
             tx.rollback().await?;
             return Err(ServiceError::NotFound);

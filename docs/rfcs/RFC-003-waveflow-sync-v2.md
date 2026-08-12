@@ -103,3 +103,20 @@ queries before data reaches any facade.
 The journal is append-only in v2.0. Retention/compaction may be introduced only
 with a snapshot floor that prevents an offline client from silently skipping
 events.
+
+## Expired cursors
+
+`GET /sync/changes` refuses a cursor that precedes the oldest retained event
+with **409** and `{"code": "cursor_expired"}`. The client discards its local
+projection, takes a fresh `/sync/snapshot`, and resumes from its cursor.
+
+The status is shared with idempotency conflicts, so **the code is what clients
+must branch on**, not the status: `conflict` means mint a new operation id and
+retry the mutation, `cursor_expired` means re-snapshot. Reacting to one as if it
+were the other either loses a write or wipes a healthy projection.
+
+The check is implemented and tested today even though it cannot fire: the
+journal is append-only, so no cursor can fall below the floor. It is specified
+now so clients write the recovery branch against a real contract rather than
+discover it the day retention lands. Resuming from the surviving floor itself
+stays a normal 200 — only a genuine gap is refused.
