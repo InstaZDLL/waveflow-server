@@ -290,7 +290,7 @@ async fn dispatch(
             .attr("valid", true)
             .attr("email", "")
             .attr("licenseExpires", "2099-12-31T23:59:59Z")),
-        "getOpenSubsonicExtensions" => Ok(Node::new("openSubsonicExtensions")),
+        "getOpenSubsonicExtensions" => Ok(open_subsonic_extensions()),
         // Symfonium includes bookmarks in its initial sync even when the
         // server does not expose audiobook progress. Returning the standard
         // empty container keeps that optional capability non-destructive.
@@ -1600,10 +1600,14 @@ fn render_protocol(node: Node, json: bool, status: StatusCode) -> Response {
 }
 
 fn node_json(node: &Node) -> Value {
+    // An array-typed element is its children, not an object wrapping them —
+    // whether it holds none or several. Applying this only when empty would
+    // hand a strictly typed client `[]` on an empty catalogue and an object on
+    // a populated one, which is worse than being wrong consistently.
+    if json_array_node(&node.name) {
+        return Value::Array(node.children.iter().map(node_json).collect());
+    }
     if node.attrs.is_empty() && node.children.is_empty() {
-        if json_array_node(&node.name) {
-            return Value::Array(Vec::new());
-        }
         if let Some(text) = &node.text {
             return Value::String(text.clone());
         }
@@ -1637,6 +1641,37 @@ fn node_json(node: &Node) -> Value {
 /// strictly typed clients that decode the field into a list.
 fn json_array_node(name: &str) -> bool {
     matches!(name, "openSubsonicExtensions")
+}
+
+/// Extensions this server actually implements, with their supported versions.
+///
+/// The list was empty, which told every third-party client that WaveFlow
+/// supports nothing optional — so a client that could have posted a long
+/// request, authenticated with an API key or seeked a transcode fell back to
+/// the lowest common denominator instead.
+///
+/// **Only advertise what is implemented and covered by tests.** Announcing an
+/// extension the server does not honour is worse than announcing none: the
+/// client stops probing and starts relying on it.
+///
+/// The specification defines no XML shape for this method, so `versions`
+/// renders as a JSON array here and stringifies as `"[1]"` in the XML branch.
+/// Clients that use the method request JSON.
+fn open_subsonic_extensions() -> Node {
+    let extension = |name: &str, versions: Vec<i64>| {
+        Node::new("openSubsonicExtension").attr("name", name).attr(
+            "versions",
+            Value::Array(versions.into_iter().map(Value::from).collect()),
+        )
+    };
+    Node::new("openSubsonicExtensions")
+        // POST with application/x-www-form-urlencoded, for requests too long
+        // for a query string.
+        .child(extension("formPost", vec![1]))
+        // `apiKey` in place of the u/p and u/t/s pairs.
+        .child(extension("apiKeyAuthentication", vec![1]))
+        // `timeOffset` on stream, honoured for transcoded output.
+        .child(extension("transcodeOffset", vec![1]))
 }
 
 fn json_array_field(parent: &str, name: &str) -> bool {
