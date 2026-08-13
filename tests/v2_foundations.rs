@@ -3098,6 +3098,28 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
     assert_eq!(found["songs"].as_array().unwrap().len(), 2);
 
+    // Search-as-you-type: the trailing term matches as a prefix. This exact
+    // case was reported from the Android client — "echo" returned 2 songs,
+    // 1 album and 1 artist while "ech" returned nothing, because the native
+    // surface still required whole tokens after the Subsonic one moved on.
+    let partial = get("/api/v2/search?q=ech".into(), owner_token.clone()).await;
+    assert_eq!(partial.status(), StatusCode::OK);
+    let partial = json_body(partial).await;
+    assert_eq!(partial["songs"].as_array().unwrap().len(), 2);
+    assert_eq!(partial["albums"].as_array().unwrap().len(), 1);
+    assert_eq!(partial["artists"].as_array().unwrap().len(), 1);
+
+    // Extra terms still narrow rather than widen.
+    let narrowed = get(
+        "/api/v2/search?q=echo%20nonexistent".into(),
+        owner_token.clone(),
+    )
+    .await;
+    assert!(json_body(narrowed).await["songs"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
     // A search with no usable term is an empty result, never a SQL error.
     let blank = get("/api/v2/search?q=%20".into(), owner_token.clone()).await;
     assert_eq!(blank.status(), StatusCode::OK);

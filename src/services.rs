@@ -765,7 +765,11 @@ impl DomainServices {
         query: &str,
         page: BrowsePage,
     ) -> Result<SearchResult, ServiceError> {
-        let Some(fts) = crate::catalog::fts_match_query(query) else {
+        // Prefix on the trailing term, like the Subsonic surface: a client
+        // querying on each keystroke would otherwise get nothing until the word
+        // is complete — "ech" returned zero results while "echo" returned the
+        // album. Native clients type incrementally just as Subsonic ones do.
+        let Some(fts) = crate::catalog::fts_prefix_query(query) else {
             return Ok(SearchResult {
                 artists: Vec::new(),
                 albums: Vec::new(),
