@@ -128,6 +128,9 @@ pub struct TrackRecord {
     pub duration_ms: i64,
     pub codec: Option<String>,
     pub artwork_hash: Option<String>,
+    /// Content fingerprint: BLAKE3, unkeyed, hexadecimal, over the whole file.
+    /// See `services::SongItem::full_hash` for the contract.
+    pub full_hash: String,
     pub available: bool,
 }
 
@@ -661,13 +664,13 @@ async fn fetch_tracks(
 ) -> Result<Vec<TrackRecord>, sqlx::Error> {
     let rows = if let Some(fts_query) = query.and_then(fts_match_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.is_available FROM track t \
+            t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
             WHERE t.library_id=? AND m.user_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
             .bind(library.to_string()).bind(user.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.is_available FROM track t \
+            t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id WHERE t.library_id=? AND m.user_id=? \
             ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?")
             .bind(library.to_string()).bind(user.to_string()).bind(limit).bind(offset).fetch_all(db.pool()).await?
@@ -823,6 +826,7 @@ fn track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<TrackRecord, sqlx::Err
         duration_ms: row.try_get("duration_ms")?,
         codec: row.try_get("codec")?,
         artwork_hash: row.try_get("artwork_hash")?,
+        full_hash: row.try_get("full_hash")?,
         available: row.try_get::<i64, _>("is_available")? != 0,
     })
 }

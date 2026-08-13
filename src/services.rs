@@ -23,7 +23,7 @@ macro_rules! song_select {
     () => {
         "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
-                t.codec, t.relative_path, t.file_size, t.artwork_hash, t.created_at, \
+                t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
                 us.starred_at, ur.rating AS user_rating \
          FROM track t JOIN library_member m ON m.library_id=t.library_id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
@@ -114,6 +114,15 @@ pub struct SongItem {
     pub suffix: String,
     pub size: i64,
     pub artwork_hash: Option<String>,
+    /// Content fingerprint: **BLAKE3, unkeyed, hexadecimal, over the whole
+    /// file** — 64 characters. A client can compute the same value locally and
+    /// compare, which is the only automatic link M5 accepts (a unique full-hash
+    /// match; MBID stays a suggestion to confirm).
+    ///
+    /// It fingerprints the *file*, not the decoded audio: two copies of one
+    /// recording with different tags do not match. The algorithm is part of the
+    /// contract — changing it means adding a field, never redefining this one.
+    pub full_hash: String,
     pub created_at: i64,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
@@ -2606,6 +2615,7 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
             .to_ascii_lowercase(),
         size: row.try_get("file_size")?,
         artwork_hash: row.try_get("artwork_hash")?,
+        full_hash: row.try_get("full_hash")?,
         created_at: row.try_get("created_at")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
