@@ -1087,6 +1087,18 @@ async fn ffmpeg_generated_catalog_format_matrix_is_indexed() {
         assert_eq!(track.album.as_deref(), Some("WaveFlow format matrix"));
         assert_eq!(track.artist.as_deref(), Some("Alpha; Beta"));
         assert!(track.duration_ms > 0);
+
+        // full_hash is published to clients as *the* reconciliation key, so its
+        // algorithm is part of the contract. Check the served value against the
+        // file rather than trusting the column name: a client computing BLAKE3
+        // locally and getting something else would match nothing, silently.
+        let bytes = std::fs::read(music.join(format!("matrix.{extension}"))).unwrap();
+        assert_eq!(
+            track.full_hash,
+            blake3::hash(&bytes).to_hex().to_string(),
+            "full_hash must be unkeyed BLAKE3 over the whole {extension} file"
+        );
+        assert_eq!(track.full_hash.len(), 64);
     }
 }
 
