@@ -188,15 +188,12 @@ vérifié.
 
 ## Dettes identifiées, non traitées
 
-- `getOpenSubsonicExtensions` renvoie un conteneur **vide** alors que le serveur
-  implémente plusieurs extensions. Sans conséquence pour WaveFlow Desktop, qui
-  détecte le serveur par `type="waveflow"`, mais un client tiers en conclut que
-  rien n'est disponible. Touche le contrat gelé : à traiter après le tag.
-- `webapp/` n'a pas encore de test de composant ou de parcours automatisé. La
-  suite couvre les gardes de redirection et les design tokens ; un smoke test
-  navigateur manuel sur installation vide valide setup, session, rôles,
-  playlists, favoris, queue, partages, bibliothèques, scans, comptes et rotation
-  d'identifiant Subsonic. La CI web lint (Biome), construit et lance Vitest.
+- `webapp/` n'a pas de test de **rendu** ni de parcours navigateur. La suite
+  couvre désormais les gardes de redirection, les design tokens, la pagination
+  et le rafraîchissement de session — mais pas les composants. Un smoke test
+  manuel sur installation vide valide setup, session, rôles, playlists, favoris,
+  queue, partages, bibliothèques, scans, comptes et rotation d'identifiant
+  Subsonic. La CI web lint (Biome), construit et lance Vitest.
 
 ## Dettes fermées, à ne pas rouvrir par erreur
 
@@ -311,6 +308,24 @@ Deux invariants préservés, et testés parce qu'ils cassent en silence :
 
 **À revalider avec les quatre clients réels** (Symfonium, DSub, Feishin,
 Substreamer) avant le tag `v2.0-beta` : c'est la surface que le gel protégeait.
+
+## Extensions OpenSubsonic annoncées (2026-08-13)
+
+`getOpenSubsonicExtensions` renvoyait un conteneur vide, ce qui disait à tout
+client tiers que le serveur ne prend rien en charge d'optionnel. Il annonce
+maintenant les trois extensions réellement implémentées et couvertes par la
+suite : **`formPost`**, **`apiKeyAuthentication`** et **`transcodeOffset`**.
+
+**N'annoncer que ce qui est implémenté.** Déclarer une extension que le serveur
+n'honore pas est pire que n'en déclarer aucune : le client cesse de sonder et
+se met à en dépendre.
+
+La spécification ne définit **aucune forme XML** pour cette méthode ; `versions`
+est donc un tableau JSON et se rend en `"[1]"` dans la branche XML. Les clients
+qui utilisent la méthode demandent du JSON.
+
+Groupé volontairement avec le passage à FTS5 : les deux touchent la surface
+Subsonic, une seule campagne de revalidation les couvre.
 
 ## Correctifs de sécurité postérieurs à la fusion (2026-08-09)
 

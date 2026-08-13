@@ -12,13 +12,15 @@
 #   scripts/seed-dev-instance.sh [data-dir]
 #
 # Environment:
-#   WAVEFLOW_SEED_PASSWORD   account password (default: a dev-only constant)
-#   WAVEFLOW_BIN             server binary (default: cargo run --quiet --)
+#   WAVEFLOW_SEED_PASSWORD            account password (dev-only constant)
+#   WAVEFLOW_SEED_SUBSONIC_PASSWORD   dedicated /rest/ password (dev-only)
+#   WAVEFLOW_BIN                      server binary (default: cargo run --quiet --)
 
 set -euo pipefail
 
 DATA_DIR="${1:-./data-dev}"
 PASSWORD="${WAVEFLOW_SEED_PASSWORD:-dev-password-change-me}"
+SUBSONIC_PASSWORD="${WAVEFLOW_SEED_SUBSONIC_PASSWORD:-subsonic-dev-password}"
 ADMIN="${WAVEFLOW_SEED_ADMIN:-dev-admin}"
 MUSIC_DIR="$DATA_DIR/music"
 
@@ -85,6 +87,12 @@ echo
 echo "Creating a native API token …"
 "${SERVER[@]}" token create --actor "$ADMIN" --username "$ADMIN" --name "dev-client" --scopes read,write
 
+# Without this the instance answers 40 to every /rest/ call, which looks like a
+# broken build rather than a missing credential.
+echo
+echo "Setting the Subsonic credential …"
+WAVEFLOW_SUBSONIC_PASSWORD="$SUBSONIC_PASSWORD" "${SERVER[@]}" credential set --actor "$ADMIN" --username "$ADMIN"
+
 cat <<EOF
 
 ──────────────────────────────────────────────────────────────
@@ -93,6 +101,7 @@ Seeded instance ready.
   data dir   $DATA_DIR
   username   $ADMIN
   password   $PASSWORD
+  subsonic   $SUBSONIC_PASSWORD  (for /rest/ — the web password does not work there)
 
   6 tracks · 3 albums · 3 artists (one multi-artist, one untracked)
 

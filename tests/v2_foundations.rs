@@ -1760,9 +1760,27 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             let extensions = &response["subsonic-response"]["openSubsonicExtensions"];
             assert!(
                 extensions.is_array(),
-                "the extension list stays an array when empty, never an object"
+                "the extension list is an array whether empty or populated, never an object"
             );
-            assert!(extensions.as_array().unwrap().is_empty());
+            let advertised = extensions
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|extension| {
+                    assert!(
+                        extension["versions"].is_array(),
+                        "versions must be an array of integers"
+                    );
+                    extension["name"].as_str().unwrap().to_owned()
+                })
+                .collect::<Vec<_>>();
+            // Advertising an extension the server does not honour is worse than
+            // advertising none: the client stops probing and starts relying on
+            // it. Each of these is exercised elsewhere in this suite — form
+            // POST, apiKey authentication and timeOffset on a transcode.
+            assert!(advertised.contains(&"formPost".to_owned()));
+            assert!(advertised.contains(&"apiKeyAuthentication".to_owned()));
+            assert!(advertised.contains(&"transcodeOffset".to_owned()));
         }
         if method == "getBookmarks" {
             assert!(response["subsonic-response"]["bookmarks"].is_object());
