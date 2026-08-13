@@ -4744,3 +4744,141 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         "an authorization code is single use"
     );
 }
+
+/// `search3` runs on the FTS5 index rather than filtering a fully materialised
+/// catalogue in memory. That is not a pure refactor — it changes which queries
+/// match — so the trade is pinned here rather than left to a client to discover.
+#[tokio::test]
+async fn subsonic_search_matches_through_the_fts_index() {
+    let (_temp, config, state) = test_app().await;
+    let subsonic_password = "subsonic-secret-123";
+    let api_key = "wfsk_search-key";
+    let admin = state
+        .db
+        .create_account(
+            "search-admin",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(subsonic_password.as_bytes())
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            admin,
+            admin,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("search-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(admin, "Search", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3).await.unwrap();
+    // One album of three tracks, one of them accented.
+    for (index, title) in ["Echo Chamber", "Écho lointain", "Silent Partner"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut input = catalog_input(index, "Nocturne");
+        input.title = title.to_owned();
+        input.album = Some("Night Sessions".into());
+        input.is_compilation = false;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let titles = |result: &serde_json::Value| -> Vec<String> {
+        result["subsonic-response"]["searchResult3"]["song"]
+            .as_array()
+            .map(|songs| {
+                songs
+                    .iter()
+                    .filter_map(|song| song["title"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // Whole-word match, as before.
+    let whole = subsonic_json(&router, "search3", api_key, "&query=Echo&songCount=10").await;
+    assert!(titles(&whole).contains(&"Echo Chamber".to_owned()));
+
+    // Search-as-you-type: the trailing term matches as a prefix, so a client
+    // querying on every keystroke keeps getting results.
+    let prefix = subsonic_json(&router, "search3", api_key, "&query=Ech&songCount=10").await;
+    assert!(titles(&prefix).contains(&"Echo Chamber".to_owned()));
+
+    // Gained: the tokenizer folds diacritics, so "echo" now reaches "Écho".
+    // The previous lowercase substring test did not.
+    assert!(titles(&prefix).contains(&"Écho lointain".to_owned()));
+
+    // Given up: matching inside a word. "cho" used to find "Echo Chamber"
+    // through a substring test and no longer does. Documented, not accidental.
+    let infix = subsonic_json(&router, "search3", api_key, "&query=cho&songCount=10").await;
+    assert!(!titles(&infix).contains(&"Echo Chamber".to_owned()));
+
+    // Terms narrow rather than widen.
+    let narrowed = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Echo%20Silent&songCount=10",
+    )
+    .await;
+    assert!(titles(&narrowed).is_empty());
+
+    // An album reports its own size, not how much of it the query hit: two of
+    // the three tracks match "echo", and songCount must still read 3.
+    let album = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Echo&albumCount=10&songCount=0",
+    )
+    .await;
+    let albums = album["subsonic-response"]["searchResult3"]["album"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let night = albums
+        .iter()
+        .find(|album| album["name"] == "Night Sessions")
+        .expect("matching album should be returned");
+    assert_eq!(
+        night["songCount"], 3,
+        "songCount must describe the album, not the query"
+    );
+
+    // The documented match-all query still returns the whole catalogue.
+    let all = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=%22%22&songCount=500&albumCount=500&artistCount=500",
+    )
+    .await;
+    assert_eq!(titles(&all).len(), 3);
+}

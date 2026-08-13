@@ -644,6 +644,34 @@ impl Database {
 /// quoted so punctuation cannot be read as FTS syntax, and terms are ANDed so
 /// extra words narrow the result. Returns `None` when the input carries no
 /// searchable term — `MATCH ''` is a SQLite error, not an empty result.
+/// Like [`fts_match_query`], but the last term also matches as a prefix.
+///
+/// Search-as-you-type is the normal way a Subsonic client queries: the user has
+/// typed "ech" and expects "Echo". A bare token match returns nothing until the
+/// word is complete, so the trailing term becomes `ech*`.
+///
+/// Earlier terms stay exact — `"dark side of the m"` should narrow, not widen,
+/// and prefixing every token would make short words match far too much.
+pub(crate) fn fts_prefix_query(query: &str) -> Option<String> {
+    let mut terms = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .peekable();
+    let mut expression = String::new();
+    while let Some(term) = terms.next() {
+        if !expression.is_empty() {
+            expression.push_str(" AND ");
+        }
+        expression.push('"');
+        expression.push_str(&term.replace('"', "\"\""));
+        expression.push('"');
+        if terms.peek().is_none() {
+            expression.push('*');
+        }
+    }
+    (!expression.is_empty()).then_some(expression)
+}
+
 pub(crate) fn fts_match_query(query: &str) -> Option<String> {
     let expression = query
         .split_whitespace()

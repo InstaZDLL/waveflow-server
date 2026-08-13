@@ -106,9 +106,9 @@ régression.
 - **Pas de registre de clients OAuth.** Modèle RFC 8252 pour clients publics :
   PKCE + restriction des redirections (loopback / https / schéma en domaine
   inversé) remplacent l'enregistrement.
-- **Le contrat Subsonic est gelé.** `search3` filtre encore en mémoire sans
-  utiliser l'index FTS5 — dette assumée : y toucher risquerait une régression
-  sur les trois clients validés.
+- **Le contrat Subsonic est gelé**, à une exception documentée : `search3`
+  s'appuie désormais sur FTS5 (voir « Recherche Subsonic » plus bas). Toute
+  autre évolution du comportement observable reste proscrite.
 - **`web/` a été supprimé** (décision user du 2026-08-08) après extraction de
   `packages/design-tokens` vers `webapp/src/design-tokens/`. Le reste était
   arrimé à la hiérarchie profil/bibliothèque de la v1 et aux server functions
@@ -188,7 +188,10 @@ vérifié.
 
 ## Dettes identifiées, non traitées
 
-- `search3` n'exploite pas FTS5 (voir ci-dessus).
+- `getOpenSubsonicExtensions` renvoie un conteneur **vide** alors que le serveur
+  implémente plusieurs extensions. Sans conséquence pour WaveFlow Desktop, qui
+  détecte le serveur par `type="waveflow"`, mais un client tiers en conclut que
+  rien n'est disponible. Touche le contrat gelé : à traiter après le tag.
 - `webapp/` n'a pas encore de test de composant ou de parcours automatisé. La
   suite couvre les gardes de redirection et les design tokens ; un smoke test
   navigateur manuel sur installation vide valide setup, session, rôles,
@@ -251,6 +254,28 @@ uniquement — la façade Subsonic est inchangée et ses tests n'ont pas bougé.
   implémenté et testé pour que les clients écrivent leur branche de reprise
   contre un contrat réel.
 
+Trois ajouts demandés par le client Android, tous sur `/api/v2` :
+
+- **`GET /api/v2/artwork/{artwork_id}`** sert les pochettes derrière le Bearer
+  natif. Elle accepte un `artwork_hash` ou l'id d'une piste, d'un album ou d'un
+  artiste. Sans elle, un catalogue distant s'affichait **sans aucune pochette** :
+  les charges portaient `artwork_hash` et seule la façade Subsonic, avec ses
+  identifiants distincts, savait le résoudre. La lecture du fichier est partagée
+  avec `getCoverArt` pour que les deux surfaces ne divergent pas.
+- **`full_hash` publié** sur `SongItem` et `TrackRecord` : BLAKE3 non keyed,
+  hexadécimal, sur le fichier entier. C'est la clé de réconciliation de M5, que
+  les clients peuvent recalculer localement. Elle empreinte le **fichier**, pas
+  l'audio décodé. **L'algorithme fait partie du contrat** : en changer un jour
+  signifie ajouter un champ, jamais redéfinir celui-ci.
+- **`album_count` sur `/artists/{id}`**, comme sur `/artists`.
+
+**L'URL d'un ticket de flux est toujours relative**, jamais préfixée par
+`WAVEFLOW_PUBLIC_URL` — contrairement à une URL de partage, faite pour sortir de
+l'application. Une valeur absolue permettrait d'orienter la lecture vers un hôte
+auquel l'utilisateur ne s'est jamais authentifié, et les clients natifs la
+rejettent. Un test le vérifie avec `public_url` configurée : **ne pas
+« harmoniser » les deux**.
+
 **L'OpenAPI déclare enfin sa sécurité.** Schéma bearer exigé globalement, douze
 opérations explicitement publiques (celles qui portent leur propre justificatif
 ou aucun, `/api/v2/stream/{ticket}` compris), et les en-têtes
@@ -258,6 +283,34 @@ ou aucun, `/api/v2/stream/{ticket}` compris), et les en-têtes
 `user-data` — jamais sur les lectures, qui ne portent pas d'identifiant
 d'opération. Sans cela, un client généré depuis le document ne s'authentifiait
 nulle part et perdait la sûreté de rejeu.
+
+## Recherche Subsonic sur FTS5 (2026-08-13)
+
+`search3` interrogeait le catalogue entier chargé en mémoire, puis le filtrait
+par sous-chaîne. Il s'appuie désormais sur l'index FTS5, comme `/api/v2/search`.
+**C'est le seul écart autorisé au gel du contrat Subsonic**, et il change les
+résultats — d'où ce qui suit.
+
+- **Gagné :** l'insensibilité aux diacritiques. Le tokenizer
+  `unicode61 remove_diacritics 2` fait que « echo » atteint « Écho », ce que le
+  test par sous-chaîne en minuscules ne faisait pas.
+- **Gagné :** la recherche ne matérialise plus tout le catalogue à chaque appel.
+- **Perdu :** la correspondance en milieu de mot. « cho » ne trouve plus
+  « Echo ». Le dernier terme est traité comme un préfixe (`ech*`), donc la
+  frappe incrémentale — le mode d'interrogation normal d'un client — continue
+  de fonctionner.
+
+Deux invariants préservés, et testés parce qu'ils cassent en silence :
+
+- la requête littérale `""` reste « tout le catalogue » et emprunte toujours le
+  snapshot complet, FTS5 n'ayant pas d'expression signifiant « tout » ;
+- un nœud `album` annonce **sa** taille, pas le nombre de pistes qui matchent.
+  `album_node` dérive `songCount` et `duration` de la liste de pistes qu'on lui
+  passe : lui donner les seules correspondances ferait annoncer « 2 pistes » à
+  un album qui en compte 12, faussement et sans erreur.
+
+**À revalider avec les quatre clients réels** (Symfonium, DSub, Feishin,
+Substreamer) avant le tag `v2.0-beta` : c'est la surface que le gel protégeait.
 
 ## Correctifs de sécurité postérieurs à la fusion (2026-08-09)
 

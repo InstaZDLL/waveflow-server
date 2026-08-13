@@ -821,63 +821,76 @@ async fn search(
     params: &Params,
 ) -> Result<Node, ProtocolError> {
     let raw_query = params.first("query").ok_or_else(missing)?;
-    // Subsonic clients use the literal pair of quotes as the documented
-    // match-all query while paginating a complete catalogue.
-    let query = (raw_query != "\"\"").then(|| raw_query.to_lowercase());
-    let snapshot = snapshot(state, principal, params).await?;
     let artist_count = params.usize_or("artistCount", 20, 500)?;
     let artist_offset = params.usize_or("artistOffset", 0, 100_000)?;
     let album_count = params.usize_or("albumCount", 20, 500)?;
     let album_offset = params.usize_or("albumOffset", 0, 100_000)?;
     let song_count = params.usize_or("songCount", 20, 500)?;
     let song_offset = params.usize_or("songOffset", 0, 100_000)?;
-    Ok(Node::new("searchResult3")
+
+    // Subsonic clients use the literal pair of quotes as the documented
+    // match-all query while paginating a complete catalogue. That path stays on
+    // the full snapshot: there is nothing to match, and FTS5 has no expression
+    // meaning "everything".
+    if raw_query == "\"\"" {
+        let snapshot = snapshot(state, principal, params).await?;
+        return Ok(search_result(
+            snapshot.artists.iter(),
+            snapshot.albums.iter(),
+            snapshot.songs.iter(),
+            &snapshot.songs,
+            (artist_offset, artist_count),
+            (album_offset, album_count),
+            (song_offset, song_count),
+        ));
+    }
+
+    let folders = params.uuids("musicFolderId")?;
+    let found = state
+        .services
+        .catalog_search(principal.id, &folders, raw_query)
+        .await
+        .map_err(internal)?;
+    Ok(search_result(
+        found.artists.iter(),
+        found.albums.iter(),
+        found.songs.iter(),
+        &found.album_tracks,
+        (artist_offset, artist_count),
+        (album_offset, album_count),
+        (song_offset, song_count),
+    ))
+}
+
+/// Renders a `searchResult3` from already-selected entities.
+///
+/// `album_tracks` is what `album_node` derives songCount and duration from, and
+/// it is deliberately not the matching songs: an album must report its own size,
+/// not how much of it the query happened to hit.
+#[allow(clippy::too_many_arguments)]
+fn search_result<'a>(
+    artists: impl Iterator<Item = &'a ArtistItem>,
+    albums: impl Iterator<Item = &'a AlbumItem>,
+    songs: impl Iterator<Item = &'a SongItem>,
+    album_tracks: &[SongItem],
+    (artist_offset, artist_count): (usize, usize),
+    (album_offset, album_count): (usize, usize),
+    (song_offset, song_count): (usize, usize),
+) -> Node {
+    Node::new("searchResult3")
         .children(
-            snapshot
-                .artists
-                .iter()
-                .filter(|artist| {
-                    query
-                        .as_ref()
-                        .is_none_or(|query| artist.name.to_lowercase().contains(query))
-                })
+            artists
                 .skip(artist_offset)
                 .take(artist_count)
                 .map(|artist| artist_node(artist, 0)),
         )
         .children(
-            snapshot
-                .albums
-                .iter()
-                .filter(|album| {
-                    query
-                        .as_ref()
-                        .is_none_or(|query| album.title.to_lowercase().contains(query))
-                })
+            albums
                 .skip(album_offset)
                 .take(album_count)
-                .map(|album| album_node(album, &snapshot.songs)),
+                .map(|album| album_node(album, album_tracks)),
         )
-        .children(
-            snapshot
-                .songs
-                .iter()
-                .filter(|song| {
-                    query.as_ref().is_none_or(|query| {
-                        [
-                            Some(song.title.as_str()),
-                            song.album.as_deref(),
-                            song.artist.as_deref(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .any(|value| value.to_lowercase().contains(query))
-                    })
-                })
-                .skip(song_offset)
-                .take(song_count)
-                .map(song_node),
-        ))
+        .children(songs.skip(song_offset).take(song_count).map(song_node))
 }
 
 async fn playlists(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {

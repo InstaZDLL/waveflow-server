@@ -136,6 +136,21 @@ pub struct CatalogSnapshot {
     pub songs: Vec<SongItem>,
 }
 
+/// Result of a Subsonic `search3`, backed by the FTS5 index.
+#[derive(Debug, Clone)]
+pub struct CatalogSearch {
+    pub artists: Vec<ArtistItem>,
+    pub albums: Vec<AlbumItem>,
+    pub songs: Vec<SongItem>,
+    /// Every track of every returned album — not only the matching ones.
+    ///
+    /// `album` nodes carry `songCount` and `duration` derived from the track
+    /// list they are rendered with. Handing them only the matches would make an
+    /// album of twelve tracks report two, wrongly and silently, whenever the
+    /// query happened to hit two of them.
+    pub album_tracks: Vec<SongItem>,
+}
+
 /// Upper bound on a native browse page. It matches the Subsonic contract's
 /// 500-item cap so both surfaces expose the same paging ceiling.
 pub const MAX_BROWSE_LIMIT: i64 = 500;
@@ -499,6 +514,128 @@ impl DomainServices {
             artists,
             albums,
             songs,
+        })
+    }
+
+    /// Backs Subsonic `search3` with the FTS5 index instead of materialising the
+    /// whole catalogue and filtering it in memory.
+    ///
+    /// `track_fts` indexes title, album, artists and genres per track, so
+    /// selecting matching tracks and deriving their albums and artists covers
+    /// the same ground the in-memory pass did — a matching album title reaches
+    /// its own tracks through the `album` column.
+    ///
+    /// Its tokenizer folds case *and* diacritics, so "echo" now finds "Écho",
+    /// which the previous lowercase substring test did not. What it gives up is
+    /// matching inside a word: "cho" no longer finds "Echo". The trailing term
+    /// is treated as a prefix so search-as-you-type still works.
+    pub async fn catalog_search(
+        &self,
+        user_id: Uuid,
+        folder_ids: &[Uuid],
+        query: &str,
+    ) -> Result<CatalogSearch, ServiceError> {
+        let Some(fts) = crate::catalog::fts_prefix_query(query) else {
+            return Ok(CatalogSearch {
+                artists: Vec::new(),
+                albums: Vec::new(),
+                songs: Vec::new(),
+                album_tracks: Vec::new(),
+            });
+        };
+        let folder_filter = (!folder_ids.is_empty()).then(|| {
+            serde_json::to_string(folder_ids).expect("UUID list serialization cannot fail")
+        });
+        let folder_filter = folder_filter.as_deref();
+
+        let songs = sqlx::query(concat!(
+            song_select!(),
+            " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
+               AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+             ORDER BY t.title COLLATE NOCASE, t.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(folder_filter)
+        .bind(folder_filter)
+        .bind(&fts)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+               AND al.id IN (SELECT t.album_id FROM track t WHERE t.album_id IS NOT NULL \
+                 AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+             ORDER BY al.title COLLATE NOCASE, al.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(folder_filter)
+        .bind(folder_filter)
+        .bind(&fts)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+
+        let artists = sqlx::query(
+            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, \
+                    us.starred_at, ur.rating AS user_rating FROM artist ar \
+             JOIN library_member m ON m.library_id=ar.library_id \
+             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
+             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
+             WHERE m.user_id=? AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+               AND ar.id IN ( \
+                 SELECT al.album_artist_id FROM album al JOIN track t ON t.album_id=al.id \
+                 WHERE al.album_artist_id IS NOT NULL \
+                   AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+                 UNION \
+                 SELECT ta.artist_id FROM track_artist ta \
+                 WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+               ) \
+             ORDER BY ar.name COLLATE NOCASE",
+        )
+        .bind(user_id.to_string())
+        .bind(folder_filter)
+        .bind(folder_filter)
+        .bind(&fts)
+        .bind(&fts)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+
+        // Reload every track of the returned albums, so their songCount and
+        // duration describe the album rather than the query.
+        let album_tracks = if albums.is_empty() {
+            Vec::new()
+        } else {
+            let ids =
+                serde_json::to_string(&albums.iter().map(|album| album.id).collect::<Vec<_>>())
+                    .expect("UUID list serialization cannot fail");
+            sqlx::query(concat!(
+                song_select!(),
+                " AND t.album_id IN (SELECT value FROM json_each(?)) \
+                 ORDER BY t.title COLLATE NOCASE, t.id"
+            ))
+            .bind(user_id.to_string())
+            .bind(&ids)
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(song_from_row)
+            .collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok(CatalogSearch {
+            artists,
+            albums,
+            songs,
+            album_tracks,
         })
     }
 
