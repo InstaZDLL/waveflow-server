@@ -106,9 +106,17 @@ events.
 
 ## Expired cursors
 
-`GET /sync/changes` refuses a cursor that precedes the oldest retained event
-with **409** and `{"code": "cursor_expired"}`. The client discards its local
-projection, takes a fresh `/sync/snapshot`, and resumes from its cursor.
+`GET /api/v2/sync/changes` refuses a cursor that precedes the oldest retained
+event with **409** and `{"code": "cursor_expired"}`. The client discards its
+local projection, takes a fresh `/api/v2/sync/snapshot`, and resumes from its
+cursor.
+
+The floor is the journal's, not the caller's. `cursor` is one global sequence,
+so a given account's own oldest event says nothing about what was retained:
+deriving the floor per user reported a newcomer's valid cursor as expired as
+soon as another account had written first. Any future per-user retention would
+need a stored floor, since surviving rows cannot distinguish "purged" from
+"never written".
 
 The status is shared with idempotency conflicts, so **the code is what clients
 must branch on**, not the status: `conflict` means mint a new operation id and

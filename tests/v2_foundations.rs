@@ -1677,7 +1677,8 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         // decides whether to enable the native /api/v2 surface from `type`
         // alone, before it holds any credential, so this must survive a
         // rewrite of the error envelope. getOpenSubsonicExtensions cannot
-        // serve that purpose: it returns an empty list.
+        // serve that purpose: it needs an authenticated call, and this decision
+        // is made before there is a credential.
         assert_eq!(body["subsonic-response"]["type"], "waveflow", "{path}");
         assert_eq!(body["subsonic-response"]["openSubsonic"], true, "{path}");
         assert!(
@@ -3982,6 +3983,48 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .as_array()
         .unwrap()
         .is_empty());
+
+    // `cursor` is one global sequence, so a second account's first event lands
+    // far above zero. Deriving the retention floor from that account's own
+    // MIN(cursor) reported its perfectly valid cursor as expired — a bug no
+    // single-tenant test could see, since there the two are the same number.
+    let intruder_id = intruder_login["user"]["id"].as_str().unwrap().to_owned();
+    let latecomer_operation = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sync_operation (user_id, operation_id, created_at) VALUES (?, ?, ?)")
+        .bind(&intruder_id)
+        .bind(&latecomer_operation)
+        .bind(now_ms())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO sync_event (event_id, user_id, operation_id, entity_type, entity_id, \
+                                 action, payload_json, changed_at) \
+         VALUES (?, ?, ?, 'favorite', ?, 'upsert', '{}', ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&intruder_id)
+    .bind(&latecomer_operation)
+    .bind(Uuid::new_v4().to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let latecomer = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0")
+                .header("authorization", format!("Bearer {intruder_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        latecomer.status(),
+        StatusCode::OK,
+        "a newcomer's cursor is not expired just because others wrote first"
+    );
 
     // Retention contract. The journal is append-only in v2.0, so this cannot
     // happen in production — the gap is forced here by deleting the head of the
