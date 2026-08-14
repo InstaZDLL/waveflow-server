@@ -261,12 +261,21 @@ impl SyncService {
         // A journal that starts above `after + 1` has dropped events the caller
         // never saw. Returning the surviving tail would look like a successful
         // catch-up while silently skipping the gap, so refuse instead.
-        let oldest: Option<i64> =
-            sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event WHERE user_id=?")
-                .bind(user_id.to_string())
-                .fetch_one(self.db.pool())
-                .await?;
-        if oldest.is_some_and(|oldest| after < oldest - 1) {
+        //
+        // The floor is the journal's own, not this user's. `cursor` is a single
+        // global sequence, so a user's own MIN only marks where they first
+        // wrote: on a shared instance a new account snapshots at cursor 0, is
+        // handed a high cursor for its first event, and would then be told its
+        // perfectly valid cursor had expired.
+        //
+        // This assumes compaction, when it arrives, trims the head of the
+        // journal for everyone. A per-user retention policy would need a stored
+        // per-user floor instead — deriving one from the rows that survive
+        // cannot distinguish "purged" from "never written".
+        let floor: Option<i64> = sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event")
+            .fetch_one(self.db.pool())
+            .await?;
+        if floor.is_some_and(|floor| after < floor - 1) {
             return Err(SyncError::CursorExpired);
         }
         let rows = sqlx::query(

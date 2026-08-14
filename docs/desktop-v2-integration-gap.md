@@ -128,8 +128,9 @@ choses acquises :
 
 - **l'idempotence** — les routes v2 lisent `X-WaveFlow-Operation-Id`, pas la
   façade Subsonic ;
-- **la recherche FTS5** — `services::search` passe par `fts_match_query`, tandis
-  que `search3` filtre encore en mémoire (dette assumée du contrat gelé) ;
+- **la pertinence** — les deux surfaces passent désormais par FTS5
+  (`catalog_search` pour `search3`), mais seule `/api/v2` rend des projections
+  paginées plutôt qu'un `searchResult3` plafonné par des compteurs distincts ;
 - **la pagination native** et les projections typées de `/api/v2`.
 
 Le dénominateur commun est large : la façade Subsonic couvre **toutes** les
@@ -140,11 +141,11 @@ en CRUD complet, `scrobble`, `savePlayQueue`/`getPlayQueue` et les partages.
 `serverVersion` et `openSubsonic="true"` (`src/subsonic.rs`). Un `ping` suffit
 donc à décider si `SyncProvider` peut être activé.
 
-> **Piège vérifié.** Ne pas détecter les capacités de WaveFlow par
-> `getOpenSubsonicExtensions` : cette méthode renvoie aujourd'hui un conteneur
-> **vide**. Un client qui s'y fierait conclurait que WaveFlow n'offre aucune
-> extension, alors qu'il offre l'intégralité de l'API v2. Le discriminant est
-> `type`, pas la liste d'extensions.
+> **Piège.** `getOpenSubsonicExtensions` annonce désormais `formPost`,
+> `apiKeyAuthentication` et `transcodeOffset` — mais il ne dira **jamais** que
+> l'API native v2 existe : ce n'est pas une extension OpenSubsonic. Et il exige
+> un appel authentifié, alors que la décision d'activer `SyncProvider` se prend
+> avant d'avoir un identifiant. Le discriminant reste `type="waveflow"`.
 
 **Ce que seul WaveFlow offre**, et qui doit donc être traité comme une capacité
 optionnelle et non comme un prérequis : le journal (`/sync/snapshot`,
