@@ -22,9 +22,32 @@
   la revalidation Subsonic due au passage à FTS5 et aux extensions annoncées.
 - **M5, M6 : non commencés.**
 
-`main` est vert et aucune PR n'est ouverte au moment de cette note. La suite
-tient en un point bloquant : **revalider les quatre clients Subsonic** avant tout
-tag, la recherche ayant changé de comportement le 2026-08-13.
+`main` est vert. La PR #101 corrige le seul défaut découvert pendant la
+revalidation client du 2026-08-15 : DSub traitait le 404 de l'optionnel
+`getArtistInfo2` comme une erreur bloquante en ouvrant un artiste.
+
+## Revalidation des clients Subsonic (2026-08-15)
+
+- **Symfonium : validé.** Authentification, deux synchronisations complètes,
+  catalogue, pochettes, lecture, recherche insensible aux accents et par
+  préfixe, puis playlist partagée avec les autres clients.
+- **Feishin : validé.** Catalogue, pochettes, lecture et playlist dans le même
+  ordre que Symfonium.
+- **DSub : validé avec un correctif en PR #101.** Authentification `p=enc:`,
+  catalogue, pochettes, lecture, seek et playlist fonctionnent. L'ouverture
+  d'un artiste demandait `getArtistInfo2`, hors de la matrice initiale, et
+  affichait « Resource not found ». La PR renvoie un conteneur standard vide,
+  après résolution tenant-scoped de l'artiste, sans inventer de biographie.
+- **Juliet sur iOS : validé** comme client Subsonic supplémentaire.
+- **Substreamer : non exécutable sur le matériel de validation.** Le Play Store
+  le déclare incompatible avec l'appareil actuel ; il n'a donc pas été marqué
+  comme testé. Juliet le remplace dans la matrice manuelle, tandis que les
+  contrats d'authentification token/salt et les réponses XML restent couverts
+  par les tests automatisés.
+
+Il ne reste côté façade Subsonic qu'à fusionner #101 et à rouvrir une page
+artiste DSub sur le binaire livré. Aucun tag ne doit être créé sans demande
+explicite du user.
 
 ## Validation sur bibliothèque réelle (2026-08-09)
 
@@ -209,14 +232,11 @@ compte, chaque faux réveil coûtant un `/changes` vide.
    protocole v1 attend cette exécution. **Le Desktop lit avec un `Authorization:
    Bearer` sur `/api/v2/tracks/{id}/stream` — les tickets scellés restent
    réservés à `<audio src>`, qui ne peut pas porter d'en-tête.**
-2. **Revalider les quatre clients Subsonic** — Symfonium, DSub, Feishin,
-   Substreamer — **avant le tag `v2.0-beta`**. C'est le seul point bloquant
-   côté serveur. Deux changements du 2026-08-13 touchent leur surface : la
-   recherche passée à FTS5 (les résultats changent, voir plus bas) et les trois
-   extensions désormais annoncées. Monter une instance avec
-   `scripts/seed-dev-instance.sh` et un tunnel HTTPS éphémère, comme pour la
-   validation Symfonium du 2026-08-09. Vérifier en priorité **la recherche** :
-   accent, préfixe, et milieu de mot qui ne fonctionne plus.
+2. **Fusionner la PR #101 et revalider l'ouverture d'un artiste dans DSub.**
+   Symfonium, Feishin, DSub et Juliet ont validé le reste de la façade sur la
+   bibliothèque réelle. Substreamer n'est plus installable sur l'appareil de
+   validation et demeure explicitement non testé, plutôt que déclaré vert par
+   approximation.
 3. **Taguer une release uniquement sur demande explicite du user.** La porte M3
    est fermée ; il reste la revalidation ci-dessus et la fermeture de M4.
 4. **M5** : réconciliation locale/serveur conservatrice. **Commencer par un
@@ -362,8 +382,9 @@ Deux invariants préservés, et testés parce qu'ils cassent en silence :
   passe : lui donner les seules correspondances ferait annoncer « 2 pistes » à
   un album qui en compte 12, faussement et sans erreur.
 
-**À revalider avec les quatre clients réels** (Symfonium, DSub, Feishin,
-Substreamer) avant le tag `v2.0-beta` : c'est la surface que le gel protégeait.
+**Revalidé le 2026-08-15** avec Symfonium, DSub, Feishin et Juliet. Substreamer
+était indisponible sur le matériel actuel. Accent et préfixe fonctionnent dans
+Symfonium ; le milieu de mot reste volontairement absent.
 
 ## Extensions OpenSubsonic annoncées (2026-08-13)
 
