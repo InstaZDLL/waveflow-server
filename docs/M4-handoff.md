@@ -1,6 +1,6 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-14. **M4 est livré côté serveur mais
+> Note de suivi mise à jour le 2026-08-15. **M4 est livré côté serveur mais
 > reste ouvert** : le socle est fusionné en `14aec76`, son complément en
 > `6716df9` (PR #94), et la validation Symfonium a fermé M3. Ce qui manque est
 > hors de ce dépôt — l'intégration WaveFlow Desktop n'a pas tourné de bout en
@@ -22,8 +22,9 @@
   la revalidation Subsonic due au passage à FTS5 et aux extensions annoncées.
 - **M5, M6 : non commencés.**
 
-`main` est vert sur les deux runners et aucune PR n'est ouverte au moment de
-cette note.
+`main` est vert et aucune PR n'est ouverte au moment de cette note. La suite
+tient en un point bloquant : **revalider les quatre clients Subsonic** avant tout
+tag, la recherche ayant changé de comportement le 2026-08-13.
 
 ## Validation sur bibliothèque réelle (2026-08-09)
 
@@ -117,6 +118,49 @@ régression.
   arrimé à la hiérarchie profil/bibliothèque de la v1 et aux server functions
   Better Auth : git en garde l'historique.
 
+## Comment livrer ici
+
+**Le code passe par une pull request.** Seule la documentation se commite
+directement sur `main`. Une autorisation ponctuelle de commiter sur `main` porte
+sur ce qui a été demandé à ce moment-là — elle ne se reconduit pas au reste.
+
+Ce n'est pas une formalité de procédure. Quinze commits de cette session — API
+publique, contrat Subsonic, correctifs de sécurité — sont passés sans PR, donc
+sans relecture. La review qui a suivi a trouvé **quatre défauts réels** que les
+43 tests ne voyaient pas, dont un que j'avais introduit en corrigeant l'autre.
+
+Le ruleset « Main » exige une revue de code owner ; `.github/CODEOWNERS` la rend
+satisfaisable. Les fusions ne devraient plus nécessiter d'override propriétaire.
+
+## Le piège des tests mono-compte
+
+`sync_event.cursor` est **une seule séquence `AUTOINCREMENT` globale**, partagée
+par tous les comptes. Sur un jeu de test à un seul utilisateur, « le plus grand
+curseur de cet utilisateur » et « le plus grand curseur du journal » sont le
+même nombre : les deux sémantiques y sont **indiscernables**, et un test écrit
+ainsi valide l'intention plutôt que le comportement.
+
+Trois bugs de cette famille ont été trouvés en relecture, aucun par les tests :
+
+- le plancher de rétention dérivé du `MIN` **par utilisateur** renvoyait
+  `cursor_expired` sur des curseurs parfaitement valides dès qu'un second compte
+  existait ;
+- le filigrane de snapshot resté **par utilisateur** donnait à un compte sans
+  événement un curseur sous le plancher : il re-snapshotait, était refusé, et
+  **bouclait sans fin** ;
+- le test du WebSocket ne discriminait rien, faute d'un second compte ayant
+  écrit en dernier.
+
+**Tout test touchant aux curseurs doit faire écrire au moins deux comptes**,
+sinon il passe quelle que soit l'implémentation. Le test du journal utilise
+désormais trois comptes, dont un sans aucun événement — la seule forme qui
+déclenche la boucle.
+
+Sémantique en vigueur : le **plancher** et le **filigrane de snapshot** sont
+globaux ; le réveil WebSocket (`latest_user_cursor`) reste par utilisateur, car
+le notifier sur le curseur global le ferait sonner à chaque écriture d'un autre
+compte, chaque faux réveil coûtant un `/changes` vide.
+
 ## Pièges connus
 
 - **Les tests exigent `ffmpeg` et `ffprobe` sur le `PATH`.** `test_app()`
@@ -165,13 +209,22 @@ régression.
    protocole v1 attend cette exécution. **Le Desktop lit avec un `Authorization:
    Bearer` sur `/api/v2/tracks/{id}/stream` — les tickets scellés restent
    réservés à `<audio src>`, qui ne peut pas porter d'en-tête.**
-2. **Taguer une release uniquement sur demande explicite du user.** M3 et sa
-   validation Symfonium sont terminés ; aucune action de compatibilité ne reste
-   ouverte pour cette porte.
-3. **M5** : réconciliation locale/serveur conservatrice. **Commencer par un
+2. **Revalider les quatre clients Subsonic** — Symfonium, DSub, Feishin,
+   Substreamer — **avant le tag `v2.0-beta`**. C'est le seul point bloquant
+   côté serveur. Deux changements du 2026-08-13 touchent leur surface : la
+   recherche passée à FTS5 (les résultats changent, voir plus bas) et les trois
+   extensions désormais annoncées. Monter une instance avec
+   `scripts/seed-dev-instance.sh` et un tunnel HTTPS éphémère, comme pour la
+   validation Symfonium du 2026-08-09. Vérifier en priorité **la recherche** :
+   accent, préfixe, et milieu de mot qui ne fonctionne plus.
+3. **Taguer une release uniquement sur demande explicite du user.** La porte M3
+   est fermée ; il reste la revalidation ci-dessus et la fermeture de M4.
+4. **M5** : réconciliation locale/serveur conservatrice. **Commencer par un
    RFC** — liaison automatique sur hash complet unique seulement, MBID en
    suggestion à confirmer, aucun rapprochement flou par titre/artiste/durée.
-4. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+   `full_hash` est publié depuis le 2026-08-13, donc les clients peuvent déjà
+   préparer leur schéma.
+5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
 
 ## Outillage front
 
