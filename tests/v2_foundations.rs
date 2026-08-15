@@ -1739,6 +1739,8 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         ("getIndexes", format!("&musicFolderId={library}")),
         ("getArtists", format!("&musicFolderId={library}")),
         ("getArtist", format!("&id={artist}")),
+        ("getArtistInfo", format!("&id={artist}")),
+        ("getArtistInfo2", format!("&id={artist}")),
         ("getAlbum", format!("&id={album}")),
         ("getSong", format!("&id={song}")),
         ("getGenres", String::new()),
@@ -1786,7 +1788,49 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         if method == "getBookmarks" {
             assert!(response["subsonic-response"]["bookmarks"].is_object());
         }
+        if method == "getArtistInfo" || method == "getArtistInfo2" {
+            let container = if method == "getArtistInfo" {
+                "artistInfo"
+            } else {
+                "artistInfo2"
+            };
+            assert!(response["subsonic-response"][container].is_object());
+        }
     }
+
+    let dsub_artist_info = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getArtistInfo2.view?{plain_auth}&id={artist}&includeNotPresent=true"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dsub_artist_info.status(), StatusCode::OK);
+    let dsub_artist_info = body_text(dsub_artist_info).await;
+    assert!(dsub_artist_info.contains("<artistInfo2/>"));
+
+    let unknown_artist_info = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getArtistInfo2.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id=00000000-0000-0000-0000-000000000000"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown_artist_info.status(), StatusCode::NOT_FOUND);
+    let unknown_artist_info = json_body(unknown_artist_info).await;
+    assert_eq!(unknown_artist_info["subsonic-response"]["status"], "failed");
+    assert_eq!(
+        unknown_artist_info["subsonic-response"]["error"]["code"],
+        70
+    );
     let match_all_search = subsonic_json(
         &router,
         "search3",

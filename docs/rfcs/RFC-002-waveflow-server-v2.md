@@ -56,6 +56,8 @@ Pagination is capped at 500 items per page. `offset` is zero-based; `search3` ap
 
 For full-catalogue pagination, `search3` treats the literal query `""` as match-all, as used by Symfonium. `getBookmarks` returns the standard empty `bookmarks` container until audiobook progress is implemented; it never fabricates bookmark state.
 
+`getArtistInfo` and `getArtistInfo2` resolve the requested artist through tenant-scoped catalogue access and return their standard empty containers until artist biography enrichment is implemented. This preserves compatibility with clients such as DSub without fabricating biography or similar-artist metadata.
+
 Mutation methods whose Subsonic result is empty (`updatePlaylist`, `deletePlaylist`, stars, ratings, scrobbles, queue save, share deletion and user-management writes) return only the successful protocol envelope. They do not add implementation-specific child elements.
 
 `getOpenSubsonicExtensions` intentionally returns an empty tested extension list for the beta. No extension is advertised merely because a similarly named endpoint exists.
