@@ -1550,14 +1550,10 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let web_password = "correct horse battery staple";
     let subsonic_password = "subsonic-secret-123";
     let api_key = "wfsk_golden-api-key";
+    let web_hash = security::hash_password(web_password).unwrap();
     let admin = state
         .db
-        .create_account(
-            "sub-admin",
-            &security::hash_password(web_password).unwrap(),
-            AccountRole::Admin,
-            now_ms(),
-        )
+        .create_account("sub-admin", &web_hash, AccountRole::Admin, now_ms())
         .await
         .unwrap();
     let encrypted = state
@@ -1615,6 +1611,58 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         )
         .await
         .unwrap();
+    let foreign_owner = state
+        .db
+        .create_account("sub-foreign-owner", &web_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let foreign_music = config.data_dir.join("subsonic-foreign");
+    std::fs::create_dir_all(&foreign_music).unwrap();
+    let foreign_library = state
+        .db
+        .create_library(
+            foreign_owner,
+            "Foreign Subsonic library",
+            &std::fs::canonicalize(&foreign_music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let foreign_scan = state
+        .db
+        .create_scan_job(foreign_library, Some(foreign_owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(foreign_scan, 1).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            foreign_library,
+            foreign_scan,
+            &browse_input(
+                7_000,
+                "Foreign track",
+                "Foreign album",
+                "Foreign artist",
+                Some(1),
+                Some(1),
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(foreign_scan, 0).await.unwrap();
+    let foreign_artist = state
+        .services
+        .catalog_snapshot(foreign_owner, &[])
+        .await
+        .unwrap()
+        .artists
+        .first()
+        .unwrap()
+        .id;
     let snapshot = state.services.catalog_snapshot(admin, &[]).await.unwrap();
     let song = snapshot.songs.first().unwrap().id;
     let artist = snapshot.artists.first().unwrap().id;
@@ -1794,9 +1842,24 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             } else {
                 "artistInfo2"
             };
-            assert!(response["subsonic-response"][container].is_object());
+            assert_eq!(
+                response["subsonic-response"][container],
+                serde_json::json!({})
+            );
         }
     }
+
+    let artist_info = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/rest/getArtistInfo.view?{plain_auth}&id={artist}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(artist_info.status(), StatusCode::OK);
+    assert!(body_text(artist_info).await.contains("<artistInfo/>"));
 
     let dsub_artist_info = router
         .clone()
@@ -1813,24 +1876,27 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let dsub_artist_info = body_text(dsub_artist_info).await;
     assert!(dsub_artist_info.contains("<artistInfo2/>"));
 
-    let unknown_artist_info = router
-        .clone()
-        .oneshot(
-            Request::get(format!(
-                "/rest/getArtistInfo2.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id=00000000-0000-0000-0000-000000000000"
-            ))
-            .body(Body::empty())
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(unknown_artist_info.status(), StatusCode::NOT_FOUND);
-    let unknown_artist_info = json_body(unknown_artist_info).await;
-    assert_eq!(unknown_artist_info["subsonic-response"]["status"], "failed");
-    assert_eq!(
-        unknown_artist_info["subsonic-response"]["error"]["code"],
-        70
-    );
+    for (method, id) in [
+        ("getArtistInfo", foreign_artist),
+        ("getArtistInfo2", foreign_artist),
+        ("getArtistInfo2", Uuid::nil()),
+    ] {
+        let hidden_artist_info = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/rest/{method}.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={id}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(hidden_artist_info.status(), StatusCode::NOT_FOUND);
+        let hidden_artist_info = json_body(hidden_artist_info).await;
+        assert_eq!(hidden_artist_info["subsonic-response"]["status"], "failed");
+        assert_eq!(hidden_artist_info["subsonic-response"]["error"]["code"], 70);
+    }
     let match_all_search = subsonic_json(
         &router,
         "search3",
