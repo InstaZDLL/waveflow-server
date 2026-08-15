@@ -312,6 +312,12 @@ async fn dispatch(
         "getIndexes" => indexes(state, principal, params, false).await,
         "getArtists" => indexes(state, principal, params, true).await,
         "getArtist" => get_artist(state, principal, params).await,
+        // DSub requests artist information as soon as an artist page opens.
+        // WaveFlow does not enrich biographies yet, but a successful empty
+        // standard container avoids turning an optional capability into a
+        // blocking client error. The artist is still resolved tenant-side.
+        "getArtistInfo" => artist_info(state, principal, params, "artistInfo").await,
+        "getArtistInfo2" => artist_info(state, principal, params, "artistInfo2").await,
         "getAlbum" => get_album(state, principal, params).await,
         "getSong" => get_song(state, principal, params).await,
         "getGenres" => genres(state, principal, params).await,
@@ -543,6 +549,20 @@ async fn get_artist(
         .map(|album| album_node(album, &snapshot.songs))
         .collect::<Vec<_>>();
     Ok(artist_node(artist, albums.len()).children(albums))
+}
+
+async fn artist_info(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+    container: &'static str,
+) -> Result<Node, ProtocolError> {
+    state
+        .services
+        .artist(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new(container))
 }
 
 async fn get_album(
