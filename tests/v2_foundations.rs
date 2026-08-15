@@ -3876,6 +3876,37 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         favorite_operation.to_string()
     );
 
+    // Another account writes last, so the journal's global cursor now sits
+    // above this user's. The socket must still report the user's own position:
+    // it exists to say "your state moved", and notifying on the global cursor
+    // would wake every client on every other account's write, each false wake
+    // costing a /changes round trip that returns nothing.
+    let noise_operation = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sync_operation (user_id, operation_id, created_at) VALUES (?, ?, ?)")
+        .bind(intruder_login["user"]["id"].as_str().unwrap())
+        .bind(&noise_operation)
+        .bind(now_ms())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let noise_cursor: i64 = sqlx::query_scalar(
+        "INSERT INTO sync_event (event_id, user_id, operation_id, entity_type, entity_id, \
+                                 action, payload_json, changed_at) \
+         VALUES (?, ?, ?, 'favorite', ?, 'upsert', '{}', ?) RETURNING cursor",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(intruder_login["user"]["id"].as_str().unwrap())
+    .bind(&noise_operation)
+    .bind(Uuid::new_v4().to_string())
+    .bind(now_ms())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert!(
+        noise_cursor > paged_changes[3]["cursor"].as_i64().unwrap(),
+        "the other account must now hold the journal's highest cursor"
+    );
+
     // The real WebSocket route sends the durable cursor immediately when a
     // reconnecting client is behind. The lagged-receiver branch is covered by
     // the focused `http` unit test using the same serve-path helper.
@@ -3902,7 +3933,15 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .unwrap()
         .unwrap();
     let notice: serde_json::Value = serde_json::from_str(notice.to_text().unwrap()).unwrap();
-    assert_eq!(notice["cursor"], paged_changes[3]["cursor"]);
+    assert_eq!(
+        notice["cursor"], paged_changes[3]["cursor"],
+        "the socket reports this user's cursor, not the journal's"
+    );
+    assert_ne!(
+        notice["cursor"].as_i64().unwrap(),
+        noise_cursor,
+        "falling back to the global cursor would wake clients for other accounts"
+    );
     socket.close(None).await.unwrap();
     server.abort();
 
@@ -3984,10 +4023,12 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         )
         .await
         .unwrap();
-    assert!(json_body(foreign).await["changes"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    // The other account sees its own event and nothing else — the owner's
+    // entries never cross, even though they share one cursor sequence.
+    let foreign = json_body(foreign).await;
+    let foreign_changes = foreign["changes"].as_array().unwrap();
+    assert_eq!(foreign_changes.len(), 1);
+    assert_eq!(foreign_changes[0]["operation_id"], noise_operation);
 
     // `cursor` is one global sequence, so a second account's first event lands
     // far above zero. Deriving the retention floor from that account's own
@@ -4036,14 +4077,12 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     // sequence while the caller resumes from nothing.
     let latecomer = json_body(latecomer).await;
     let delivered = latecomer["changes"].as_array().unwrap();
-    assert_eq!(
-        delivered.len(),
-        1,
-        "the newcomer's own event must be served"
-    );
-    assert_eq!(delivered[0]["operation_id"], latecomer_operation);
+    let served = delivered
+        .iter()
+        .find(|change| change["operation_id"] == latecomer_operation)
+        .expect("the late event must be served, not swallowed by an expiry check");
     assert!(
-        delivered[0]["cursor"].as_i64().unwrap() > 0,
+        served["cursor"].as_i64().unwrap() > 0,
         "the event sits in the shared sequence, not at the caller's origin"
     );
 
@@ -4120,6 +4159,18 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .unwrap();
     assert_eq!(recovery.status(), StatusCode::OK);
     let recovery_cursor = json_body(recovery).await["cursor"].as_i64().unwrap();
+    // The watermark is the journal's own high-water mark, not a value that
+    // merely happens to clear the floor. Asserting resumability alone would
+    // also pass on any number above the floor, including a per-user one that
+    // clears it by luck on this fixture.
+    let journal_max: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        recovery_cursor, journal_max,
+        "a snapshot resumes from the journal's high-water mark"
+    );
     let after_recovery = router
         .clone()
         .oneshot(
