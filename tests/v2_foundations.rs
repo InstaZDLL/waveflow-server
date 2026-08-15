@@ -3561,6 +3561,11 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .create_account("sync-intruder", &hash, AccountRole::User, now_ms())
         .await
         .unwrap();
+    state
+        .db
+        .create_account("sync-newcomer", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
     let music = config.data_dir.join("sync-music");
     std::fs::create_dir_all(&music).unwrap();
     let library = state
@@ -3956,7 +3961,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let foreign_device = Request::put(format!("/api/v2/favorites/track/{track}"))
         .header("authorization", format!("Bearer {owner_token}"))
         .header("x-waveflow-operation-id", Uuid::new_v4().to_string())
-        .header("x-waveflow-device-id", intruder_device_id)
+        .header("x-waveflow-device-id", &intruder_device_id)
         .body(Body::empty())
         .unwrap();
     assert_eq!(
@@ -4025,6 +4030,22 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         StatusCode::OK,
         "a newcomer's cursor is not expired just because others wrote first"
     );
+    // A 200 alone would also pass on an empty page, which is what a wrongly
+    // filtered query would return. Check the event actually came back, and at
+    // a cursor above zero — the whole point is that it sits high in the global
+    // sequence while the caller resumes from nothing.
+    let latecomer = json_body(latecomer).await;
+    let delivered = latecomer["changes"].as_array().unwrap();
+    assert_eq!(
+        delivered.len(),
+        1,
+        "the newcomer's own event must be served"
+    );
+    assert_eq!(delivered[0]["operation_id"], latecomer_operation);
+    assert!(
+        delivered[0]["cursor"].as_i64().unwrap() > 0,
+        "the event sits in the shared sequence, not at the caller's origin"
+    );
 
     // Retention contract. The journal is append-only in v2.0, so this cannot
     // happen in production — the gap is forced here by deleting the head of the
@@ -4068,6 +4089,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     // A full snapshot is the only correct recovery, which is what the error
     // code asks for.
     let resumed = router
+        .clone()
         .oneshot(
             Request::get(format!("/api/v2/sync/changes?after={}", floor + 1))
                 .header("authorization", format!("Bearer {owner_token}"))
@@ -4077,6 +4099,61 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(resumed.status(), StatusCode::OK);
+
+    // And the recovery itself must terminate. An account with no events of its
+    // own is the case that loops: a per-user snapshot watermark hands it cursor
+    // 0, which sits below the journal floor, so it re-snapshots, is refused
+    // again, and never progresses. The watermark is global, so the cursor a
+    // snapshot returns is always resumable.
+    let newcomer_login = login("sync-newcomer").await;
+    let newcomer_token = newcomer_login["access_token"].as_str().unwrap().to_owned();
+    let newcomer_device_id = newcomer_login["device_id"].as_str().unwrap().to_owned();
+    let recovery = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/snapshot")
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovery.status(), StatusCode::OK);
+    let recovery_cursor = json_body(recovery).await["cursor"].as_i64().unwrap();
+    let after_recovery = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/sync/changes?after={recovery_cursor}"))
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        after_recovery.status(),
+        StatusCode::OK,
+        "a snapshot cursor must always be resumable, or recovery never ends"
+    );
+    // The same cursor must be acknowledgeable, otherwise a client that recovers
+    // correctly still reports a failed ACK on every cycle.
+    let acked = router
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "device_id": &newcomer_device_id,
+                        "cursor": recovery_cursor
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(acked.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
