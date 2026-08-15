@@ -302,7 +302,29 @@ impl SyncService {
         })
     }
 
-    pub async fn latest_cursor(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
+    /// Highest cursor the journal has issued, to anyone.
+    ///
+    /// Global for the same reason the snapshot watermark is: an ACK carries the
+    /// cursor a client actually reached, and that cursor comes from a snapshot
+    /// or a change page — both global. Bounding it by this user's own MAX would
+    /// reject the snapshot cursor of an account that has never written, which
+    /// is precisely the client that needs to acknowledge one.
+    ///
+    /// It still bounds the future: nobody can acknowledge a cursor the journal
+    /// has not issued.
+    pub async fn latest_cursor(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event")
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Highest cursor carrying an event *for this user*.
+    ///
+    /// The wake-up signal stays per user: the socket exists to tell a client
+    /// that its own state moved. Waking it on the global cursor would fire on
+    /// every other account's write, and each false wake costs a `/changes`
+    /// round trip that returns nothing.
+    pub async fn latest_user_cursor(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event WHERE user_id=?")
             .bind(user_id.to_string())
             .fetch_one(self.db.pool())
@@ -330,7 +352,7 @@ impl SyncService {
         device_id: Uuid,
         cursor: i64,
     ) -> Result<bool, sqlx::Error> {
-        if cursor < 0 || cursor > self.latest_cursor(user_id).await? {
+        if cursor < 0 || cursor > self.latest_cursor().await? {
             return Ok(false);
         }
         let _writer = self.db.writer_guard().await;
