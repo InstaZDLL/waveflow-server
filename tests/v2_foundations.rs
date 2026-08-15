@@ -1677,7 +1677,8 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         // decides whether to enable the native /api/v2 surface from `type`
         // alone, before it holds any credential, so this must survive a
         // rewrite of the error envelope. getOpenSubsonicExtensions cannot
-        // serve that purpose: it returns an empty list.
+        // serve that purpose: it needs an authenticated call, and this decision
+        // is made before there is a credential.
         assert_eq!(body["subsonic-response"]["type"], "waveflow", "{path}");
         assert_eq!(body["subsonic-response"]["openSubsonic"], true, "{path}");
         assert!(
@@ -3560,6 +3561,11 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .create_account("sync-intruder", &hash, AccountRole::User, now_ms())
         .await
         .unwrap();
+    state
+        .db
+        .create_account("sync-newcomer", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
     let music = config.data_dir.join("sync-music");
     std::fs::create_dir_all(&music).unwrap();
     let library = state
@@ -3870,6 +3876,37 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         favorite_operation.to_string()
     );
 
+    // Another account writes last, so the journal's global cursor now sits
+    // above this user's. The socket must still report the user's own position:
+    // it exists to say "your state moved", and notifying on the global cursor
+    // would wake every client on every other account's write, each false wake
+    // costing a /changes round trip that returns nothing.
+    let noise_operation = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sync_operation (user_id, operation_id, created_at) VALUES (?, ?, ?)")
+        .bind(intruder_login["user"]["id"].as_str().unwrap())
+        .bind(&noise_operation)
+        .bind(now_ms())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let noise_cursor: i64 = sqlx::query_scalar(
+        "INSERT INTO sync_event (event_id, user_id, operation_id, entity_type, entity_id, \
+                                 action, payload_json, changed_at) \
+         VALUES (?, ?, ?, 'favorite', ?, 'upsert', '{}', ?) RETURNING cursor",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(intruder_login["user"]["id"].as_str().unwrap())
+    .bind(&noise_operation)
+    .bind(Uuid::new_v4().to_string())
+    .bind(now_ms())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert!(
+        noise_cursor > paged_changes[3]["cursor"].as_i64().unwrap(),
+        "the other account must now hold the journal's highest cursor"
+    );
+
     // The real WebSocket route sends the durable cursor immediately when a
     // reconnecting client is behind. The lagged-receiver branch is covered by
     // the focused `http` unit test using the same serve-path helper.
@@ -3896,7 +3933,15 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .unwrap()
         .unwrap();
     let notice: serde_json::Value = serde_json::from_str(notice.to_text().unwrap()).unwrap();
-    assert_eq!(notice["cursor"], paged_changes[3]["cursor"]);
+    assert_eq!(
+        notice["cursor"], paged_changes[3]["cursor"],
+        "the socket reports this user's cursor, not the journal's"
+    );
+    assert_ne!(
+        notice["cursor"].as_i64().unwrap(),
+        noise_cursor,
+        "falling back to the global cursor would wake clients for other accounts"
+    );
     socket.close(None).await.unwrap();
     server.abort();
 
@@ -3955,7 +4000,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     let foreign_device = Request::put(format!("/api/v2/favorites/track/{track}"))
         .header("authorization", format!("Bearer {owner_token}"))
         .header("x-waveflow-operation-id", Uuid::new_v4().to_string())
-        .header("x-waveflow-device-id", intruder_device_id)
+        .header("x-waveflow-device-id", &intruder_device_id)
         .body(Body::empty())
         .unwrap();
     assert_eq!(
@@ -3978,10 +4023,68 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         )
         .await
         .unwrap();
-    assert!(json_body(foreign).await["changes"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    // The other account sees its own event and nothing else — the owner's
+    // entries never cross, even though they share one cursor sequence.
+    let foreign = json_body(foreign).await;
+    let foreign_changes = foreign["changes"].as_array().unwrap();
+    assert_eq!(foreign_changes.len(), 1);
+    assert_eq!(foreign_changes[0]["operation_id"], noise_operation);
+
+    // `cursor` is one global sequence, so a second account's first event lands
+    // far above zero. Deriving the retention floor from that account's own
+    // MIN(cursor) reported its perfectly valid cursor as expired — a bug no
+    // single-tenant test could see, since there the two are the same number.
+    let intruder_id = intruder_login["user"]["id"].as_str().unwrap().to_owned();
+    let latecomer_operation = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sync_operation (user_id, operation_id, created_at) VALUES (?, ?, ?)")
+        .bind(&intruder_id)
+        .bind(&latecomer_operation)
+        .bind(now_ms())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO sync_event (event_id, user_id, operation_id, entity_type, entity_id, \
+                                 action, payload_json, changed_at) \
+         VALUES (?, ?, ?, 'favorite', ?, 'upsert', '{}', ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&intruder_id)
+    .bind(&latecomer_operation)
+    .bind(Uuid::new_v4().to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let latecomer = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/changes?after=0")
+                .header("authorization", format!("Bearer {intruder_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        latecomer.status(),
+        StatusCode::OK,
+        "a newcomer's cursor is not expired just because others wrote first"
+    );
+    // A 200 alone would also pass on an empty page, which is what a wrongly
+    // filtered query would return. Check the event actually came back, and at
+    // a cursor above zero — the whole point is that it sits high in the global
+    // sequence while the caller resumes from nothing.
+    let latecomer = json_body(latecomer).await;
+    let delivered = latecomer["changes"].as_array().unwrap();
+    let served = delivered
+        .iter()
+        .find(|change| change["operation_id"] == latecomer_operation)
+        .expect("the late event must be served, not swallowed by an expiry check");
+    assert!(
+        served["cursor"].as_i64().unwrap() > 0,
+        "the event sits in the shared sequence, not at the caller's origin"
+    );
 
     // Retention contract. The journal is append-only in v2.0, so this cannot
     // happen in production — the gap is forced here by deleting the head of the
@@ -4025,6 +4128,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     // A full snapshot is the only correct recovery, which is what the error
     // code asks for.
     let resumed = router
+        .clone()
         .oneshot(
             Request::get(format!("/api/v2/sync/changes?after={}", floor + 1))
                 .header("authorization", format!("Bearer {owner_token}"))
@@ -4034,6 +4138,73 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(resumed.status(), StatusCode::OK);
+
+    // And the recovery itself must terminate. An account with no events of its
+    // own is the case that loops: a per-user snapshot watermark hands it cursor
+    // 0, which sits below the journal floor, so it re-snapshots, is refused
+    // again, and never progresses. The watermark is global, so the cursor a
+    // snapshot returns is always resumable.
+    let newcomer_login = login("sync-newcomer").await;
+    let newcomer_token = newcomer_login["access_token"].as_str().unwrap().to_owned();
+    let newcomer_device_id = newcomer_login["device_id"].as_str().unwrap().to_owned();
+    let recovery = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/snapshot")
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovery.status(), StatusCode::OK);
+    let recovery_cursor = json_body(recovery).await["cursor"].as_i64().unwrap();
+    // The watermark is the journal's own high-water mark, not a value that
+    // merely happens to clear the floor. Asserting resumability alone would
+    // also pass on any number above the floor, including a per-user one that
+    // clears it by luck on this fixture.
+    let journal_max: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        recovery_cursor, journal_max,
+        "a snapshot resumes from the journal's high-water mark"
+    );
+    let after_recovery = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/sync/changes?after={recovery_cursor}"))
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        after_recovery.status(),
+        StatusCode::OK,
+        "a snapshot cursor must always be resumable, or recovery never ends"
+    );
+    // The same cursor must be acknowledgeable, otherwise a client that recovers
+    // correctly still reports a failed ACK on every cycle.
+    let acked = router
+        .oneshot(
+            Request::put("/api/v2/sync/ack")
+                .header("authorization", format!("Bearer {newcomer_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "device_id": &newcomer_device_id,
+                        "cursor": recovery_cursor
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(acked.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
