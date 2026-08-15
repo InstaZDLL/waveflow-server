@@ -1,22 +1,25 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-12. **M4 est complet** : le socle est
-> fusionné en `14aec76`, son complément serveur en `6716df9` (PR #94). La
-> validation réelle Symfonium est terminée et ferme M3. Ce document décrit ce
-> qui est fait, les décisions non évidentes à ne pas défaire, et ce qui reste.
-> Aucun tag de release ne doit être créé sans demande explicite.
->
-> **La porte M4 n'est pas encore refermée** : l'intégration WaveFlow Desktop est
-> en cours dans son propre dépôt et n'a pas tourné de bout en bout. Voir
+> Note de suivi mise à jour le 2026-08-14. **M4 est livré côté serveur mais
+> reste ouvert** : le socle est fusionné en `14aec76`, son complément en
+> `6716df9` (PR #94), et la validation Symfonium a fermé M3. Ce qui manque est
+> hors de ce dépôt — l'intégration WaveFlow Desktop n'a pas tourné de bout en
+> bout, et c'est elle qui ferme la porte. Voir
 > [`desktop-v2-integration-gap.md`](desktop-v2-integration-gap.md).
+>
+> Ce document décrit ce qui est fait, les décisions non évidentes à ne pas
+> défaire, et ce qui reste. Aucun tag de release ne doit être créé sans demande
+> explicite.
 
 ## Où on en est
 
 - **M0, M1, M2 : fermés.**
 - **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
   lecture native/transcodée, favoris, scrobbles et playlists.
-- **M4 : fermé.** Socle en `14aec76`, complément serveur en `6716df9`. L'ancien
-  `web/` est retiré par la PR #84 après extraction de ses design tokens utiles.
+- **M4 : ouvert.** Tout le travail serveur est livré — socle en `14aec76`,
+  complément en `6716df9`, `web/` retiré par la PR #84 après extraction de ses
+  design tokens. La porte attend la validation de l'intégration Desktop, plus
+  la revalidation Subsonic due au passage à FTS5 et aux extensions annoncées.
 - **M5, M6 : non commencés.**
 
 `main` est vert sur les deux runners et aucune PR n'est ouverte au moment de

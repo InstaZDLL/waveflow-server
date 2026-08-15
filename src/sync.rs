@@ -261,12 +261,21 @@ impl SyncService {
         // A journal that starts above `after + 1` has dropped events the caller
         // never saw. Returning the surviving tail would look like a successful
         // catch-up while silently skipping the gap, so refuse instead.
-        let oldest: Option<i64> =
-            sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event WHERE user_id=?")
-                .bind(user_id.to_string())
-                .fetch_one(self.db.pool())
-                .await?;
-        if oldest.is_some_and(|oldest| after < oldest - 1) {
+        //
+        // The floor is the journal's own, not this user's. `cursor` is a single
+        // global sequence, so a user's own MIN only marks where they first
+        // wrote: on a shared instance a new account snapshots at cursor 0, is
+        // handed a high cursor for its first event, and would then be told its
+        // perfectly valid cursor had expired.
+        //
+        // This assumes compaction, when it arrives, trims the head of the
+        // journal for everyone. A per-user retention policy would need a stored
+        // per-user floor instead — deriving one from the rows that survive
+        // cannot distinguish "purged" from "never written".
+        let floor: Option<i64> = sqlx::query_scalar("SELECT MIN(cursor) FROM sync_event")
+            .fetch_one(self.db.pool())
+            .await?;
+        if floor.is_some_and(|floor| after < floor - 1) {
             return Err(SyncError::CursorExpired);
         }
         let rows = sqlx::query(
@@ -293,7 +302,29 @@ impl SyncService {
         })
     }
 
-    pub async fn latest_cursor(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
+    /// Highest cursor the journal has issued, to anyone.
+    ///
+    /// Global for the same reason the snapshot watermark is: an ACK carries the
+    /// cursor a client actually reached, and that cursor comes from a snapshot
+    /// or a change page — both global. Bounding it by this user's own MAX would
+    /// reject the snapshot cursor of an account that has never written, which
+    /// is precisely the client that needs to acknowledge one.
+    ///
+    /// It still bounds the future: nobody can acknowledge a cursor the journal
+    /// has not issued.
+    pub async fn latest_cursor(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event")
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Highest cursor carrying an event *for this user*.
+    ///
+    /// The wake-up signal stays per user: the socket exists to tell a client
+    /// that its own state moved. Waking it on the global cursor would fire on
+    /// every other account's write, and each false wake costs a `/changes`
+    /// round trip that returns nothing.
+    pub async fn latest_user_cursor(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COALESCE(MAX(cursor), 0) FROM sync_event WHERE user_id=?")
             .bind(user_id.to_string())
             .fetch_one(self.db.pool())
@@ -321,7 +352,7 @@ impl SyncService {
         device_id: Uuid,
         cursor: i64,
     ) -> Result<bool, sqlx::Error> {
-        if cursor < 0 || cursor > self.latest_cursor(user_id).await? {
+        if cursor < 0 || cursor > self.latest_cursor().await? {
             return Ok(false);
         }
         let _writer = self.db.writer_guard().await;

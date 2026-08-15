@@ -1675,7 +1675,7 @@ pub async fn sync_socket(
 async fn serve_sync_socket(socket: WebSocket, state: AppState, user_id: Uuid, after: i64) {
     let (mut sender, mut receiver) = socket.split();
     let mut notices = state.sync.subscribe();
-    if let Ok(cursor) = state.sync.latest_cursor(user_id).await {
+    if let Ok(cursor) = state.sync.latest_user_cursor(user_id).await {
         if cursor > after && send_sync_notice(&mut sender, cursor).await.is_err() {
             return;
         }
@@ -1733,7 +1733,7 @@ async fn sync_notice_action(
         }
         Ok(_) => Ok(SyncNoticeAction::Continue),
         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => sync
-            .latest_cursor(user_id)
+            .latest_user_cursor(user_id)
             .await
             .map(SyncNoticeAction::Send),
         Err(tokio::sync::broadcast::error::RecvError::Closed) => Ok(SyncNoticeAction::Close),

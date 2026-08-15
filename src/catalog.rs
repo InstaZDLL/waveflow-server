@@ -686,14 +686,14 @@ async fn fetch_tracks(
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
-            WHERE t.library_id=? AND m.user_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
-            .bind(library.to_string()).bind(user.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
+            WHERE m.user_id=? AND t.library_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
+            .bind(user.to_string()).bind(library.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
-            JOIN library_member m ON m.library_id=t.library_id WHERE t.library_id=? AND m.user_id=? \
+            JOIN library_member m ON m.library_id=t.library_id WHERE m.user_id=? AND t.library_id=? \
             ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?")
-            .bind(library.to_string()).bind(user.to_string()).bind(limit).bind(offset).fetch_all(db.pool()).await?
+            .bind(user.to_string()).bind(library.to_string()).bind(limit).bind(offset).fetch_all(db.pool()).await?
     };
     rows.into_iter().map(track_from_row).collect()
 }
