@@ -908,6 +908,7 @@ async fn scanner_indexes_dsd64_and_deduplicates_folder_artwork() {
     write_test_wav(&music.join("One.wav"));
     write_test_wav(&music.join("Two.wav"));
     write_test_dsf(&music.join("Native DSD.dsf"));
+    std::fs::write(music.join("Native DSD.lrc"), "[00:01]DSD words").unwrap();
     write_test_png(&music.join("cover.png"));
     let root = std::fs::canonicalize(&music).unwrap();
     let library_id = state
@@ -921,16 +922,12 @@ async fn scanner_indexes_dsd64_and_deduplicates_folder_artwork() {
         )
         .await
         .unwrap();
-    run_scan(
-        &state,
-        owner,
-        LibraryRecord {
-            id: library_id,
-            name: "Formats".into(),
-            root_path: root,
-        },
-    )
-    .await;
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Formats".into(),
+        root_path: root,
+    };
+    run_scan(&state, owner, library.clone()).await;
 
     let tracks = state
         .db
@@ -943,6 +940,9 @@ async fn scanner_indexes_dsd64_and_deduplicates_folder_artwork() {
         .find(|track| track.title == "Native DSD")
         .unwrap();
     assert_eq!(dsd.codec.as_deref(), Some("DSD64"));
+    let dsd_lyrics = state.services.lyrics(owner, dsd.id).await.unwrap();
+    assert_eq!(dsd_lyrics.structured_lyrics[0].lines[0].start, Some(1_000));
+    assert_eq!(dsd_lyrics.structured_lyrics[0].lines[0].value, "DSD words");
     let dsd_depth: i64 = sqlx::query_scalar("SELECT bit_depth FROM track WHERE id = ?")
         .bind(dsd.id.to_string())
         .fetch_one(state.db.pool())
@@ -963,6 +963,15 @@ async fn scanner_indexes_dsd64_and_deduplicates_folder_artwork() {
         .await
         .unwrap();
     assert_eq!(artwork_rows, 1);
+
+    std::fs::write(music.join("Native DSD.lrc"), "[00:02]Updated DSD words").unwrap();
+    run_scan(&state, owner, library).await;
+    let dsd_lyrics = state.services.lyrics(owner, dsd.id).await.unwrap();
+    assert_eq!(dsd_lyrics.structured_lyrics[0].lines[0].start, Some(2_000));
+    assert_eq!(
+        dsd_lyrics.structured_lyrics[0].lines[0].value,
+        "Updated DSD words"
+    );
 }
 
 #[tokio::test]

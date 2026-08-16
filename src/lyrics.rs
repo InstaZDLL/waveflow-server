@@ -104,7 +104,11 @@ fn parse_timestamp(value: &str) -> Option<i64> {
     let minutes = minutes.parse::<i64>().ok()?;
     let (seconds, fraction) = seconds.split_once('.').unwrap_or((seconds, ""));
     let seconds = seconds.parse::<i64>().ok()?;
-    if seconds >= 60 || fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+    if minutes < 0
+        || !(0..60).contains(&seconds)
+        || fraction.len() > 3
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+    {
         return None;
     }
     let millis = match fraction.len() {
@@ -114,7 +118,10 @@ fn parse_timestamp(value: &str) -> Option<i64> {
         3 => fraction.parse::<i64>().ok()?,
         _ => return None,
     };
-    Some((minutes * 60 + seconds) * 1000 + millis)
+    minutes
+        .checked_mul(60_000)?
+        .checked_add(seconds.checked_mul(1_000)?)?
+        .checked_add(millis)
 }
 
 #[cfg(test)]
@@ -165,5 +172,12 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn rejects_negative_and_overflowing_timestamps() {
+        assert_eq!(parse_timestamp("-1:00"), None);
+        assert_eq!(parse_timestamp("00:-01"), None);
+        assert_eq!(parse_timestamp(&format!("{}:00", i64::MAX)), None);
     }
 }

@@ -3,6 +3,7 @@
 use std::{
     collections::HashSet,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
     time::UNIX_EPOCH,
@@ -491,6 +492,8 @@ fn extract_dsd(
         });
     let artwork = waveflow_core::scanner::extract_folder_cover(path, artwork_dir)
         .map(|v| artwork_input(artwork_dir, v));
+    let lyrics = extract_lyrics(path, None);
+    let lyrics_hash = lyrics_hash(&lyrics);
     Ok(CatalogTrackInput {
         relative_path,
         file_size: size,
@@ -520,8 +523,8 @@ fn extract_dsd(
         musical_key: None,
         tag_rating: None,
         artwork,
-        lyrics_hash: lyrics_hash(&[]),
-        lyrics: Vec::new(),
+        lyrics_hash,
+        lyrics,
     })
 }
 
@@ -562,14 +565,35 @@ fn push_lyrics(found: &mut Vec<LyricsInput>, source: &'static str, content: &str
 }
 
 fn read_sidecar(path: &Path) -> Option<String> {
-    let metadata = fs::symlink_metadata(path).ok()?;
-    if metadata.file_type().is_symlink()
-        || !metadata.file_type().is_file()
-        || metadata.len() > MAX_LYRICS_BYTES
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself so descriptor metadata can reject a
+        // symlink instead of validating one path and reading its later target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_LYRICS_BYTES
     {
         return None;
     }
-    String::from_utf8(fs::read(path).ok()?).ok()
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_LYRICS_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_LYRICS_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
 fn lyrics_hash(entries: &[LyricsInput]) -> String {
@@ -583,4 +607,35 @@ fn lyrics_hash(entries: &[LyricsInput]) -> String {
         hasher.update(&[0xff]);
     }
     hasher.finalize().to_hex().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_sidecar, MAX_LYRICS_BYTES};
+
+    #[test]
+    fn sidecar_reader_rejects_invalid_files_and_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let valid = temp.path().join("valid.lrc");
+        std::fs::write(&valid, "[00:01]safe").unwrap();
+        assert_eq!(read_sidecar(&valid).as_deref(), Some("[00:01]safe"));
+
+        let oversized = temp.path().join("oversized.lrc");
+        std::fs::write(&oversized, vec![b'x'; MAX_LYRICS_BYTES as usize + 1]).unwrap();
+        assert!(read_sidecar(&oversized).is_none());
+
+        let invalid_utf8 = temp.path().join("invalid.lrc");
+        std::fs::write(&invalid_utf8, [0xff]).unwrap();
+        assert!(read_sidecar(&invalid_utf8).is_none());
+        assert!(read_sidecar(temp.path()).is_none());
+
+        let link = temp.path().join("linked.lrc");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&valid, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&valid, &link).is_ok();
+        if linked {
+            assert!(read_sidecar(&link).is_none());
+        }
+    }
 }
