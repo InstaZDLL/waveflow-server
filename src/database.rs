@@ -1108,8 +1108,16 @@ mod tests {
 
         let writer = database.writer_guard().await;
         for version in versions {
+            let legacy_checksum = crlf_checksum(version);
+            let current_checksum = MIGRATOR
+                .iter()
+                .find(|migration| migration.version == version)
+                .expect("known migration")
+                .checksum
+                .as_ref();
+            assert_ne!(legacy_checksum, current_checksum);
             sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
-                .bind(crlf_checksum(version))
+                .bind(legacy_checksum)
                 .bind(version)
                 .execute(&database.pool)
                 .await
