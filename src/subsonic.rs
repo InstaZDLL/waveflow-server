@@ -320,6 +320,8 @@ async fn dispatch(
         "getArtistInfo2" => artist_info(state, principal, params, "artistInfo2").await,
         "getAlbum" => get_album(state, principal, params).await,
         "getSong" => get_song(state, principal, params).await,
+        "getLyrics" => get_lyrics(state, principal, params).await,
+        "getLyricsBySongId" => get_lyrics_by_song_id(state, principal, params).await,
         "getGenres" => genres(state, principal, params).await,
         "getMusicDirectory" => music_directory(state, principal, params).await,
         "getAlbumList2" => album_list(state, principal, params).await,
@@ -601,6 +603,66 @@ async fn get_song(
         .next()
         .ok_or_else(not_found)?;
     Ok(song_node(&song))
+}
+
+async fn get_lyrics(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+) -> Result<Node, ProtocolError> {
+    let artist = params.first("artist");
+    let title = params.first("title");
+    let Some(lyrics) = state
+        .services
+        .lyrics_by_metadata(principal.id, artist, title)
+        .await
+        .map_err(service_protocol)?
+    else {
+        return Ok(Node::new("lyrics")
+            .maybe_attr("artist", artist.map(str::to_owned))
+            .maybe_attr("title", title.map(str::to_owned)));
+    };
+    let Some(first) = lyrics.structured_lyrics.first() else {
+        return Ok(Node::new("lyrics"));
+    };
+    Ok(Node::new("lyrics")
+        .maybe_attr("artist", first.display_artist.clone())
+        .attr("title", first.display_title.clone())
+        .text(
+            first
+                .lines
+                .iter()
+                .map(|line| line.value.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ))
+}
+
+async fn get_lyrics_by_song_id(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+) -> Result<Node, ProtocolError> {
+    let lyrics = state
+        .services
+        .lyrics(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("lyricsList")
+        .children(lyrics.structured_lyrics.iter().map(structured_lyrics_node)))
+}
+
+fn structured_lyrics_node(lyrics: &crate::lyrics::StructuredLyrics) -> Node {
+    Node::new("structuredLyrics")
+        .maybe_attr("displayArtist", lyrics.display_artist.clone())
+        .attr("displayTitle", lyrics.display_title.clone())
+        .attr("lang", lyrics.lang.clone())
+        .attr("synced", lyrics.synced)
+        .children(lyrics.lines.iter().map(|line| {
+            Node::new("line")
+                .maybe_attr("start", line.start)
+                .text(line.value.clone())
+        }))
 }
 
 async fn genres(
@@ -1651,6 +1713,10 @@ fn node_json(node: &Node) -> Value {
         };
         map.insert(name.to_owned(), value);
     }
+    for name in json_required_array_fields(&node.name) {
+        map.entry((*name).to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
     if let Some(text) = &node.text {
         map.insert("value".into(), Value::String(text.clone()));
     }
@@ -1662,6 +1728,14 @@ fn node_json(node: &Node) -> Value {
 /// strictly typed clients that decode the field into a list.
 fn json_array_node(name: &str) -> bool {
     matches!(name, "openSubsonicExtensions")
+}
+
+fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
+    match parent {
+        "lyricsList" => &["structuredLyrics"],
+        "structuredLyrics" => &["line"],
+        _ => &[],
+    }
 }
 
 /// Extensions this server actually implements, with their supported versions.
@@ -1693,6 +1767,8 @@ fn open_subsonic_extensions() -> Node {
         .child(extension("apiKeyAuthentication", vec![1]))
         // `timeOffset` on stream, honoured for transcoded output.
         .child(extension("transcodeOffset", vec![1]))
+        // Structured plain or line-synchronised lyrics by stable song UUID.
+        .child(extension("songLyrics", vec![1]))
 }
 
 fn json_array_field(parent: &str, name: &str) -> bool {
@@ -1721,6 +1797,8 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("users", "user")
             | ("user", "folder")
             | ("openSubsonicExtensions", "openSubsonicExtension")
+            | ("lyricsList", "structuredLyrics")
+            | ("structuredLyrics", "line")
     )
 }
 

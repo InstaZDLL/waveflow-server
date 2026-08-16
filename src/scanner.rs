@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use futures_util::{stream, StreamExt};
 use lofty::{
     file::TaggedFileExt,
-    prelude::{Accessor, AudioFile},
+    prelude::{Accessor, AudioFile, ItemKey},
 };
 use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
@@ -23,7 +23,10 @@ use walkdir::WalkDir;
 use crate::{
     catalog::{ApplyOutcome, ArtworkInput, CatalogApply, CatalogTrackInput, LibraryRecord},
     database::Database,
+    lyrics::{self, LyricsInput},
 };
+
+const MAX_LYRICS_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScanProgress {
@@ -203,6 +206,7 @@ impl ScanManager {
                                 && existing.modified_at == input.modified_at
                                 && existing.quick_hash == input.quick_hash
                                 && existing.full_hash == input.full_hash
+                                && existing.lyrics_hash.as_deref() == Some(&input.lyrics_hash)
                                 && existing.available
                             {
                                 seen.push(existing.id);
@@ -403,6 +407,8 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
         .and_then(|tag| waveflow_core::scanner::extract_cover(tag, artwork_dir))
         .or_else(|| waveflow_core::scanner::extract_folder_cover(path, artwork_dir));
     let artwork = cover.map(|cover| artwork_input(artwork_dir, cover));
+    let lyrics = extract_lyrics(path, tag);
+    let lyrics_hash = lyrics_hash(&lyrics);
     Ok(CatalogTrackInput {
         relative_path,
         file_size: size,
@@ -429,6 +435,8 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
             .and_then(waveflow_core::scanner::extract_rating)
             .map(i64::from),
         artwork,
+        lyrics_hash,
+        lyrics,
     })
 }
 
@@ -512,5 +520,67 @@ fn extract_dsd(
         musical_key: None,
         tag_rating: None,
         artwork,
+        lyrics_hash: lyrics_hash(&[]),
+        lyrics: Vec::new(),
     })
+}
+
+fn extract_lyrics(path: &Path, tag: Option<&lofty::tag::Tag>) -> Vec<LyricsInput> {
+    let mut found = Vec::new();
+    if let Some(tag) = tag {
+        for key in [ItemKey::UnsyncLyrics, ItemKey::Lyrics] {
+            if let Some(content) = tag.get_string(key) {
+                push_lyrics(&mut found, "embedded", content);
+            }
+        }
+    }
+    for (extension, source) in [("lrc", "sidecar_lrc"), ("txt", "sidecar_text")] {
+        let sidecar = path.with_extension(extension);
+        if let Some(content) = read_sidecar(&sidecar) {
+            push_lyrics(&mut found, source, &content);
+        }
+    }
+    found
+}
+
+fn push_lyrics(found: &mut Vec<LyricsInput>, source: &'static str, content: &str) {
+    let content = lyrics::normalize_content(content);
+    if content.trim().is_empty()
+        || found
+            .iter()
+            .any(|existing| existing.source == source && existing.content == content)
+    {
+        return;
+    }
+    let synced = lyrics::has_lrc_timestamps(&content);
+    found.push(LyricsInput {
+        source,
+        lang: "xxx".into(),
+        synced,
+        content,
+    });
+}
+
+fn read_sidecar(path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink()
+        || !metadata.file_type().is_file()
+        || metadata.len() > MAX_LYRICS_BYTES
+    {
+        return None;
+    }
+    String::from_utf8(fs::read(path).ok()?).ok()
+}
+
+fn lyrics_hash(entries: &[LyricsInput]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for entry in entries {
+        hasher.update(entry.source.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(entry.lang.as_bytes());
+        hasher.update(&[u8::from(entry.synced)]);
+        hasher.update(entry.content.as_bytes());
+        hasher.update(&[0xff]);
+    }
+    hasher.finalize().to_hex().to_string()
 }

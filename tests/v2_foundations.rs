@@ -660,6 +660,7 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         "/api/v2/sync/ack",
         "/api/v2/sync/socket",
         "/api/v2/transcode/status",
+        "/api/v2/tracks/{track_id}/lyrics",
     ] {
         assert!(document["paths"][path].is_object(), "missing {path}");
     }
@@ -752,6 +753,11 @@ async fn scanner_indexes_moves_and_marks_tracks_unavailable() {
     let music = config.data_dir.join("scan-music");
     std::fs::create_dir_all(&music).unwrap();
     write_test_wav(&music.join("First Track.wav"));
+    std::fs::write(
+        music.join("First Track.lrc"),
+        "[00:01.25]First line\n[00:02.500]Second line",
+    )
+    .unwrap();
     let library_id = state
         .db
         .create_library(
@@ -779,12 +785,27 @@ async fn scanner_indexes_moves_and_marks_tracks_unavailable() {
     assert_eq!(tracks[0].title, "First Track");
     assert!(tracks[0].available);
     let stable_id = tracks[0].id;
+    let lyrics = state.services.lyrics(owner, stable_id).await.unwrap();
+    assert_eq!(lyrics.structured_lyrics.len(), 1);
+    assert!(lyrics.structured_lyrics[0].synced);
+    assert_eq!(lyrics.structured_lyrics[0].lines[0].start, Some(1_250));
+    assert_eq!(lyrics.structured_lyrics[0].lines[0].value, "First line");
     let found = state
         .db
         .search_tracks_for_user(owner, library_id, "First")
         .await
         .unwrap();
     assert_eq!(found[0].id, stable_id);
+
+    // A sidecar can change while the audio bytes and timestamps stay exactly
+    // the same. Its fingerprint must prevent the scanner's unchanged-file fast
+    // path from preserving stale lyrics.
+    std::fs::write(music.join("First Track.lrc"), "[00:03]Replacement").unwrap();
+    run_scan(&state, owner, library.clone()).await;
+    let lyrics = state.services.lyrics(owner, stable_id).await.unwrap();
+    assert_eq!(lyrics.structured_lyrics[0].lines.len(), 1);
+    assert_eq!(lyrics.structured_lyrics[0].lines[0].start, Some(3_000));
+    assert_eq!(lyrics.structured_lyrics[0].lines[0].value, "Replacement");
 
     std::fs::create_dir_all(music.join("Moved")).unwrap();
     std::fs::rename(
@@ -1574,6 +1595,11 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let music = config.data_dir.join("subsonic-music");
     std::fs::create_dir_all(&music).unwrap();
     generate_audio_fixture(&music.join("Golden.wav"), "pcm_s16le", "wav");
+    std::fs::write(
+        music.join("Golden.lrc"),
+        "[00:01.25]Golden opening\n[00:02.500]Golden chorus",
+    )
+    .unwrap();
     write_test_wav(&music.join("NoArtist.wav"));
     write_test_png(&music.join("cover.png"));
     let root = std::fs::canonicalize(&music).unwrap();
@@ -1636,22 +1662,24 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await
         .unwrap();
     state.db.start_scan_job(foreign_scan, 1).await.unwrap();
+    let mut foreign_input = browse_input(
+        7_000,
+        "Foreign track",
+        "Foreign album",
+        "Foreign artist",
+        Some(1),
+        Some(1),
+    );
+    foreign_input.lyrics = vec![waveflow_server::lyrics::LyricsInput {
+        source: "embedded",
+        lang: "eng".into(),
+        synced: false,
+        content: "private words".into(),
+    }];
+    foreign_input.lyrics_hash = blake3::hash(b"private words").to_hex().to_string();
     state
         .db
-        .apply_catalog_track(
-            foreign_library,
-            foreign_scan,
-            &browse_input(
-                7_000,
-                "Foreign track",
-                "Foreign album",
-                "Foreign artist",
-                Some(1),
-                Some(1),
-            ),
-            None,
-            false,
-        )
+        .apply_catalog_track(foreign_library, foreign_scan, &foreign_input, None, false)
         .await
         .unwrap();
     state.db.finish_scan_job(foreign_scan, 0).await.unwrap();
@@ -1664,8 +1692,22 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .first()
         .unwrap()
         .id;
+    let foreign_song = state
+        .services
+        .catalog_snapshot(foreign_owner, &[])
+        .await
+        .unwrap()
+        .songs
+        .first()
+        .unwrap()
+        .id;
     let snapshot = state.services.catalog_snapshot(admin, &[]).await.unwrap();
-    let song = snapshot.songs.first().unwrap().id;
+    let song = snapshot
+        .songs
+        .iter()
+        .find(|song| song.title == "Matrix wav")
+        .expect("the tagged Golden fixture is present")
+        .id;
     let no_artist_song = snapshot
         .songs
         .iter()
@@ -1798,6 +1840,8 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         ("getArtistInfo2", format!("&id={artist}")),
         ("getAlbum", format!("&id={album}")),
         ("getSong", format!("&id={song}")),
+        ("getLyrics", "&title=Matrix%20wav".into()),
+        ("getLyricsBySongId", format!("&id={song}")),
         ("getGenres", String::new()),
         ("getMusicDirectory", format!("&id={album}")),
         ("getAlbumList", "&type=newest&size=10".into()),
@@ -1839,6 +1883,14 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             assert!(advertised.contains(&"formPost".to_owned()));
             assert!(advertised.contains(&"apiKeyAuthentication".to_owned()));
             assert!(advertised.contains(&"transcodeOffset".to_owned()));
+            assert!(advertised.contains(&"songLyrics".to_owned()));
+            let song_lyrics = extensions
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|extension| extension["name"] == "songLyrics")
+                .unwrap();
+            assert_eq!(song_lyrics["versions"], serde_json::json!([1]));
         }
         if method == "getBookmarks" {
             assert!(response["subsonic-response"]["bookmarks"].is_object());
@@ -1848,6 +1900,20 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
                 response["subsonic-response"]["song"]["artistId"],
                 artist.to_string()
             );
+        }
+        if method == "getLyrics" {
+            let lyrics = &response["subsonic-response"]["lyrics"];
+            assert_eq!(lyrics["title"], "Matrix wav");
+            assert_eq!(lyrics["value"], "Golden opening\nGolden chorus");
+        }
+        if method == "getLyricsBySongId" {
+            let lyrics = &response["subsonic-response"]["lyricsList"]["structuredLyrics"];
+            assert!(lyrics.is_array());
+            assert_eq!(lyrics[0]["displayTitle"], "Matrix wav");
+            assert_eq!(lyrics[0]["lang"], "xxx");
+            assert_eq!(lyrics[0]["synced"], true);
+            assert_eq!(lyrics[0]["line"][0]["start"], 1_250);
+            assert_eq!(lyrics[0]["line"][0]["value"], "Golden opening");
         }
         if method == "getArtistInfo" || method == "getArtistInfo2" {
             let container = if method == "getArtistInfo" {
@@ -1887,6 +1953,81 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(body_text(song_xml)
         .await
         .contains(&format!("artistId=\"{artist}\"")));
+
+    let lyrics_xml = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getLyricsBySongId.view?{plain_auth}&id={song}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lyrics_xml.status(), StatusCode::OK);
+    let lyrics_xml = body_text(lyrics_xml).await;
+    assert!(lyrics_xml.contains("<lyricsList>"));
+    assert!(lyrics_xml.contains("<structuredLyrics"));
+    assert!(lyrics_xml.contains("<line start=\"1250\">Golden opening</line>"));
+
+    let native_token = login_token(&router, "sub-admin", web_password).await;
+    let native_lyrics = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/tracks/{song}/lyrics"))
+                .header("authorization", format!("Bearer {native_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native_lyrics.status(), StatusCode::OK);
+    let native_lyrics = json_body(native_lyrics).await;
+    assert_eq!(native_lyrics["trackId"], song.to_string());
+    assert_eq!(
+        native_lyrics["structuredLyrics"][0]["line"][1]["start"],
+        2_500
+    );
+
+    let hidden_lyrics = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getLyricsBySongId.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={foreign_song}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hidden_lyrics.status(), StatusCode::NOT_FOUND);
+    let hidden_lyrics = json_body(hidden_lyrics).await;
+    assert_eq!(hidden_lyrics["subsonic-response"]["status"], "failed");
+    assert_eq!(hidden_lyrics["subsonic-response"]["error"]["code"], 70);
+    let hidden_native_lyrics = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/tracks/{foreign_song}/lyrics"))
+                .header("authorization", format!("Bearer {native_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hidden_native_lyrics.status(), StatusCode::NOT_FOUND);
+
+    let empty_lyrics = subsonic_json(
+        &router,
+        "getLyricsBySongId",
+        api_key,
+        &format!("&id={no_artist_song}"),
+    )
+    .await;
+    assert_eq!(
+        empty_lyrics["subsonic-response"]["lyricsList"]["structuredLyrics"],
+        serde_json::json!([])
+    );
 
     let no_artist_json = subsonic_json(
         &router,
@@ -2851,6 +2992,8 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         musical_key: None,
         tag_rating: None,
         artwork: None,
+        lyrics_hash: blake3::hash(b"").to_hex().to_string(),
+        lyrics: Vec::new(),
     }
 }
 
@@ -3089,6 +3232,8 @@ fn browse_input(
         musical_key: None,
         tag_rating: None,
         artwork: None,
+        lyrics_hash: blake3::hash(b"").to_hex().to_string(),
+        lyrics: Vec::new(),
     }
 }
 

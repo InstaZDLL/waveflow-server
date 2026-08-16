@@ -34,6 +34,7 @@ pub struct ExistingTrack {
     pub modified_at: i64,
     pub quick_hash: String,
     pub full_hash: String,
+    pub lyrics_hash: Option<String>,
     pub available: bool,
 }
 
@@ -83,6 +84,8 @@ pub struct CatalogTrackInput {
     pub musical_key: Option<String>,
     pub tag_rating: Option<i64>,
     pub artwork: Option<ArtworkInput>,
+    pub lyrics_hash: String,
+    pub lyrics: Vec<crate::lyrics::LyricsInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -333,7 +336,7 @@ impl Database {
         relative_path: &str,
     ) -> Result<Option<ExistingTrack>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, relative_path, file_size, file_modified_at, quick_hash, full_hash, is_available \
+            "SELECT id, relative_path, file_size, file_modified_at, quick_hash, full_hash, lyrics_hash, is_available \
              FROM track WHERE library_id = ? AND relative_path = ?",
         )
         .bind(library_id.to_string())
@@ -349,7 +352,7 @@ impl Database {
         full_hash: &str,
     ) -> Result<Vec<ExistingTrack>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, relative_path, file_size, file_modified_at, quick_hash, full_hash, is_available \
+            "SELECT id, relative_path, file_size, file_modified_at, quick_hash, full_hash, lyrics_hash, is_available \
              FROM track WHERE library_id = ? AND full_hash = ?",
         )
         .bind(library_id.to_string())
@@ -481,8 +484,8 @@ impl Database {
             "INSERT INTO track (id, library_id, album_id, artwork_hash, relative_path, file_size, \
                file_modified_at, quick_hash, full_hash, title, album_title, artist_display, genre_display, \
                year, track_number, disc_number, duration_ms, bitrate, sample_rate, channels, bit_depth, \
-               codec, musical_key, tag_rating, is_available, last_seen_scan_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?) \
+               codec, musical_key, tag_rating, lyrics_hash, is_available, last_seen_scan_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
                file_modified_at=excluded.file_modified_at, quick_hash=excluded.quick_hash, \
@@ -491,7 +494,7 @@ impl Database {
                track_number=excluded.track_number, disc_number=excluded.disc_number, duration_ms=excluded.duration_ms, \
                bitrate=excluded.bitrate, sample_rate=excluded.sample_rate, channels=excluded.channels, \
                bit_depth=excluded.bit_depth, codec=excluded.codec, musical_key=excluded.musical_key, \
-               tag_rating=excluded.tag_rating, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
+               tag_rating=excluded.tag_rating, lyrics_hash=excluded.lyrics_hash, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
         .bind(track_id.to_string()).bind(library_id.to_string())
@@ -502,8 +505,30 @@ impl Database {
         .bind(input.year).bind(input.track_number).bind(input.disc_number).bind(input.duration_ms)
         .bind(input.bitrate).bind(input.sample_rate).bind(input.channels).bind(input.bit_depth)
         .bind(input.codec.as_deref()).bind(input.musical_key.as_deref()).bind(input.tag_rating)
+        .bind(&input.lyrics_hash)
         .bind(scan_id.to_string()).bind(now).bind(now)
         .execute(&mut **tx).await?;
+
+        sqlx::query("DELETE FROM track_lyrics WHERE track_id = ?")
+            .bind(track_id.to_string())
+            .execute(&mut **tx)
+            .await?;
+        for (position, lyrics) in input.lyrics.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO track_lyrics \
+                 (track_id, library_id, position, source, lang, synced, content) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(track_id.to_string())
+            .bind(library_id.to_string())
+            .bind(position as i64)
+            .bind(lyrics.source)
+            .bind(&lyrics.lang)
+            .bind(i64::from(lyrics.synced))
+            .bind(&lyrics.content)
+            .execute(&mut **tx)
+            .await?;
+        }
 
         sqlx::query("DELETE FROM track_artist WHERE track_id = ?")
             .bind(track_id.to_string())
@@ -804,6 +829,7 @@ fn existing_track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ExistingTrack
         modified_at: row.try_get("file_modified_at")?,
         quick_hash: row.try_get("quick_hash")?,
         full_hash: row.try_get("full_hash")?,
+        lyrics_hash: row.try_get("lyrics_hash")?,
         available: row.try_get::<i64, _>("is_available")? != 0,
     })
 }
