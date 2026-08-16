@@ -3173,8 +3173,15 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     assert_eq!(detail.status(), StatusCode::OK);
     let detail = json_body(detail).await;
     assert_eq!(detail["title"], "Aurora Fields");
+    let album_artist_id = detail["artist_id"]
+        .as_str()
+        .expect("the album artist has a public id")
+        .to_owned();
     let songs = detail["songs"].as_array().unwrap();
     assert_eq!(songs.len(), 3);
+    assert!(songs
+        .iter()
+        .all(|song| song["artist_id"] == album_artist_id));
     assert_eq!(songs[0]["title"], "First Light", "sleeve order wins");
     assert_eq!(songs[1]["title"], "Slow Tide");
     assert_eq!(
@@ -3208,6 +3215,27 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     assert_eq!(found["albums"].as_array().unwrap().len(), 1);
     assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
     assert_eq!(found["songs"].as_array().unwrap().len(), 2);
+    let found_artist_id = found["artists"][0]["id"].as_str().unwrap();
+    assert!(found["songs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|song| song["artist_id"] == found_artist_id));
+
+    // The library projection uses TrackRecord rather than SongItem, but keeps
+    // the same artist link so a client can open an artist from every track list.
+    let tracks = get(
+        format!("/api/v2/libraries/{library_id}/tracks"),
+        owner_token.clone(),
+    )
+    .await;
+    let tracks = json_body(tracks).await;
+    assert_eq!(tracks.as_array().unwrap().len(), 5);
+    assert!(tracks
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|track| track["artist_id"].as_str().is_some()));
 
     // Search-as-you-type: the trailing term matches as a prefix. This exact
     // case was reported from the Android client — "echo" returned 2 songs,
@@ -3359,6 +3387,10 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let detail = json_body(detail).await;
     let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
     let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
+    let artist_id = detail["songs"][0]["artist_id"]
+        .as_str()
+        .expect("the fixture track has an artist")
+        .to_owned();
 
     // Individual tracks can be resolved for favorites and queue hydration,
     // while the same public id remains opaque to another tenant.
@@ -3370,7 +3402,9 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     )
     .await;
     assert_eq!(track.status(), StatusCode::OK);
-    assert_eq!(json_body(track).await["id"], first);
+    let track = json_body(track).await;
+    assert_eq!(track["id"], first);
+    assert_eq!(track["artist_id"], artist_id);
     let foreign_track = send(
         "GET",
         format!("/api/v2/tracks/{first}"),
@@ -3392,6 +3426,7 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let created = json_body(created).await;
     let playlist_id = created["id"].as_str().unwrap().to_owned();
     assert_eq!(created["songs"].as_array().unwrap().len(), 1);
+    assert_eq!(created["songs"][0]["artist_id"], artist_id);
 
     let listed = send("GET", "/api/v2/playlists".into(), owner_token.clone(), None).await;
     assert_eq!(json_body(listed).await.as_array().unwrap().len(), 1);
@@ -3407,6 +3442,11 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let updated = json_body(updated).await;
     assert_eq!(updated["comment"], "late night");
     assert_eq!(updated["songs"].as_array().unwrap().len(), 2);
+    assert!(updated["songs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|song| song["artist_id"] == artist_id));
 
     // Favorites round-trip through the dedicated collection.
     let starred = send(
