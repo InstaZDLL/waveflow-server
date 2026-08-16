@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::{
     authentication::now_ms,
     database::{AccountRecord, AccountRole, Database},
+    lyrics::{self, LyricsList, StructuredLyrics},
     security::{self, EncryptedSecret, SecretBox},
     sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},
 };
@@ -886,6 +887,61 @@ impl DomainServices {
     ) -> Result<Vec<SongItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.songs_by_ids_on(&mut connection, user_id, ids).await
+    }
+
+    /// Lyrics for one visible, available track. A visible track with no lyrics
+    /// returns an empty list; an unknown or foreign track is blurred as not
+    /// found, matching the rest of the catalogue API.
+    pub async fn lyrics(&self, user_id: Uuid, track_id: Uuid) -> Result<LyricsList, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.title, t.artist_display, tl.lang, tl.synced, tl.content \
+             FROM track t JOIN library_member m ON m.library_id=t.library_id \
+             LEFT JOIN track_lyrics tl ON tl.track_id=t.id AND tl.library_id=t.library_id \
+             WHERE m.user_id=? AND t.id=? AND t.is_available=1 \
+             ORDER BY tl.position",
+        )
+        .bind(user_id.to_string())
+        .bind(track_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        lyrics_list_from_rows(track_id, rows)
+    }
+
+    /// Legacy Subsonic lookup by metadata. Matching stays tenant-scoped and
+    /// deterministic; it is intentionally exact because fuzzy catalogue
+    /// reconciliation is outside the v2 contract.
+    pub async fn lyrics_by_metadata(
+        &self,
+        user_id: Uuid,
+        artist: Option<&str>,
+        title: Option<&str>,
+    ) -> Result<Option<LyricsList>, ServiceError> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT t.id FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND (? IS NULL OR t.artist_display = ? COLLATE NOCASE) \
+               AND (? IS NULL OR t.title = ? COLLATE NOCASE) \
+               AND EXISTS (SELECT 1 FROM track_lyrics tl WHERE tl.track_id=t.id) \
+             ORDER BY t.title COLLATE NOCASE, t.id LIMIT 1",
+        )
+        .bind(user_id.to_string())
+        .bind(artist)
+        .bind(artist)
+        .bind(title)
+        .bind(title)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let track_id = row
+            .map(|id| {
+                Uuid::parse_str(&id)
+                    .map_err(|error| ServiceError::Database(sqlx::Error::Decode(error.into())))
+            })
+            .transpose()?;
+        match track_id {
+            Some(track_id) => self.lyrics(user_id, track_id).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     pub async fn sync_snapshot(
@@ -2738,6 +2794,35 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
         user_rating: row.try_get("user_rating")?,
         play_count: row.try_get("play_count")?,
         last_played_at: row.try_get("last_played_at")?,
+    })
+}
+
+fn lyrics_list_from_rows(
+    track_id: Uuid,
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+) -> Result<LyricsList, ServiceError> {
+    let first = rows.first().ok_or(ServiceError::NotFound)?;
+    let display_title: String = first.try_get("title")?;
+    let display_artist: Option<String> = first.try_get("artist_display")?;
+    let mut structured_lyrics = Vec::new();
+    for row in rows {
+        let Some(content) = row.try_get::<Option<String>, _>("content")? else {
+            continue;
+        };
+        let synced = row.try_get::<Option<i64>, _>("synced")?.unwrap_or(0) != 0;
+        structured_lyrics.push(StructuredLyrics {
+            display_artist: display_artist.clone(),
+            display_title: display_title.clone(),
+            lang: row
+                .try_get::<Option<String>, _>("lang")?
+                .unwrap_or_else(|| "xxx".into()),
+            synced,
+            lines: lyrics::lines(&content, synced),
+        });
+    }
+    Ok(LyricsList {
+        track_id,
+        structured_lyrics,
     })
 }
 

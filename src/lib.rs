@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod database;
 pub mod http;
+pub mod lyrics;
 pub mod media;
 pub mod oauth;
 pub mod scanner;
@@ -85,6 +86,7 @@ pub struct AppState {
         http::scan_events,
         http::list_tracks,
         http::get_track,
+        http::get_track_lyrics,
         http::list_albums,
         http::get_album,
         http::list_artists,
@@ -145,6 +147,9 @@ pub struct AppState {
         services::AlbumItem,
         services::ArtistItem,
         services::SongItem,
+        lyrics::LyricsList,
+        lyrics::StructuredLyrics,
+        lyrics::LyricsLine,
         services::ArtistSummary,
         services::AlbumDetail,
         services::ArtistDetail,
