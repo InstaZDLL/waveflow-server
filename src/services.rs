@@ -22,6 +22,8 @@ use crate::{
 macro_rules! song_select {
     () => {
         "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
+                (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id \
+                 ORDER BY ta.position LIMIT 1) AS artist_id, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
                 us.starred_at, ur.rating AS user_rating \
@@ -104,6 +106,8 @@ pub struct SongItem {
     pub title: String,
     pub album: Option<String>,
     pub artist: Option<String>,
+    /// Primary credited artist, matching the first artist in `artist`.
+    pub artist_id: Option<Uuid>,
     pub genre: Option<String>,
     pub year: Option<i64>,
     pub track: Option<i64>,
@@ -2749,6 +2753,10 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         title: row.try_get("title")?,
         album: row.try_get("album_title")?,
         artist: row.try_get("artist_display")?,
+        artist_id: row
+            .try_get::<Option<String>, _>("artist_id")?
+            .map(parse_uuid)
+            .transpose()?,
         genre: row.try_get("genre_display")?,
         year: row.try_get("year")?,
         track: row.try_get("track_number")?,
