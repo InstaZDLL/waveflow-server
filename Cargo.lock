@@ -3475,6 +3475,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http-body-util",
+ "libc",
  "lofty",
  "md-5",
  "rand 0.8.6",
