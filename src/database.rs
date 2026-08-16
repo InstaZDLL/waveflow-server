@@ -3,6 +3,7 @@
 use std::{path::Path, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha384};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -246,10 +247,65 @@ impl Database {
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
         let _writer = self.writer_guard().await;
+        let normalized = self
+            .normalize_legacy_crlf_migration_checksums()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("legacy migration checksum normalization failed: {error}")
+            })?;
+        if normalized > 0 {
+            tracing::warn!(
+                normalized,
+                "normalized legacy Windows CRLF migration checksums"
+            );
+        }
         MIGRATOR
             .run(&self.pool)
             .await
             .map_err(|error| anyhow::anyhow!("v2 migration failed: {error}"))
+    }
+
+    /// Early Windows builds embedded migrations after Git had converted their
+    /// LF line endings to CRLF. SQLx hashes the exact bytes, so databases made
+    /// by those builds are rejected after `.gitattributes` made the checkout
+    /// byte-stable even though the SQL itself is unchanged.
+    ///
+    /// Only the checksum of the current migration with every LF converted to
+    /// CRLF is accepted. Any other mismatch is left untouched for SQLx to
+    /// reject normally.
+    async fn normalize_legacy_crlf_migration_checksums(&self) -> Result<u64, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let migrations_table_exists: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'table' AND name = '_sqlx_migrations')",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if migrations_table_exists == 0 {
+            tx.commit().await?;
+            return Ok(0);
+        }
+
+        let mut normalized = 0;
+        for migration in MIGRATOR.iter() {
+            let sql = migration.sql.as_str();
+            if sql.contains('\r') || !sql.contains('\n') {
+                continue;
+            }
+            let legacy_checksum = Sha384::digest(sql.replace('\n', "\r\n").as_bytes());
+            let result = sqlx::query(
+                "UPDATE _sqlx_migrations SET checksum = ? \
+                 WHERE version = ? AND success = TRUE AND checksum = ?",
+            )
+            .bind(migration.checksum.as_ref())
+            .bind(migration.version)
+            .bind(&legacy_checksum[..])
+            .execute(&mut *tx)
+            .await?;
+            normalized += result.rows_affected();
+        }
+        tx.commit().await?;
+        Ok(normalized)
     }
 
     pub async fn ping(&self) -> Result<(), sqlx::Error> {
@@ -1022,4 +1078,94 @@ async fn insert_audit(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn migrated_database() -> (tempfile::TempDir, Database) {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let database = Database::open(&Config::for_data_dir(temp.path().join("data")))
+            .await
+            .expect("open database");
+        database.migrate().await.expect("initial migration");
+        (temp, database)
+    }
+
+    fn crlf_checksum(version: i64) -> Vec<u8> {
+        let migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == version)
+            .expect("known migration");
+        Sha384::digest(migration.sql.as_str().replace('\n', "\r\n").as_bytes()).to_vec()
+    }
+
+    #[tokio::test]
+    async fn migrate_accepts_checksums_from_legacy_windows_line_endings() {
+        let (_temp, database) = migrated_database().await;
+        let versions = [20260806000000_i64, 20260806120000_i64];
+
+        let writer = database.writer_guard().await;
+        for version in versions {
+            let legacy_checksum = crlf_checksum(version);
+            let current_checksum = MIGRATOR
+                .iter()
+                .find(|migration| migration.version == version)
+                .expect("known migration")
+                .checksum
+                .as_ref();
+            assert_ne!(legacy_checksum, current_checksum);
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(legacy_checksum)
+                .bind(version)
+                .execute(&database.pool)
+                .await
+                .expect("install legacy checksum");
+        }
+        drop(writer);
+
+        database.migrate().await.expect("normalize then migrate");
+
+        for version in versions {
+            let expected = MIGRATOR
+                .iter()
+                .find(|migration| migration.version == version)
+                .expect("known migration")
+                .checksum
+                .as_ref();
+            let stored: Vec<u8> =
+                sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+                    .bind(version)
+                    .fetch_one(&database.pool)
+                    .await
+                    .expect("read normalized checksum");
+            assert_eq!(stored, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn migrate_still_rejects_an_unrelated_checksum_mismatch() {
+        let (_temp, database) = migrated_database().await;
+        let version = 20260806000000_i64;
+        let writer = database.writer_guard().await;
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+            .bind(vec![0_u8; 48])
+            .bind(version)
+            .execute(&database.pool)
+            .await
+            .expect("install invalid checksum");
+        drop(writer);
+
+        let error = database
+            .migrate()
+            .await
+            .expect_err("unrelated checksum must remain invalid");
+        assert!(
+            error
+                .to_string()
+                .contains("previously applied but has been modified"),
+            "unexpected error: {error:#}"
+        );
+    }
 }
