@@ -124,6 +124,8 @@ pub struct TrackRecord {
     pub title: String,
     pub album: Option<String>,
     pub artist: Option<String>,
+    /// Primary credited artist, matching the first artist in `artist`.
+    pub artist_id: Option<Uuid>,
     pub genre: Option<String>,
     pub duration_ms: i64,
     pub codec: Option<String>,
@@ -684,12 +686,16 @@ async fn fetch_tracks(
     // typed into a library rather than the whole catalogue.
     let rows = if let Some(fts_query) = query.and_then(fts_prefix_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
+            (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
+             ORDER BY ta.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
             WHERE m.user_id=? AND t.library_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
             .bind(user.to_string()).bind(library.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
+            (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
+             ORDER BY ta.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id WHERE m.user_id=? AND t.library_id=? \
             ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?")
@@ -842,6 +848,10 @@ fn track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<TrackRecord, sqlx::Err
         title: row.try_get("title")?,
         album: row.try_get("album_title")?,
         artist: row.try_get("artist_display")?,
+        artist_id: row
+            .try_get::<Option<String>, _>("artist_id")?
+            .map(parse_uuid)
+            .transpose()?,
         genre: row.try_get("genre_display")?,
         duration_ms: row.try_get("duration_ms")?,
         codec: row.try_get("codec")?,

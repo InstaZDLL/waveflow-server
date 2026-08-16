@@ -1501,6 +1501,7 @@ fn song_node(song: &SongItem) -> Node {
         .attr("type", "music")
         .maybe_attr("coverArt", song.artwork_hash.clone())
         .maybe_attr("albumId", song.album_id.map(|id| id.to_string()))
+        .maybe_attr("artistId", song.artist_id.map(|id| id.to_string()))
         .maybe_attr("starred", song.starred_at.map(iso_time))
         .maybe_attr("userRating", song.user_rating)
         .attr("created", iso_time(song.created_at))
