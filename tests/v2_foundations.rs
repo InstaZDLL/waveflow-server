@@ -1574,6 +1574,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let music = config.data_dir.join("subsonic-music");
     std::fs::create_dir_all(&music).unwrap();
     generate_audio_fixture(&music.join("Golden.wav"), "pcm_s16le", "wav");
+    write_test_wav(&music.join("NoArtist.wav"));
     write_test_png(&music.join("cover.png"));
     let root = std::fs::canonicalize(&music).unwrap();
     let library = state
@@ -1665,6 +1666,12 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .id;
     let snapshot = state.services.catalog_snapshot(admin, &[]).await.unwrap();
     let song = snapshot.songs.first().unwrap().id;
+    let no_artist_song = snapshot
+        .songs
+        .iter()
+        .find(|song| song.artist_id.is_none())
+        .expect("the untagged fixture has no track_artist row")
+        .id;
     let artist = snapshot.artists.first().unwrap().id;
     let album = snapshot.albums.first().unwrap().id;
     let artwork = snapshot
@@ -1880,6 +1887,30 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(body_text(song_xml)
         .await
         .contains(&format!("artistId=\"{artist}\"")));
+
+    let no_artist_json = subsonic_json(
+        &router,
+        "getSong",
+        api_key,
+        &format!("&id={no_artist_song}"),
+    )
+    .await;
+    assert!(no_artist_json["subsonic-response"]["song"]
+        .get("artistId")
+        .is_none());
+    let no_artist_xml = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getSong.view?{plain_auth}&id={no_artist_song}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_artist_xml.status(), StatusCode::OK);
+    assert!(!body_text(no_artist_xml).await.contains("artistId="));
 
     let dsub_artist_info = router
         .clone()
@@ -3132,15 +3163,25 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     .into_iter()
     .enumerate()
     {
+        let mut input = browse_input(index, title, album, artist, track, disc);
+        match title {
+            // The album still has an artist, but this track has no credited
+            // artist and therefore no track_artist row.
+            "Hidden Track" => {
+                input.artist = None;
+                input.album_artist = Some("Lumen Drift".into());
+            }
+            // Materializes positions 0 and 1 while preserving the existing
+            // album identity. The public primary must remain Écho Solaire.
+            "Prélude" => {
+                input.artist = Some("Écho Solaire; Lumen Drift".into());
+                input.album_artist = Some("Écho Solaire".into());
+            }
+            _ => {}
+        }
         state
             .db
-            .apply_catalog_track(
-                library_id,
-                scan_id,
-                &browse_input(index, title, album, artist, track, disc),
-                None,
-                false,
-            )
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
             .await
             .unwrap();
     }
@@ -3199,9 +3240,9 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
         .to_owned();
     let songs = detail["songs"].as_array().unwrap();
     assert_eq!(songs.len(), 3);
-    assert!(songs
-        .iter()
-        .all(|song| song["artist_id"] == album_artist_id));
+    assert_eq!(songs[0]["artist_id"], album_artist_id);
+    assert_eq!(songs[1]["artist_id"], album_artist_id);
+    assert!(songs[2]["artist_id"].is_null());
     assert_eq!(songs[0]["title"], "First Light", "sleeve order wins");
     assert_eq!(songs[1]["title"], "Slow Tide");
     assert_eq!(
@@ -3230,17 +3271,27 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     let found = get("/api/v2/search?q=echo".into(), owner_token.clone()).await;
     assert_eq!(found.status(), StatusCode::OK);
     let found = json_body(found).await;
-    assert_eq!(found["artists"].as_array().unwrap().len(), 1);
-    assert_eq!(found["artists"][0]["name"], "Écho Solaire");
+    assert_eq!(found["artists"].as_array().unwrap().len(), 2);
     assert_eq!(found["albums"].as_array().unwrap().len(), 1);
     assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
     assert_eq!(found["songs"].as_array().unwrap().len(), 2);
-    let found_artist_id = found["artists"][0]["id"].as_str().unwrap();
-    assert!(found["songs"]
+    let found_artist_id = found["artists"]
         .as_array()
         .unwrap()
         .iter()
-        .all(|song| song["artist_id"] == found_artist_id));
+        .find(|artist| artist["name"] == "Écho Solaire")
+        .expect("the primary artist is included in search results")["id"]
+        .as_str()
+        .unwrap();
+    for title in ["Prélude", "Rivière Noire"] {
+        let song = found["songs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|song| song["title"] == title)
+            .unwrap_or_else(|| panic!("missing search result {title}"));
+        assert_eq!(song["artist_id"], found_artist_id, "{title}");
+    }
 
     // The library projection uses TrackRecord rather than SongItem, but keeps
     // the same artist link so a client can open an artist from every track list.
@@ -3251,22 +3302,30 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     .await;
     let tracks = json_body(tracks).await;
     assert_eq!(tracks.as_array().unwrap().len(), 5);
-    assert!(tracks
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|track| track["artist_id"].as_str().is_some()));
+    let track = |title: &str| {
+        tracks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|track| track["title"] == title)
+            .unwrap_or_else(|| panic!("missing library track {title}"))
+    };
+    assert_eq!(track("First Light")["artist_id"], album_artist_id);
+    assert_eq!(track("Slow Tide")["artist_id"], album_artist_id);
+    assert!(track("Hidden Track")["artist_id"].is_null());
+    assert_eq!(track("Prélude")["artist_id"], artist_id);
+    assert_eq!(track("Rivière Noire")["artist_id"], artist_id);
 
     // Search-as-you-type: the trailing term matches as a prefix. This exact
-    // case was reported from the Android client — "echo" returned 2 songs,
-    // 1 album and 1 artist while "ech" returned nothing, because the native
+    // case was reported from the Android client — "echo" returned songs,
+    // albums and artists while "ech" returned nothing, because the native
     // surface still required whole tokens after the Subsonic one moved on.
     let partial = get("/api/v2/search?q=ech".into(), owner_token.clone()).await;
     assert_eq!(partial.status(), StatusCode::OK);
     let partial = json_body(partial).await;
     assert_eq!(partial["songs"].as_array().unwrap().len(), 2);
     assert_eq!(partial["albums"].as_array().unwrap().len(), 1);
-    assert_eq!(partial["artists"].as_array().unwrap().len(), 1);
+    assert_eq!(partial["artists"].as_array().unwrap().len(), 2);
 
     // Extra terms still narrow rather than widen.
     let narrowed = get(
@@ -3348,23 +3407,25 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
         .await
         .unwrap();
     state.db.start_scan_job(scan_id, 2).await.unwrap();
-    for (index, title) in ["First Light", "Slow Tide"].into_iter().enumerate() {
+    for (index, (title, artist)) in [
+        ("First Light", "Lumen Drift"),
+        ("Slow Tide", "Écho Solaire"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = browse_input(
+            index,
+            title,
+            "Aurora Fields",
+            artist,
+            Some(index as i64 + 1),
+            Some(1),
+        );
+        input.album_artist = Some("Lumen Drift".into());
         state
             .db
-            .apply_catalog_track(
-                library_id,
-                scan_id,
-                &browse_input(
-                    index,
-                    title,
-                    "Aurora Fields",
-                    "Lumen Drift",
-                    Some(index as i64 + 1),
-                    Some(1),
-                ),
-                None,
-                false,
-            )
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
             .await
             .unwrap();
     }
@@ -3407,10 +3468,15 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let detail = json_body(detail).await;
     let first = detail["songs"][0]["id"].as_str().unwrap().to_owned();
     let second = detail["songs"][1]["id"].as_str().unwrap().to_owned();
-    let artist_id = detail["songs"][0]["artist_id"]
+    let first_artist_id = detail["songs"][0]["artist_id"]
         .as_str()
         .expect("the fixture track has an artist")
         .to_owned();
+    let second_artist_id = detail["songs"][1]["artist_id"]
+        .as_str()
+        .expect("the second fixture track has an artist")
+        .to_owned();
+    assert_ne!(first_artist_id, second_artist_id);
 
     // Individual tracks can be resolved for favorites and queue hydration,
     // while the same public id remains opaque to another tenant.
@@ -3424,7 +3490,7 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     assert_eq!(track.status(), StatusCode::OK);
     let track = json_body(track).await;
     assert_eq!(track["id"], first);
-    assert_eq!(track["artist_id"], artist_id);
+    assert_eq!(track["artist_id"], first_artist_id);
     let foreign_track = send(
         "GET",
         format!("/api/v2/tracks/{first}"),
@@ -3446,7 +3512,8 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let created = json_body(created).await;
     let playlist_id = created["id"].as_str().unwrap().to_owned();
     assert_eq!(created["songs"].as_array().unwrap().len(), 1);
-    assert_eq!(created["songs"][0]["artist_id"], artist_id);
+    assert_eq!(created["songs"][0]["id"], first);
+    assert_eq!(created["songs"][0]["artist_id"], first_artist_id);
 
     let listed = send("GET", "/api/v2/playlists".into(), owner_token.clone(), None).await;
     assert_eq!(json_body(listed).await.as_array().unwrap().len(), 1);
@@ -3462,11 +3529,10 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
     let updated = json_body(updated).await;
     assert_eq!(updated["comment"], "late night");
     assert_eq!(updated["songs"].as_array().unwrap().len(), 2);
-    assert!(updated["songs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|song| song["artist_id"] == artist_id));
+    assert_eq!(updated["songs"][0]["id"], first);
+    assert_eq!(updated["songs"][0]["artist_id"], first_artist_id);
+    assert_eq!(updated["songs"][1]["id"], second);
+    assert_eq!(updated["songs"][1]["artist_id"], second_artist_id);
 
     // Favorites round-trip through the dedicated collection.
     let starred = send(
