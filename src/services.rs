@@ -22,7 +22,7 @@ use crate::{
 macro_rules! song_select {
     () => {
         "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
-                (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id \
+                (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
                  ORDER BY ta.position LIMIT 1) AS artist_id, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
