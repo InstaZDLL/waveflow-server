@@ -1836,6 +1836,12 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         if method == "getBookmarks" {
             assert!(response["subsonic-response"]["bookmarks"].is_object());
         }
+        if method == "getSong" {
+            assert_eq!(
+                response["subsonic-response"]["song"]["artistId"],
+                artist.to_string()
+            );
+        }
         if method == "getArtistInfo" || method == "getArtistInfo2" {
             let container = if method == "getArtistInfo" {
                 "artistInfo"
@@ -1860,6 +1866,20 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .unwrap();
     assert_eq!(artist_info.status(), StatusCode::OK);
     assert!(body_text(artist_info).await.contains("<artistInfo/>"));
+
+    let song_xml = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/rest/getSong.view?{plain_auth}&id={song}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(song_xml.status(), StatusCode::OK);
+    assert!(body_text(song_xml)
+        .await
+        .contains(&format!("artistId=\"{artist}\"")));
 
     let dsub_artist_info = router
         .clone()
