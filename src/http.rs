@@ -344,6 +344,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
         .route("/api/v2/tracks/{track_id}", get(get_track))
+        .route("/api/v2/tracks/{track_id}/lyrics", get(get_track_lyrics))
         .route("/api/v2/albums", get(list_albums))
         .route("/api/v2/albums/{album_id}", get(get_album))
         .route("/api/v2/artists", get(list_artists))
@@ -868,6 +869,21 @@ pub async fn get_track(
         .next()
         .map(Json)
         .ok_or(ApiError::NotFound)
+}
+
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}/lyrics", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_track_lyrics(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .lyrics(user.id, track_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
 }
 
 #[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]

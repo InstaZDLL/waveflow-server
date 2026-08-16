@@ -60,7 +60,7 @@ For full-catalogue pagination, `search3` treats the literal query `""` as match-
 
 Mutation methods whose Subsonic result is empty (`updatePlaylist`, `deletePlaylist`, stars, ratings, scrobbles, queue save, share deletion and user-management writes) return only the successful protocol envelope. They do not add implementation-specific child elements.
 
-`getOpenSubsonicExtensions` intentionally returns an empty tested extension list for the beta. No extension is advertised merely because a similarly named endpoint exists.
+`getOpenSubsonicExtensions` advertises only capabilities covered by protocol tests: `formPost` v1, `apiKeyAuthentication` v1, `transcodeOffset` v1 and `songLyrics` v1. No extension is advertised merely because a similarly named endpoint exists. `songLyrics` v1 exposes embedded textual lyrics and UTF-8 `.lrc`/`.txt` sidecars through `getLyricsBySongId`; line timestamps are milliseconds and an unknown language is `xxx`. The legacy `getLyrics` lookup remains available by exact artist/title metadata. The native equivalent is `GET /api/v2/tracks/{track_id}/lyrics`. Word-level cues, translations and other `songLyrics` v2 enhanced fields are not declared.
 
 Cross-origin access is disabled unless the operator supplies an exact comma-separated allow-list through `WAVEFLOW_ALLOWED_ORIGINS`. Allowed origins may use GET, form POST and OPTIONS and may read the byte-range response headers needed for web playback; wildcard origins are not accepted.
 
