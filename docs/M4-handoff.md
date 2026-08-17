@@ -1,10 +1,10 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-15. **M4 est livré côté serveur mais
-> reste ouvert** : le socle est fusionné en `14aec76`, son complément en
-> `6716df9` (PR #94), et la validation Symfonium a fermé M3. Ce qui manque est
-> hors de ce dépôt — l'intégration WaveFlow Desktop n'a pas tourné de bout en
-> bout, et c'est elle qui ferme la porte. Voir
+> Note de suivi mise à jour le 2026-08-17. **M4 est fermé** : le serveur, la
+> façade Subsonic et l'intégration WaveFlow Desktop ont tourné de bout en bout.
+> Le socle est fusionné en `14aec76`, son complément en `6716df9` (PR #94), et
+> le contrat consommé par Desktop inclut désormais les artistes de piste et les
+> paroles. Voir
 > [`desktop-v2-integration-gap.md`](desktop-v2-integration-gap.md).
 >
 > Ce document décrit ce qui est fait, les décisions non évidentes à ne pas
@@ -16,15 +16,15 @@
 - **M0, M1, M2 : fermés.**
 - **M3 : fermé.** Symfonium 14.1.0 a validé authentification, synchronisation,
   lecture native/transcodée, favoris, scrobbles et playlists.
-- **M4 : ouvert.** Tout le travail serveur est livré — socle en `14aec76`,
+- **M4 : fermé.** Tout le travail serveur est livré — socle en `14aec76`,
   complément en `6716df9`, `web/` retiré par la PR #84 après extraction de ses
-  design tokens. La porte attend la validation de l'intégration Desktop, plus
-  la revalidation Subsonic due au passage à FTS5 et aux extensions annoncées.
-- **M5, M6 : non commencés.**
+  design tokens — et l'intégration Desktop `/api/v2` + PKCE est validée de bout
+  en bout.
+- **M5 : ouvert au stade RFC. M6 : non commencé.**
 
-`main` est vert. La PR #101 corrige le seul défaut découvert pendant la
-revalidation client du 2026-08-15 : DSub traitait le 404 de l'optionnel
-`getArtistInfo2` comme une erreur bloquante en ouvrant un artiste.
+`main` est vert. Les correctifs découverts pendant la revalidation client sont
+fusionnés, notamment le conteneur `getArtistInfo*` attendu par DSub, le lien
+`artist_id` sur les pistes et les paroles natives/OpenSubsonic.
 
 ## Revalidation des clients Subsonic (2026-08-15)
 
@@ -45,9 +45,20 @@ revalidation client du 2026-08-15 : DSub traitait le 404 de l'optionnel
   contrats d'authentification token/salt et les réponses XML restent couverts
   par les tests automatisés.
 
-Il ne reste côté façade Subsonic qu'à fusionner #101 et à rouvrir une page
-artiste DSub sur le binaire livré. Aucun tag ne doit être créé sans demande
+La façade Subsonic est revalidée. Aucun tag ne doit être créé sans demande
 explicite du user.
+
+## Validation WaveFlow Desktop `/api/v2` (2026-08-17)
+
+Le parcours natif a été validé de bout en bout sur le binaire courant :
+identification du serveur, Authorization Code + PKCE, catalogue distant,
+recherche, pochettes, streaming, playlists et synchronisation des données
+utilisateur. Les playlists observées depuis les clients Subsonic et WaveFlow
+convergent sur les mêmes services métier. Les contrats `artist_id` et paroles
+sont également publiés pour les vues Desktop qui les consomment.
+
+Cette validation ferme la porte M4. Elle n'autorise pas à elle seule la création
+d'un tag ou d'une release : cette action reste soumise à une demande explicite.
 
 ## Validation sur bibliothèque réelle (2026-08-09)
 
@@ -75,6 +86,7 @@ la façade Subsonic.
 ```text
 GET  /api/v2/albums · /albums/{id} · /artists · /artists/{id} · /search
 GET  /api/v2/tracks/{id}
+GET  /api/v2/tracks/{id}/lyrics
 GET  /api/v2/playlists · POST · PATCH · DELETE
 GET  /api/v2/favorites · PUT|DELETE /favorites/{kind}/{id}
 PUT  /api/v2/ratings/{kind}/{id} · POST /scrobbles · GET /now-playing
@@ -222,29 +234,13 @@ compte, chaque faux réveil coûtant un `/changes` vide.
 
 ## Ce qui reste
 
-1. **Valider l'intégration WaveFlow Desktop** contre `/api/v2` et Authorization
-   Code + PKCE : catalogue distant, streaming, playlists, favoris, notes,
-   historique, file d'attente et partages, plus la reconnexion, la
-   rotation/révocation des refresh tokens et la reprise de synchronisation.
-   C'est le vrai test de convergence : la bibliothèque réelle avait déjà révélé
-   deux défauts qu'aucun test ne voyait. Le portage est en cours dans le dépôt
-   Desktop ; il n'a pas encore tourné de bout en bout, et le retrait de son
-   protocole v1 attend cette exécution. **Le Desktop lit avec un `Authorization:
-   Bearer` sur `/api/v2/tracks/{id}/stream` — les tickets scellés restent
-   réservés à `<audio src>`, qui ne peut pas porter d'en-tête.**
-2. **Fusionner la PR #101 et revalider l'ouverture d'un artiste dans DSub.**
-   Symfonium, Feishin, DSub et Juliet ont validé le reste de la façade sur la
-   bibliothèque réelle. Substreamer n'est plus installable sur l'appareil de
-   validation et demeure explicitement non testé, plutôt que déclaré vert par
-   approximation.
-3. **Taguer une release uniquement sur demande explicite du user.** La porte M3
-   est fermée ; il reste la revalidation ci-dessus et la fermeture de M4.
-4. **M5** : réconciliation locale/serveur conservatrice. **Commencer par un
-   RFC** — liaison automatique sur hash complet unique seulement, MBID en
-   suggestion à confirmer, aucun rapprochement flou par titre/artiste/durée.
-   `full_hash` est publié depuis le 2026-08-13, donc les clients peuvent déjà
-   préparer leur schéma.
-5. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright.
+1. **M5** : faire accepter le RFC de réconciliation locale/serveur avant toute
+   implémentation. Le socle proposé lie automatiquement sur hash complet exact
+   et unique seulement ; aucun rapprochement flou n'est autorisé.
+2. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright, après
+   la porte M5.
+3. **Taguer une release uniquement sur demande explicite du user.** Les portes
+   M3 et M4 sont fermées, mais aucune demande de tag n'a été faite.
 
 ## Outillage front
 
