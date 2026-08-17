@@ -42,7 +42,20 @@ import {
   startScan,
   type User,
 } from "./api";
+import { Artwork } from "./artwork";
+import { useI18n } from "./i18n";
 import { usePlayer } from "./player";
+
+const SKELETON_KEYS = [
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+];
 
 /** Resolves a promise into render state, with the error surfaced rather than swallowed. */
 function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
@@ -69,11 +82,36 @@ function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
 }
 
 function Loading({ error }: { error: string | null }) {
-  return <p className="muted">{error ? `Failed: ${error}` : "Loading…"}</p>;
+  const { t } = useI18n();
+  if (error) {
+    return (
+      <div className="error-state" role="alert">
+        <strong>{t("common.loadError")}</strong>
+        <p>{error}</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="skeleton-grid"
+      role="status"
+      aria-label={t("common.loading")}
+      aria-busy="true"
+    >
+      {SKELETON_KEYS.map((key) => (
+        <div className="skeleton-card" key={key}>
+          <span />
+          <i />
+          <i />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -94,16 +132,14 @@ export function LoginPage() {
           await bootstrapAdmin(username, password);
           setSetup(false);
         } catch {
-          setError(
-            "Setup failed. Use a valid username and at least 12 password characters.",
-          );
+          setError(t("login.setupError"));
           return;
         }
       }
       try {
         await login(username, password);
       } catch {
-        setError("Wrong username or password.");
+        setError(t("login.error"));
         return;
       }
       const next = safeInternalPath(
@@ -119,55 +155,64 @@ export function LoginPage() {
 
   return (
     <main className="centered">
-      <form className="card" onSubmit={submit}>
-        <h1>{setup ? "Create the administrator" : "WaveFlow"}</h1>
-        {setup ? (
-          <p className="muted">
-            This is a new server. Choose the first administrator account.
-          </p>
-        ) : null}
-        <label>
-          Username
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={setup ? "new-password" : "current-password"}
-            minLength={setup ? 12 : undefined}
-            required
-          />
-        </label>
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={busy}>
-          {busy ? "Please wait…" : setup ? "Create and sign in" : "Sign in"}
-        </button>
-      </form>
+      <div className="login-shell">
+        <section className="login-story" aria-hidden="true">
+          <span className="eyebrow">{t("login.heroEyebrow")}</span>
+          <h1>{t("login.heroTitle")}</h1>
+          <div className="signal" />
+          <p>{t("login.heroDetail")}</p>
+        </section>
+        <form className="card login-card" onSubmit={submit}>
+          <span className="eyebrow">{t("login.server")}</span>
+          <h1>{setup ? t("login.createAdmin") : t("login.welcome")}</h1>
+          {setup ? <p className="muted">{t("login.setupDetail")}</p> : null}
+          <label>
+            {t("login.username")}
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              required
+            />
+          </label>
+          <label>
+            {t("login.password")}
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={setup ? "new-password" : "current-password"}
+              minLength={setup ? 12 : undefined}
+              required
+            />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={busy}>
+            {busy
+              ? t("login.wait")
+              : setup
+                ? t("login.create")
+                : t("login.signIn")}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }
 
 function AlbumGrid({ albums }: { albums: Album[] }) {
-  if (albums.length === 0) return <p className="muted">No albums yet.</p>;
+  const { t } = useI18n();
+  if (albums.length === 0)
+    return <p className="muted">{t("common.noAlbums")}</p>;
   return (
     <ul className="grid">
       {albums.map((album) => (
         <li key={album.id}>
           <Link to="/albums/$albumId" params={{ albumId: album.id }}>
-            <div className="cover" aria-hidden="true">
-              {album.title.slice(0, 1)}
-            </div>
+            <Artwork artworkId={album.artwork_hash} title={album.title} />
             <strong>{album.title}</strong>
             <span className="muted">
-              {album.artist ?? "Various artists"}
+              {album.artist ?? t("common.variousArtists")}
               {album.year ? ` · ${album.year}` : ""}
             </span>
           </Link>
@@ -178,11 +223,15 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
 }
 
 export function AlbumsPage() {
+  const { t } = useI18n();
   const { value, error } = useAsync(listAlbums, []);
   if (!value) return <Loading error={error} />;
   return (
     <section>
-      <h2>Albums</h2>
+      <PageHeader
+        title={t("nav.albums")}
+        detail={t("albums.detail", { count: value.length })}
+      />
       <AlbumGrid albums={value} />
     </section>
   );
@@ -190,6 +239,7 @@ export function AlbumsPage() {
 
 export function SongTable({ songs }: { songs: Song[] }) {
   const player = usePlayer();
+  const { t } = useI18n();
   const [stars, setStars] = useState<Record<string, boolean>>({});
 
   async function toggleStar(song: Song) {
@@ -215,10 +265,18 @@ export function SongTable({ songs }: { songs: Song[] }) {
                 <td>
                   <button
                     type="button"
-                    className="link"
+                    className="link song-title"
                     onClick={() => player.play(songs, position)}
                   >
-                    {song.title}
+                    <Artwork
+                      artworkId={song.artwork_hash}
+                      title={song.title}
+                      className="song-cover"
+                    />
+                    <span>
+                      {song.title}
+                      <small>{song.album}</small>
+                    </span>
                   </button>
                 </td>
                 <td className="muted">{song.artist}</td>
@@ -228,7 +286,9 @@ export function SongTable({ songs }: { songs: Song[] }) {
                     type="button"
                     className="star"
                     onClick={() => void toggleStar(song)}
-                    aria-label={starred ? "Remove favourite" : "Add favourite"}
+                    aria-label={
+                      starred ? t("favourites.remove") : t("favourites.add")
+                    }
                     aria-pressed={starred}
                   >
                     {starred ? "★" : "☆"}
@@ -244,6 +304,7 @@ export function SongTable({ songs }: { songs: Song[] }) {
 }
 
 export function FavoritesPage() {
+  const { t } = useI18n();
   const { value, error } = useAsync(async () => {
     const favorites = await listFavorites();
     const tracks = favorites.filter((item) => item.entity_type === "track");
@@ -257,11 +318,14 @@ export function FavoritesPage() {
   if (!value) return <Loading error={error} />;
   return (
     <section>
-      <PageHeader title="Favourites" detail={`${value.length} saved tracks`} />
+      <PageHeader
+        title={t("nav.favourites")}
+        detail={t("favourites.detail", { count: value.length })}
+      />
       {value.length ? (
         <SongTable songs={value} />
       ) : (
-        <EmptyState message="Star a track from an album or search result and it will appear here." />
+        <EmptyState message={t("favourites.empty")} />
       )}
     </section>
   );
@@ -269,6 +333,7 @@ export function FavoritesPage() {
 
 export function PlaylistsPage() {
   const player = usePlayer();
+  const { t } = useI18n();
   const [revision, setRevision] = useState(0);
   const [name, setName] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -282,7 +347,7 @@ export function PlaylistsPage() {
       setName("");
       setRevision((value) => value + 1);
     } catch {
-      setMutationError("The playlist could not be created.");
+      setMutationError(t("playlists.createError"));
     }
   }
 
@@ -296,7 +361,7 @@ export function PlaylistsPage() {
       );
       setRevision((value) => value + 1);
     } catch {
-      setMutationError("The queue could not be added to this playlist.");
+      setMutationError(t("playlists.queueError"));
     }
   }
 
@@ -306,23 +371,26 @@ export function PlaylistsPage() {
       await deletePlaylist(id);
       setRevision((value) => value + 1);
     } catch {
-      setMutationError("The playlist could not be deleted.");
+      setMutationError(t("playlists.deleteError"));
     }
   }
 
   if (!value) return <Loading error={error} />;
   return (
     <section>
-      <PageHeader title="Playlists" detail={`${value.length} collections`} />
+      <PageHeader
+        title={t("nav.playlists")}
+        detail={t("playlists.detail", { count: value.length })}
+      />
       <form className="inline-form" onSubmit={(event) => void create(event)}>
         <input
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="New playlist name"
-          aria-label="New playlist name"
+          placeholder={t("playlists.newName")}
+          aria-label={t("playlists.newName")}
           required
         />
-        <button type="submit">Create playlist</button>
+        <button type="submit">{t("playlists.create")}</button>
       </form>
       {mutationError ? <p className="error">{mutationError}</p> : null}
       {value.length ? (
@@ -332,7 +400,9 @@ export function PlaylistsPage() {
               <header className="collection-header">
                 <div>
                   <h3>{playlist.name}</h3>
-                  <span className="muted">{playlist.songs.length} tracks</span>
+                  <span className="muted">
+                    {t("common.tracks", { count: playlist.songs.length })}
+                  </span>
                 </div>
                 <div className="actions">
                   <button
@@ -340,34 +410,34 @@ export function PlaylistsPage() {
                     onClick={() => player.play(playlist.songs, 0)}
                     disabled={!playlist.songs.length}
                   >
-                    Play
+                    {t("playlists.play")}
                   </button>
                   <button
                     type="button"
                     onClick={() => void addQueue(playlist)}
                     disabled={!player.queue.length}
                   >
-                    Add queue
+                    {t("playlists.addQueue")}
                   </button>
                   <button
                     type="button"
                     className="danger"
                     onClick={() => void removePlaylist(playlist.id)}
                   >
-                    Delete
+                    {t("common.delete")}
                   </button>
                 </div>
               </header>
               {playlist.songs.length ? (
                 <SongTable songs={playlist.songs} />
               ) : (
-                <p className="muted">This playlist is empty.</p>
+                <p className="muted">{t("playlists.emptyOne")}</p>
               )}
             </article>
           ))}
         </div>
       ) : (
-        <EmptyState message="Create a playlist to keep a set of tracks together." />
+        <EmptyState message={t("playlists.empty")} />
       )}
     </section>
   );
@@ -375,6 +445,7 @@ export function PlaylistsPage() {
 
 export function QueuePage() {
   const player = usePlayer();
+  const { t } = useI18n();
   const queueKeys = useMemo(() => {
     const occurrences = new Map<string, number>();
     return player.queue.map((song) => {
@@ -386,17 +457,17 @@ export function QueuePage() {
   return (
     <section>
       <PageHeader
-        title="Queue"
-        detail={`${player.queue.length} tracks synchronized with your account`}
+        title={t("nav.queue")}
+        detail={t("queue.detail", { count: player.queue.length })}
       />
       {player.queue.length ? (
         <>
           <div className="actions section-actions">
             <button type="button" onClick={() => player.play(player.queue, 0)}>
-              Play from start
+              {t("queue.playStart")}
             </button>
             <button type="button" className="danger" onClick={player.clear}>
-              Clear queue
+              {t("queue.clear")}
             </button>
           </div>
           <ol className="queue-list">
@@ -412,19 +483,21 @@ export function QueuePage() {
                 >
                   {song.title}
                 </button>
-                <span className="muted">{song.artist ?? "Unknown artist"}</span>
+                <span className="muted">
+                  {song.artist ?? t("common.unknownArtist")}
+                </span>
                 <span className="muted">
                   {formatDuration(song.duration_ms)}
                 </span>
                 <button type="button" onClick={() => player.remove(position)}>
-                  Remove
+                  {t("queue.remove")}
                 </button>
               </li>
             ))}
           </ol>
         </>
       ) : (
-        <EmptyState message="Play an album or playlist to build your synchronized queue." />
+        <EmptyState message={t("queue.empty")} />
       )}
     </section>
   );
@@ -432,6 +505,7 @@ export function QueuePage() {
 
 export function SharesPage() {
   const player = usePlayer();
+  const { t } = useI18n();
   const [description, setDescription] = useState("");
   const [createdShare, setCreatedShare] = useState<Share | null>(null);
   const [revision, setRevision] = useState(0);
@@ -439,7 +513,7 @@ export function SharesPage() {
   const { value, error } = useAsync(listShares, [revision]);
   const createdShareNotice = createdShare?.url ? (
     <p>
-      This link is shown only once:{" "}
+      {t("shares.once")}{" "}
       <a className="resource-url" href={createdShare.url}>
         {createdShare.url}
       </a>
@@ -466,7 +540,7 @@ export function SharesPage() {
       setDescription("");
       setRevision((value) => value + 1);
     } catch {
-      setMutationError("The share could not be created.");
+      setMutationError(t("shares.createError"));
     }
   }
 
@@ -477,13 +551,13 @@ export function SharesPage() {
       setCreatedShare((current) => (current?.id === id ? null : current));
       setRevision((value) => value + 1);
     } catch {
-      setMutationError("The share could not be deleted.");
+      setMutationError(t("shares.deleteError"));
     }
   }
 
   return (
     <section>
-      <PageHeader title="Shares" detail="Public links for selected music" />
+      <PageHeader title={t("nav.shares")} detail={t("shares.detail")} />
       <form
         className="inline-form"
         onSubmit={(event) => void shareQueue(event)}
@@ -491,16 +565,16 @@ export function SharesPage() {
         <input
           value={description}
           onChange={(event) => setDescription(event.target.value)}
-          placeholder="Description"
-          aria-label="Share description"
+          placeholder={t("shares.description")}
+          aria-label={t("shares.description")}
           required
         />
         <button type="submit" disabled={!player.queue.length}>
-          Share current queue
+          {t("shares.create")}
         </button>
       </form>
       {!player.queue.length ? (
-        <p className="muted">Add tracks to the queue before creating a link.</p>
+        <p className="muted">{t("shares.needQueue")}</p>
       ) : null}
       {mutationError ? <p className="error">{mutationError}</p> : null}
       {createdShareNotice}
@@ -509,32 +583,35 @@ export function SharesPage() {
           {value.map((share) => (
             <li key={share.id}>
               <div>
-                <strong>{share.description ?? "Music share"}</strong>
+                <strong>{share.description ?? t("shares.defaultName")}</strong>
                 {share.url ? (
                   <a className="muted resource-url" href={share.url}>
                     {share.url}
                   </a>
                 ) : null}
               </div>
-              <span className="muted">{share.track_ids.length} tracks</span>
+              <span className="muted">
+                {t("common.tracks", { count: share.track_ids.length })}
+              </span>
               <button
                 type="button"
                 className="danger"
                 onClick={() => void removeShare(share.id)}
               >
-                Delete
+                {t("common.delete")}
               </button>
             </li>
           ))}
         </ul>
       ) : (
-        <EmptyState message="No public links have been created." />
+        <EmptyState message={t("shares.empty")} />
       )}
     </section>
   );
 }
 
 function CredentialForm({ user }: { user: User }) {
+  const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -546,7 +623,7 @@ function CredentialForm({ user }: { user: User }) {
       setApiKey(result.api_key);
       setPassword("");
     } catch {
-      setError("Credential rotation failed.");
+      setError(t("credential.error"));
     }
   }
   return (
@@ -555,15 +632,15 @@ function CredentialForm({ user }: { user: User }) {
         type="password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
-        placeholder="Dedicated Subsonic password"
-        aria-label={`Subsonic password for ${user.username}`}
+        placeholder={t("credential.password")}
+        aria-label={`${t("credential.password")} — ${user.username}`}
         minLength={12}
         required
       />
-      <button type="submit">Rotate credential</button>
+      <button type="submit">{t("credential.rotate")}</button>
       {apiKey ? (
         <output className="secret-output">
-          Copy this API key now: <code>{apiKey}</code>
+          {t("credential.copy")} <code>{apiKey}</code>
         </output>
       ) : null}
       {error ? <span className="error">{error}</span> : null}
@@ -573,6 +650,7 @@ function CredentialForm({ user }: { user: User }) {
 
 export function AdminPage() {
   const signedInUser = currentUser();
+  const { t } = useI18n();
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
@@ -598,10 +676,10 @@ export function AdminPage() {
       const result = await addLibrary(libraryName, libraryPath, "private");
       setLibraryName("");
       setLibraryPath("");
-      setNotice(`Initial scan ${result.scan_id} queued.`);
+      setNotice(t("admin.initialScan", { id: result.scan_id }));
       setRevision((value) => value + 1);
     } catch {
-      setAdminError("The library path could not be registered.");
+      setAdminError(t("admin.libraryError"));
     } finally {
       setLibraryBusy(false);
     }
@@ -618,7 +696,7 @@ export function AdminPage() {
       setPassword("");
       setRevision((value) => value + 1);
     } catch {
-      setAdminError("The account could not be created.");
+      setAdminError(t("admin.accountError"));
     } finally {
       setUserBusy(false);
     }
@@ -631,7 +709,7 @@ export function AdminPage() {
       await setUserDisabled(user.username, !user.disabled);
       setRevision((value) => value + 1);
     } catch {
-      setAdminError("The account status could not be changed.");
+      setAdminError(t("admin.statusError"));
     }
   }
 
@@ -640,23 +718,20 @@ export function AdminPage() {
     setNotice(null);
     try {
       const result = await startScan(libraryId);
-      setNotice(`Scan ${result.scan_id} queued.`);
+      setNotice(t("admin.scanQueued", { id: result.scan_id }));
     } catch {
-      setAdminError("The scan could not be started.");
+      setAdminError(t("admin.scanError"));
     }
   }
 
   return (
     <section>
-      <PageHeader
-        title="Administration"
-        detail="Libraries, scans and accounts"
-      />
+      <PageHeader title={t("admin.title")} detail={t("admin.detail")} />
       {notice ? <p className="notice">{notice}</p> : null}
       {adminError ? <p className="error">{adminError}</p> : null}
       <div className="admin-grid">
         <article className="admin-panel">
-          <h3>Libraries</h3>
+          <h3>{t("admin.libraries")}</h3>
           <form
             className="stacked-form"
             onSubmit={(event) => void registerLibrary(event)}
@@ -664,17 +739,17 @@ export function AdminPage() {
             <input
               value={libraryName}
               onChange={(event) => setLibraryName(event.target.value)}
-              placeholder="Library name"
+              placeholder={t("admin.libraryName")}
               required
             />
             <input
               value={libraryPath}
               onChange={(event) => setLibraryPath(event.target.value)}
-              placeholder="Absolute server folder path"
+              placeholder={t("admin.libraryPath")}
               required
             />
             <button type="submit" disabled={libraryBusy}>
-              {libraryBusy ? "Registering…" : "Register and scan"}
+              {libraryBusy ? t("admin.registering") : t("admin.register")}
             </button>
           </form>
           <ul className="resource-list compact">
@@ -688,14 +763,14 @@ export function AdminPage() {
                   type="button"
                   onClick={() => void scanLibrary(library.id)}
                 >
-                  Scan now
+                  {t("admin.scan")}
                 </button>
               </li>
             ))}
           </ul>
         </article>
         <article className="admin-panel">
-          <h3>Accounts</h3>
+          <h3>{t("admin.accounts")}</h3>
           <form
             className="stacked-form"
             onSubmit={(event) => void addUser(event)}
@@ -703,7 +778,7 @@ export function AdminPage() {
             <input
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              placeholder="Username"
+              placeholder={t("login.username")}
               autoComplete="off"
               required
             />
@@ -711,13 +786,13 @@ export function AdminPage() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="Web password, 12 characters minimum"
+              placeholder={t("admin.webPassword")}
               minLength={12}
               autoComplete="new-password"
               required
             />
             <button type="submit" disabled={userBusy}>
-              {userBusy ? "Creating…" : "Create account"}
+              {userBusy ? t("admin.creating") : t("admin.create")}
             </button>
           </form>
         </article>
@@ -738,11 +813,11 @@ export function AdminPage() {
                 disabled={user.id === signedInUser?.id}
                 title={
                   user.id === signedInUser?.id
-                    ? "You cannot disable your current account"
+                    ? t("admin.currentAccount")
                     : undefined
                 }
               >
-                {user.disabled ? "Enable" : "Disable"}
+                {user.disabled ? t("admin.enable") : t("admin.disable")}
               </button>
             </header>
             <CredentialForm user={user} />
@@ -771,6 +846,7 @@ function EmptyState({ message }: { message: string }) {
 }
 
 export function AlbumPage({ albumId }: { albumId: string }) {
+  const { t } = useI18n();
   const { value, error } = useAsync<AlbumDetail>(
     () => getAlbum(albumId),
     [albumId],
@@ -779,14 +855,18 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   return (
     <section>
       <header className="detail-header">
-        <div className="cover large" aria-hidden="true">
-          {value.title.slice(0, 1)}
-        </div>
+        <Artwork
+          artworkId={value.artwork_hash}
+          title={value.title}
+          className="large"
+        />
         <div>
+          <span className="eyebrow">{t("common.album")}</span>
           <h2>{value.title}</h2>
           <p className="muted">
-            {value.artist ?? "Various artists"}
-            {value.year ? ` · ${value.year}` : ""} · {value.songs.length} tracks
+            {value.artist ?? t("common.variousArtists")}
+            {value.year ? ` · ${value.year}` : ""} ·{" "}
+            {t("common.tracks", { count: value.songs.length })}
           </p>
         </div>
       </header>
@@ -796,20 +876,30 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 }
 
 export function ArtistsPage() {
+  const { t } = useI18n();
   const { value, error } = useAsync<Artist[]>(listArtists, []);
   if (!value) return <Loading error={error} />;
-  if (value.length === 0) return <p className="muted">No artists yet.</p>;
+  if (value.length === 0)
+    return <p className="muted">{t("common.noArtists")}</p>;
   return (
     <section>
-      <h2>Artists</h2>
-      <ul className="list">
+      <PageHeader
+        title={t("nav.artists")}
+        detail={t("artists.detail", { count: value.length })}
+      />
+      <ul className="list artist-list">
         {value.map((artist) => (
           <li key={artist.id}>
             <Link to="/artists/$artistId" params={{ artistId: artist.id }}>
-              {artist.name}
+              <Artwork
+                artworkId={artist.artwork_hash}
+                title={artist.name}
+                className="artist-avatar"
+              />
+              <strong>{artist.name}</strong>
             </Link>
             <span className="muted">
-              {artist.album_count} album{artist.album_count === 1 ? "" : "s"}
+              {t("common.albums", { count: artist.album_count })}
             </span>
           </li>
         ))}
@@ -819,6 +909,7 @@ export function ArtistsPage() {
 }
 
 export function ArtistPage({ artistId }: { artistId: string }) {
+  const { t } = useI18n();
   const { value, error } = useAsync<ArtistDetail>(
     () => getArtist(artistId),
     [artistId],
@@ -826,13 +917,27 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   if (!value) return <Loading error={error} />;
   return (
     <section>
-      <h2>{value.name}</h2>
+      <header className="artist-hero">
+        <Artwork
+          artworkId={value.artwork_hash}
+          title={value.name}
+          className="artist-portrait"
+        />
+        <div>
+          <span className="eyebrow">{t("common.artist")}</span>
+          <h2>{value.name}</h2>
+          <p className="muted">
+            {t("artists.libraryCount", { count: value.album_count })}
+          </p>
+        </div>
+      </header>
       <AlbumGrid albums={value.albums} />
     </section>
   );
 }
 
 export function SearchPage() {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const { value, error } = useAsync<SearchResult | null>(
@@ -842,7 +947,7 @@ export function SearchPage() {
 
   return (
     <section>
-      <h2>Search</h2>
+      <PageHeader title={t("nav.search")} detail={t("search.detail")} />
       <form
         className="search"
         onSubmit={(event) => {
@@ -853,17 +958,17 @@ export function SearchPage() {
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Title, album or artist"
-          aria-label="Search query"
+          placeholder={t("search.placeholder")}
+          aria-label={t("search.query")}
         />
-        <button type="submit">Search</button>
+        <button type="submit">{t("nav.search")}</button>
       </form>
       {submitted && !value && <Loading error={error} />}
       {value && (
         <>
           {value.artists.length > 0 && (
             <>
-              <h3>Artists</h3>
+              <h3>{t("nav.artists")}</h3>
               <ul className="list">
                 {value.artists.map((artist) => (
                   <li key={artist.id}>
@@ -880,19 +985,21 @@ export function SearchPage() {
           )}
           {value.albums.length > 0 && (
             <>
-              <h3>Albums</h3>
+              <h3>{t("nav.albums")}</h3>
               <AlbumGrid albums={value.albums} />
             </>
           )}
           {value.songs.length > 0 && (
             <>
-              <h3>Tracks</h3>
+              <h3>{t("search.tracks")}</h3>
               <SongTable songs={value.songs} />
             </>
           )}
           {value.artists.length === 0 &&
             value.albums.length === 0 &&
-            value.songs.length === 0 && <p className="muted">Nothing found.</p>}
+            value.songs.length === 0 && (
+              <p className="muted">{t("search.empty")}</p>
+            )}
         </>
       )}
     </section>
@@ -907,6 +1014,7 @@ export function SearchPage() {
  * follows the redirect the server computes.
  */
 export function AuthorizePage() {
+  const { t } = useI18n();
   const params = new URLSearchParams(window.location.search);
   const clientId = params.get("client_id") ?? "";
   const redirectUri = params.get("redirect_uri") ?? "";
@@ -936,9 +1044,7 @@ export function AuthorizePage() {
       });
       window.location.assign(response.redirect_to);
     } catch {
-      setError(
-        "The application sent an authorisation request we cannot honour.",
-      );
+      setError(t("authorize.error"));
       setBusy(false);
     }
   }
@@ -955,34 +1061,43 @@ export function AuthorizePage() {
   if (missing) {
     return (
       <section>
-        <h2>Authorisation</h2>
-        <p className="error">
-          This authorisation link is incomplete or asks to send you somewhere we
-          do not trust.
-        </p>
+        <h2>{t("authorize.title")}</h2>
+        <p className="error">{t("authorize.invalid")}</p>
       </section>
     );
   }
 
   return (
     <section className="consent">
-      <h2>Authorise {clientId}</h2>
-      <p className="muted">
-        It will be able to browse your libraries, play your music and manage
-        your playlists, favourites and ratings, everything this account can do.
-      </p>
-      <p className="muted">
-        Sending you back to <code>{redirectUri}</code>
-      </p>
+      <h2>{t("authorize.client", { client: clientId })}</h2>
+      <p className="muted">{t("authorize.detail")}</p>
+      <p className="muted">{t("authorize.redirect", { url: redirectUri })}</p>
       {error && <p className="error">{error}</p>}
       <div className="consent-actions">
         <button type="button" onClick={() => void approve()} disabled={busy}>
-          {busy ? "Authorising…" : "Authorise"}
+          {busy ? t("authorize.busy") : t("authorize.approve")}
         </button>
         <button type="button" onClick={deny} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </section>
+  );
+}
+
+export function NotFoundPage() {
+  const { t } = useI18n();
+  return (
+    <main className="centered">
+      <section className="not-found">
+        <span className="not-found-code" aria-hidden="true">
+          404
+        </span>
+        <span className="eyebrow">WaveFlow</span>
+        <h1>{t("notFound.title")}</h1>
+        <p className="muted">{t("notFound.detail")}</p>
+        <Link to="/">{t("notFound.back")}</Link>
+      </section>
+    </main>
   );
 }

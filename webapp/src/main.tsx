@@ -12,6 +12,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { currentUser, ensureSession, logout } from "./api";
+import { I18nProvider, LanguagePicker, useI18n } from "./i18n";
+import { Icon, type IconName } from "./icons";
 import {
   AdminPage,
   AlbumPage,
@@ -21,51 +23,158 @@ import {
   AuthorizePage,
   FavoritesPage,
   LoginPage,
+  NotFoundPage,
   PlaylistsPage,
   QueuePage,
   SearchPage,
   SharesPage,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
+import { PreferencesProvider, ThemePicker } from "./preferences";
 import "./styles.css";
+
+const navigation: Array<{
+  to:
+    | "/"
+    | "/artists"
+    | "/search"
+    | "/favourites"
+    | "/playlists"
+    | "/queue"
+    | "/shares"
+    | "/admin";
+  label:
+    | "Albums"
+    | "Artists"
+    | "Search"
+    | "Favourites"
+    | "Playlists"
+    | "Queue"
+    | "Shares"
+    | "Admin";
+  icon: IconName;
+  admin?: boolean;
+  primary?: boolean;
+}> = [
+  { to: "/", label: "Albums", icon: "albums", primary: true },
+  { to: "/artists", label: "Artists", icon: "artists" },
+  { to: "/search", label: "Search", icon: "search", primary: true },
+  { to: "/favourites", label: "Favourites", icon: "heart", primary: true },
+  { to: "/playlists", label: "Playlists", icon: "playlists", primary: true },
+  { to: "/queue", label: "Queue", icon: "queue", primary: true },
+  { to: "/shares", label: "Shares", icon: "shares" },
+  { to: "/admin", label: "Admin", icon: "admin", admin: true },
+];
+
+function Brand() {
+  const { t } = useI18n();
+  return (
+    <Link className="brand" to="/" aria-label={t("nav.home")}>
+      <span className="brand-mark" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+        <i />
+      </span>
+      <span>WaveFlow</span>
+      <small>{t("nav.server")}</small>
+    </Link>
+  );
+}
+
+function Navigation({ mobile = false }: { mobile?: boolean }) {
+  const user = currentUser();
+  const { t } = useI18n();
+  const labels = {
+    Albums: t("nav.albums"),
+    Artists: t("nav.artists"),
+    Search: t("nav.search"),
+    Favourites: t("nav.favourites"),
+    Playlists: t("nav.playlists"),
+    Queue: t("nav.queue"),
+    Shares: t("nav.shares"),
+    Admin: t("nav.admin"),
+  };
+  return (
+    <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
+      {navigation
+        .filter(
+          (item) =>
+            (!item.admin || user?.role === "admin") &&
+            (!mobile || item.primary),
+        )
+        .map((item) => (
+          <Link
+            key={item.to}
+            to={item.to}
+            aria-label={mobile ? labels[item.label] : undefined}
+            activeOptions={{ exact: item.to === "/" }}
+          >
+            <Icon name={item.icon} />
+            <span>{labels[item.label]}</span>
+          </Link>
+        ))}
+    </nav>
+  );
+}
 
 function Shell() {
   const navigate = useNavigate();
   const user = currentUser();
+  const { t } = useI18n();
   return (
     <PlayerProvider>
+      <a className="skip-link" href="#main-content">
+        {t("nav.skip")}
+      </a>
       <div className="shell">
-        <nav>
-          <span className="brand">WaveFlow</span>
-          <Link to="/">Albums</Link>
-          <Link to="/artists">Artists</Link>
-          <Link to="/search">Search</Link>
-          <Link to="/favourites">Favourites</Link>
-          <Link to="/playlists">Playlists</Link>
-          <Link to="/queue">Queue</Link>
-          <Link to="/shares">Shares</Link>
-          {user?.role === "admin" ? <Link to="/admin">Admin</Link> : null}
-          <button
-            type="button"
-            className="link"
-            onClick={async () => {
-              await logout();
-              await navigate({ to: "/login" });
-            }}
-          >
-            Sign out
-          </button>
-        </nav>
-        <main>
+        <aside className="sidebar">
+          <Brand />
+          <Navigation />
+          <div className="sidebar-footer">
+            <ThemePicker />
+            <LanguagePicker />
+            <div className="account-chip">
+              <span aria-hidden="true">
+                {user?.username.slice(0, 1).toUpperCase()}
+              </span>
+              <div>
+                <strong>{user?.username}</strong>
+                <small>{user?.role}</small>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="nav-action"
+              onClick={async () => {
+                await logout();
+                await navigate({ to: "/login" });
+              }}
+            >
+              <Icon name="logout" />
+              {t("nav.signOut")}
+            </button>
+          </div>
+        </aside>
+        <header className="mobile-header">
+          <Brand />
+          <ThemePicker />
+          <LanguagePicker />
+        </header>
+        <main id="main-content" tabIndex={-1}>
           <Outlet />
         </main>
+        <Navigation mobile />
         <PlayerBar />
       </div>
     </PlayerProvider>
   );
 }
 
-const rootRoute = createRootRoute({ component: Outlet });
+const rootRoute = createRootRoute({
+  component: Outlet,
+  notFoundComponent: NotFoundPage,
+});
 
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -199,6 +308,10 @@ if (!container) throw new Error("missing #root");
 
 createRoot(container).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <PreferencesProvider>
+      <I18nProvider>
+        <RouterProvider router={router} />
+      </I18nProvider>
+    </PreferencesProvider>
   </StrictMode>,
 );

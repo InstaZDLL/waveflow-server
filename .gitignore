@@ -26,3 +26,5 @@ Thumbs.db
 skills-lock.json
 .codex
 webapp/dist/
+webapp/playwright-report/
+webapp/test-results/
