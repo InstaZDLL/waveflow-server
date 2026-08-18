@@ -1,0 +1,114 @@
+name: Cache Cleanup
+
+# GitHub caps a repository at 10 GB of Actions cache and evicts the least
+# recently used entries once that is reached. Eviction is not a cleanup: it
+# discards whichever cache happened to be idle, which is usually a warm `main`
+# one the next push would have restored from, while the dead caches of merged
+# pull requests survive because nothing distinguishes them.
+#
+# This workflow keeps the total under the cap deliberately instead. Three
+# `Swatinem/rust-cache` entries are written per dependency generation — the
+# Linux job, the Windows job and the CodeQL analysis job — for roughly 2.2 GB
+# together, so five generations exceed the cap on their own.
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "0 3 * * *" # Daily at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  # A closed pull request will never restore its caches again, and they are the
+  # largest immediately recoverable block: each branch holds a full generation
+  # of its own. Deleting them here rather than waiting for the daily sweep is
+  # what keeps a busy day from reaching the cap at all.
+  cleanup-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete the caches of the closed pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          echo "Cleaning caches for $BRANCH"
+          gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id' |
+            xargs -r -I {} gh cache delete {} || true
+
+  # Age alone does not bound this repository: dependencies change often enough
+  # that a single week holds several generations. The sweep is therefore first
+  # a per-lineage cap and only second a cutoff.
+  cleanup-stale:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete superseded, idle and orphaned caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # Retires a lineage the toolchain has moved past, and reclaims a
+          # branch nobody builds any more. A cache this cold costs one slow
+          # build to rebuild, which is the cheaper side of the trade.
+          MAX_IDLE_DAYS: 14
+        run: |
+          set -euo pipefail
+
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | [.id, .ref, .last_accessed_at, .key] | @tsv' > caches.tsv
+          echo "$(wc -l < caches.tsv) cache(s) present"
+
+          # Refs that can still restore something: main, and every pull request
+          # still open. Anything else belongs to a deleted branch, or to a pull
+          # request closed before this workflow existed.
+          {
+            echo "refs/heads/main"
+            gh pr list --state open --limit 200 --json number \
+              --jq '.[] | "refs/pull/\(.number)/merge"'
+          } | sort -u > live-refs.txt
+
+          : > doomed.tsv
+
+          # A lineage is the cache key without its trailing content hash, so
+          # every generation of one job on one toolchain sorts together and
+          # only the newest two survive. Two rather than one so a branch opened
+          # just before a dependency bump still finds a near match through
+          # rust-cache's restore-keys. Newest is by last access rather than by
+          # creation: a cache still being restored is still earning its space.
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" --jq '
+            [.actions_caches[] | select(.ref == "refs/heads/main")]
+            | group_by(.key | sub("-[^-]+$"; ""))[]
+            | sort_by(.last_accessed_at) | reverse
+            | .[2:][]
+            | [.id, "superseded", .key] | @tsv
+          ' >> doomed.tsv
+
+          cutoff=$(date -u -d "$MAX_IDLE_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Retiring anything unused since $cutoff"
+          awk -F'\t' -v cutoff="$cutoff" '$3 < cutoff { print $1 "\tidle\t" $4 }' \
+            caches.tsv >> doomed.tsv
+
+          awk -F'\t' 'NR == FNR { live[$0]; next } !($2 in live) { print $1 "\torphaned\t" $2 }' \
+            live-refs.txt caches.tsv >> doomed.tsv
+
+          # One cache can be doomed for several reasons; -k1,1 makes the id the
+          # only thing uniqueness is judged on, so it is reported and deleted
+          # once.
+          sort -u -k1,1 doomed.tsv > delete.tsv
+          echo "$(wc -l < delete.tsv) cache(s) to delete"
+          while IFS=$'\t' read -r id reason label; do
+            echo "delete $id ($reason) $label"
+            gh cache delete "$id" || true
+          done < delete.tsv
+
+          gh api "repos/$GH_REPO/actions/cache/usage" --jq '
+            "remaining: \(.active_caches_count) cache(s), \(
+              (.active_caches_size_in_bytes / 1073741824 * 100 | round / 100)) GB"'
