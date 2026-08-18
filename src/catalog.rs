@@ -261,16 +261,24 @@ impl Database {
         Ok(id)
     }
 
-    /// Creates a scan job only if the user still holds membership of the
-    /// library, testing it inside the insert rather than before it.
+    /// Creates a scan job only if the user is entitled to one, testing that
+    /// inside the insert rather than before it.
     ///
-    /// A caller that checked membership with a separate read leaves a window
+    /// A caller that checked entitlement with a separate read leaves a window
     /// where a revocation lands between the check and the insert, queuing
     /// work for a library the requester can no longer reach. Making the
-    /// membership row a condition of the statement closes it: there is no
-    /// moment at which the job exists without the grant that justified it.
+    /// `library_member` row a condition of the statement closes it: there is
+    /// no moment at which the job exists without the grant that justified it.
     ///
-    /// Returns `None` when the user is not, or no longer, a member.
+    /// Membership alone is not that grant. A scan walks the owner's files and
+    /// competes for the writer gate, so it is reserved to `owner` and
+    /// `manager`: a `listener` is entitled to read the catalogue, not to spend
+    /// someone else's disk on it. [`crate::database::LibraryRole::may_scan`]
+    /// names the same rule for callers that have the row in hand.
+    ///
+    /// Returns `None` when the user is not, or no longer, entitled. Callers
+    /// map that onto the answer a missing library gets, so a refusal never
+    /// confirms that the library exists.
     pub async fn create_scan_job_for_user(
         &self,
         user_id: Uuid,
@@ -282,7 +290,8 @@ impl Database {
         let inserted = sqlx::query(
             "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, created_at) \
              SELECT ?, ?, ?, ?, 'queued', ? WHERE EXISTS \
-               (SELECT 1 FROM library_member WHERE library_id=? AND user_id=?)",
+               (SELECT 1 FROM library_member WHERE library_id=? AND user_id=? \
+                AND role IN ('owner', 'manager'))",
         )
         .bind(id.to_string())
         .bind(library_id.to_string())
@@ -346,6 +355,66 @@ impl Database {
         .bind(scan_id.to_string())
         .execute(self.pool())
         .await?;
+        Ok(())
+    }
+
+    /// Recomputes the derived MusicBrainz identifier of every album and artist
+    /// in one library from the tracks that currently back them.
+    ///
+    /// Tracks of one album routinely disagree: a release id is written per file
+    /// by whatever tagger touched it, and a library assembled over years holds
+    /// files tagged against different releases of the same record. The album's
+    /// identifier is therefore the one most of its available tracks agree on,
+    /// not the one the last file scanned happened to carry.
+    ///
+    /// Ties are broken by the earliest disc and track number, zero-padded into
+    /// a single sortable key so `MIN` compares the pair rather than each half
+    /// independently, and finally by the identifier itself. A tie means the
+    /// tags genuinely split the album down the middle; what matters is that two
+    /// scans of unchanged files answer the same thing, so nothing flaps.
+    ///
+    /// An artist takes the identifier from the tracks it is the *primary*
+    /// credit of (`track_artist.position = 0`), because `musicbrainz_artist_id`
+    /// is one value on a track that may credit several artists, and only the
+    /// first credit is the one the tag is about.
+    ///
+    /// Albums and artists whose tracks carry no identifier are set back to
+    /// `NULL` rather than left alone: this runs after every scan, so a tag
+    /// removed from the files has to disappear from the catalogue too.
+    pub async fn consolidate_musicbrainz_ids(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(
+            "UPDATE album SET musicbrainz_id = ( \
+               SELECT t.musicbrainz_release_id FROM track t \
+               WHERE t.album_id = album.id AND t.is_available = 1 \
+                 AND t.musicbrainz_release_id IS NOT NULL \
+               GROUP BY t.musicbrainz_release_id \
+               ORDER BY COUNT(*) DESC, \
+                        MIN(printf('%06d%06d', COALESCE(t.disc_number, 1), \
+                                   COALESCE(t.track_number, 0))), \
+                        t.musicbrainz_release_id \
+               LIMIT 1) \
+             WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE artist SET musicbrainz_id = ( \
+               SELECT t.musicbrainz_artist_id FROM track t \
+               JOIN track_artist ta ON ta.track_id = t.id AND ta.position = 0 \
+               WHERE ta.artist_id = artist.id AND t.is_available = 1 \
+                 AND t.musicbrainz_artist_id IS NOT NULL \
+               GROUP BY t.musicbrainz_artist_id \
+               ORDER BY COUNT(*) DESC, t.musicbrainz_artist_id \
+               LIMIT 1) \
+             WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 

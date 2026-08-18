@@ -29,7 +29,7 @@ For Substreamer, the Android Media3 session completed the 11-track validation al
 
 The real-client runs added four compatibility requirements to the automated suite: Feishin relies on the independent `artistOffset`, `albumOffset` and `songOffset` values in `search3`; DSub still calls the legacy `getAlbumList` method, treats `maxBitRate` as a ceiling rather than an unconditional transcode request, and sends album/artist favorites through the generic `star?id` form. WaveFlow supports both album-list methods with their protocol-appropriate containers, streams directly when a bitrate ceiling already admits the source, and resolves generic favorite IDs only inside the authenticated user's visible catalogue.
 
-The Symfonium run added three narrowly scoped requirements. Version 14.1.0 validates the configured credential and then sends an exact `GET ping` discovery probe with `c=Symfonium` and `test/test`; WaveFlow answers only that public ping shape and never creates a principal. Its catalogue pagination uses the literal `search3` query `""` as match-all. It also requests `getBookmarks` during initial sync, for which WaveFlow returns the standard empty container until audiobook progress exists. Automated tests prevent the discovery probe from reaching any catalogue method or accepting alternate clients, duplicate identities or extra token parameters.
+The Symfonium run added three narrowly scoped requirements. Version 14.1.0 validates the configured credential and then sends an exact `GET ping` discovery probe with `c=Symfonium` and `test/test`; WaveFlow answers only that public ping shape and never creates a principal. Its catalogue pagination uses the literal `search3` query `""` as match-all. It also requests `getBookmarks` during initial sync, which WaveFlow now answers from real per-account playback positions rather than with an empty container. Automated tests prevent the discovery probe from reaching any catalogue method or accepting alternate clients, duplicate identities or extra token parameters.
 
 The contract audit additionally covers administrative folder access: `createUser` defaults to all libraries, repeated `musicFolderId` values select a subset, `updateUser` changes that subset, and `getUser`/`getUsers` return `folder[]`. Golden tests authenticate as the created user before and after a folder/password update and verify that `changePassword` leaves the Argon2id web credential untouched. Empty-result mutations emit an empty success envelope as required by the protocol.
 
@@ -45,10 +45,20 @@ re-dated before the next tag**. Range responses keep 206/416, and `/share` and
 `/api/v2` are unchanged.
 
 The same release adds `tokenInfo` — the half of `apiKeyAuthentication` that was
-advertised but never served — and `getAlbumInfo`/`getAlbumInfo2` as tenant-
-resolved empty containers, so Feishin and Symfonium no longer receive an
-unimplemented-method error when an album page opens. `playlist.owner` and
+advertised but never served — and `getAlbumInfo`/`getAlbumInfo2`, so Feishin
+and Symfonium no longer receive an unimplemented-method error when an album page
+opens. `playlist.owner` and
 `share.username` now carry the authenticated username instead of an empty
 string, which is what Feishin reads to decide whether a playlist is editable.
+
+Four further batches of wire changes have landed against the same unvalidated
+matrix, and the re-run covers them all: media items gained the remaining
+OpenSubsonic fields under the presence rule (`moods`, `explicitStatus`, `isrc`,
+`replayGain`, `bpm` and the rest); `startScan`, `getScanStatus`, `search2`,
+`getStarred` and the bookmark methods were added or backed by real state;
+`album` and `artist` gained `musicBrainzId`, which `getMusicDirectory` children
+deliberately do not carry; and rescanning became restricted to the `owner` and
+`manager` roles, so a client signed in as a listener now sees `startScan`
+succeed while queuing nothing.
 
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.
