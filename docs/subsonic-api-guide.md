@@ -236,8 +236,9 @@ Album-list types are `random`, `newest`, `highest`, `frequent`, `recent`,
 `starred`, `alphabeticalByName`, `alphabeticalByArtist`, `byYear` and `byGenre`.
 Non-random results use stable title/UUID tie-breaking. `byGenre` matches the
 canonical genre name, folding case, punctuation and spacing, so `Hip-Hop` and
-`hip hop` select the same albums. A reversed `fromYear`/`toYear` pair returns
-the range in descending order. `size=0` answers with an empty container. All ten
+`hip hop` select the same albums; it requires `genre` and answers error code 10
+without it, rather than returning the catalogue unfiltered. A reversed
+`fromYear`/`toYear` pair returns the range in descending order. `size=0` answers with an empty container. All ten
 types are ordered and paged in SQL; the same vocabulary is available natively as
 `GET /api/v2/albums?sort=`.
 

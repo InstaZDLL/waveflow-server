@@ -583,24 +583,11 @@ impl DomainServices {
         .into_iter()
         .map(artist_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-        let albums = sqlx::query(
-            "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
-                    al.artwork_hash, al.year, al.created_at, us.starred_at, ur.rating AS user_rating, \
-                    (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
-                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
-                    (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
-                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at, \
-                    (SELECT COUNT(*) FROM track t2 WHERE t2.album_id=al.id AND t2.is_available=1) \
-                     AS song_count, \
-                    (SELECT COALESCE(SUM(t2.duration_ms), 0) FROM track t2 \
-                     WHERE t2.album_id=al.id AND t2.is_available=1) AS duration_ms \
-             FROM album al \
-             JOIN library_member m ON m.library_id=al.library_id \
-             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
-             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='album' AND ur.entity_id=al.id \
-             WHERE m.user_id=? AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
-             ORDER BY al.title COLLATE NOCASE",
-        )
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY al.title COLLATE NOCASE"
+        ))
         .bind(user_id.to_string())
         .bind(folder_filter.as_deref())
         .bind(folder_filter.as_deref())
