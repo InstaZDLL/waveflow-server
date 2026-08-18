@@ -3190,6 +3190,17 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         codec: Some("FLAC".into()),
         musical_key: None,
         tag_rating: None,
+        musicbrainz_recording_id: None,
+        musicbrainz_release_id: None,
+        musicbrainz_artist_id: None,
+        replay_gain_track_gain: None,
+        replay_gain_track_peak: None,
+        replay_gain_album_gain: None,
+        replay_gain_album_peak: None,
+        bpm: None,
+        sort_title: None,
+        comment: None,
+        isrc: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -3881,6 +3892,17 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     tagged.album_artist = Some("Aria Lux".into());
     tagged.genre = Some("Rock; Jazz".into());
     tagged.is_compilation = true;
+    tagged.musicbrainz_recording_id = Some("9f4c1d2e-recording".into());
+    tagged.musicbrainz_release_id = Some("3a8b7c6d-release".into());
+    tagged.musicbrainz_artist_id = Some("1b2c3d4e-artist".into());
+    tagged.replay_gain_track_gain = Some(-7.32);
+    tagged.replay_gain_track_peak = Some(0.988_525);
+    tagged.replay_gain_album_gain = Some(-6.5);
+    tagged.replay_gain_album_peak = Some(1.0);
+    tagged.bpm = Some(128);
+    tagged.sort_title = Some("Tagged, The".into());
+    tagged.comment = Some("ripped from vinyl".into());
+    tagged.isrc = Some("FRZ039800212; GBAYE0601498".into());
     state
         .db
         .apply_catalog_track(library, scan, &tagged, None, false)
@@ -3945,6 +3967,24 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert!(artists[0]["id"].is_string());
     // The primary credit still matches the frozen artistId.
     assert_eq!(tagged_json["artistId"], artists[0]["id"]);
+    assert_eq!(tagged_json["musicBrainzId"], "9f4c1d2e-recording");
+    assert_eq!(tagged_json["bpm"], 128);
+    assert_eq!(tagged_json["sortName"], "Tagged, The");
+    assert_eq!(tagged_json["comment"], "ripped from vinyl");
+    // Multi-valued like artists and genres, and split the same way.
+    assert_eq!(
+        tagged_json["isrc"],
+        serde_json::json!(["FRZ039800212", "GBAYE0601498"])
+    );
+    assert_eq!(
+        tagged_json["replayGain"],
+        serde_json::json!({
+            "trackGain": -7.32,
+            "trackPeak": 0.988_525,
+            "albumGain": -6.5,
+            "albumPeak": 1.0
+        })
+    );
     // Genres are ordered by name so two identical catalogues answer identically.
     let genres = tagged_json["genres"]
         .as_array()
@@ -3965,6 +4005,15 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert_eq!(bare_json["displayArtist"], "");
     assert_eq!(bare_json["artists"], serde_json::json!([]));
     assert_eq!(bare_json["genres"], serde_json::json!([]));
+    assert_eq!(bare_json["musicBrainzId"], "");
+    assert_eq!(bare_json["bpm"], 0);
+    assert_eq!(bare_json["sortName"], "");
+    assert_eq!(bare_json["comment"], "");
+    assert_eq!(bare_json["isrc"], serde_json::json!([]));
+    // replayGain is the one addition whose members the specification says to
+    // omit when unknown. The container still has to be there: it is what says
+    // the server reads gain tags at all.
+    assert_eq!(bare_json["replayGain"], serde_json::json!({}));
     // The documented exception: an empty string is not a timestamp, and
     // playCount already signals that play statistics are supported.
     assert!(bare_json.get("played").is_none());
@@ -3999,6 +4048,11 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert!(tagged_xml.contains("<genres name=\"Jazz\"/>"));
     assert!(tagged_xml.contains("<genres name=\"Rock\"/>"));
     assert!(tagged_xml.contains("played="));
+    assert!(tagged_xml.contains("musicBrainzId=\"9f4c1d2e-recording\""));
+    assert!(tagged_xml.contains("bpm=\"128\""));
+    assert!(tagged_xml.contains("<isrc>FRZ039800212</isrc>"));
+    assert!(tagged_xml.contains("<isrc>GBAYE0601498</isrc>"));
+    assert!(tagged_xml.contains("trackGain=\"-7.32\""));
 
     let bare_xml = xml_song(bare_id).await;
     assert!(bare_xml.contains("samplingRate=\"0\""));
@@ -4009,6 +4063,11 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert!(!bare_xml.contains("<artists "));
     assert!(!bare_xml.contains("<genres "));
     assert!(!bare_xml.contains("played="));
+    assert!(bare_xml.contains("musicBrainzId=\"\""));
+    assert!(bare_xml.contains("bpm=\"0\""));
+    assert!(!bare_xml.contains("<isrc>"));
+    // Present but empty, in both encodings.
+    assert!(bare_xml.contains("<replayGain/>"));
 
     // Albums carry their own additions.
     let album_id = state
@@ -4052,6 +4111,12 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
         vec!["Aria Lux", "Mono Field"]
     );
     assert_eq!(native["genres"], serde_json::json!(["Jazz", "Rock"]));
+    assert_eq!(native["musicbrainz_id"], "9f4c1d2e-recording");
+    assert_eq!(native["bpm"], 128);
+    assert_eq!(
+        native["isrc"],
+        serde_json::json!(["FRZ039800212", "GBAYE0601498"])
+    );
 }
 
 /// The facade could not trigger a rescan the native API has always been able to
@@ -4347,6 +4412,17 @@ fn browse_input(
         codec: Some("FLAC".into()),
         musical_key: None,
         tag_rating: None,
+        musicbrainz_recording_id: None,
+        musicbrainz_release_id: None,
+        musicbrainz_artist_id: None,
+        replay_gain_track_gain: None,
+        replay_gain_track_peak: None,
+        replay_gain_album_gain: None,
+        replay_gain_album_peak: None,
+        bpm: None,
+        sort_title: None,
+        comment: None,
+        isrc: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),

@@ -83,6 +83,22 @@ pub struct CatalogTrackInput {
     pub codec: Option<String>,
     pub musical_key: Option<String>,
     pub tag_rating: Option<i64>,
+    /// The MusicBrainz recording identifier: the performance, which is what a
+    /// song's `musicBrainzId` means. Release and artist are separate entities
+    /// and are kept separate.
+    pub musicbrainz_recording_id: Option<String>,
+    pub musicbrainz_release_id: Option<String>,
+    pub musicbrainz_artist_id: Option<String>,
+    /// Decibel gains and linear peaks, as tagged.
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
+    pub bpm: Option<i64>,
+    pub sort_title: Option<String>,
+    pub comment: Option<String>,
+    /// Multi-valued, split like `artist` and `genre`.
+    pub isrc: Option<String>,
     pub artwork: Option<ArtworkInput>,
     pub lyrics_hash: String,
     pub lyrics: Vec<crate::lyrics::LyricsInput>,
@@ -544,8 +560,13 @@ impl Database {
             "INSERT INTO track (id, library_id, album_id, artwork_hash, relative_path, file_size, \
                file_modified_at, quick_hash, full_hash, title, album_title, artist_display, genre_display, \
                year, track_number, disc_number, duration_ms, bitrate, sample_rate, channels, bit_depth, \
-               codec, musical_key, tag_rating, lyrics_hash, is_available, last_seen_scan_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?) \
+               codec, musical_key, tag_rating, musicbrainz_recording_id, musicbrainz_release_id, \
+               musicbrainz_artist_id, replay_gain_track_gain, replay_gain_track_peak, \
+               replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, comment, isrc, \
+               lyrics_hash, is_available, last_seen_scan_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+                     1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
                file_modified_at=excluded.file_modified_at, quick_hash=excluded.quick_hash, \
@@ -554,7 +575,17 @@ impl Database {
                track_number=excluded.track_number, disc_number=excluded.disc_number, duration_ms=excluded.duration_ms, \
                bitrate=excluded.bitrate, sample_rate=excluded.sample_rate, channels=excluded.channels, \
                bit_depth=excluded.bit_depth, codec=excluded.codec, musical_key=excluded.musical_key, \
-               tag_rating=excluded.tag_rating, lyrics_hash=excluded.lyrics_hash, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
+               tag_rating=excluded.tag_rating, \
+               musicbrainz_recording_id=excluded.musicbrainz_recording_id, \
+               musicbrainz_release_id=excluded.musicbrainz_release_id, \
+               musicbrainz_artist_id=excluded.musicbrainz_artist_id, \
+               replay_gain_track_gain=excluded.replay_gain_track_gain, \
+               replay_gain_track_peak=excluded.replay_gain_track_peak, \
+               replay_gain_album_gain=excluded.replay_gain_album_gain, \
+               replay_gain_album_peak=excluded.replay_gain_album_peak, \
+               bpm=excluded.bpm, sort_title=excluded.sort_title, comment=excluded.comment, \
+               isrc=excluded.isrc, \
+               lyrics_hash=excluded.lyrics_hash, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
         .bind(track_id.to_string()).bind(library_id.to_string())
@@ -565,6 +596,13 @@ impl Database {
         .bind(input.year).bind(input.track_number).bind(input.disc_number).bind(input.duration_ms)
         .bind(input.bitrate).bind(input.sample_rate).bind(input.channels).bind(input.bit_depth)
         .bind(input.codec.as_deref()).bind(input.musical_key.as_deref()).bind(input.tag_rating)
+        .bind(input.musicbrainz_recording_id.as_deref())
+        .bind(input.musicbrainz_release_id.as_deref())
+        .bind(input.musicbrainz_artist_id.as_deref())
+        .bind(input.replay_gain_track_gain).bind(input.replay_gain_track_peak)
+        .bind(input.replay_gain_album_gain).bind(input.replay_gain_album_peak)
+        .bind(input.bpm).bind(input.sort_title.as_deref()).bind(input.comment.as_deref())
+        .bind(input.isrc.as_deref())
         .bind(&input.lyrics_hash)
         .bind(scan_id.to_string()).bind(now).bind(now)
         .execute(&mut **tx).await?;

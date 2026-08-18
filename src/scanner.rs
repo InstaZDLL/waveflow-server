@@ -419,6 +419,7 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
     let artwork = cover.map(|cover| artwork_input(artwork_dir, cover));
     let lyrics = extract_lyrics(path, tag);
     let lyrics_hash = lyrics_hash(&lyrics);
+    let extended = extended_tags(tag);
     Ok(CatalogTrackInput {
         relative_path,
         file_size: size,
@@ -441,6 +442,17 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
         bit_depth: props.bit_depth().map(i64::from).filter(|v| *v > 0),
         codec: waveflow_core::scanner::file_type_label(tagged.file_type()),
         musical_key: tag.and_then(waveflow_core::scanner::extract_musical_key),
+        musicbrainz_recording_id: extended.musicbrainz_recording_id,
+        musicbrainz_release_id: extended.musicbrainz_release_id,
+        musicbrainz_artist_id: extended.musicbrainz_artist_id,
+        replay_gain_track_gain: extended.replay_gain_track_gain,
+        replay_gain_track_peak: extended.replay_gain_track_peak,
+        replay_gain_album_gain: extended.replay_gain_album_gain,
+        replay_gain_album_peak: extended.replay_gain_album_peak,
+        bpm: extended.bpm,
+        sort_title: extended.sort_title,
+        comment: extended.comment,
+        isrc: extended.isrc,
         tag_rating: tag
             .and_then(waveflow_core::scanner::extract_rating)
             .map(i64::from),
@@ -503,6 +515,7 @@ fn extract_dsd(
         .map(|v| artwork_input(artwork_dir, v));
     let lyrics = extract_lyrics(path, None);
     let lyrics_hash = lyrics_hash(&lyrics);
+    let extended = extended_tags(None);
     Ok(CatalogTrackInput {
         relative_path,
         file_size: size,
@@ -531,10 +544,86 @@ fn extract_dsd(
         codec,
         musical_key: None,
         tag_rating: None,
+        musicbrainz_recording_id: extended.musicbrainz_recording_id,
+        musicbrainz_release_id: extended.musicbrainz_release_id,
+        musicbrainz_artist_id: extended.musicbrainz_artist_id,
+        replay_gain_track_gain: extended.replay_gain_track_gain,
+        replay_gain_track_peak: extended.replay_gain_track_peak,
+        replay_gain_album_gain: extended.replay_gain_album_gain,
+        replay_gain_album_peak: extended.replay_gain_album_peak,
+        bpm: extended.bpm,
+        sort_title: extended.sort_title,
+        comment: extended.comment,
+        isrc: extended.isrc,
         artwork,
         lyrics_hash,
         lyrics,
     })
+}
+
+/// The OpenSubsonic media tags the scanner reads beyond the Subsonic 1.16 set.
+///
+/// Grouped rather than inlined because both entry points build a
+/// [`CatalogTrackInput`], and the DSD path has no tag reader at all: it has to
+/// produce the same shape with every field empty rather than a different one.
+#[derive(Debug, Default)]
+struct ExtendedTags {
+    musicbrainz_recording_id: Option<String>,
+    musicbrainz_release_id: Option<String>,
+    musicbrainz_artist_id: Option<String>,
+    replay_gain_track_gain: Option<f64>,
+    replay_gain_track_peak: Option<f64>,
+    replay_gain_album_gain: Option<f64>,
+    replay_gain_album_peak: Option<f64>,
+    bpm: Option<i64>,
+    sort_title: Option<String>,
+    comment: Option<String>,
+    isrc: Option<String>,
+}
+
+fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
+    let Some(tag) = tag else {
+        return ExtendedTags::default();
+    };
+    let text = |key: ItemKey| {
+        tag.get_string(key)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    // ReplayGain tags carry their unit: `-7.32 dB`. Reading only the first
+    // token keeps the suffix from turning a valid measurement into none. A
+    // non-finite value is discarded rather than stored: it would travel all
+    // the way to a player as a volume adjustment.
+    let gain = |key: ItemKey| {
+        tag.get_string(key)
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+    };
+    ExtendedTags {
+        musicbrainz_recording_id: text(ItemKey::MusicBrainzRecordingId),
+        musicbrainz_release_id: text(ItemKey::MusicBrainzReleaseId),
+        musicbrainz_artist_id: text(ItemKey::MusicBrainzArtistId),
+        replay_gain_track_gain: gain(ItemKey::ReplayGainTrackGain),
+        replay_gain_track_peak: gain(ItemKey::ReplayGainTrackPeak),
+        replay_gain_album_gain: gain(ItemKey::ReplayGainAlbumGain),
+        replay_gain_album_peak: gain(ItemKey::ReplayGainAlbumPeak),
+        // Both spellings occur in the wild, and a fractional value is written
+        // often enough that parsing the whole string would drop it entirely.
+        bpm: text(ItemKey::IntegerBpm)
+            .or_else(|| text(ItemKey::Bpm))
+            .and_then(|value| {
+                value
+                    .split(['.', ','])
+                    .next()
+                    .and_then(|whole| whole.parse::<i64>().ok())
+            })
+            .filter(|value| *value > 0),
+        sort_title: text(ItemKey::TrackTitleSortOrder),
+        comment: text(ItemKey::Comment),
+        isrc: text(ItemKey::Isrc),
+    }
 }
 
 fn extract_lyrics(path: &Path, tag: Option<&lofty::tag::Tag>) -> Vec<LyricsInput> {
@@ -620,7 +709,59 @@ fn lyrics_hash(entries: &[LyricsInput]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_sidecar, MAX_LYRICS_BYTES};
+    use super::{extended_tags, read_sidecar, MAX_LYRICS_BYTES};
+    use lofty::{
+        prelude::ItemKey,
+        tag::{Tag, TagType},
+    };
+
+    #[test]
+    fn extended_tags_survive_the_shapes_real_files_use() {
+        // MP4 is the tag type whose lofty mapping covers every key this reads.
+        // The others cover a subset each — ID3v2 carries the recording MBID in
+        // a UFID frame rather than a text one, and Vorbis comments spell BPM
+        // only as `Bpm` — which is what the fallbacks in `extended_tags` are
+        // for. This test is about the parsing, so it uses the tag type that
+        // exercises all of it at once.
+        let mut tag = Tag::new(TagType::Mp4Ilst);
+        // ReplayGain is written with its unit, and a leading + is legal.
+        assert!(tag.insert_text(ItemKey::ReplayGainTrackGain, "-7.32 dB".into()));
+        assert!(tag.insert_text(ItemKey::ReplayGainAlbumGain, "+1.50 dB".into()));
+        assert!(tag.insert_text(ItemKey::ReplayGainTrackPeak, "0.988525".into()));
+        // BPM is often fractional even in the integer key.
+        assert!(tag.insert_text(ItemKey::IntegerBpm, "128.5".into()));
+        assert!(tag.insert_text(ItemKey::MusicBrainzRecordingId, "  rec-1  ".into()));
+        assert!(tag.insert_text(ItemKey::Comment, "   ".into()));
+        assert!(tag.insert_text(ItemKey::Isrc, "FRZ039800212".into()));
+        let extended = extended_tags(Some(&tag));
+        assert_eq!(extended.replay_gain_track_gain, Some(-7.32));
+        assert_eq!(extended.replay_gain_album_gain, Some(1.5));
+        assert_eq!(extended.replay_gain_track_peak, Some(0.988_525));
+        assert_eq!(extended.replay_gain_album_peak, None);
+        assert_eq!(extended.bpm, Some(128));
+        // Trimmed, and a tag holding only whitespace is no value at all
+        // rather than an empty one the presence rule would then report as
+        // meaningful.
+        assert_eq!(extended.musicbrainz_recording_id.as_deref(), Some("rec-1"));
+        assert_eq!(extended.comment, None);
+        assert_eq!(extended.isrc.as_deref(), Some("FRZ039800212"));
+
+        // Unparseable measurements are dropped rather than stored: a NaN gain
+        // would reach a player as a volume adjustment.
+        let mut broken = Tag::new(TagType::Mp4Ilst);
+        assert!(broken.insert_text(ItemKey::ReplayGainTrackGain, "loud".into()));
+        assert!(broken.insert_text(ItemKey::ReplayGainAlbumPeak, "NaN".into()));
+        assert!(broken.insert_text(ItemKey::IntegerBpm, "0".into()));
+        let broken = extended_tags(Some(&broken));
+        assert_eq!(broken.replay_gain_track_gain, None);
+        assert_eq!(broken.replay_gain_album_peak, None);
+        assert_eq!(broken.bpm, None);
+
+        // The DSD path has no tag reader and must produce the same shape.
+        let absent = extended_tags(None);
+        assert_eq!(absent.musicbrainz_recording_id, None);
+        assert_eq!(absent.bpm, None);
+    }
 
     #[test]
     fn sidecar_reader_rejects_invalid_files_and_symlinks() {
