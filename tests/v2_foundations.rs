@@ -3641,13 +3641,25 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
         assert_eq!(native_titles(native.into()).await, expected, "{native}");
     }
 
-    // `random` is unordered but must still page the same set.
+    // `random` draws from the same set as every other ordering. Its page
+    // contents cannot be asserted: SQLite reshuffles per statement, so two
+    // requests are two independent draws and a title may repeat or be missed
+    // across them. What must hold is membership — no ordering may surface an
+    // album the account cannot see.
+    let catalogue = vec!["Alpha Sea", "Beta Sky", "Gamma Sun", "delta moon"];
     let mut shuffled = subsonic_titles("&type=random&size=500".into()).await;
     shuffled.sort();
-    assert_eq!(
-        shuffled,
-        vec!["Alpha Sea", "Beta Sky", "Gamma Sun", "delta moon"]
-    );
+    assert_eq!(shuffled, catalogue);
+    for offset in [0, 2] {
+        let page = subsonic_titles(format!("&type=random&size=2&offset={offset}")).await;
+        assert!(page.len() <= 2, "offset {offset} returned {page:?}");
+        for title in &page {
+            assert!(
+                catalogue.contains(&title.as_str()),
+                "offset {offset} returned {title}"
+            );
+        }
+    }
 
     // Paging happens in SQL now; the second page of an ordered list is exact.
     assert_eq!(
@@ -3689,7 +3701,7 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
         .unwrap();
     assert_eq!(rejected_native.status(), StatusCode::UNPROCESSABLE_ENTITY);
     // byGenre without a genre would silently drop the filter if it were not
-    // refused.
+    // refused, so both surfaces reject it.
     let missing_genre = router
         .clone()
         .oneshot(
@@ -3701,6 +3713,22 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
         .await
         .unwrap();
     assert_eq!(missing_genre.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let missing_genre_subsonic = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getAlbumList2.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&type=byGenre"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_genre_subsonic.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(missing_genre_subsonic).await["subsonic-response"]["error"]["code"],
+        10
+    );
 
     // songCount and duration describe the album, not the tracks the caller
     // happened to load. "Tidewater" matches one of Alpha Sea's two tracks.

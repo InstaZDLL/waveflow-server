@@ -44,7 +44,7 @@ M4 adds `/api/v2`, Authorization Code with PKCE for WaveFlow Desktop, rotating n
 
 All web, native and Subsonic writes pass through common services so playlists, favorites, ratings, queue and history converge independent of the calling protocol.
 
-Reads converge on the same rule. Album discovery — the ten orderings, the genre and year filters, and paging — lives once in `DomainServices::list_albums`, with the Subsonic facade and `GET /api/v2/albums` as parameter adapters over it. It had drifted the other way: the orderings existed only in the facade, sorted in memory over a whole-tenant catalogue read, while the native API offered no ordering at all and could not answer "recently added" without paging the catalogue client-side. `GET /api/v2/genres` is the native half of `getGenres`. Album records carry their own `songCount`/`duration`, so no listing loads tracks to size an album.
+Reads converge on the same rule. Album discovery — the ten orderings, the genre and year filters, and paging — lives once in `DomainServices::list_albums`, with the Subsonic façade and `GET /api/v2/albums` as parameter adapters over it. It had drifted the other way: the orderings existed only in the façade, sorted in memory over a whole-tenant catalogue read, while the native API offered no ordering at all and could not answer "recently added" without paging the catalogue client-side. `GET /api/v2/genres` is the native half of `getGenres`. Album records carry their own `songCount`/`duration`, so no listing loads tracks to size an album.
 
 ### Frozen Subsonic v2.0-beta contract
 
