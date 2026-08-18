@@ -525,10 +525,16 @@ scopes are checked:
 
 | Scope | Admits |
 |---|---|
-| `write` | any mutation: playlists, favorites, ratings, the queue, bookmarks, shares, scrobbles, scans, issuing an OAuth code |
+| `write` | any mutation: playlists, favorites, ratings, the queue, bookmarks, shares, scrobbles, scans |
 | `admin` | the administrative routes, and everything `write` admits |
 
-Reading needs no scope, so a token naming neither is read-only. **A scope this
+Reading needs no scope, so a token naming neither is read-only. **Minting a
+credential needs no scope either — it needs the absence of one**: the
+authorization code flow at `POST /api/v2/oauth/authorize` is refused to any
+token carrying a scope list at all, because the session it returns is
+unrestricted and nothing on the grant records what asked for it. A narrowed
+credential must not be able to mint a broader one. Pairing a device is done
+from a session, which is what the flow is for. **A scope this
 server does not know grants nothing**, which is why `catalog:read` reads and
 does no more: there is no vocabulary to learn, only these two names to use.
 
