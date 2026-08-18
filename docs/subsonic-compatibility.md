@@ -29,4 +29,21 @@ The Symfonium run added three narrowly scoped requirements. Version 14.1.0 valid
 
 The contract audit additionally covers administrative folder access: `createUser` defaults to all libraries, repeated `musicFolderId` values select a subset, `updateUser` changes that subset, and `getUser`/`getUsers` return `folder[]`. Golden tests authenticate as the created user before and after a folder/password update and verify that `changePassword` leaves the Argon2id web credential untouched. Empty-result mutations emit an empty success envelope as required by the protocol.
 
+## Deviation accepted for the next tag: HTTP 200 on every `/rest` answer
+
+Protocol failures now answer HTTP 200 and report the outcome in the body
+(`status="failed"` plus an `error` code), as the Subsonic contract requires.
+Previously WaveFlow also set 401, 403, 404, 409 or 429. All five clients in the
+matrix above were validated against the old behaviour and tolerate the new one,
+because each reads `error/code` — but the matrix records real runs, not
+inferences, so **every row must be re-run before the next tag**. Range responses
+keep 206/416, and `/share` and `/api/v2` are unchanged.
+
+The same release adds `tokenInfo` — the half of `apiKeyAuthentication` that was
+advertised but never served — and `getAlbumInfo`/`getAlbumInfo2` as tenant-
+resolved empty containers, so Feishin and Symfonium no longer receive an
+unimplemented-method error when an album page opens. `playlist.owner` and
+`share.username` now carry the authenticated username instead of an empty
+string, which is what Feishin reads to decide whether a playlist is editable.
+
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.
