@@ -529,17 +529,25 @@ impl DomainServices {
             .library_for_user(user_id, library_id)
             .await?
             .ok_or(ServiceError::NotFound)?;
-        self.scanner
-            .trigger(library, Some(user_id), "manual")
-            .await
-            .map_err(|error| {
-                tracing::error!(error = %error, "scan queue failed");
-                ServiceError::Unavailable
-            })
+        // The lookup above reads the root path; it is not what authorises the
+        // job. The insert tests `library_member` itself, so a membership
+        // revoked between the two refuses the job instead of queuing work for
+        // a library the requester can no longer reach.
+        let scan_id = self
+            .db
+            .create_scan_job_for_user(user_id, library_id, "manual")
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        self.scanner.spawn(scan_id, library);
+        Ok(scan_id)
     }
 
     /// Queues a rescan of every library the user can reach, for the Subsonic
     /// `startScan`, which takes no library parameter.
+    ///
+    /// An account that can reach no library queues nothing and succeeds: there
+    /// is no missing resource to report, and every other catalogue-wide method
+    /// answers such an account with an empty result rather than an error.
     ///
     /// Best effort by design: a library whose job cannot be queued does not
     /// cancel the ones that can. Aborting on the first failure would leave
