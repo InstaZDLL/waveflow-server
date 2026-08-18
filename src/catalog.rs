@@ -178,6 +178,31 @@ impl Database {
         rows.into_iter().map(library_from_row).collect()
     }
 
+    /// Whether any library the user can see is being scanned, and how many
+    /// available tracks they can currently reach.
+    ///
+    /// Both halves of the Subsonic `scanStatus` shape, resolved in one
+    /// round trip and scoped to the caller: `count` is what *this* account
+    /// can see, not what the instance holds.
+    pub async fn scan_progress_for_user(&self, user_id: Uuid) -> Result<(bool, i64), sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT EXISTS (SELECT 1 FROM scan_job sj \
+                       JOIN library_member m ON m.library_id=sj.library_id \
+                       WHERE m.user_id=? AND sj.status IN ('queued', 'running')) AS scanning, \
+                    (SELECT COUNT(*) FROM track t \
+                     JOIN library_member m ON m.library_id=t.library_id \
+                     WHERE m.user_id=? AND t.is_available=1) AS scanned",
+        )
+        .bind(user_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_one(self.pool())
+        .await?;
+        Ok((
+            row.try_get::<i64, _>("scanning")? != 0,
+            row.try_get("scanned")?,
+        ))
+    }
+
     pub async fn library_for_user(
         &self,
         user_id: Uuid,
