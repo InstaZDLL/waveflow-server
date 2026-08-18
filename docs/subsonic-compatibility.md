@@ -10,10 +10,14 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 | DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass* | Validated 2026-08-02 on Android 14, then revalidated 2026-08-15 on the current Android environment: authentication, catalogue, artwork, native playback, seek and playlist. `*` Scrobbling was disabled in the original run; the endpoint remains covered by fixtures and other clients. |
 | Juliet | iOS build tested 2026-08-15 | pass | pass | native pass; transcode not run | not run | Current iOS compatibility check: authentication, catalogue, artwork and native playback succeeded. Unsupported/unexercised surfaces are not inferred as passes. |
 
-The M3 real-client gate is closed. This matrix remains the regression record;
-missing client features are covered by automated fixtures and another real
-client rather than inferred as passes. Creating any tag or release remains a
-separate action requiring an explicit operator request.
+**Every row above predates the move to HTTP 200 on every `/rest` answer.** Each
+records a real run against the previous status behaviour and is kept as a
+historical result; none of them validates the current Subsonic contract. The M3
+real-client gate was closed on that earlier behaviour, so it is not a satisfied
+gate for the next tag: every client must be re-run against the current contract
+and its row re-dated first. Missing client features stay covered by automated
+fixtures and another real client rather than inferred as passes. Creating any tag
+or release remains a separate action requiring an explicit operator request.
 
 The Substreamer row records the successful 2026-08-02 run. It could not be
 reinstalled on the current Android 17 device during the 2026-08-15 revalidation
@@ -34,10 +38,11 @@ The contract audit additionally covers administrative folder access: `createUser
 Protocol failures now answer HTTP 200 and report the outcome in the body
 (`status="failed"` plus an `error` code), as the Subsonic contract requires.
 Previously WaveFlow also set 401, 403, 404, 409 or 429. All five clients in the
-matrix above were validated against the old behaviour and tolerate the new one,
-because each reads `error/code` — but the matrix records real runs, not
-inferences, so **every row must be re-run before the next tag**. Range responses
-keep 206/416, and `/share` and `/api/v2` are unchanged.
+matrix above were validated against that old behaviour. Each reads `error/code`,
+so none is expected to break — but that is an expectation, not a result, and the
+matrix records runs rather than inferences: **every row must be re-run and
+re-dated before the next tag**. Range responses keep 206/416, and `/share` and
+`/api/v2` are unchanged.
 
 The same release adds `tokenInfo` — the half of `apiKeyAuthentication` that was
 advertised but never served — and `getAlbumInfo`/`getAlbumInfo2` as tenant-

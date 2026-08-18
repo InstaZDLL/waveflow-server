@@ -1805,6 +1805,29 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         );
     }
 
+    // Under `formPost` the requested format arrives in the body, not the query
+    // string. A refused credential must still be answered in it: a client that
+    // asked for JSON and received XML cannot read the error at all.
+    let rejected_post = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/getMusicFolders.view")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("apiKey=wfsk_wrong&v=1.16.1&c=golden&f=json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected_post.status(), StatusCode::OK);
+    assert_eq!(
+        rejected_post.headers()["content-type"],
+        "application/json; charset=utf-8"
+    );
+    assert_eq!(
+        json_body(rejected_post).await["subsonic-response"]["error"]["code"],
+        40
+    );
+
     let salt = "golden-salt";
     let mut digest = Md5::new();
     digest.update(subsonic_password.as_bytes());
