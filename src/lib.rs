@@ -368,7 +368,12 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     );
     let media = media::MediaService::initialize(config).await?;
     let sync = sync::SyncService::new(db.clone());
-    let services = services::DomainServices::new(db.clone(), Arc::clone(&secret_box), sync.clone());
+    let services = services::DomainServices::new(
+        db.clone(),
+        Arc::clone(&secret_box),
+        sync.clone(),
+        scanner.clone(),
+    );
     Ok(AppState {
         db,
         auth,

@@ -4149,9 +4149,43 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
     let search2 = subsonic_json(&router, "search2", api_key, "&query=One&songCount=10").await;
     assert!(search2["subsonic-response"]["searchResult2"]["song"].is_array());
     assert!(search2["subsonic-response"].get("searchResult3").is_none());
+    // Nothing is starred yet, so the container is present but carries no list.
     let starred = subsonic_json(&router, "getStarred", api_key, "").await;
     assert!(starred["subsonic-response"]["starred"].is_object());
+    assert!(starred["subsonic-response"]["starred"]
+        .get("song")
+        .is_none());
     assert!(starred["subsonic-response"].get("starred2").is_none());
+
+    // One favorite of each kind, so the renamed container is exercised with
+    // content: an alias that only ever answers empty proves nothing about the
+    // JSON array rules its new name needs.
+    let snapshot = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    for (entity, id) in [
+        ("artist", snapshot.artists[0].id),
+        ("album", snapshot.albums[0].id),
+        ("track", snapshot.songs[0].id),
+    ] {
+        state
+            .services
+            .set_star(owner, entity, id, true)
+            .await
+            .unwrap();
+    }
+    let starred = subsonic_json(&router, "getStarred", api_key, "").await;
+    let starred = &starred["subsonic-response"]["starred"];
+    for field in ["artist", "album", "song"] {
+        let entries = starred[field]
+            .as_array()
+            .unwrap_or_else(|| panic!("starred.{field} is not an array: {starred}"));
+        assert_eq!(entries.len(), 1, "{field}");
+    }
+    // The ID3 method answers the same payload under its own container.
+    let starred2 = subsonic_json(&router, "getStarred2", api_key, "").await;
+    let starred2 = &starred2["subsonic-response"]["starred2"];
+    for field in ["artist", "album", "song"] {
+        assert_eq!(starred2[field], starred[field], "{field}");
+    }
 
     // Surfaces WaveFlow does not compute answer the standard empty container
     // rather than a not-implemented error.
