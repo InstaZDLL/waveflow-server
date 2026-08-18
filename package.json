@@ -27,6 +27,6 @@
     "fmt:web": "bun --cwd=webapp run format"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4"
+    "concurrently": "^10.0.5"
   }
 }
