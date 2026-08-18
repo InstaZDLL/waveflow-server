@@ -1,4 +1,4 @@
-//! Subsonic/OpenSubsonic compatibility façade.
+//! Subsonic/OpenSubsonic compatibility faÃ§ade.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -15,7 +15,6 @@ use axum::{
     Router,
 };
 use md5::{Digest, Md5};
-use rand::seq::SliceRandom;
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -24,8 +23,8 @@ use crate::{
     media::{MediaError, OutputFormat, StreamQuery},
     security,
     services::{
-        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, BrowsePage, CatalogSnapshot,
-        PlaylistItem, ServiceError, SongItem,
+        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, BrowsePage, PlaylistItem, ServiceError,
+        SongItem,
     },
     AppState,
 };
@@ -372,13 +371,13 @@ async fn dispatch(
         "startScan" => start_scan(state, principal).await,
         "getScanStatus" => scan_status(state, principal).await,
         "getMusicFolders" => {
-            let snapshot = state
+            let folders = state
                 .services
-                .catalog_snapshot(principal.id, &[])
+                .music_folders(principal.id, &[])
                 .await
                 .map_err(internal)?;
             Ok(
-                Node::new("musicFolders").children(snapshot.folders.into_iter().map(|folder| {
+                Node::new("musicFolders").children(folders.into_iter().map(|folder| {
                     Node::new("musicFolder")
                         .attr("id", folder.id.to_string())
                         .attr("name", folder.name)
@@ -571,15 +570,20 @@ fn clear_auth_failures(key: &str) {
     }
 }
 
-async fn snapshot(
+/// Folders, artists and albums for the requested libraries.
+///
+/// Preferred over [`snapshot`] wherever the answer does not contain tracks:
+/// the track read is the expensive third of a snapshot, and since the
+/// OpenSubsonic fields landed it carries two relation loads of its own.
+async fn overview(
     state: &AppState,
     principal: &Principal,
     params: &Params,
-) -> Result<CatalogSnapshot, ProtocolError> {
+) -> Result<crate::services::CatalogOverview, ProtocolError> {
     let folders = params.uuids("musicFolderId")?;
     state
         .services
-        .catalog_snapshot(principal.id, &folders)
+        .catalog_overview(principal.id, &folders)
         .await
         .map_err(internal)
 }
@@ -622,9 +626,9 @@ async fn indexes(
     params: &Params,
     id3: bool,
 ) -> Result<Node, ProtocolError> {
-    let snapshot = snapshot(state, principal, params).await?;
+    let overview = overview(state, principal, params).await?;
     let mut groups: BTreeMap<char, Vec<ArtistItem>> = BTreeMap::new();
-    for artist in snapshot.artists {
+    for artist in overview.artists {
         let initial = artist
             .name
             .chars()
@@ -644,7 +648,7 @@ async fn indexes(
                 .children(artists.into_iter().map(|artist| {
                     artist_node(
                         &artist,
-                        snapshot
+                        overview
                             .albums
                             .iter()
                             .filter(|album| album.artist_id == Some(artist.id))
@@ -659,20 +663,13 @@ async fn get_artist(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let id = params.uuid("id")?;
-    let snapshot = snapshot(state, principal, params).await?;
-    let artist = snapshot
-        .artists
-        .iter()
-        .find(|artist| artist.id == id)
-        .ok_or_else(not_found)?;
-    let albums = snapshot
-        .albums
-        .iter()
-        .filter(|album| album.artist_id == Some(id))
-        .map(album_node)
-        .collect::<Vec<_>>();
-    Ok(artist_node(artist, albums.len()).children(albums))
+    let detail = state
+        .services
+        .artist(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    let albums = detail.albums.iter().map(album_node).collect::<Vec<_>>();
+    Ok(artist_node(&detail.artist, albums.len()).children(albums))
 }
 
 async fn artist_info(
@@ -723,20 +720,12 @@ async fn get_album(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let id = params.uuid("id")?;
-    let snapshot = snapshot(state, principal, params).await?;
-    let album = snapshot
-        .albums
-        .iter()
-        .find(|album| album.id == id)
-        .ok_or_else(not_found)?;
-    Ok(album_node(album).children(
-        snapshot
-            .songs
-            .iter()
-            .filter(|song| song.album_id == Some(id))
-            .map(song_node),
-    ))
+    let detail = state
+        .services
+        .album(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    Ok(album_node(&detail.album).children(detail.songs.iter().map(song_node)))
 }
 
 async fn get_song(
@@ -856,30 +845,35 @@ async fn music_directory(
     params: &Params,
 ) -> Result<Node, ProtocolError> {
     let id = params.uuid("id")?;
-    let snapshot = snapshot(state, principal, params).await?;
+    let overview = overview(state, principal, params).await?;
     let mut directory = Node::new("directory").attr("id", id.to_string());
-    if let Some(folder) = snapshot.folders.iter().find(|item| item.id == id) {
+    if let Some(folder) = overview.folders.iter().find(|item| item.id == id) {
         directory = directory.attr("name", folder.name.clone()).children(
-            snapshot
+            overview
                 .artists
                 .iter()
                 .filter(|artist| artist.library_id == id)
                 .map(|artist| directory_child(artist_node(artist, 0))),
         );
-    } else if let Some(artist) = snapshot.artists.iter().find(|item| item.id == id) {
+    } else if let Some(artist) = overview.artists.iter().find(|item| item.id == id) {
         directory = directory.attr("name", artist.name.clone()).children(
-            snapshot
+            overview
                 .albums
                 .iter()
                 .filter(|album| album.artist_id == Some(id))
                 .map(|album| directory_child(album_node(album))),
         );
-    } else if let Some(album) = snapshot.albums.iter().find(|item| item.id == id) {
-        directory = directory.attr("name", album.title.clone()).children(
-            snapshot
+    } else if overview.albums.iter().any(|item| item.id == id) {
+        // Only this level needs tracks, and only this album's.
+        let detail = state
+            .services
+            .album(principal.id, id)
+            .await
+            .map_err(service_protocol)?;
+        directory = directory.attr("name", detail.album.title.clone()).children(
+            detail
                 .songs
                 .iter()
-                .filter(|song| song.album_id == Some(id))
                 .map(|song| song_node(song).renamed("child")),
         );
     } else {
@@ -935,24 +929,23 @@ async fn random_songs(
     params: &Params,
 ) -> Result<Node, ProtocolError> {
     let size = params.usize_or("size", 10, 500)?;
-    let mut songs = snapshot(state, principal, params).await?.songs;
-    if let Some(genre) = params.first("genre") {
-        songs.retain(|song| {
-            split_multi(song.genre.as_deref())
-                .iter()
-                .any(|value| value.eq_ignore_ascii_case(genre))
-        });
+    // A page of nothing is a valid request, as it is for getAlbumList.
+    if size == 0 {
+        return Ok(Node::new("randomSongs"));
     }
-    let from = params.i64_or("fromYear", i64::MIN)?;
-    let to = params.i64_or("toYear", i64::MAX)?;
-    if params.first("fromYear").is_some() || params.first("toYear").is_some() {
-        songs.retain(|song| {
-            song.year
-                .is_some_and(|year| year >= from.min(to) && year <= from.max(to))
-        });
-    }
-    songs.shuffle(&mut rand::thread_rng());
-    Ok(Node::new("randomSongs").children(songs.iter().take(size).map(song_node)))
+    let songs = state
+        .services
+        .random_songs(
+            principal.id,
+            &params.uuids("musicFolderId")?,
+            params.first("genre"),
+            params.i64_optional("fromYear")?,
+            params.i64_optional("toYear")?,
+            size as i64,
+        )
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("randomSongs").children(songs.iter().map(song_node)))
 }
 
 async fn songs_by_genre(
@@ -963,19 +956,20 @@ async fn songs_by_genre(
     let genre = params.first("genre").ok_or_else(missing)?;
     let offset = params.usize_or("offset", 0, 100_000)?;
     let count = params.usize_or("count", 10, 500)?;
-    let songs = snapshot(state, principal, params).await?.songs;
-    Ok(Node::new("songsByGenre").children(
-        songs
-            .iter()
-            .filter(|song| {
-                split_multi(song.genre.as_deref())
-                    .iter()
-                    .any(|value| value.eq_ignore_ascii_case(genre))
-            })
-            .skip(offset)
-            .take(count)
-            .map(song_node),
-    ))
+    if count == 0 {
+        return Ok(Node::new("songsByGenre"));
+    }
+    let songs = state
+        .services
+        .songs_by_genre(
+            principal.id,
+            &params.uuids("musicFolderId")?,
+            genre,
+            BrowsePage::new(Some(offset as i64), Some(count as i64)).map_err(service_protocol)?,
+        )
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("songsByGenre").children(songs.iter().map(song_node)))
 }
 
 async fn search(
@@ -991,23 +985,40 @@ async fn search(
     let song_count = params.usize_or("songCount", 20, 500)?;
     let song_offset = params.usize_or("songOffset", 0, 100_000)?;
 
-    // Subsonic clients use the literal pair of quotes as the documented
-    // match-all query while paginating a complete catalogue. That path stays on
-    // the full snapshot: there is nothing to match, and FTS5 has no expression
-    // meaning "everything".
+    let folders = params.uuids("musicFolderId")?;
+
+    // Subsonic clients send the literal pair of quotes as the documented
+    // match-all query while paging through a complete catalogue. There is
+    // nothing to match and FTS5 has no expression meaning "everything", so
+    // this is three ordinary listings wearing the search response — paged in
+    // SQL rather than sliced out of a full catalogue read, which is what made
+    // a client's initial synchronization quadratic in the library.
     if raw_query == "\"\"" {
-        let snapshot = snapshot(state, principal, params).await?;
+        let page = |offset: usize, count: usize| {
+            BrowsePage::new(Some(offset as i64), Some(count as i64)).map_err(service_protocol)
+        };
+        let found = state
+            .services
+            .browse_all(
+                principal.id,
+                &folders,
+                page(artist_offset, artist_count.max(1))?,
+                page(album_offset, album_count.max(1))?,
+                page(song_offset, song_count.max(1))?,
+            )
+            .await
+            .map_err(service_protocol)?;
+        // The service already applied the offsets, so the renderer must not.
         return Ok(search_result(
-            snapshot.artists.iter(),
-            snapshot.albums.iter(),
-            snapshot.songs.iter(),
-            (artist_offset, artist_count),
-            (album_offset, album_count),
-            (song_offset, song_count),
+            found.artists.iter().take(artist_count),
+            found.albums.iter().take(album_count),
+            found.songs.iter().take(song_count),
+            (0, artist_count),
+            (0, album_count),
+            (0, song_count),
         ));
     }
 
-    let folders = params.uuids("musicFolderId")?;
     let found = state
         .services
         .catalog_search(principal.id, &folders, raw_query)
@@ -1232,36 +1243,23 @@ async fn starred(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let snapshot = snapshot(state, principal, params).await?;
-    let ids = state
+    // The three projections already carry `starred_at`, so the nodes emit
+    // `starred` themselves. This used to read the whole catalogue and look
+    // each starred id up inside it.
+    let starred = state
         .services
-        .starred_ids(principal.id)
+        .starred(principal.id, &params.uuids("musicFolderId")?)
         .await
-        .map_err(internal)?;
+        .map_err(service_protocol)?;
     let mut node = Node::new("starred2");
-    for (kind, id, at) in ids {
-        match kind.as_str() {
-            "track" => {
-                if let Some(item) = snapshot.songs.iter().find(|item| item.id == id) {
-                    node.children
-                        .push(song_node(item).attr("starred", iso_time(at)));
-                }
-            }
-            "album" => {
-                if let Some(item) = snapshot.albums.iter().find(|item| item.id == id) {
-                    node.children
-                        .push(album_node(item).attr("starred", iso_time(at)));
-                }
-            }
-            "artist" => {
-                if let Some(item) = snapshot.artists.iter().find(|item| item.id == id) {
-                    node.children
-                        .push(artist_node(item, 0).attr("starred", iso_time(at)));
-                }
-            }
-            _ => {}
-        }
-    }
+    node.children.extend(
+        starred
+            .artists
+            .iter()
+            .map(|summary| artist_node(&summary.artist, summary.album_count as usize)),
+    );
+    node.children.extend(starred.albums.iter().map(album_node));
+    node.children.extend(starred.songs.iter().map(song_node));
     Ok(node)
 }
 
@@ -2179,15 +2177,6 @@ fn content_type(suffix: &str) -> &'static str {
         "dsf" | "dff" => "audio/dsd",
         _ => "application/octet-stream",
     }
-}
-fn split_multi(value: Option<&str>) -> Vec<String> {
-    value
-        .into_iter()
-        .flat_map(|value| value.split(';'))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 fn iso_time(millis: i64) -> String {
     chrono::DateTime::from_timestamp_millis(millis)
