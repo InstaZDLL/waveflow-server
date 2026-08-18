@@ -8,7 +8,7 @@
 
 The server is authoritative for its catalogue. Desktop exposes it as a separate
 remote source and synchronizes user-owned state only: playlists, favorites,
-ratings, scrobbles/history, play queue and public shares. This protocol never
+ratings, scrobbles/history, play queue, public shares and bookmarks. This protocol never
 imports server tracks into the local catalogue and never guesses a local/server
 track match. Reconciliation remains M5 and requires its own RFC.
 
@@ -67,6 +67,12 @@ Each change has `cursor`, `event_id`, `operation_id`, optional
 | `scrobble` | `upsert`, `append` | `track_id`, `submission`, `played_at` |
 | `queue` | `upsert` | ordered `track_ids`, current track, `position_ms`, client |
 | `share` | `upsert`, `delete` | id and the changed non-secret share fields; bearer token and URL are never synchronized |
+| `bookmark` | `upsert`, `delete` | `track_id`, plus `position_ms` and `comment` on `upsert`; the entity ID is the track |
+
+A `bookmark` is keyed by track, so an `upsert` for a track that already has one
+moves it rather than adding a second, and a `delete` is emitted whether or not
+the server held one — the same shape `favorite` uses, and what lets a client that
+still holds a stale bookmark converge.
 
 Unknown entity types, actions and payload fields must be ignored and retained
 only if a client needs to relay diagnostic data. A client that cannot apply a
