@@ -7899,12 +7899,50 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
     let (_temp, config, state) = test_app().await;
     let password = "correct horse battery staple";
     let hash = security::hash_password(password).unwrap();
-    state
+    let user = state
         .db
         .create_account("pkce-user", &hash, AccountRole::Admin, now_ms())
         .await
         .unwrap();
-    let router = waveflow_server::app(&config, state);
+    // One indexed track, so the scoped token can be shown writing rather
+    // than merely not being refused.
+    let music = config.data_dir.join("pkce-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            user,
+            "Pkce",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(user), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = browse_input(700, "Paired", "Handshake", "Loopback", Some(1), Some(1));
+    input.relative_path = "pkce-0.flac".into();
+    input.quick_hash = format!("{:064x}", 71_000);
+    input.full_hash = format!("{:064x}", 72_000);
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state
+        .services
+        .catalog_snapshot(user, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    let router = waveflow_server::app(&config, state.clone());
     let token = login_token(&router, "pkce-user", password).await;
 
     let verifier = "H1r8mQ2xY7pL4vC0nB6zK9tW3sD5gJ8fA2eR7uI1oP4";
@@ -7989,7 +8027,7 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         .oneshot(
             Request::builder()
                 .method(Method::PUT)
-                .uri("/api/v2/ratings/track/00000000-0000-4000-8000-000000000000")
+                .uri(format!("/api/v2/ratings/track/{track}"))
                 .header("authorization", format!("Bearer {scoped}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::json!({"rating": 3}).to_string()))
@@ -7997,11 +8035,13 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         )
         .await
         .unwrap();
-    assert_ne!(
-        writes.status(),
-        StatusCode::FORBIDDEN,
-        "the write scope should still write"
-    );
+    assert_eq!(writes.status(), StatusCode::NO_CONTENT);
+    // And the write landed: a route that had quietly become a no-op would
+    // still answer without refusing.
+    let ratings = state.services.ratings(user).await.unwrap();
+    assert_eq!(ratings.len(), 1);
+    assert_eq!(ratings[0].entity_id, track);
+    assert_eq!(ratings[0].rating, 3);
 
     // A redirect that could carry the code off the machine is refused.
     let mut remote = grant.clone();
