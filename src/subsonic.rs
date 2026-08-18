@@ -1666,6 +1666,17 @@ fn album_node(album: &AlbumItem) -> Node {
         .attr("playCount", album.play_count)
         .attr("displayArtist", album.artist.clone().unwrap_or_default())
         .maybe_attr("played", album.last_played_at.map(iso_time))
+        .children(album.artists.iter().map(|artist| {
+            Node::new("artists")
+                .attr("id", artist.id.to_string())
+                .attr("name", artist.name.clone())
+        }))
+        .children(
+            album
+                .genres
+                .iter()
+                .map(|genre| Node::new("genres").attr("name", genre.clone())),
+        )
         // On an album the identifier means the release, not the recording the
         // song carries. It is derived from the album's own tracks at scan time,
         // so it is a plain column read here.
@@ -1728,6 +1739,15 @@ fn song_node(song: &SongItem) -> Node {
             song.genres
                 .iter()
                 .map(|genre| Node::new("genres").attr("name", genre.clone())),
+        )
+        .children(song.album_artist_id.iter().map(|id| {
+            Node::new("albumArtists")
+                .attr("id", id.to_string())
+                .attr("name", song.album_artist.clone().unwrap_or_default())
+        }))
+        .attr(
+            "displayAlbumArtist",
+            song.album_artist.clone().unwrap_or_default(),
         )
         .attr(
             "musicBrainzId",
@@ -1951,7 +1971,7 @@ fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
         // Emitted as `[]` rather than omitted when a track has no credited
         // artist or no genre: under the OpenSubsonic presence rule an absent
         // key means the server does not support the field at all.
-        "song" | "entry" | "child" => &["artists", "genres", "isrc", "moods"],
+        "song" | "entry" | "child" => &["artists", "genres", "isrc", "moods", "albumArtists"],
         "album" => &["artists", "genres"],
         _ => &[],
     }
@@ -2023,7 +2043,7 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             // a playlist or share and to `child` inside a directory. Its
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
-            | ("song" | "entry" | "child", "isrc" | "moods")
+            | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
     )
 }
 
