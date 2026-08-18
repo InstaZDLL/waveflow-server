@@ -1,4 +1,4 @@
-//! Subsonic/OpenSubsonic compatibility faÃ§ade.
+//! Subsonic/OpenSubsonic compatibility façade.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -572,9 +572,10 @@ fn clear_auth_failures(key: &str) {
 
 /// Folders, artists and albums for the requested libraries.
 ///
-/// Preferred over [`snapshot`] wherever the answer does not contain tracks:
-/// the track read is the expensive third of a snapshot, and since the
-/// OpenSubsonic fields landed it carries two relation loads of its own.
+/// Preferred over [`crate::services::DomainServices::catalog_snapshot`]
+/// wherever the answer does not contain tracks: the track read is the
+/// expensive third of a snapshot, and since the OpenSubsonic fields landed it
+/// carries two relation loads of its own.
 async fn overview(
     state: &AppState,
     principal: &Principal,
@@ -668,8 +669,11 @@ async fn get_artist(
         .artist(principal.id, params.uuid("id")?)
         .await
         .map_err(service_protocol)?;
-    let albums = detail.albums.iter().map(album_node).collect::<Vec<_>>();
-    Ok(artist_node(&detail.artist, albums.len()).children(albums))
+    // `album_count` comes from the projection rather than from the length of
+    // the list below. They agree today only because `albums` is unpaginated,
+    // which is an unwritten guarantee the response should not rest on.
+    Ok(artist_node(&detail.artist, detail.album_count as usize)
+        .children(detail.albums.iter().map(album_node)))
 }
 
 async fn artist_info(

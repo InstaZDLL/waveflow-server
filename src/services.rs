@@ -3325,7 +3325,7 @@ impl DomainServices {
             .await?
             .ok_or(ServiceError::NotFound)?;
         let token = security::generate_token("wfapi_");
-        let id = self
+        let record = self
             .db
             .create_api_token(
                 account.id,
@@ -3335,13 +3335,6 @@ impl DomainServices {
                 now_ms(),
             )
             .await?;
-        let record = self
-            .db
-            .api_tokens_for_user(account.id)
-            .await?
-            .into_iter()
-            .find(|record| record.id == id)
-            .ok_or(ServiceError::NotFound)?;
         Ok((record, token))
     }
 
