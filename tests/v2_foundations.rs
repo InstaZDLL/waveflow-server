@@ -3395,10 +3395,6 @@ async fn login_token(router: &axum::Router, username: &str, password: &str) -> S
         .to_owned()
 }
 
-/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
-/// it is not a compilation, so `album_artist_id` is populated and the artist
-/// drill-down has something to resolve.
-#[allow(clippy::too_many_arguments)]
 /// The ten Subsonic album-list modes and their native equivalents resolve
 /// through one SQL implementation, so both surfaces agree by construction and
 /// neither loads the catalogue to sort it.
@@ -3662,15 +3658,47 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
     }
 
     // Paging happens in SQL now; the second page of an ordered list is exact.
+    // Both surfaces are asserted because they reach `page` by different routes:
+    // Subsonic clamps `size` before building it, the native handler maps
+    // `offset`/`limit` straight onto `BrowsePage::new`.
     assert_eq!(
         subsonic_titles("&type=alphabeticalByName&size=2&offset=2".into()).await,
         vec!["delta moon", "Gamma Sun"]
     );
-    // A zero-size page stays an empty container rather than a protocol error.
+    assert_eq!(
+        native_titles("sort=alphabeticalByName&limit=2&offset=2".into()).await,
+        vec!["delta moon", "Gamma Sun"]
+    );
+    assert_eq!(
+        native_titles("sort=newest&limit=1&offset=1".into()).await,
+        vec!["Gamma Sun"]
+    );
+
+    // An empty page is where the two surfaces deliberately diverge. Subsonic
+    // answered `size=0` with an empty container long before this change and
+    // still does, while the native contract is `1 <= limit <= 500` and rejects
+    // the bound like it rejects 501.
     let empty_page = subsonic_json(&router, "getAlbumList2", api_key, "&type=newest&size=0").await;
     let empty_page = &empty_page["subsonic-response"]["albumList2"];
     assert!(empty_page.is_object());
     assert!(empty_page.get("album").is_none());
+    for query in ["sort=newest&limit=0", "sort=newest&limit=501"] {
+        let out_of_bounds = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/albums?{query}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            out_of_bounds.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{query}"
+        );
+    }
 
     // An unknown ordering is refused on both surfaces rather than silently
     // falling back to the default.
@@ -3792,6 +3820,10 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
     );
 }
 
+/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
+/// it is not a compilation, so `album_artist_id` is populated and the artist
+/// drill-down has something to resolve.
+#[allow(clippy::too_many_arguments)]
 fn browse_input(
     index: usize,
     title: &str,
