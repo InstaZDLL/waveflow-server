@@ -347,9 +347,9 @@ async fn dispatch(
         // a key has no other way to learn which account it speaks for.
         // Advertising the extension without serving this told clients a lie.
         "tokenInfo" => Ok(Node::new("tokenInfo").attr("username", principal.username.clone())),
-        // Symfonium includes bookmarks in its initial sync even when the
-        // server does not expose audiobook progress. Returning the standard
-        // empty container keeps that optional capability non-destructive.
+        // Playback positions, one per account and track. Symfonium asks for
+        // them during its initial sync, and they are now read from and written
+        // to the catalogue rather than answered with an empty container.
         "getBookmarks" => bookmarks(state, principal).await,
         "createBookmark" => create_bookmark(state, principal, params).await,
         "deleteBookmark" => delete_bookmark(state, principal, params).await,

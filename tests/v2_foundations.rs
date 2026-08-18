@@ -4562,6 +4562,50 @@ async fn bookmarks_round_trip_sync_and_isolate_tenants() {
     assert_eq!(native["bookmarks"][0]["position_ms"], 250_000);
     assert_eq!(native["bookmarks"][0]["song"]["id"], track.to_string());
 
+    // A position before the start of the file is not a position. The service
+    // refuses it, and the facade reports the parameter error rather than an
+    // internal one.
+    assert!(matches!(
+        state.services.set_bookmark(owner, track, -1, None).await,
+        Err(ServiceError::Invalid)
+    ));
+    let negative = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/createBookmark.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={track}&position=-1"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(negative).await["subsonic-response"]["error"]["code"],
+        10
+    );
+
+    // XML is the default encoding and nests the entry as an element rather
+    // than as a JSON object, so it gets its own assertion.
+    let xml = router
+        .clone()
+        .oneshot(
+            Request::get(
+                "/rest/getBookmarks.view?u=bookmark-owner&p=bookmark-secret&v=1.16.1&c=golden",
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(xml.status(), StatusCode::OK);
+    let xml = body_text(xml).await;
+    assert!(xml.contains("<bookmark "));
+    assert!(xml.contains("username=\"bookmark-owner\""));
+    assert!(xml.contains("position=\"250000\""));
+    assert!(xml.contains("<entry "));
+    assert!(xml.contains("bookmarkPosition=\"250000\""));
+
     // Another account's track is not bookmarkable, and the refusal does not
     // confirm that the track exists.
     let foreign = router

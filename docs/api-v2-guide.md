@@ -205,9 +205,15 @@ also carries the decoded audio properties `sample_rate`, `channels` and
 structured `artists` (every credit in tag order, each `{id, name}`) and `genres`
 lists, plus the tag fields `musicbrainz_id` (the MusicBrainz recording
 identifier), `bpm`, `sort_name`, `comment`, the `isrc` list and the four
-`replay_gain_*` measurements, the `moods` list and `explicit_status`. The tag
-fields are empty until the library is rescanned after upgrading. `artist`/`artist_id` stay the display string and the primary credit, so a
-client that only wants one name needs no change.
+`replay_gain_*` measurements, the `moods` list and `explicit_status`.
+`artist`/`artist_id` stay the display string and the primary credit, so a client
+that only wants one name needs no change.
+
+Each tag field is filled by the first scan that runs after the release adding it,
+and reads empty before that — `moods` and `explicit_status` are the most recent,
+so a library scanned for the earlier tag fields still needs one more pass to
+carry those two.
+
 An `AlbumItem` carries `song_count` and `duration_ms` for the whole album, so a
 listing never has to load the tracks to size it, plus `is_compilation`,
 `play_count` and `last_played_at`.
