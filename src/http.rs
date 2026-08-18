@@ -1109,7 +1109,11 @@ pub async fn oauth_authorize(
 ) -> Result<Json<AuthorizeResponse>, ApiError> {
     // The browser session is the proof of identity; the consent screen is a
     // route of the embedded client, so this is a JSON call rather than a form.
-    let user = authenticated(&state, &headers, Access::Write).await?;
+    //
+    // Unrestricted rather than Write: this mints a credential, and the one it
+    // mints carries the account's whole authority. A `write` token reaching
+    // here came back holding a session that answered to `Admin`.
+    let user = authenticated(&state, &headers, Access::Unrestricted).await?;
     let redirect_to = state
         .services
         .authorize_native_client(
@@ -2237,11 +2241,30 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 pub(crate) enum Access {
     /// Reads the caller's own catalogue and user data.
     Read,
-    /// Writes on the caller's behalf: playlists, favorites, ratings, the queue,
-    /// bookmarks, shares, scrobbles, scans, and issuing an OAuth code.
+    /// Writes on the caller's behalf: playlists, favorites, ratings, the
+    /// queue, bookmarks, shares, scrobbles and scans.
     Write,
     /// Acts on the instance: accounts, libraries, memberships, credentials.
     Admin,
+    /// Mints a new credential from this one.
+    ///
+    /// Only an unrestricted credential may, because the credential minted is
+    /// itself unrestricted: a session issued through the authorization code
+    /// flow carries the account's whole authority, and nothing on the grant
+    /// records what asked for it. Letting a narrowed credential mint one is
+    /// how a token widens itself — `write` was enough to reach the code flow,
+    /// and the session that came back answered to `Admin`.
+    ///
+    /// This is a restriction, not a role: an ordinary account pairs its own
+    /// devices from its own session, which is what the flow is for. What it
+    /// refuses is doing so on behalf of a credential that was deliberately
+    /// narrowed.
+    ///
+    /// The durable fix is to carry the scopes through the grant, so a session
+    /// is never broader than what issued it. That needs a column on
+    /// `oauth_authorization` and on `session`; until then, this closes the
+    /// path without a migration.
+    Unrestricted,
 }
 
 /// The scope that admits the administrative routes.
@@ -2270,6 +2293,9 @@ impl Access {
             Self::Read => true,
             Self::Write => holds(WRITE_SCOPE) || holds(ADMIN_SCOPE),
             Self::Admin => holds(ADMIN_SCOPE),
+            // Unreachable: the early return above already answered for every
+            // empty list, and a non-empty one is by definition restricted.
+            Self::Unrestricted => false,
         }
     }
 }
@@ -2278,9 +2304,12 @@ impl Access {
 /// what the route is about to do.
 ///
 /// Both halves of administrative authority live here: an active administrator,
-/// on a credential that has not been narrowed away from it. Being an
-/// administrator does not widen a token, and a token cannot promote an
-/// ordinary account.
+/// on a credential that has not been narrowed away from it. A token cannot
+/// promote an ordinary account, and an administrator's token is not widened by
+/// whose account it belongs to.
+///
+/// It could widen itself, once. Minting a credential is [`Access::Unrestricted`]
+/// for that reason, and not merely a write.
 pub(crate) async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
