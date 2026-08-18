@@ -1,7 +1,8 @@
-# M4 — convergence native, client embarqué, PKCE : état & handoff
+# WaveFlow Server v2 — handoff final M0 à M6
 
-> Note de suivi mise à jour le 2026-08-18. **M4 est fermé** : le serveur, la
-> façade Subsonic et l'intégration WaveFlow Desktop ont tourné de bout en bout.
+> Note de suivi mise à jour le 2026-08-18. **Le plan M0 à M6 est fermé** : le
+> serveur, la façade Subsonic, l'intégration WaveFlow Desktop, la réconciliation
+> conservatrice et le client web final ont tourné de bout en bout.
 > Le socle est fusionné en `14aec76`, son complément en `6716df9` (PR #94), et
 > le contrat consommé par Desktop inclut désormais les artistes de piste et les
 > paroles. Voir
@@ -22,12 +23,14 @@
   en bout.
 - **M5 : fermé.** La réconciliation conservatrice a été validée puis fusionnée
   côté Desktop.
-- **M6 : implémenté.** Le client embarqué est désormais studio-nocturne,
-  bilingue, responsive et couvert par Playwright sur desktop et mobile.
+- **M6 : fermé.** Le client embarqué studio-nocturne, bilingue et responsive a
+  été fusionné par la PR #109 (`f77dd62`) après validation Playwright sur
+  desktop et mobile.
 
-`main` est vert. Les correctifs découverts pendant la revalidation client sont
-fusionnés, notamment le conteneur `getArtistInfo*` attendu par DSub, le lien
-`artist_id` sur les pistes et les paroles natives/OpenSubsonic.
+`main` contient désormais tous les jalons. Les correctifs découverts pendant la
+revalidation client sont fusionnés, notamment le conteneur `getArtistInfo*`
+attendu par DSub, le lien `artist_id` sur les pistes et les paroles
+natives/OpenSubsonic.
 
 ## Revalidation des clients Subsonic (2026-08-15)
 
@@ -62,6 +65,27 @@ sont également publiés pour les vues Desktop qui les consomment.
 
 Cette validation ferme la porte M4. Elle n'autorise pas à elle seule la création
 d'un tag ou d'une release : cette action reste soumise à une demande explicite.
+
+## Fermeture M5 et M6 (2026-08-18)
+
+**M5** est fusionné côté WaveFlow Desktop. La réconciliation reste strictement
+conservatrice conformément à la RFC-004 : hash complet vérifié et unique pour
+la liaison automatique, liens obsolètes bloqués après mutation du fichier,
+aucune correspondance floue par métadonnées et conversion de playlist atomique.
+
+**M6** est fusionné côté serveur par la PR #109. Le client embarqué apporte le
+design studio-nocturne, 14 thèmes localisés, français/anglais, pochettes
+authentifiées, Media Session, préchargement, raccourcis clavier, états complets
+et navigation accessible. Sa porte automatisée couvre :
+
+- **30 tests web** sous Vitest ;
+- **6 parcours Playwright** sur desktop et mobile, dont les règles WCAG A/AA ;
+- **49 tests Rust**, y compris le client compilé dans le binaire ;
+- Biome, TypeScript, build Vite, Clippy strict, CodeQL, Semgrep, DCO et les
+  runners Rust Linux/Windows.
+
+La PR a été fusionnée après le passage de l'ensemble de ces contrôles. Aucun tag
+n'a été créé.
 
 ## Validation sur bibliothèque réelle (2026-08-09)
 
@@ -238,11 +262,31 @@ compte, chaque faux réveil coûtant un `/changes` vide.
   n'existe pas avant. Les bumps front se testent ensemble : pris isolément,
   celui du plugin échoue au build.
 
-## Ce qui reste
+## Suite pour le prochain agent
 
-1. **Valider puis fusionner M6** après la CI et la revue de la PR.
-2. **Taguer une release uniquement sur demande explicite du user.** Les portes
-   M3 à M5 sont fermées, mais aucune demande de tag n'a été faite.
+Il ne reste plus de jalon fonctionnel dans le plan accepté. La prochaine tâche
+est une **préparation de release**, pas un M7 implicite :
+
+1. **Demander au user la version cible.** `Cargo.toml` porte encore
+   `2.0.0-beta.0`, alors que le plan associe M6 à v2.1. Ne choisir ni version ni
+   tag sans arbitrage explicite.
+2. **Préparer les changements de release dans une PR.** Mettre à jour la version
+   et son lockfile, rédiger les notes de release et ajuster uniquement les
+   métadonnées d'image/documentation réellement dépendantes de la version.
+3. **Rejouer la porte complète dans l'ordre d'embarquement :**
+   `bun --cwd=webapp install --frozen-lockfile`, lint, typecheck, build, Vitest,
+   installation Chromium, Playwright, puis formatage, Clippy, check et tests
+   Rust. Le build web doit toujours précéder `cargo build --release`.
+4. **Valider les artefacts candidats.** Construire le binaire release et
+   l'image Docker avec FFmpeg, démarrer une instance jetable, vérifier
+   `/health`, `/ready`, connexion, scan, lecture native/transcodée et cohérence
+   sauvegarde/restauration de SQLite avec la clé d'instance.
+5. **Présenter les résultats au user.** Créer le tag et la release GitHub
+   uniquement après sa demande explicite. Publier alors les artefacts et leurs
+   sommes de contrôle depuis le commit exact validé.
+
+Après cette release, le dépôt passe en maintenance : correctifs, compatibilité
+clients et évolutions explicitement demandées. Aucun jalon M7 n'est défini.
 
 ## Outillage front
 
