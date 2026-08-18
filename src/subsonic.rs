@@ -96,11 +96,17 @@ impl Node {
     }
 }
 
+/// A Subsonic protocol failure.
+///
+/// The transport status is deliberately not carried here. OpenSubsonic answers
+/// every request it could parse with HTTP 200 and reports the failure in the
+/// body, so a client reading `error/code` sees the same outcome whatever the
+/// transport did. Answering 401 or 404 instead let proxies and HTTP-level
+/// client error handling discard the body before the Subsonic layer read it.
 #[derive(Debug)]
 struct ProtocolError {
     code: i64,
     message: &'static str,
-    status: StatusCode,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -197,23 +203,6 @@ pub async fn handle(
     Path(raw_method): Path<String>,
     request: Request,
 ) -> Response {
-    let format_hint = request.uri().query().unwrap_or_default().to_owned();
-    match handle_inner(state, raw_method, request).await {
-        Ok(response) => response,
-        Err(error) => render_protocol(
-            error_node(error.code, error.message),
-            wants_json_query(&format_hint),
-            error.status,
-        ),
-    }
-}
-
-async fn handle_inner(
-    state: AppState,
-    raw_method: String,
-    request: Request,
-) -> Result<Response, ProtocolError> {
-    let method = raw_method.strip_suffix(".view").unwrap_or(&raw_method);
     let request_method = request.method().clone();
     let query = request.uri().query().unwrap_or_default().to_owned();
     let range = request
@@ -221,50 +210,110 @@ async fn handle_inner(
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let mut params = parse_pairs(&query)?;
-    if request_method == Method::POST {
-        let content_type = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
-        if !content_type.starts_with("application/x-www-form-urlencoded") {
-            return Err(invalid("POST requires application/x-www-form-urlencoded"));
+
+    // Format negotiation has to survive a failure, and under the `formPost`
+    // extension `f=json` arrives in the body rather than the query string.
+    // Collecting the parameters here, outside the fallible path, is what lets a
+    // POST that fails to authenticate still answer in the format it asked for
+    // instead of falling back to XML.
+    let mut wants_json = false;
+    let params = match parse_pairs(&query) {
+        Ok(mut params) => {
+            wants_json = json_requested(&params);
+            if request_method == Method::POST {
+                match form_params(request).await {
+                    Ok(body) => {
+                        params.0.extend(body.0);
+                        wants_json = json_requested(&params);
+                        Ok(params)
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                Ok(params)
+            }
         }
-        let body = to_bytes(request.into_body(), MAX_FORM_BYTES)
+        Err(error) => Err(error),
+    };
+
+    let outcome = match params {
+        Ok(params) => {
+            handle_inner(
+                &state,
+                &raw_method,
+                &request_method,
+                &params,
+                range.as_deref(),
+            )
             .await
-            .map_err(|_| invalid("Invalid form body"))?;
-        params.0.extend(
-            parse_pairs(std::str::from_utf8(&body).map_err(|_| invalid("Invalid form body"))?)?.0,
-        );
+        }
+        Err(error) => Err(error),
+    };
+    match outcome {
+        Ok(response) => response,
+        // A protocol failure is still an HTTP success: the Subsonic contract
+        // puts the outcome in the body, never in the status line.
+        Err(error) => render_protocol(error_node(error.code, error.message), wants_json),
     }
-    let wants_json = params.first("f").is_some_and(|value| value == "json");
-    if is_symfonium_discovery_probe(method, &request_method, &params) {
-        return Ok(render_protocol(ok_node(), wants_json, StatusCode::OK));
+}
+
+/// Parameters carried in a POST body, as the `formPost` extension allows in
+/// place of a query string too long for a URL.
+async fn form_params(request: Request) -> Result<Params, ProtocolError> {
+    // A media type is case-insensitive and may carry parameters, so the type is
+    // compared on its own rather than as a prefix of the raw header value:
+    // `Application/X-WWW-Form-Urlencoded; charset=UTF-8` is a conformant way to
+    // say the same thing, and `application/x-www-form-urlencodedish` is not.
+    let media_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if !media_type.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+        return Err(invalid("POST requires application/x-www-form-urlencoded"));
     }
-    let principal = authenticate(&state, &params).await?;
+    let body = to_bytes(request.into_body(), MAX_FORM_BYTES)
+        .await
+        .map_err(|_| invalid("Invalid form body"))?;
+    parse_pairs(std::str::from_utf8(&body).map_err(|_| invalid("Invalid form body"))?)
+}
+
+fn json_requested(params: &Params) -> bool {
+    params.first("f").is_some_and(|value| value == "json")
+}
+
+async fn handle_inner(
+    state: &AppState,
+    raw_method: &str,
+    request_method: &Method,
+    params: &Params,
+    range: Option<&str>,
+) -> Result<Response, ProtocolError> {
+    let method = raw_method.strip_suffix(".view").unwrap_or(raw_method);
+    let wants_json = json_requested(params);
+    if is_symfonium_discovery_probe(method, request_method, params) {
+        return Ok(render_protocol(ok_node(), wants_json));
+    }
+    let principal = authenticate(state, params).await?;
 
     if matches!(method, "stream" | "download") {
-        return media_response(
-            &state,
-            &principal,
-            &params,
-            method == "download",
-            range.as_deref(),
-        )
-        .await;
+        return media_response(state, &principal, params, method == "download", range).await;
     }
     if method == "getCoverArt" {
-        return cover_art_response(&state, &principal, &params).await;
+        return cover_art_response(state, &principal, params).await;
     }
 
-    let payload = dispatch(&state, &principal, method, &params).await?;
+    let payload = dispatch(state, &principal, method, params).await?;
     let root = if method == "ping" || empty_success_method(method) {
         ok_node()
     } else {
         ok_node().child(payload)
     };
-    Ok(render_protocol(root, wants_json, StatusCode::OK))
+    Ok(render_protocol(root, wants_json))
 }
 
 fn is_symfonium_discovery_probe(method: &str, request_method: &Method, params: &Params) -> bool {
@@ -291,6 +340,10 @@ async fn dispatch(
             .attr("email", "")
             .attr("licenseExpires", "2099-12-31T23:59:59Z")),
         "getOpenSubsonicExtensions" => Ok(open_subsonic_extensions()),
+        // The other half of the apiKeyAuthentication extension: a client holding
+        // a key has no other way to learn which account it speaks for.
+        // Advertising the extension without serving this told clients a lie.
+        "tokenInfo" => Ok(Node::new("tokenInfo").attr("username", principal.username.clone())),
         // Symfonium includes bookmarks in its initial sync even when the
         // server does not expose audiobook progress. Returning the standard
         // empty container keeps that optional capability non-destructive.
@@ -318,6 +371,13 @@ async fn dispatch(
         // blocking client error. The artist is still resolved tenant-side.
         "getArtistInfo" => artist_info(state, principal, params, "artistInfo").await,
         "getArtistInfo2" => artist_info(state, principal, params, "artistInfo2").await,
+        // Feishin and Symfonium call these as soon as an album page opens. As
+        // with getArtistInfo, WaveFlow enriches nothing yet, so the standard
+        // empty container is the honest answer — and it still resolves the
+        // album tenant-side, so a foreign id is indistinguishable from a
+        // missing one.
+        "getAlbumInfo" => album_info(state, principal, params, "albumInfo").await,
+        "getAlbumInfo2" => album_info(state, principal, params, "albumInfo2").await,
         "getAlbum" => get_album(state, principal, params).await,
         "getSong" => get_song(state, principal, params).await,
         "getLyrics" => get_lyrics(state, principal, params).await,
@@ -356,7 +416,6 @@ async fn dispatch(
         _ => Err(ProtocolError {
             code: 0,
             message: "Requested method is not implemented",
-            status: StatusCode::NOT_FOUND,
         }),
     }
 }
@@ -371,7 +430,6 @@ async fn authenticate(state: &AppState, params: &Params) -> Result<Principal, Pr
         return Err(ProtocolError {
             code: 40,
             message: "Wrong username or password",
-            status: StatusCode::TOO_MANY_REQUESTS,
         });
     }
 
@@ -562,6 +620,20 @@ async fn artist_info(
     state
         .services
         .artist(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new(container))
+}
+
+async fn album_info(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+    container: &'static str,
+) -> Result<Node, ProtocolError> {
+    state
+        .services
+        .album(principal.id, params.uuid("id")?)
         .await
         .map_err(service_protocol)?;
     Ok(Node::new(container))
@@ -981,7 +1053,11 @@ async fn playlists(state: &AppState, principal: &Principal) -> Result<Node, Prot
         .playlists(principal.id)
         .await
         .map_err(internal)?;
-    Ok(Node::new("playlists").children(playlists.iter().map(playlist_node)))
+    Ok(Node::new("playlists").children(
+        playlists
+            .iter()
+            .map(|playlist| playlist_node(playlist, &principal.username)),
+    ))
 }
 
 async fn get_playlist(
@@ -994,7 +1070,7 @@ async fn get_playlist(
         .playlist(principal.id, params.uuid("id")?)
         .await
         .map_err(service_protocol)?;
-    Ok(playlist_node(&playlist).children(
+    Ok(playlist_node(&playlist, &principal.username).children(
         playlist
             .songs
             .iter()
@@ -1036,7 +1112,7 @@ async fn create_playlist(
             .await
             .map_err(service_protocol)?
     };
-    Ok(playlist_node(&playlist).children(
+    Ok(playlist_node(&playlist, &principal.username).children(
         playlist
             .songs
             .iter()
@@ -1063,7 +1139,7 @@ async fn update_playlist(
         )
         .await
         .map_err(service_protocol)?;
-    Ok(playlist_node(&playlist))
+    Ok(playlist_node(&playlist, &principal.username))
 }
 
 async fn delete_playlist(
@@ -1360,7 +1436,7 @@ async fn shares(
                 .await
                 .map_err(internal)?
                 .iter()
-                .map(|share| share_node(share, state.public_url.as_deref())),
+                .map(|share| share_node(share, &principal.username, state.public_url.as_deref())),
         )),
         "createShare" => {
             let share = state
@@ -1373,7 +1449,11 @@ async fn shares(
                 )
                 .await
                 .map_err(service_protocol)?;
-            Ok(Node::new("shares").child(share_node(&share, state.public_url.as_deref())))
+            Ok(Node::new("shares").child(share_node(
+                &share,
+                &principal.username,
+                state.public_url.as_deref(),
+            )))
         }
         "updateShare" => {
             let share = state
@@ -1387,7 +1467,11 @@ async fn shares(
                 )
                 .await
                 .map_err(service_protocol)?;
-            Ok(Node::new("shares").child(share_node(&share, state.public_url.as_deref())))
+            Ok(Node::new("shares").child(share_node(
+                &share,
+                &principal.username,
+                state.public_url.as_deref(),
+            )))
         }
         "deleteShare" => {
             state
@@ -1411,7 +1495,6 @@ async fn admin(
         return Err(ProtocolError {
             code: 50,
             message: "User is not authorized for the given operation",
-            status: StatusCode::FORBIDDEN,
         });
     }
     match method {
@@ -1569,12 +1652,15 @@ fn song_node(song: &SongItem) -> Node {
         .attr("created", iso_time(song.created_at))
 }
 
-fn playlist_node(playlist: &PlaylistItem) -> Node {
+/// `owner` is the caller: playlist reads are already scoped to their owner, so
+/// there is no other name this could carry. Leaving it empty made Feishin
+/// treat every playlist as someone else's and refuse to edit it.
+fn playlist_node(playlist: &PlaylistItem, owner: &str) -> Node {
     Node::new("playlist")
         .attr("id", playlist.id.to_string())
         .attr("name", playlist.name.clone())
         .maybe_attr("comment", playlist.comment.clone())
-        .attr("owner", "")
+        .attr("owner", owner)
         .attr("public", playlist.public)
         .attr("songCount", playlist.songs.len() as i64)
         .attr(
@@ -1612,7 +1698,7 @@ fn user_node(user: &crate::services::UserItem) -> Node {
         )
 }
 
-fn share_node(share: &crate::services::ShareItem, public_url: Option<&str>) -> Node {
+fn share_node(share: &crate::services::ShareItem, owner: &str, public_url: Option<&str>) -> Node {
     let url = share.url_token.as_ref().map(|token| {
         let path = format!("/share/{token}");
         external_url(public_url, &path)
@@ -1622,7 +1708,7 @@ fn share_node(share: &crate::services::ShareItem, public_url: Option<&str>) -> N
         .maybe_attr("url", url)
         .maybe_attr("description", share.description.clone())
         .maybe_attr("expires", share.expires_at.map(iso_time))
-        .attr("username", "")
+        .attr("username", owner)
         .attr("created", iso_time(share.created_at))
         .attr("visitCount", share.visit_count)
         .children(
@@ -1662,19 +1748,19 @@ fn error_node(code: i64, message: &'static str) -> Node {
         )
 }
 
-fn render_protocol(node: Node, json: bool, status: StatusCode) -> Response {
+fn render_protocol(node: Node, json: bool) -> Response {
     if json {
         let mut root = Map::new();
         root.insert(node.name.clone(), node_json(&node));
         (
-            status,
+            StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
             Value::Object(root).to_string(),
         )
             .into_response()
     } else {
         (
-            status,
+            StatusCode::OK,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
             node_xml(&node),
         )
@@ -1934,13 +2020,6 @@ fn parse_pairs(raw: &str) -> Result<Params, ProtocolError> {
         .map_err(|_| invalid("Invalid parameters"))
 }
 
-fn wants_json_query(query: &str) -> bool {
-    parse_pairs(query)
-        .ok()
-        .and_then(|params| params.first("f").map(str::to_owned))
-        .as_deref()
-        == Some("json")
-}
 fn content_type(suffix: &str) -> &'static str {
     match suffix {
         "mp3" => "audio/mpeg",
@@ -1996,28 +2075,21 @@ fn auth_error() -> ProtocolError {
     ProtocolError {
         code: 40,
         message: "Wrong username or password",
-        status: StatusCode::UNAUTHORIZED,
     }
 }
 fn missing() -> ProtocolError {
     ProtocolError {
         code: 10,
         message: "Required parameter is missing",
-        status: StatusCode::BAD_REQUEST,
     }
 }
 fn invalid(message: &'static str) -> ProtocolError {
-    ProtocolError {
-        code: 10,
-        message,
-        status: StatusCode::BAD_REQUEST,
-    }
+    ProtocolError { code: 10, message }
 }
 fn not_found() -> ProtocolError {
     ProtocolError {
         code: 70,
         message: "The requested data was not found",
-        status: StatusCode::NOT_FOUND,
     }
 }
 fn internal(error: impl std::fmt::Display) -> ProtocolError {
@@ -2025,7 +2097,6 @@ fn internal(error: impl std::fmt::Display) -> ProtocolError {
     ProtocolError {
         code: 0,
         message: "Internal server error",
-        status: StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 fn service_protocol(error: ServiceError) -> ProtocolError {
@@ -2034,13 +2105,11 @@ fn service_protocol(error: ServiceError) -> ProtocolError {
         ServiceError::Forbidden => ProtocolError {
             code: 50,
             message: "User is not authorized for the given operation",
-            status: StatusCode::FORBIDDEN,
         },
         ServiceError::Invalid => invalid("Invalid parameters"),
         ServiceError::Conflict => ProtocolError {
             code: 0,
             message: "Conflict",
-            status: StatusCode::CONFLICT,
         },
         other => internal(other),
     }
