@@ -117,7 +117,8 @@ wire compatibility, not encryption. Use HTTPS for every authentication mode.
 
 Authentication failures use Subsonic error code `40` without distinguishing an
 unknown, disabled or incorrectly authenticated user. Repeated failures are rate
-limited. WaveFlow request tracing records only the path, never credentials or
+limited and reported with that same code, so a throttled client sees exactly
+what a wrong password produces. WaveFlow request tracing records only the path, never credentials or
 query parameters; clients should still prefer form POST so their own URL logs
 do not retain secrets.
 
@@ -212,14 +213,14 @@ and completed cached responses support Range; live transcodes are chunked.
 
 ## Implemented methods
 
-Only the following methods are dispatched. Unknown methods return HTTP `404`
-with Subsonic error code `0`.
+Only the following methods are dispatched. Unknown methods answer HTTP `200`
+with Subsonic error code `0`, like every other protocol failure.
 
 | Group | Methods | Notes |
 |---|---|---|
-| System | `ping`, `getLicense`, `getOpenSubsonicExtensions` | Extensions are listed below. |
+| System | `ping`, `getLicense`, `getOpenSubsonicExtensions`, `tokenInfo` | Extensions are listed below. `tokenInfo` returns the username the presented credential resolves to. |
 | Catalogue roots | `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getGenres`, `getMusicDirectory` | IDs and `musicFolderId` values are UUIDs. |
-| Artist information | `getArtistInfo`, `getArtistInfo2` | Validates tenant access and returns the standard empty container; biography enrichment is not implemented. |
+| Artist and album information | `getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the standard empty container; enrichment is not implemented. |
 | Album discovery | `getAlbumList`, `getAlbumList2`, `getRandomSongs`, `getSongsByGenre` | Both legacy and ID3 album-list containers are supported. |
 | Search | `search3` | Independent artist, album and song pagination. |
 | Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. |
@@ -247,7 +248,7 @@ additions.
 | Extension | Version | Behavior |
 |---|---:|---|
 | `formPost` | 1 | Form POST requests are accepted. |
-| `apiKeyAuthentication` | 1 | `apiKey` can replace `u/p` or `u/t/s`. |
+| `apiKeyAuthentication` | 1 | `apiKey` can replace `u/p` or `u/t/s`; `tokenInfo` resolves it to a username. |
 | `transcodeOffset` | 1 | `timeOffset` seeks transcoded playback. |
 | `songLyrics` | 1 | Plain and line-synchronized lyrics by song ID. |
 
@@ -267,9 +268,14 @@ and `message`. Important codes include:
 | 50 | User lacks the required role. |
 | 70 | Requested resource is missing or inaccessible. |
 
-Clients must inspect the envelope `status`, not only the HTTP status. Resource
-lookups are tenant-scoped; code `70` does not reveal whether a foreign UUID
-exists.
+Every protocol answer is HTTP `200`, success and failure alike: the outcome
+lives in the envelope `status` and, when it failed, in `error/code`. Do not
+branch on the HTTP status — it carries no protocol meaning here. Byte-range
+responses on `stream` and `download` are the exception and still answer `206`
+and `416`, because those are transport facts rather than protocol outcomes.
+Resource lookups are tenant-scoped; code `70` does not reveal whether a foreign
+UUID exists. Authentication throttling is reported as code `40`, identical to a
+wrong password.
 
 ## Browser-hosted Subsonic clients
 
