@@ -579,32 +579,17 @@ async fn snapshot(
 
 /// Rescans every library the account can reach.
 ///
-/// Subsonic has no library parameter here: the method rescans "the media
-/// library", so it fans out over `libraries_for_user`. Who may scan a given
-/// library is deliberately the same question the native
-/// `POST /api/v2/libraries/{id}/scans` asks — membership — so the two
-/// surfaces cannot disagree about it.
+/// Subsonic has no library parameter here, so this fans out. Both the
+/// authorization and the queuing live in
+/// [`crate::services::DomainServices::start_visible_scans`], so this facade
+/// and the native per-library endpoint cannot disagree about who may scan
+/// what.
 async fn start_scan(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {
-    let libraries = state
-        .db
-        .libraries_for_user(principal.id)
+    state
+        .services
+        .start_visible_scans(principal.id)
         .await
-        .map_err(internal)?;
-    for access in libraries {
-        let Some(library) = state
-            .db
-            .library_for_user(principal.id, access.id)
-            .await
-            .map_err(internal)?
-        else {
-            continue;
-        };
-        state
-            .scanner
-            .trigger(library, Some(principal.id), "manual")
-            .await
-            .map_err(internal)?;
-    }
+        .map_err(service_protocol)?;
     // The protocol answers a start with the resulting status, so a client
     // that only calls startScan still learns whether anything is running.
     scan_status(state, principal).await
