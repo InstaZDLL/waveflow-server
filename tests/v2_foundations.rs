@@ -4054,6 +4054,188 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert_eq!(native["genres"], serde_json::json!(["Jazz", "Rock"]));
 }
 
+/// The facade could not trigger a rescan the native API has always been able to
+/// trigger, and answered a not-implemented error for surfaces clients open by
+/// default. Both gaps are closed without inventing data.
+#[tokio::test]
+async fn facade_controls_scans_and_answers_its_remaining_methods() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_asymmetry-key";
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("asym-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"asym-secret").unwrap(),
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let outsider = state
+        .db
+        .create_account("asym-outsider", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+
+    let seed = |account: Uuid, name: &'static str, titles: Vec<&'static str>| {
+        let state = state.clone();
+        let root = config.data_dir.join(name);
+        async move {
+            std::fs::create_dir_all(&root).unwrap();
+            let library = state
+                .db
+                .create_library(
+                    account,
+                    name,
+                    &std::fs::canonicalize(&root).unwrap(),
+                    LibraryVisibility::Private,
+                    now_ms(),
+                )
+                .await
+                .unwrap();
+            let scan = state
+                .db
+                .create_scan_job(library, Some(account), "manual")
+                .await
+                .unwrap();
+            state
+                .db
+                .start_scan_job(scan, titles.len() as i64)
+                .await
+                .unwrap();
+            for (index, title) in titles.into_iter().enumerate() {
+                let mut input = browse_input(
+                    index + 120,
+                    title,
+                    "Asym Album",
+                    "Asym Artist",
+                    Some(1),
+                    Some(1),
+                );
+                input.relative_path = format!("{name}-{index}.flac");
+                input.quick_hash = format!("{:064x}", index + 7_000 + name.len() * 100);
+                input.full_hash = format!("{:064x}", index + 8_000 + name.len() * 100);
+                state
+                    .db
+                    .apply_catalog_track(library, scan, &input, None, false)
+                    .await
+                    .unwrap();
+            }
+            state.db.finish_scan_job(scan, 0).await.unwrap();
+            library
+        }
+    };
+    let library = seed(owner, "asym-own", vec!["One", "Two", "Three"]).await;
+    seed(outsider, "asym-foreign", vec!["Hidden"]).await;
+
+    let router = waveflow_server::app(&config, state.clone());
+
+    // Idle, and counting only what this account can reach: the outsider's
+    // fourth track must not appear in the owner's total.
+    let status = subsonic_json(&router, "getScanStatus", api_key, "").await;
+    let status = &status["subsonic-response"]["scanStatus"];
+    assert_eq!(status["scanning"], false);
+    assert_eq!(status["count"], 3);
+
+    // Container-only aliases for browse-by-folder clients. The payload is the
+    // ID3 one; only the wrapper name differs, as for getAlbumList.
+    let search2 = subsonic_json(&router, "search2", api_key, "&query=One&songCount=10").await;
+    assert!(search2["subsonic-response"]["searchResult2"]["song"].is_array());
+    assert!(search2["subsonic-response"].get("searchResult3").is_none());
+    let starred = subsonic_json(&router, "getStarred", api_key, "").await;
+    assert!(starred["subsonic-response"]["starred"].is_object());
+    assert!(starred["subsonic-response"].get("starred2").is_none());
+
+    // Surfaces WaveFlow does not compute answer the standard empty container
+    // rather than a not-implemented error.
+    for (method, container) in [
+        ("getTopSongs", "topSongs"),
+        ("getSimilarSongs", "similarSongs"),
+        ("getSimilarSongs2", "similarSongs2"),
+        ("getInternetRadioStations", "internetRadioStations"),
+    ] {
+        let response = subsonic_json(&router, method, api_key, "&id=whatever&count=5").await;
+        assert_eq!(response["subsonic-response"]["status"], "ok", "{method}");
+        assert_eq!(
+            response["subsonic-response"][container],
+            serde_json::json!({}),
+            "{method}"
+        );
+    }
+
+    // No avatars are stored, so the data is missing rather than the method.
+    let avatar = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getAvatar.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&username=asym-owner"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(avatar.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(avatar).await["subsonic-response"]["error"]["code"],
+        70
+    );
+
+    // A method that really is unimplemented still says so.
+    let unknown = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getPodcasts.view?apiKey={api_key}&v=1.16.1&c=golden&f=json"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(unknown).await["subsonic-response"]["error"]["code"],
+        0
+    );
+
+    // Starting a scan comes last: it runs a real scan over a library root that
+    // holds no files, which marks the fabricated tracks unavailable. Every
+    // assertion above reads the catalogue and would race it.
+    //
+    // The response carries the same shape as getScanStatus, so a client that
+    // only calls startScan still learns the state.
+    let started = subsonic_json(&router, "startScan", api_key, "").await;
+    let started = &started["subsonic-response"]["scanStatus"];
+    assert!(started["scanning"].is_boolean());
+    assert!(started["count"].is_number());
+    // The work is real: a job now exists for the owner's library beyond the one
+    // the fixture created.
+    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_job WHERE library_id = ?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(queued >= 2, "startScan queued nothing: {queued} jobs");
+    let foreign_jobs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM scan_job sj JOIN library l ON l.id = sj.library_id \
+         WHERE l.name = 'asym-foreign'",
+    )
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        foreign_jobs, 1,
+        "startScan reached a library the account cannot see"
+    );
+}
+
 /// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
 /// it is not a compilation, so `album_artist_id` is populated and the artist
 /// drill-down has something to resolve.
