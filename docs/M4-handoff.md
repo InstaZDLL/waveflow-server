@@ -1,6 +1,6 @@
 # M4 — convergence native, client embarqué, PKCE : état & handoff
 
-> Note de suivi mise à jour le 2026-08-17. **M4 est fermé** : le serveur, la
+> Note de suivi mise à jour le 2026-08-18. **M4 est fermé** : le serveur, la
 > façade Subsonic et l'intégration WaveFlow Desktop ont tourné de bout en bout.
 > Le socle est fusionné en `14aec76`, son complément en `6716df9` (PR #94), et
 > le contrat consommé par Desktop inclut désormais les artistes de piste et les
@@ -20,7 +20,10 @@
   complément en `6716df9`, `web/` retiré par la PR #84 après extraction de ses
   design tokens — et l'intégration Desktop `/api/v2` + PKCE est validée de bout
   en bout.
-- **M5 : ouvert au stade RFC. M6 : non commencé.**
+- **M5 : fermé.** La réconciliation conservatrice a été validée puis fusionnée
+  côté Desktop.
+- **M6 : implémenté.** Le client embarqué est désormais studio-nocturne,
+  bilingue, responsive et couvert par Playwright sur desktop et mobile.
 
 `main` est vert. Les correctifs découverts pendant la revalidation client sont
 fusionnés, notamment le conteneur `getArtistInfo*` attendu par DSub, le lien
@@ -106,8 +109,11 @@ POST /api/v2/tracks/{track_id}/stream-ticket · GET /api/v2/stream/{ticket}
 dans le binaire par `rust_embed`. Connexion, albums, artistes, recherche,
 favoris, playlists, file d'attente persistante, partages, lecture, écran de
 consentement OAuth et administration des bibliothèques, scans, comptes et
-identifiants Subsonic. Le lecteur n'est monté qu'après authentification afin de
-charger la file du bon compte à chaque nouvelle session.
+identifiants Subsonic. M6 ajoute les pochettes authentifiées, 14 thèmes,
+français/anglais, Media Session, préchargement, raccourcis clavier, états
+d'erreur complets et navigation responsive. Le lecteur n'est monté qu'après
+authentification afin de charger la file du bon compte à chaque nouvelle
+session.
 
 **Retrait de la v1** : `src/api/*`, `db.rs`, `apply.rs`, `sync.rs`, les
 migrations PostgreSQL et 21 fichiers de tests. Tout était déjà mort (non déclaré
@@ -234,20 +240,17 @@ compte, chaque faux réveil coûtant un `/changes` vide.
 
 ## Ce qui reste
 
-1. **M5** : faire accepter le RFC de réconciliation locale/serveur avant toute
-   implémentation. Le socle proposé lie automatiquement sur hash complet exact
-   et unique seulement ; aucun rapprochement flou n'est autorisé.
-2. **M6** : finition web studio-nocturne, bilingue, WCAG AA, Playwright, après
-   la porte M5.
-3. **Taguer une release uniquement sur demande explicite du user.** Les portes
-   M3 et M4 sont fermées, mais aucune demande de tag n'a été faite.
+1. **Valider puis fusionner M6** après la CI et la revue de la PR.
+2. **Taguer une release uniquement sur demande explicite du user.** Les portes
+   M3 à M5 sont fermées, mais aucune demande de tag n'a été faite.
 
 ## Outillage front
 
 `webapp/` utilise **Biome** (lint + format en une passe) plutôt qu'eslint +
 prettier : `bun run lint`, `bun run format`. La suite vitest tourne sous jsdom,
 nécessaire aux design tokens qui écrivent sur `document.documentElement`. La CI
-web lint, construit et teste. La chaîne est sur Vite 8, TypeScript 7 et React 19.
+web lint, construit, lance Vitest puis vérifie les parcours desktop/mobile sous
+Chromium avec Playwright. La chaîne est sur Vite 8, TypeScript 7 et React 19.
 
 `webapp/src/vite-env.d.ts` déclare `/// <reference types="vite/client" />`. Ce
 fichier n'est pas décoratif : sans lui, TypeScript 7 rejette l'import
@@ -258,16 +261,11 @@ avant `}, deps)`**, pas avant `useEffect` : la règle se déclenche sur
 l'argument de dépendances, et déplacée plus haut elle ne supprime plus rien —
 vérifié.
 
-## Dettes identifiées, non traitées
-
-- `webapp/` n'a pas de test de **rendu** ni de parcours navigateur. La suite
-  couvre désormais les gardes de redirection, les design tokens, la pagination
-  et le rafraîchissement de session — mais pas les composants. Un smoke test
-  manuel sur installation vide valide setup, session, rôles, playlists, favoris,
-  queue, partages, bibliothèques, scans, comptes et rotation d'identifiant
-  Subsonic. La CI web lint (Biome), construit et lance Vitest.
-
 ## Dettes fermées, à ne pas rouvrir par erreur
+
+- **Le rendu web possède une porte navigateur.** Playwright vérifie le shell,
+  la navigation clavier, les préférences, la langue, la page 404 et l'absence
+  de débordement horizontal sur les formats desktop et mobile.
 
 - **La session navigateur ne dépend plus de `localStorage`** : access token
   court en mémoire, refresh rotatif dans un cookie HttpOnly/SameSite, contrôle

@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import {
+  artworkUrl,
   formatDuration,
   getQueue,
   type Song,
@@ -17,12 +18,16 @@ import {
   scrobble,
   streamUrl,
 } from "./api";
+import { Artwork } from "./artwork";
+import { useI18n } from "./i18n";
+import { Icon } from "./icons";
 
 type PlayerState = {
   queue: Song[];
   index: number;
   current: Song | null;
   playing: boolean;
+  error: boolean;
   play: (queue: Song[], index: number) => void;
   remove: (index: number) => void;
   clear: () => void;
@@ -40,6 +45,20 @@ type PlayerProgress = {
 const PlayerContext = createContext<PlayerState | null>(null);
 const PlayerProgressContext = createContext<PlayerProgress | null>(null);
 
+export function setDirectionalMediaSessionHandlers(
+  mediaSession: Pick<MediaSession, "setActionHandler">,
+  element: Pick<HTMLAudioElement, "paused">,
+  play: () => void,
+  pause: () => void,
+): void {
+  mediaSession.setActionHandler("play", () => {
+    if (element.paused) play();
+  });
+  mediaSession.setActionHandler("pause", () => {
+    if (!element.paused) pause();
+  });
+}
+
 export function usePlayer(): PlayerState {
   const player = useContext(PlayerContext);
   if (!player) throw new Error("usePlayer requires PlayerProvider");
@@ -53,12 +72,14 @@ function usePlayerProgress(): PlayerProgress {
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const audio = useRef<HTMLAudioElement | null>(null);
   const [queue, setQueue] = useState<Song[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [playbackError, setPlaybackError] = useState(false);
   // A completed listen is reported once per track, when playback passes half
   // of it — the same threshold the Subsonic clients use for a submission.
   const submitted = useRef<string | null>(null);
@@ -75,6 +96,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const autoplay = useRef(false);
   const suppressedPauseEvents = useRef(0);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const streamUrls = useRef(
+    new Map<string, { url: string; expiresAt: number }>(),
+  );
+  const preloader = useRef<HTMLAudioElement | null>(null);
 
   const current = queue[index] ?? null;
   queueLength.current = queue.length;
@@ -91,6 +116,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  const resolveStream = useCallback(async (trackId: string) => {
+    const cached = streamUrls.current.get(trackId);
+    if (cached && cached.expiresAt > Date.now() + 5_000) return cached.url;
+    const ticket = await streamUrl(trackId);
+    streamUrls.current.set(trackId, ticket);
+    return ticket.url;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +150,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!audio.current) audio.current = new Audio();
+    if (!audio.current) {
+      audio.current = new Audio();
+      audio.current.preload = "auto";
+    }
     const element = audio.current;
     const onTime = () => setPosition(element.currentTime);
     const onDuration = () => setDuration(element.duration || 0);
@@ -175,6 +211,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     positionRef.current = resumeSeconds;
     setPosition(resumeSeconds);
     setDuration(0);
+    setPlaybackError(false);
     if (!element) return;
     suppressedPauseEvents.current = 2;
     element.pause();
@@ -185,9 +222,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     submitted.current = null;
     const shouldAutoplay = autoplay.current;
     autoplay.current = false;
+    const onError = () => {
+      if (cancelled) return;
+      streamUrls.current.delete(current.id);
+      element.pause();
+      setPlaying(false);
+      setPlaybackError(true);
+    };
+    element.addEventListener("error", onError);
     void (async () => {
       try {
-        const url = await streamUrl(current.id);
+        const url = await resolveStream(current.id);
         if (cancelled) return;
         element.src = url;
         if (resumeSeconds > 0) {
@@ -201,13 +246,37 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
       } catch {
-        if (!cancelled) setPlaying(false);
+        streamUrls.current.delete(current.id);
+        if (!cancelled) {
+          setPlaying(false);
+          setPlaybackError(true);
+        }
       }
     })();
     return () => {
       cancelled = true;
+      element.removeEventListener("error", onError);
     };
-  }, [current]);
+  }, [current, resolveStream]);
+
+  useEffect(() => {
+    const upcoming = queue[index + 1];
+    if (!upcoming) return;
+    let cancelled = false;
+    void resolveStream(upcoming.id)
+      .then((url) => {
+        if (cancelled) return;
+        const element = preloader.current ?? new Audio();
+        preloader.current = element;
+        element.preload = "metadata";
+        element.src = url;
+        element.load();
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [queue, index, resolveStream]);
 
   useEffect(() => {
     if (!current || duration <= 0) return;
@@ -249,16 +318,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [queue, current, hydrated, persistQueue]);
 
-  const toggle = useCallback(() => {
+  const startPlayback = useCallback(() => {
     const element = audio.current;
-    if (!element || !current) return;
-    if (element.paused) {
-      void element
-        .play()
-        .then(() => scrobble(current.id, false))
-        .catch(() => undefined);
-    } else element.pause();
+    if (!element || !current || !element.paused) return;
+    void element
+      .play()
+      .then(() => scrobble(current.id, false))
+      .catch(() => undefined);
   }, [current]);
+
+  const pausePlayback = useCallback(() => {
+    const element = audio.current;
+    if (element && !element.paused) element.pause();
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (audio.current?.paused) startPlayback();
+    else pausePlayback();
+  }, [pausePlayback, startPlayback]);
 
   const next = useCallback(() => {
     localMutation.current = true;
@@ -278,12 +355,110 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const seek = useCallback(
+    (seconds: number) => {
+      const element = audio.current;
+      if (!element) return;
+      localMutation.current = true;
+      const bounded = Math.max(
+        0,
+        Math.min(seconds, element.duration || seconds),
+      );
+      element.currentTime = bounded;
+      positionRef.current = bounded;
+      setPosition(bounded);
+      const songs = queueRef.current;
+      const selected = songs[indexRef.current] ?? null;
+      persistQueue(songs, selected?.id ?? null, Math.round(bounded * 1000));
+    },
+    [persistQueue],
+  );
+
+  useEffect(() => {
+    const mediaSession = navigator.mediaSession;
+    const element = audio.current;
+    if (!mediaSession || !element) return;
+    setDirectionalMediaSessionHandlers(
+      mediaSession,
+      element,
+      startPlayback,
+      pausePlayback,
+    );
+    mediaSession.setActionHandler("previoustrack", previous);
+    mediaSession.setActionHandler("nexttrack", next);
+    mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime !== undefined) seek(details.seekTime);
+    });
+    return () => {
+      for (const action of [
+        "play",
+        "pause",
+        "previoustrack",
+        "nexttrack",
+        "seekto",
+      ] as MediaSessionAction[]) {
+        mediaSession.setActionHandler(action, null);
+      }
+    };
+  }, [next, pausePlayback, previous, seek, startPlayback]);
+
+  useEffect(() => {
+    if (!navigator.mediaSession) return;
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    if (!current) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+    let cancelled = false;
+    void artworkUrl(current.artwork_hash).then((url) => {
+      if (cancelled) return;
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: current.title,
+        artist: current.artist ?? t("common.unknownArtist"),
+        album: current.album ?? "WaveFlow",
+        artwork: url ? [{ src: url }] : [],
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [current, playing, t]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
+      ) {
+        return;
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggle();
+      } else if (event.code === "ArrowRight") {
+        event.preventDefault();
+        seek(positionRef.current + 5);
+      } else if (event.code === "ArrowLeft") {
+        event.preventDefault();
+        seek(positionRef.current - 5);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [seek, toggle]);
+
   const value = useMemo<PlayerState>(
     () => ({
       queue,
       index,
       current,
       playing,
+      error: playbackError,
       play,
       remove: (at: number) => {
         localMutation.current = true;
@@ -318,34 +493,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       toggle,
       next,
       previous,
-      seek: (seconds: number) => {
-        const element = audio.current;
-        if (element) {
-          localMutation.current = true;
-          element.currentTime = seconds;
-          positionRef.current = seconds;
-          const songs = queueRef.current;
-          const selected = songs[indexRef.current] ?? null;
-          // Queue the seek itself: it must not depend on a later pause event,
-          // which may never arrive before the page is closed.
-          persistQueue(
-            songs,
-            selected?.id ?? null,
-            Math.round(positionRef.current * 1000),
-          );
-        }
-      },
+      seek,
     }),
     [
       queue,
       index,
       current,
       playing,
+      playbackError,
       play,
       toggle,
       next,
       previous,
       persistQueue,
+      seek,
     ],
   );
 
@@ -366,6 +527,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 export function PlayerBar() {
   const player = usePlayer();
   const progress = usePlayerProgress();
+  const { t } = useI18n();
   const [scrubbing, setScrubbing] = useState<number | null>(null);
   if (!player.current) return null;
   const commit = (value: number) => {
@@ -374,27 +536,37 @@ export function PlayerBar() {
   };
   return (
     <footer className="player">
+      <Artwork
+        artworkId={player.current.artwork_hash}
+        title={player.current.title}
+        className="player-cover"
+      />
       <div className="player-track">
         <strong>{player.current.title}</strong>
-        <span>{player.current.artist ?? "Unknown artist"}</span>
+        <span>{player.current.artist ?? t("common.unknownArtist")}</span>
+        {player.error ? <small role="alert">{t("player.error")}</small> : null}
       </div>
       <div className="player-controls">
         <button
           type="button"
           onClick={player.previous}
-          aria-label="Previous track"
+          aria-label={t("player.previous")}
         >
-          Previous
+          <Icon name="previous" />
         </button>
         <button
           type="button"
           onClick={player.toggle}
-          aria-label={player.playing ? "Pause" : "Play"}
+          aria-label={player.playing ? t("player.pause") : t("player.play")}
         >
-          {player.playing ? "Pause" : "Play"}
+          <Icon name={player.playing ? "pause" : "play"} size={24} />
         </button>
-        <button type="button" onClick={player.next} aria-label="Next track">
-          Next
+        <button
+          type="button"
+          onClick={player.next}
+          aria-label={t("player.next")}
+        >
+          <Icon name="next" />
         </button>
       </div>
       <div className="player-progress">
@@ -409,7 +581,7 @@ export function PlayerBar() {
           onMouseUp={(event) => commit(Number(event.currentTarget.value))}
           onTouchEnd={(event) => commit(Number(event.currentTarget.value))}
           onKeyUp={(event) => commit(Number(event.currentTarget.value))}
-          aria-label="Seek"
+          aria-label={t("player.seek")}
         />
         <span>{formatDuration(progress.duration * 1000)}</span>
       </div>
