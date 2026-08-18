@@ -1637,6 +1637,29 @@ fn song_node(song: &SongItem) -> Node {
                 .iter()
                 .map(|genre| Node::new("genres").attr("name", genre.clone())),
         )
+        .attr(
+            "musicBrainzId",
+            song.musicbrainz_id.clone().unwrap_or_default(),
+        )
+        .attr("bpm", song.bpm.unwrap_or_default())
+        .attr("sortName", song.sort_name.clone().unwrap_or_default())
+        .attr("comment", song.comment.clone().unwrap_or_default())
+        .children(
+            song.isrc
+                .iter()
+                .map(|isrc| Node::new("isrc").text(isrc.clone())),
+        )
+        // ReplayGain is the one addition whose *members* are omitted when
+        // unknown, on the specification's own instruction. The container is
+        // still always present, because that is what says the server reads
+        // gain tags at all; an untagged track carries an empty one.
+        .child(
+            Node::new("replayGain")
+                .maybe_attr("trackGain", song.replay_gain_track_gain)
+                .maybe_attr("trackPeak", song.replay_gain_track_peak)
+                .maybe_attr("albumGain", song.replay_gain_album_gain)
+                .maybe_attr("albumPeak", song.replay_gain_album_peak),
+        )
 }
 
 /// `owner` is the caller: playlist reads are already scoped to their owner, so
@@ -1810,7 +1833,8 @@ fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
         // Emitted as `[]` rather than omitted when a track has no credited
         // artist or no genre: under the OpenSubsonic presence rule an absent
         // key means the server does not support the field at all.
-        "song" | "entry" | "child" | "album" => &["artists", "genres"],
+        "song" | "entry" | "child" => &["artists", "genres", "isrc"],
+        "album" => &["artists", "genres"],
         _ => &[],
     }
 }
@@ -1880,6 +1904,7 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             // a playlist or share and to `child` inside a directory. Its
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
+            | ("song" | "entry" | "child", "isrc")
     )
 }
 
