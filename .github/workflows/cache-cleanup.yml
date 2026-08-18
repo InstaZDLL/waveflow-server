@@ -18,10 +18,9 @@ on:
     - cron: "0 3 * * *" # Daily at 03:00 UTC
   workflow_dispatch:
 
-permissions:
-  actions: write
-  contents: read
-  pull-requests: read
+# Granted per job instead. Neither one checks out the repository or reads its
+# contents; they only call the cache and pull request APIs.
+permissions: {}
 
 jobs:
   # A closed pull request will never restore its caches again, and they are the
@@ -32,6 +31,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: write
     steps:
       - name: Delete the caches of the closed pull request
         env:
@@ -39,9 +40,36 @@ jobs:
           GH_REPO: ${{ github.repository }}
           BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
         run: |
+          set -euo pipefail
+
+          # `gh cache delete` fails the same way whether the cache is already
+          # gone or the token may not delete it. Only the first is tolerable: a
+          # cache can disappear between the listing and the delete, through
+          # eviction or a concurrent run. Anything else is a real failure, and
+          # swallowing it would report a successful cleanup that freed nothing
+          # — which is exactly how the cap gets reached unnoticed.
+          delete_cache() {
+            local id=$1 output
+            if output=$(gh cache delete "$id" 2>&1); then
+              return 0
+            fi
+            if grep -qiE 'could not find a cache|not found|404' <<<"$output"; then
+              echo "  $id already gone"
+              return 0
+            fi
+            echo "::error::deleting cache $id failed: $output"
+            return 1
+          }
+
           echo "Cleaning caches for $BRANCH"
-          gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id' |
-            xargs -r -I {} gh cache delete {} || true
+          gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id' > ids.txt
+          echo "$(wc -l < ids.txt) cache(s) to delete"
+          failed=0
+          while read -r id; do
+            echo "delete $id"
+            delete_cache "$id" || failed=1
+          done < ids.txt
+          exit "$failed"
 
   # Age alone does not bound this repository: dependencies change often enough
   # that a single week holds several generations. The sweep is therefore first
@@ -50,6 +78,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: write
+      pull-requests: read
     steps:
       - name: Delete superseded, idle and orphaned caches
         env:
@@ -62,16 +93,33 @@ jobs:
         run: |
           set -euo pipefail
 
+          # See the note in cleanup-pr: an already-absent cache is tolerated,
+          # every other failure is reported and fails the job.
+          delete_cache() {
+            local id=$1 output
+            if output=$(gh cache delete "$id" 2>&1); then
+              return 0
+            fi
+            if grep -qiE 'could not find a cache|not found|404' <<<"$output"; then
+              echo "  $id already gone"
+              return 0
+            fi
+            echo "::error::deleting cache $id failed: $output"
+            return 1
+          }
+
           gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" \
             --jq '.actions_caches[] | [.id, .ref, .last_accessed_at, .key] | @tsv' > caches.tsv
           echo "$(wc -l < caches.tsv) cache(s) present"
 
           # Refs that can still restore something: main, and every pull request
           # still open. Anything else belongs to a deleted branch, or to a pull
-          # request closed before this workflow existed.
+          # request closed before this workflow existed. The listing is
+          # paginated rather than capped, because a request missing from it is
+          # not a slower sweep but a live cache deleted as an orphan.
           {
             echo "refs/heads/main"
-            gh pr list --state open --limit 200 --json number \
+            gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
               --jq '.[] | "refs/pull/\(.number)/merge"'
           } | sort -u > live-refs.txt
 
@@ -104,11 +152,13 @@ jobs:
           # once.
           sort -u -k1,1 doomed.tsv > delete.tsv
           echo "$(wc -l < delete.tsv) cache(s) to delete"
+          failed=0
           while IFS=$'\t' read -r id reason label; do
             echo "delete $id ($reason) $label"
-            gh cache delete "$id" || true
+            delete_cache "$id" || failed=1
           done < delete.tsv
 
           gh api "repos/$GH_REPO/actions/cache/usage" --jq '
             "remaining: \(.active_caches_count) cache(s), \(
               (.active_caches_size_in_bytes / 1073741824 * 100 | round / 100)) GB"'
+          exit "$failed"
