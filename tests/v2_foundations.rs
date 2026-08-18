@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{Method, Request, StatusCode},
 };
 use futures_util::StreamExt;
 use http_body_util::BodyExt;
@@ -4974,6 +4974,776 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
         .await
         .values()
         .all(|album| album.musicbrainz_id.is_none()));
+}
+
+/// A genre is one thing or it is nothing. `getGenres` folds spelling variants
+/// into one row, so the method that lists a genre's songs has to fold them the
+/// same way — otherwise a client displays a genre it was just handed and finds
+/// it empty.
+#[tokio::test]
+async fn genre_matching_is_canonical_on_every_surface() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_genre-key";
+    let owner = state
+        .db
+        .create_account(
+            "genre-owner",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"genre-secret").unwrap(),
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("genre-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Genres",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3).await.unwrap();
+
+    // The same genre, spelled three ways across three files. Canonicalisation
+    // folds case, punctuation and spacing, so all three are one genre.
+    for (index, (title, genre)) in [
+        ("Boom", "Hip-Hop"),
+        ("Bap", "hip hop"),
+        ("Clap", "HIP  HOP"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = browse_input(
+            400 + index,
+            title,
+            "Cipher",
+            "Nine Mics",
+            Some(index as i64 + 1),
+            Some(1),
+        );
+        input.relative_path = format!("genre-{index}.flac");
+        input.quick_hash = format!("{:064x}", index + 41_000);
+        input.full_hash = format!("{:064x}", index + 42_000);
+        input.genre = Some(genre.into());
+        input.year = Some(2001);
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+
+    // One row, holding all three tracks.
+    let genres = subsonic_json(&router, "getGenres", api_key, "").await;
+    let listed = genres["subsonic-response"]["genres"]["genre"]
+        .as_array()
+        .expect("genres is an array");
+    assert_eq!(listed.len(), 1, "one genre, three spellings: {listed:?}");
+    assert_eq!(listed[0]["songCount"], 3);
+    let name = listed[0]["value"]
+        .as_str()
+        .expect("the genre carries its name")
+        .to_owned();
+
+    // Asking for the name the server just gave must return all three, and so
+    // must each of the other spellings: they are the same genre.
+    for spelling in [name.as_str(), "Hip-Hop", "hip hop", "HIP  HOP"] {
+        let encoded = spelling.replace(' ', "%20");
+        let songs = subsonic_json(
+            &router,
+            "getSongsByGenre",
+            api_key,
+            &format!("&genre={encoded}&count=50"),
+        )
+        .await;
+        let entries = songs["subsonic-response"]["songsByGenre"]["song"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no songs for {spelling}: {songs}"));
+        assert_eq!(entries.len(), 3, "{spelling}");
+    }
+
+    // getRandomSongs applies the same rule, and its year filter still narrows.
+    let random = subsonic_json(&router, "getRandomSongs", api_key, "&genre=Hip-Hop&size=50").await;
+    assert_eq!(
+        random["subsonic-response"]["randomSongs"]["song"]
+            .as_array()
+            .expect("randomSongs is an array")
+            .len(),
+        3
+    );
+    let out_of_range = subsonic_json(
+        &router,
+        "getRandomSongs",
+        api_key,
+        "&genre=Hip-Hop&size=50&fromYear=2010&toYear=2020",
+    )
+    .await;
+    assert!(out_of_range["subsonic-response"]["randomSongs"]
+        .get("song")
+        .is_none());
+    // A reversed range is how Subsonic asks for one, not an empty request.
+    let reversed = subsonic_json(
+        &router,
+        "getRandomSongs",
+        api_key,
+        "&genre=Hip-Hop&size=50&fromYear=2005&toYear=1999",
+    )
+    .await;
+    assert_eq!(
+        reversed["subsonic-response"]["randomSongs"]["song"]
+            .as_array()
+            .expect("randomSongs is an array")
+            .len(),
+        3
+    );
+
+    // A genre nobody uses is an empty list, not an error.
+    let unknown = subsonic_json(&router, "getSongsByGenre", api_key, "&genre=Polka").await;
+    assert_eq!(unknown["subsonic-response"]["status"], "ok");
+    assert!(unknown["subsonic-response"]["songsByGenre"]
+        .get("song")
+        .is_none());
+
+    // The album filter already matched canonically, and still agrees.
+    let by_genre = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=byGenre&genre=hip%20hop&size=10",
+    )
+    .await;
+    assert_eq!(
+        by_genre["subsonic-response"]["albumList2"]["album"]
+            .as_array()
+            .expect("albumList2 is an array")
+            .len(),
+        1
+    );
+
+    // Paging getSongsByGenre no longer slices a full catalogue read, and the
+    // page boundaries still line up.
+    let first = subsonic_json(
+        &router,
+        "getSongsByGenre",
+        api_key,
+        "&genre=Hip-Hop&count=2&offset=0",
+    )
+    .await;
+    let second = subsonic_json(
+        &router,
+        "getSongsByGenre",
+        api_key,
+        "&genre=Hip-Hop&count=2&offset=2",
+    )
+    .await;
+    assert_eq!(
+        first["subsonic-response"]["songsByGenre"]["song"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        second["subsonic-response"]["songsByGenre"]["song"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // The album carries the credits and genres of its tracks, folded the same
+    // way, which is what AlbumID3 asks for.
+    let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    let album = subsonic_json(
+        &router,
+        "getAlbum",
+        api_key,
+        &format!("&id={}", albums.albums[0].id),
+    )
+    .await;
+    let album = &album["subsonic-response"]["album"];
+    assert_eq!(
+        album["genres"]
+            .as_array()
+            .expect("album genres is an array")
+            .len(),
+        1,
+        "three spellings should be one album genre: {album}"
+    );
+    assert_eq!(album["artists"][0]["name"], "Nine Mics");
+    // And a track names the album's credit beside its own.
+    assert_eq!(album["song"][0]["displayAlbumArtist"], "Nine Mics");
+    assert_eq!(album["song"][0]["albumArtists"][0]["name"], "Nine Mics");
+}
+
+/// The browse methods used to resolve through a snapshot of every visible
+/// track. They now ask for what they render, which is only observable as
+/// behaviour at the edges: a foreign id is still not found, an album still
+/// comes back in sleeve order, and the match-all search still pages.
+#[tokio::test]
+async fn browse_methods_read_only_what_they_render() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_browse-key";
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("browse-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"browse-secret").unwrap(),
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let outsider = state
+        .db
+        .create_account("browse-outsider", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+
+    let seed = |account: Uuid, name: &'static str, artist: &'static str| {
+        let state = state.clone();
+        let root = config.data_dir.join(name);
+        async move {
+            std::fs::create_dir_all(&root).unwrap();
+            let library = state
+                .db
+                .create_library(
+                    account,
+                    name,
+                    &std::fs::canonicalize(&root).unwrap(),
+                    LibraryVisibility::Private,
+                    now_ms(),
+                )
+                .await
+                .unwrap();
+            let scan = state
+                .db
+                .create_scan_job(library, Some(account), "manual")
+                .await
+                .unwrap();
+            state.db.start_scan_job(scan, 3).await.unwrap();
+            // Deliberately out of sleeve order, and titled so that ordering by
+            // title would give a different answer from ordering by track.
+            for (index, (title, track)) in [("Zephyr", 1), ("Anvil", 2), ("Marrow", 3)]
+                .into_iter()
+                .enumerate()
+            {
+                let mut input = browse_input(
+                    500 + index + name.len() * 10,
+                    title,
+                    "Ordered",
+                    artist,
+                    Some(track),
+                    Some(1),
+                );
+                input.relative_path = format!("{name}-{index}.flac");
+                input.quick_hash = format!("{:064x}", index + 51_000 + name.len() * 100);
+                input.full_hash = format!("{:064x}", index + 52_000 + name.len() * 100);
+                state
+                    .db
+                    .apply_catalog_track(library, scan, &input, None, false)
+                    .await
+                    .unwrap();
+            }
+            state.db.finish_scan_job(scan, 0).await.unwrap();
+            library
+        }
+    };
+    let library = seed(owner, "browse-own", "Own Artist").await;
+    seed(outsider, "browse-foreign", "Foreign Artist").await;
+
+    let router = waveflow_server::app(&config, state.clone());
+    let mine = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    let theirs = state
+        .services
+        .catalog_snapshot(outsider, &[])
+        .await
+        .unwrap();
+
+    // getAlbum asks for one album, and returns it in sleeve order rather than
+    // alphabetically.
+    let album = subsonic_json(
+        &router,
+        "getAlbum",
+        api_key,
+        &format!("&id={}", mine.albums[0].id),
+    )
+    .await;
+    let titles = album["subsonic-response"]["album"]["song"]
+        .as_array()
+        .expect("the album lists its songs")
+        .iter()
+        .map(|song| song["title"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["Zephyr", "Anvil", "Marrow"]);
+
+    // A foreign album is not found, indistinguishably from one that does not
+    // exist. This is what the snapshot used to enforce by simply not holding
+    // the row.
+    for (method, id) in [
+        ("getAlbum", theirs.albums[0].id),
+        ("getArtist", theirs.artists[0].id),
+        ("getMusicDirectory", theirs.albums[0].id),
+    ] {
+        let response = subsonic_json(&router, method, api_key, &format!("&id={id}")).await;
+        assert_eq!(
+            response["subsonic-response"]["error"]["code"], 70,
+            "{method} reached another account: {response}"
+        );
+    }
+
+    // getMusicDirectory answers at all three levels, and the album level is the
+    // only one that loads tracks.
+    let folder = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={library}"),
+    )
+    .await;
+    assert_eq!(
+        folder["subsonic-response"]["directory"]["child"][0]["name"],
+        "Own Artist"
+    );
+    let artist_dir = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={}", mine.artists[0].id),
+    )
+    .await;
+    assert_eq!(
+        artist_dir["subsonic-response"]["directory"]["child"][0]["title"],
+        "Ordered"
+    );
+    let album_dir = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={}", mine.albums[0].id),
+    )
+    .await;
+    assert_eq!(
+        album_dir["subsonic-response"]["directory"]["child"]
+            .as_array()
+            .expect("the album directory lists its tracks")
+            .len(),
+        3
+    );
+
+    // getStarred reads the star join rather than the catalogue, and reports one
+    // of each kind.
+    for (entity, id) in [
+        ("artist", mine.artists[0].id),
+        ("album", mine.albums[0].id),
+        ("track", mine.songs[0].id),
+    ] {
+        state
+            .services
+            .set_star(owner, entity, id, true)
+            .await
+            .unwrap();
+    }
+    let starred = subsonic_json(&router, "getStarred2", api_key, "").await;
+    let starred = &starred["subsonic-response"]["starred2"];
+    for field in ["artist", "album", "song"] {
+        assert_eq!(
+            starred[field].as_array().expect(field).len(),
+            1,
+            "{field}: {starred}"
+        );
+    }
+    assert!(starred["song"][0]["starred"].is_string());
+
+    // search3's match-all pages in SQL. Two pages of two cover three songs and
+    // stop, and the third page is empty rather than an error.
+    let page = |offset: usize| {
+        let router = router.clone();
+        async move {
+            let response = subsonic_json(
+                &router,
+                "search3",
+                api_key,
+                &format!(
+                    "&query=%22%22&songCount=2&songOffset={offset}&artistCount=0&albumCount=0"
+                ),
+            )
+            .await;
+            response["subsonic-response"]["searchResult3"]["song"]
+                .as_array()
+                .map(|songs| {
+                    songs
+                        .iter()
+                        .map(|song| song["title"].as_str().unwrap_or_default().to_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        }
+    };
+    let first = page(0).await;
+    let second = page(2).await;
+    let third = page(4).await;
+    assert_eq!(first.len(), 2);
+    assert_eq!(second.len(), 1);
+    assert!(third.is_empty());
+    // The pages do not overlap, and between them they are the whole library —
+    // the outsider's tracks are in neither.
+    let mut seen = first;
+    seen.extend(second);
+    seen.sort();
+    assert_eq!(seen, vec!["Anvil", "Marrow", "Zephyr"]);
+}
+
+/// Bookmarks and API tokens were reachable from one surface each: bookmarks
+/// only from Subsonic, tokens only from a shell on the host.
+#[tokio::test]
+async fn native_bookmarks_and_api_tokens_round_trip() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let admin = state
+        .db
+        .create_account("token-admin", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("token-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            admin,
+            "Tokens",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = browse_input(600, "Long Read", "Chapters", "Narrator", Some(1), Some(1));
+    input.relative_path = "token-0.flac".into();
+    input.quick_hash = format!("{:064x}", 61_000);
+    input.full_hash = format!("{:064x}", 62_000);
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let login = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": "token-admin",
+                "password": "correct horse battery staple",
+                "device_name": "Integration"
+            }),
+        ))
+        .await
+        .unwrap();
+    let access = json_body(login).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let track = state
+        .services
+        .catalog_snapshot(admin, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+
+    let json_request = |method: Method, path: String, body: serde_json::Value| {
+        let router = router.clone();
+        let access = access.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("authorization", format!("Bearer {access}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let get = |path: String| {
+        let router = router.clone();
+        let access = access.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(path)
+                        .header("authorization", format!("Bearer {access}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Setting a bookmark twice moves it rather than adding a second, and the
+    // comment is replaced rather than patched.
+    let response = json_request(
+        Method::PUT,
+        format!("/api/v2/bookmarks/{track}"),
+        serde_json::json!({"position_ms": 90_000, "comment": "chapter two"}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = json_request(
+        Method::PUT,
+        format!("/api/v2/bookmarks/{track}"),
+        serde_json::json!({"position_ms": 180_000}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let listed = json_body(get("/api/v2/bookmarks".into()).await).await;
+    assert_eq!(listed.as_array().expect("a list").len(), 1);
+    assert_eq!(listed[0]["position_ms"], 180_000);
+    assert!(listed[0]["comment"].is_null(), "the comment was replaced");
+
+    // A negative position is not a position.
+    let response = json_request(
+        Method::PUT,
+        format!("/api/v2/bookmarks/{track}"),
+        serde_json::json!({"position_ms": -1}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The facade sees the same bookmark: one domain method, two surfaces.
+    assert_eq!(
+        state.services.bookmarks(admin).await.unwrap()[0].position_ms,
+        180_000
+    );
+
+    // Deleting is idempotent, for the same reason it is on the facade.
+    for _ in 0..2 {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v2/bookmarks/{track}"))
+                    .header("authorization", format!("Bearer {access}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    assert!(state.services.bookmarks(admin).await.unwrap().is_empty());
+
+    // An API token can now be issued without a shell on the host. The secret
+    // appears once and is never listed.
+    let created = json_request(
+        Method::POST,
+        "/api/v2/admin/users/token-admin/tokens".into(),
+        serde_json::json!({"name": "backup script", "scopes": ["catalog:read"]}),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    let secret = created["secret"].as_str().expect("the secret is returned");
+    assert!(secret.starts_with("wfapi_"));
+    let token_id = created["id"].as_str().expect("the record carries its id");
+    assert_eq!(created["scopes"][0], "catalog:read");
+
+    let listed = json_body(get("/api/v2/admin/users/token-admin/tokens".into()).await).await;
+    assert_eq!(listed.as_array().expect("a list").len(), 1);
+    assert_eq!(listed[0]["name"], "backup script");
+    assert!(
+        listed[0].get("secret").is_none() && listed[0].get("token_hash").is_none(),
+        "a listing must not carry the secret: {listed}"
+    );
+    assert!(listed[0]["revoked_at"].is_null());
+
+    // The token authenticates, and stops doing so once revoked.
+    let with_token = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(with_token.status(), StatusCode::OK);
+
+    // Scopes are enforced, not decorated. The token names `catalog:read`, so it
+    // reads the catalogue and nothing else, even though the account behind it
+    // is an administrator. Storing a scope list, returning it from the API and
+    // printing it from the CLI while ignoring it is worse than having none: the
+    // operator believes the token is limited.
+    let admin_route = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_route.status(), StatusCode::FORBIDDEN);
+    // The session it was issued from still reaches that route, so the refusal
+    // belongs to the token and not to the account.
+    assert_eq!(
+        get("/api/v2/admin/users".into()).await.status(),
+        StatusCode::OK
+    );
+
+    // A scope list grants the union of its entries: naming `admin` beside
+    // another scope admits these routes, because a token that explicitly
+    // carries a permission must not be refused it. The stored form is
+    // normalised, so what the listing shows is what authorization compares.
+    let combined = json_body(
+        json_request(
+            Method::POST,
+            "/api/v2/admin/users/token-admin/tokens".into(),
+            serde_json::json!({"name": "ops", "scopes": ["  admin  ", "catalog:read"]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(combined["scopes"][0], "admin", "scopes are stored trimmed");
+    let combined = combined["secret"].as_str().unwrap().to_owned();
+    let admitted = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {combined}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+
+    // A token issued without scopes is unrestricted, which is what the CLI has
+    // always produced and what existing tokens carry.
+    let unscoped = json_body(
+        json_request(
+            Method::POST,
+            "/api/v2/admin/users/token-admin/tokens".into(),
+            serde_json::json!({"name": "full access"}),
+        )
+        .await,
+    )
+    .await;
+    let unscoped = unscoped["secret"].as_str().unwrap().to_owned();
+    let allowed = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {unscoped}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let revoked = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/v2/admin/users/token-admin/tokens/{token_id}"))
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    let after = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+
+    // Revoking it again is not found: it is already not working.
+    let again = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/v2/admin/users/token-admin/tokens/{token_id}"))
+                .header("authorization", format!("Bearer {access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+
+    // Only an administrator mints one.
+    let listener = state
+        .db
+        .create_account("token-listener", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .create_api_token(listener, "token-admin", "stolen", &[])
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
 }
 
 /// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]

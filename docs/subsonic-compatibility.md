@@ -51,7 +51,7 @@ opens. `playlist.owner` and
 `share.username` now carry the authenticated username instead of an empty
 string, which is what Feishin reads to decide whether a playlist is editable.
 
-Four further batches of wire changes have landed against the same unvalidated
+Five further batches of wire changes have landed against the same unvalidated
 matrix, and the re-run covers them all: media items gained the remaining
 OpenSubsonic fields under the presence rule (`moods`, `explicitStatus`, `isrc`,
 `replayGain`, `bpm` and the rest); `startScan`, `getScanStatus`, `search2`,
@@ -59,6 +59,11 @@ OpenSubsonic fields under the presence rule (`moods`, `explicitStatus`, `isrc`,
 `album` and `artist` gained `musicBrainzId`, which `getMusicDirectory` children
 deliberately do not carry; and rescanning became restricted to the `owner` and
 `manager` roles, so a client signed in as a listener now sees `startScan`
-succeed while queuing nothing.
+succeed while queuing nothing. Finally, genre matching was unified on the
+canonical name, so `getSongsByGenre` and `getRandomSongs?genre=` now return a
+genre in full where they previously returned the fraction whose spelling matched
+the request; media items gained `albumArtists[]` and `displayAlbumArtist`, and
+albums gained `artists[]` and `genres[]`; and `getAlbum` returns an album in
+sleeve order rather than alphabetically.
 
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.

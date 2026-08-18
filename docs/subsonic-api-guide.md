@@ -235,6 +235,16 @@ with Subsonic error code `0`, like every other protocol failure.
 | Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2`, `getInternetRadioStations` | Return the standard empty container. WaveFlow computes no recommendations and hosts no radio. |
 | Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
 
+### Genres
+
+`getGenres` folds spelling variants onto one row: case, punctuation and
+spacing are normalised, so "Hip-Hop", "hip hop" and "HIP  HOP" are one
+genre with one count. `getSongsByGenre`, `getRandomSongs?genre=` and
+`getAlbumList2?type=byGenre` match the same way, so any spelling of a genre
+returns everything in it. Until this release the two song methods compared
+the raw display string with an ASCII case fold, so asking for a genre
+`getGenres` had just listed could return a fraction of its tracks, or none.
+
 ### Bookmarks
 
 `createBookmark` takes `id` (a track) and `position` in milliseconds, plus an
@@ -284,10 +294,25 @@ answer a library that does not exist gets.
 ### OpenSubsonic fields on media items
 
 Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
-`playCount`, `displayArtist`, `artists[]`, `genres[]`, `musicBrainzId`, `bpm`,
-`sortName`, `comment`, `isrc[]`, `moods[]`, `explicitStatus` and `replayGain`;
-albums add `isCompilation`, `playCount` and `displayArtist`. Both carry `played`
-when they have been played. No OpenSubsonic media field is left unimplemented.
+`playCount`, `displayArtist`, `artists[]`, `albumArtists[]`,
+`displayAlbumArtist`, `genres[]`, `musicBrainzId`, `bpm`, `sortName`, `comment`,
+`isrc[]`, `moods[]`, `explicitStatus` and `replayGain`; albums add
+`isCompilation`, `playCount`, `displayArtist`, `artists[]` and `genres[]`. Both
+carry `played` when they have been played.
+
+`albumArtists[]` and `displayAlbumArtist` are the **album's** credit, not the
+track's: a guest appearance names the guest in `artists[]`, while the album still
+belongs under the album artist. An album's `artists[]` and `genres[]` are derived
+from its available tracks rather than stored, and its genres are folded on the
+canonical name, so an album spelling "Hip-Hop" on some tracks and "Hip Hop" on
+others reports one genre.
+
+What WaveFlow does not implement is absent rather than empty, which under the
+presence rule is what says so: `contributors[]` and `displayComposer` on a media
+item, `sortName`, `moods[]`, `explicitStatus`, `originalReleaseDate`,
+`releaseDate`, `releaseTypes[]`, `recordLabels[]` and `discTitles[]` on an album,
+and `sortName` and `roles[]` on an artist. All of them need tags the scanner does
+not read or columns the schema does not have.
 
 These follow the OpenSubsonic presence rule: a supported field is present even
 when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,

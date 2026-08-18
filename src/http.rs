@@ -390,6 +390,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v2/ratings/{entity_type}/{entity_id}", put(set_rating))
         .route("/api/v2/ratings", get(list_ratings))
+        .route("/api/v2/bookmarks", get(list_bookmarks))
+        .route(
+            "/api/v2/bookmarks/{track_id}",
+            put(set_bookmark).delete(delete_bookmark),
+        )
         .route("/api/v2/scrobbles", post(create_scrobble))
         .route("/api/v2/history", get(list_history))
         .route("/api/v2/now-playing", get(list_now_playing))
@@ -412,6 +417,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/admin/users/{username}/subsonic-credential",
             put(set_subsonic_credential).delete(revoke_subsonic_credential),
+        )
+        .route(
+            "/api/v2/admin/users/{username}/tokens",
+            get(list_api_tokens).post(create_api_token),
+        )
+        .route(
+            "/api/v2/admin/users/{username}/tokens/{token_id}",
+            axum::routing::delete(revoke_api_token),
         )
         .with_state(state)
 }
@@ -1257,6 +1270,156 @@ pub async fn set_rating(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// A playback position to store on a track.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BookmarkRequest {
+    /// Milliseconds from the start of the file. Negative positions are refused.
+    pub position_ms: i64,
+    /// Free text. Omitting it clears whatever comment the bookmark carried,
+    /// because a bookmark is replaced rather than patched.
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/v2/bookmarks", tag = "user-data", responses((status = 200, body = [crate::services::BookmarkItem]), (status = 401, body = ErrorResponse)))]
+pub async fn list_bookmarks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::BookmarkItem>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    state
+        .services
+        .bookmarks(user.id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// One bookmark per account and track, so this replaces rather than adds.
+///
+/// `PUT` and not `POST` for that reason: the track names the resource, and
+/// sending the same position twice leaves the same single bookmark. Backed by
+/// the same `DomainServices` method as the Subsonic `createBookmark`, so the
+/// two surfaces cannot disagree about what a second call does.
+#[utoipa::path(put, path = "/api/v2/bookmarks/{track_id}", tag = "user-data", params(("track_id" = Uuid, Path)), request_body = BookmarkRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn set_bookmark(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<BookmarkRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let context = mutation_context(&state, &headers, user.id).await?;
+    state
+        .services
+        .set_bookmark_with_context(
+            user.id,
+            track_id,
+            request.position_ms,
+            request.comment.as_deref(),
+            context,
+        )
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deleting a bookmark that is not there succeeds: the caller asked for the
+/// track to carry none, and it does not. It also avoids answering a question
+/// about a track the account cannot reach.
+#[utoipa::path(delete, path = "/api/v2/bookmarks/{track_id}", tag = "user-data", params(("track_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn delete_bookmark(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let context = mutation_context(&state, &headers, user.id).await?;
+    state
+        .services
+        .delete_bookmark_with_context(user.id, track_id, context)
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A token to issue.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateApiTokenRequest {
+    /// What the token is for. Shown in the listing so a stale one can be told
+    /// apart from a live one before it is revoked.
+    pub name: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+/// An issued token. The secret appears here and nowhere else, ever again.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CreateApiTokenResponse {
+    #[serde(flatten)]
+    pub token: crate::database::ApiTokenRecord,
+    /// Shown once. Only its SHA-256 hash is stored, so it cannot be recovered.
+    pub secret: String,
+}
+
+#[utoipa::path(get, path = "/api/v2/admin/users/{username}/tokens", tag = "administration", params(("username" = String, Path)), responses((status = 200, body = [crate::database::ApiTokenRecord]), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn list_api_tokens(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::database::ApiTokenRecord>>, ApiError> {
+    let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
+    state
+        .services
+        .api_tokens(actor.id, &username)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Issues an API token without a shell on the host.
+///
+/// The `token create` CLI command remains, for bootstrapping an instance that
+/// has no administrator session yet; from here on the two share
+/// `DomainServices::create_api_token`, so a token minted either way carries the
+/// same scopes and the same audit trail.
+#[utoipa::path(post, path = "/api/v2/admin/users/{username}/tokens", tag = "administration", params(("username" = String, Path)), request_body = CreateApiTokenRequest, responses((status = 201, body = CreateApiTokenResponse), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn create_api_token(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<CreateApiTokenRequest>,
+) -> Result<(StatusCode, Json<CreateApiTokenResponse>), ApiError> {
+    let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
+    let (token, secret) = state
+        .services
+        .create_api_token(actor.id, &username, &request.name, &request.scopes)
+        .await
+        .map_err(service_error)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiTokenResponse { token, secret }),
+    ))
+}
+
+#[utoipa::path(delete, path = "/api/v2/admin/users/{username}/tokens/{token_id}", tag = "administration", params(("username" = String, Path), ("token_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn revoke_api_token(
+    State(state): State<AppState>,
+    Path((username, token_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated(&state, &headers).await?;
+    require_admin(&actor)?;
+    state
+        .services
+        .revoke_api_token(actor.id, &username, token_id)
+        .await
+        .map_err(service_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[utoipa::path(get, path = "/api/v2/ratings", tag = "user-data", responses((status = 200, body = [crate::services::RatingItem]), (status = 401, body = ErrorResponse)))]
 pub async fn list_ratings(
     State(state): State<AppState>,
@@ -2002,8 +2165,33 @@ async fn authenticated(
     state.auth.authenticate(token).await.map_err(ApiError::from)
 }
 
+/// The scope that admits the administrative routes.
+///
+/// A token issued with an explicit scope list has to carry it. Without that
+/// the list was decoration: the scopes were stored, returned by the API and
+/// printed by the CLI, while a `catalog:read` token on an administrator's
+/// account could still create users. That is worse than having no scopes at
+/// all, because the operator believes the token is limited.
+const ADMIN_SCOPE: &str = "admin";
+
+/// Administrative authority: an active administrator, on a credential that
+/// has not been narrowed away from it.
+///
+/// An empty scope list is unrestricted, which is what a session, an OAuth
+/// grant and a token issued without scopes all carry. Both conditions have
+/// to hold: being an administrator does not widen a token, and a token
+/// cannot promote an ordinary account.
+///
+/// A scope list grants the union of its entries, as scope lists do
+/// everywhere: `admin` beside `catalog:read` admits these routes, because a
+/// token that explicitly names a permission must not be refused it. The
+/// comparison is exact rather than trimmed, which it can be because
+/// `DomainServices::create_api_token` normalises what it stores: the value
+/// a listing shows is the value this compares.
 fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError> {
-    if user.role == crate::database::AccountRole::Admin {
+    let is_admin = user.role == crate::database::AccountRole::Admin;
+    let in_scope = user.scopes.is_empty() || user.scopes.iter().any(|scope| scope == ADMIN_SCOPE);
+    if is_admin && in_scope {
         Ok(())
     } else {
         Err(ApiError::Forbidden)

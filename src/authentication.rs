@@ -32,6 +32,16 @@ pub struct AuthUser {
     pub id: Uuid,
     pub username: String,
     pub role: AccountRole,
+    /// The scopes limiting this request, from the API token it arrived on.
+    ///
+    /// Empty means unrestricted: that is a session, an OAuth grant, or a
+    /// token issued without any, all of which carry the account's full
+    /// authority. A non-empty list is a restriction, and a route that needs
+    /// more than the list grants must refuse rather than trust the account
+    /// behind it. A token is handed to a script, and the point of writing
+    /// scopes on it is that they hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -194,6 +204,8 @@ impl AuthService {
                 id: session.user_id,
                 username: session.username,
                 role: session.role,
+                // A session carries the account's full authority.
+                scopes: Vec::new(),
             },
             device_id: session.device_id,
         })
@@ -231,6 +243,7 @@ impl AuthService {
             id: account.user_id,
             username: account.username,
             role: account.role,
+            scopes: account.scopes,
         })
     }
 
@@ -271,6 +284,8 @@ impl AuthService {
                 id: user_id,
                 username,
                 role,
+                // A session carries the account's full authority.
+                scopes: Vec::new(),
             },
             device_id,
         })
