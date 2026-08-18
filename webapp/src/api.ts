@@ -427,12 +427,14 @@ export const scrobble = (trackId: string, submission: boolean) =>
  * credential; it authorises this one track and is re-checked on every range
  * request the browser makes while seeking.
  */
-export async function streamUrl(trackId: string): Promise<string> {
+export type StreamUrl = { url: string; expiresAt: number };
+
+export async function streamUrl(trackId: string): Promise<StreamUrl> {
   const ticket = await call<{ url: string; expires_at: number }>(
     `/api/v2/tracks/${trackId}/stream-ticket`,
     { method: "POST" },
   );
-  return ticket.url;
+  return { url: ticket.url, expiresAt: ticket.expires_at };
 }
 
 export function formatDuration(ms: number): string {

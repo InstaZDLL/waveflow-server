@@ -30,8 +30,8 @@ const en = {
   "common.unknownArtist": "Unknown artist",
   "common.album": "Album",
   "common.artist": "Artist",
-  "common.albums": "{count} albums",
-  "common.tracks": "{count} tracks",
+  "common.albums": { one: "{count} album", other: "{count} albums" },
+  "common.tracks": { one: "{count} track", other: "{count} tracks" },
   "common.delete": "Delete",
   "common.cancel": "Cancel",
   "login.heroEyebrow": "Your music, on your terms",
@@ -50,15 +50,30 @@ const en = {
   "login.wait": "Please wait…",
   "login.create": "Create and sign in",
   "login.signIn": "Sign in",
-  "albums.detail": "{count} records in your library",
-  "artists.detail": "{count} voices and collaborators",
-  "artists.libraryCount": "{count} albums in your library",
-  "favourites.detail": "{count} saved tracks",
+  "albums.detail": {
+    one: "{count} record in your library",
+    other: "{count} records in your library",
+  },
+  "artists.detail": {
+    one: "{count} voice or collaborator",
+    other: "{count} voices and collaborators",
+  },
+  "artists.libraryCount": {
+    one: "{count} album in your library",
+    other: "{count} albums in your library",
+  },
+  "favourites.detail": {
+    one: "{count} saved track",
+    other: "{count} saved tracks",
+  },
   "favourites.empty":
     "Star a track from an album or search result and it will appear here.",
   "favourites.add": "Add favourite",
   "favourites.remove": "Remove favourite",
-  "playlists.detail": "{count} collections",
+  "playlists.detail": {
+    one: "{count} collection",
+    other: "{count} collections",
+  },
   "playlists.newName": "New playlist name",
   "playlists.create": "Create playlist",
   "playlists.play": "Play",
@@ -68,7 +83,10 @@ const en = {
   "playlists.createError": "The playlist could not be created.",
   "playlists.queueError": "The queue could not be added to this playlist.",
   "playlists.deleteError": "The playlist could not be deleted.",
-  "queue.detail": "{count} tracks synchronized with your account",
+  "queue.detail": {
+    one: "{count} track synchronized with your account",
+    other: "{count} tracks synchronized with your account",
+  },
   "queue.playStart": "Play from start",
   "queue.clear": "Clear queue",
   "queue.remove": "Remove",
@@ -132,11 +150,26 @@ const en = {
   "notFound.title": "This room is silent",
   "notFound.detail": "The page you asked for does not exist on this server.",
   "notFound.back": "Back to the library",
+  "appearance.themes.default": "Emerald light",
+  "appearance.themes.midnightLight": "Midnight light",
+  "appearance.themes.sunsetLight": "Sunset light",
+  "appearance.themes.lavenderLight": "Lavender light",
+  "appearance.themes.crimsonLight": "Crimson light",
+  "appearance.themes.oceanLight": "Ocean light",
+  "appearance.themes.defaultDark": "Emerald dark",
+  "appearance.themes.oled": "OLED black",
+  "appearance.themes.midnight": "Midnight",
+  "appearance.themes.sunset": "Sunset",
+  "appearance.themes.lavender": "Lavender",
+  "appearance.themes.crimson": "Crimson",
+  "appearance.themes.ocean": "Ocean",
+  "appearance.themes.neon": "Neon",
 } as const;
 
-type TranslationKey = keyof typeof en;
+export type TranslationKey = keyof typeof en;
+type TranslationValue = string | { one: string; other: string };
 
-const fr: Record<TranslationKey, string> = {
+const fr: Record<TranslationKey, TranslationValue> = {
   "nav.albums": "Albums",
   "nav.artists": "Artistes",
   "nav.search": "Recherche",
@@ -159,8 +192,8 @@ const fr: Record<TranslationKey, string> = {
   "common.unknownArtist": "Artiste inconnu",
   "common.album": "Album",
   "common.artist": "Artiste",
-  "common.albums": "{count} albums",
-  "common.tracks": "{count} pistes",
+  "common.albums": { one: "{count} album", other: "{count} albums" },
+  "common.tracks": { one: "{count} piste", other: "{count} pistes" },
   "common.delete": "Supprimer",
   "common.cancel": "Annuler",
   "login.heroEyebrow": "Votre musique, selon vos règles",
@@ -179,15 +212,30 @@ const fr: Record<TranslationKey, string> = {
   "login.wait": "Veuillez patienter…",
   "login.create": "Créer et se connecter",
   "login.signIn": "Se connecter",
-  "albums.detail": "{count} disques dans votre bibliothèque",
-  "artists.detail": "{count} voix et collaborations",
-  "artists.libraryCount": "{count} albums dans votre bibliothèque",
-  "favourites.detail": "{count} pistes enregistrées",
+  "albums.detail": {
+    one: "{count} disque dans votre bibliothèque",
+    other: "{count} disques dans votre bibliothèque",
+  },
+  "artists.detail": {
+    one: "{count} voix ou collaboration",
+    other: "{count} voix et collaborations",
+  },
+  "artists.libraryCount": {
+    one: "{count} album dans votre bibliothèque",
+    other: "{count} albums dans votre bibliothèque",
+  },
+  "favourites.detail": {
+    one: "{count} piste enregistrée",
+    other: "{count} pistes enregistrées",
+  },
   "favourites.empty":
     "Ajoutez une piste aux favoris depuis un album ou la recherche pour la retrouver ici.",
   "favourites.add": "Ajouter aux favoris",
   "favourites.remove": "Retirer des favoris",
-  "playlists.detail": "{count} collections",
+  "playlists.detail": {
+    one: "{count} collection",
+    other: "{count} collections",
+  },
   "playlists.newName": "Nom de la nouvelle playlist",
   "playlists.create": "Créer la playlist",
   "playlists.play": "Lire",
@@ -197,7 +245,10 @@ const fr: Record<TranslationKey, string> = {
   "playlists.createError": "La playlist n’a pas pu être créée.",
   "playlists.queueError": "La file n’a pas pu être ajoutée à cette playlist.",
   "playlists.deleteError": "La playlist n’a pas pu être supprimée.",
-  "queue.detail": "{count} pistes synchronisées avec votre compte",
+  "queue.detail": {
+    one: "{count} piste synchronisée avec votre compte",
+    other: "{count} pistes synchronisées avec votre compte",
+  },
   "queue.playStart": "Lire depuis le début",
   "queue.clear": "Vider la file",
   "queue.remove": "Retirer",
@@ -260,6 +311,20 @@ const fr: Record<TranslationKey, string> = {
   "notFound.title": "Cette salle est silencieuse",
   "notFound.detail": "La page demandée n’existe pas sur ce serveur.",
   "notFound.back": "Retour à la bibliothèque",
+  "appearance.themes.default": "Émeraude clair",
+  "appearance.themes.midnightLight": "Minuit clair",
+  "appearance.themes.sunsetLight": "Coucher de soleil clair",
+  "appearance.themes.lavenderLight": "Lavande clair",
+  "appearance.themes.crimsonLight": "Cramoisi clair",
+  "appearance.themes.oceanLight": "Océan clair",
+  "appearance.themes.defaultDark": "Émeraude sombre",
+  "appearance.themes.oled": "Noir OLED",
+  "appearance.themes.midnight": "Minuit",
+  "appearance.themes.sunset": "Coucher de soleil",
+  "appearance.themes.lavender": "Lavande",
+  "appearance.themes.crimson": "Cramoisi",
+  "appearance.themes.ocean": "Océan",
+  "appearance.themes.neon": "Néon",
 };
 
 export type Locale = "en" | "fr";
@@ -272,6 +337,33 @@ type I18n = {
 
 const I18nContext = createContext<I18n | null>(null);
 const STORAGE_KEY = "waveflow.locale";
+const pluralRules = {
+  en: new Intl.PluralRules("en"),
+  fr: new Intl.PluralRules("fr"),
+};
+
+export function translate(
+  locale: Locale,
+  key: TranslationKey,
+  values: Record<string, string | number> = {},
+): string {
+  const candidate: TranslationValue = (locale === "fr" ? fr : en)[key];
+  const count = values.count;
+  let value =
+    typeof candidate === "string"
+      ? candidate
+      : candidate[
+          typeof count === "number" &&
+          count === 1 &&
+          pluralRules[locale].select(count) === "one"
+            ? "one"
+            : "other"
+        ];
+  for (const [name, replacement] of Object.entries(values)) {
+    value = value.replaceAll(`{${name}}`, String(replacement));
+  }
+  return value;
+}
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>(() => {
@@ -294,13 +386,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const t: I18n["t"] = useCallback(
-    (key, values = {}) => {
-      let value: string = (locale === "fr" ? fr : en)[key];
-      for (const [name, replacement] of Object.entries(values)) {
-        value = value.replaceAll(`{${name}}`, String(replacement));
-      }
-      return value;
-    },
+    (key, values = {}) => translate(locale, key, values),
     [locale],
   );
 

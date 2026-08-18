@@ -286,9 +286,9 @@ export function SongTable({ songs }: { songs: Song[] }) {
                     type="button"
                     className="star"
                     onClick={() => void toggleStar(song)}
-                    aria-label={
+                    aria-label={`${
                       starred ? t("favourites.remove") : t("favourites.add")
-                    }
+                    }: ${song.title}`}
                     aria-pressed={starred}
                   >
                     {starred ? "★" : "☆"}
@@ -489,7 +489,11 @@ export function QueuePage() {
                 <span className="muted">
                   {formatDuration(song.duration_ms)}
                 </span>
-                <button type="button" onClick={() => player.remove(position)}>
+                <button
+                  type="button"
+                  onClick={() => player.remove(position)}
+                  aria-label={`${t("queue.remove")}: ${song.title}`}
+                >
                   {t("queue.remove")}
                 </button>
               </li>

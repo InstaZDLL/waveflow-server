@@ -84,6 +84,7 @@ The web client lives in `webapp/` and is compiled into the binary, so it must be
 ```bash
 bun --cwd=webapp install
 bun run build          # webapp then cargo, in that order
+bun --cwd=webapp x playwright install chromium
 bun --cwd=webapp run test:e2e
 ```
 

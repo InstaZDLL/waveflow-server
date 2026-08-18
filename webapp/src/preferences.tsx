@@ -1,13 +1,19 @@
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useState,
 } from "react";
 
-import { applyTheme, findTheme, THEME_PRESETS } from "./design-tokens";
-import { useI18n } from "./i18n";
+import {
+  applyTheme,
+  findTheme,
+  THEME_PRESETS,
+  type ThemePreset,
+} from "./design-tokens";
+import { type TranslationKey, useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.theme";
 
@@ -19,23 +25,30 @@ type Preferences = {
 const PreferencesContext = createContext<Preferences | null>(null);
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  const [themeId, setThemeId] = useState(() => {
+  const [themeId, setStoredThemeId] = useState(() => {
+    let theme: ThemePreset;
     try {
-      return findTheme(localStorage.getItem(STORAGE_KEY)).id;
+      theme = findTheme(localStorage.getItem(STORAGE_KEY));
     } catch {
-      return findTheme(null).id;
+      theme = findTheme(null);
     }
+    applyTheme(theme);
+    return theme.id;
   });
 
   useEffect(() => {
-    const theme = findTheme(themeId);
-    applyTheme(theme);
     try {
-      localStorage.setItem(STORAGE_KEY, theme.id);
+      localStorage.setItem(STORAGE_KEY, themeId);
     } catch {
       // Appearance remains usable when persistent storage is disabled.
     }
   }, [themeId]);
+
+  const setThemeId = useCallback((id: string) => {
+    const theme = findTheme(id);
+    applyTheme(theme);
+    setStoredThemeId(theme.id);
+  }, []);
 
   return (
     <PreferencesContext.Provider value={{ themeId, setThemeId }}>
@@ -58,7 +71,7 @@ export function ThemePicker() {
       >
         {THEME_PRESETS.map((theme) => (
           <option key={theme.id} value={theme.id}>
-            {theme.id.replaceAll("-", " ")}
+            {t(theme.labelKey as TranslationKey)}
           </option>
         ))}
       </select>
