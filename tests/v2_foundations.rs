@@ -4249,6 +4249,70 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
     .unwrap();
     assert_eq!(intruder_jobs, 0, "a non-member queued a scan");
 
+    // Membership is not authority. A listener reads the catalogue; a scan
+    // walks the owner's files and takes the writer gate, so it is refused --
+    // and refused the way everything unentitled is, indistinguishably from a
+    // library that does not exist.
+    let listener = state
+        .db
+        .create_account("asym-listener", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(owner, library, listener, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    // The membership is real: the listener sees the library and its tracks.
+    assert_eq!(
+        state.db.libraries_for_user(listener).await.unwrap().len(),
+        1
+    );
+    assert!(state
+        .db
+        .create_scan_job_for_user(listener, library, "manual")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        state.services.start_library_scan(listener, library).await,
+        Err(ServiceError::NotFound)
+    ));
+    // startScan names no library, so it skips the read-only ones instead of
+    // failing: an account whose every library is read-only queues nothing and
+    // succeeds, exactly like one that reaches no library at all.
+    assert!(state
+        .services
+        .start_visible_scans(listener)
+        .await
+        .unwrap()
+        .is_empty());
+    let listener_jobs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM scan_job WHERE requested_by = ?")
+            .bind(listener.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(listener_jobs, 0, "a listener queued a scan");
+    // Promotion is all it takes, and it is read from the row rather than
+    // cached anywhere.
+    state
+        .db
+        .add_library_member(owner, library, listener, LibraryRole::Manager, now_ms())
+        .await
+        .unwrap();
+    assert!(state
+        .db
+        .create_scan_job_for_user(listener, library, "manual")
+        .await
+        .unwrap()
+        .is_some());
+    state
+        .db
+        .remove_library_member(owner, library, listener, now_ms())
+        .await
+        .unwrap();
+
     // An account that can reach no library has nothing to scan. That is an
     // empty result, not an error: there is no missing resource to report, and
     // every other catalogue-wide method answers such an account the same way.
@@ -4647,6 +4711,269 @@ async fn bookmarks_round_trip_sync_and_isolate_tenants() {
     // Deleting one that is not there is not an error: the caller asked for the
     // track to carry no bookmark, and it does not.
     subsonic_json(&router, "deleteBookmark", api_key, &format!("&id={track}")).await;
+}
+
+/// A release identifier belongs to the release, not to whichever file was
+/// scanned last. Tracks of one album routinely disagree — a library assembled
+/// over years holds files tagged against different releases of the same record
+/// — so the album's identifier is the one most of its available tracks agree
+/// on, recomputed at the end of every scan.
+#[tokio::test]
+async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_mbid-key";
+    let owner = state
+        .db
+        .create_account(
+            "mbid-owner",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"mbid-secret").unwrap(),
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("mbid-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Mbid",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 6).await.unwrap();
+
+    struct TaggedFile {
+        album: &'static str,
+        title: &'static str,
+        track: i64,
+        disc: i64,
+        release: Option<&'static str>,
+        artist: Option<&'static str>,
+    }
+    let file = |album, title, track, disc, release, artist| TaggedFile {
+        album,
+        title,
+        track,
+        disc,
+        release,
+        artist,
+    };
+    let fixture = [
+        // Two files agree on the reissue, one still carries the original
+        // pressing. The majority wins, and the odd file does not.
+        file(
+            "Split Sky",
+            "Dawn",
+            1,
+            1,
+            Some("release-reissue"),
+            Some("artist-vale"),
+        ),
+        file(
+            "Split Sky",
+            "Noon",
+            2,
+            1,
+            Some("release-original"),
+            Some("artist-vale"),
+        ),
+        file("Split Sky", "Dusk", 3, 1, Some("release-reissue"), None),
+        // A genuine tie, one file each. It is broken by the earliest disc and
+        // track, so the answer is stable across scans rather than arbitrary.
+        // The earlier one sorts last as a string, so a lexical fallback alone
+        // would answer the other.
+        file(
+            "Even Halves",
+            "Side A",
+            1,
+            1,
+            Some("release-zulu"),
+            Some("artist-vale"),
+        ),
+        file(
+            "Even Halves",
+            "Side B",
+            1,
+            2,
+            Some("release-alpha"),
+            Some("artist-other"),
+        ),
+        // Nothing tagged at all.
+        file("No Tags", "Silence", 1, 1, None, None),
+    ];
+    for (index, entry) in fixture.into_iter().enumerate() {
+        let mut input = browse_input(
+            300 + index,
+            entry.title,
+            entry.album,
+            "Vale",
+            Some(entry.track),
+            Some(entry.disc),
+        );
+        input.relative_path = format!("mbid-{index}.flac");
+        input.quick_hash = format!("{:064x}", index + 31_000);
+        input.full_hash = format!("{:064x}", index + 32_000);
+        input.musicbrainz_release_id = entry.release.map(str::to_owned);
+        input.musicbrainz_artist_id = entry.artist.map(str::to_owned);
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let albums_by_title = || {
+        let state = state.clone();
+        async move {
+            state
+                .services
+                .catalog_snapshot(owner, &[])
+                .await
+                .unwrap()
+                .albums
+                .into_iter()
+                .map(|album| (album.title.clone(), album))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        }
+    };
+
+    // Nothing is derived until the pass that derives it: the tracks carry the
+    // identifiers from the moment they are indexed, the albums do not.
+    assert!(albums_by_title()
+        .await
+        .values()
+        .all(|album| album.musicbrainz_id.is_none()));
+
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let albums = albums_by_title().await;
+    assert_eq!(
+        albums["Split Sky"].musicbrainz_id.as_deref(),
+        Some("release-reissue"),
+        "the majority of the album tracks should decide"
+    );
+    assert_eq!(
+        albums["Even Halves"].musicbrainz_id.as_deref(),
+        Some("release-zulu"),
+        "a tie should fall to the earliest disc and track, not to the smaller string"
+    );
+    assert_eq!(albums["No Tags"].musicbrainz_id, None);
+
+    // The artist takes the identifier from the tracks it is the primary credit
+    // of. Every track here credits Vale first, and `artist-vale` is what most
+    // of them say.
+    let snapshot = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    let artist = snapshot
+        .artists
+        .iter()
+        .find(|artist| artist.name == "Vale")
+        .expect("the artist was indexed");
+    assert_eq!(artist.musicbrainz_id.as_deref(), Some("artist-vale"));
+
+    let router = waveflow_server::app(&config, state.clone());
+    let album_id = albums["Split Sky"].id;
+    let album = subsonic_json(&router, "getAlbum", api_key, &format!("&id={album_id}")).await;
+    assert_eq!(
+        album["subsonic-response"]["album"]["musicBrainzId"],
+        "release-reissue"
+    );
+    // Presence, not omission: an album with no release id still carries the
+    // field, because that is the only way a client tells "untagged" from "this
+    // server does not read the tag".
+    let untagged = subsonic_json(
+        &router,
+        "getAlbum",
+        api_key,
+        &format!("&id={}", albums["No Tags"].id),
+    )
+    .await;
+    assert_eq!(untagged["subsonic-response"]["album"]["musicBrainzId"], "");
+    let artist_response =
+        subsonic_json(&router, "getArtist", api_key, &format!("&id={}", artist.id)).await;
+    assert_eq!(
+        artist_response["subsonic-response"]["artist"]["musicBrainzId"],
+        "artist-vale"
+    );
+
+    // getAlbumInfo predates the presence rule and its members are elements, so
+    // the untagged album omits it rather than sending an empty one.
+    let info = subsonic_json(
+        &router,
+        "getAlbumInfo2",
+        api_key,
+        &format!("&id={album_id}"),
+    )
+    .await;
+    assert_eq!(
+        info["subsonic-response"]["albumInfo2"]["musicBrainzId"],
+        "release-reissue"
+    );
+    let info = subsonic_json(
+        &router,
+        "getAlbumInfo2",
+        api_key,
+        &format!("&id={}", albums["No Tags"].id),
+    )
+    .await;
+    assert!(info["subsonic-response"]["albumInfo2"]
+        .get("musicBrainzId")
+        .is_none());
+
+    // On a directory child the specification defines musicBrainzId as the
+    // recording, and a folder standing for a release has no recording, so the
+    // browse view drops it rather than putting a release id under that name.
+    let directory = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={}", artist.id),
+    )
+    .await;
+    let children = directory["subsonic-response"]["directory"]["child"]
+        .as_array()
+        .expect("the artist directory lists its albums");
+    assert!(!children.is_empty());
+    for child in children {
+        assert!(
+            child.get("musicBrainzId").is_none(),
+            "a browsing entry claimed a recording id: {child}"
+        );
+    }
+
+    // A tag removed from the files has to disappear from the catalogue: the
+    // derivation runs after every scan, so it clears as readily as it sets.
+    sqlx::query("UPDATE track SET musicbrainz_release_id = NULL WHERE library_id = ?")
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    assert!(albums_by_title()
+        .await
+        .values()
+        .all(|album| album.musicbrainz_id.is_none()));
 }
 
 /// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
