@@ -76,6 +76,16 @@ impl ScanManager {
             .db
             .create_scan_job(library.id, requested_by, trigger)
             .await?;
+        self.spawn(scan_id, library);
+        Ok(scan_id)
+    }
+
+    /// Runs a job that already exists.
+    ///
+    /// Split out of [`Self::trigger`] so a caller that creates the job under
+    /// its own tenancy guard does not have to create a second one to get it
+    /// running.
+    pub fn spawn(&self, scan_id: Uuid, library: LibraryRecord) {
         let library_id = library.id;
         let (sender, _) = broadcast::channel(128);
         self.events.insert(scan_id, sender);
@@ -102,7 +112,6 @@ impl ScanManager {
                 });
             }
         });
-        Ok(scan_id)
     }
 
     pub fn subscribe(&self, scan_id: Uuid) -> Option<broadcast::Receiver<ScanProgress>> {

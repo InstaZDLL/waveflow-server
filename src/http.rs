@@ -649,20 +649,11 @@ pub async fn start_scan(
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<ScanQueuedResponse>), ApiError> {
     let user = authenticated(&state, &headers).await?;
-    let library = state
-        .db
-        .library_for_user(user.id, library_id)
-        .await
-        .map_err(db_error)?
-        .ok_or(ApiError::NotFound)?;
     let scan_id = state
-        .scanner
-        .trigger(library, Some(user.id), "manual")
+        .services
+        .start_library_scan(user.id, library_id)
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "scan queue failed");
-            ApiError::Unavailable
-        })?;
+        .map_err(service_error)?;
     Ok((StatusCode::ACCEPTED, Json(ScanQueuedResponse { scan_id })))
 }
 

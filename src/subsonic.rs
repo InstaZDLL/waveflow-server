@@ -351,6 +351,19 @@ async fn dispatch(
         // server does not expose audiobook progress. Returning the standard
         // empty container keeps that optional capability non-destructive.
         "getBookmarks" => Ok(Node::new("bookmarks")),
+        // Recommendation and radio surfaces WaveFlow does not compute. The
+        // standard empty container is the honest answer and, unlike the
+        // not-implemented error, does not read to a client as a broken
+        // server on a page it opens by default.
+        "getTopSongs" => Ok(Node::new("topSongs")),
+        "getSimilarSongs" => Ok(Node::new("similarSongs")),
+        "getSimilarSongs2" => Ok(Node::new("similarSongs2")),
+        "getInternetRadioStations" => Ok(Node::new("internetRadioStations")),
+        // No avatars are stored, so the account genuinely has none. Code 70
+        // says that; code 0 would blame the method instead of the data.
+        "getAvatar" => Err(not_found()),
+        "startScan" => start_scan(state, principal).await,
+        "getScanStatus" => scan_status(state, principal).await,
         "getMusicFolders" => {
             let snapshot = state
                 .services
@@ -397,6 +410,9 @@ async fn dispatch(
         "getRandomSongs" => random_songs(state, principal, params).await,
         "getSongsByGenre" => songs_by_genre(state, principal, params).await,
         "search3" => search(state, principal, params).await,
+        "search2" => search(state, principal, params)
+            .await
+            .map(|node| node.renamed("searchResult2")),
         "getPlaylists" => playlists(state, principal).await,
         "getPlaylist" => get_playlist(state, principal, params).await,
         "createPlaylist" => create_playlist(state, principal, params).await,
@@ -405,6 +421,12 @@ async fn dispatch(
         "star" => set_star(state, principal, params, true).await,
         "unstar" => set_star(state, principal, params, false).await,
         "getStarred2" => starred(state, principal, params).await,
+        // Browse-by-folder clients such as DSub and Ultrasonic still call the
+        // pre-ID3 method. Same payload for a UUID catalogue; only the
+        // container differs, exactly as for getAlbumList.
+        "getStarred" => starred(state, principal, params)
+            .await
+            .map(|node| node.renamed("starred")),
         "setRating" => set_rating(state, principal, params).await,
         "scrobble" => scrobble(state, principal, params).await,
         "getNowPlaying" => now_playing(state, principal).await,
@@ -553,6 +575,38 @@ async fn snapshot(
         .catalog_snapshot(principal.id, &folders)
         .await
         .map_err(internal)
+}
+
+/// Rescans every library the account can reach.
+///
+/// Subsonic has no library parameter here, so this fans out. Both the
+/// authorization and the queuing live in
+/// [`crate::services::DomainServices::start_visible_scans`], so this facade
+/// and the native per-library endpoint cannot disagree about who may scan
+/// what.
+async fn start_scan(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {
+    state
+        .services
+        .start_visible_scans(principal.id)
+        .await
+        .map_err(service_protocol)?;
+    // The protocol answers a start with the resulting status, so a client
+    // that only calls startScan still learns whether anything is running.
+    scan_status(state, principal).await
+}
+
+/// `count` is the number of available tracks *this* account can reach, not
+/// what the instance holds: the rest of the facade never reports a total that
+/// includes another tenant's catalogue, and this is no exception.
+async fn scan_status(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {
+    let (scanning, count) = state
+        .db
+        .scan_progress_for_user(principal.id)
+        .await
+        .map_err(internal)?;
+    Ok(Node::new("scanStatus")
+        .attr("scanning", scanning)
+        .attr("count", count))
 }
 
 async fn indexes(
@@ -1809,10 +1863,10 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("albumList2", "album")
             | ("randomSongs", "song")
             | ("songsByGenre", "song")
-            | ("searchResult3", "artist" | "album" | "song")
+            | ("searchResult3" | "searchResult2", "artist" | "album" | "song")
             | ("playlists", "playlist")
             | ("playlist", "entry")
-            | ("starred2", "artist" | "album" | "song")
+            | ("starred2" | "starred", "artist" | "album" | "song")
             | ("nowPlaying", "song")
             | ("playQueue", "song")
             | ("shares", "share")
