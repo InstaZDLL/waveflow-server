@@ -1710,6 +1710,15 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .first()
         .unwrap()
         .id;
+    let foreign_album = state
+        .services
+        .catalog_snapshot(foreign_owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .first()
+        .unwrap()
+        .id;
     let snapshot = state.services.catalog_snapshot(admin, &[]).await.unwrap();
     let song = snapshot
         .songs
@@ -1776,7 +1785,10 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED, "{path}");
+        // A refused credential is an HTTP 200 carrying error code 40: the
+        // Subsonic contract puts the outcome in the body, and a client that
+        // trusted the status line would never read it.
+        assert_eq!(rejected.status(), StatusCode::OK, "{path}");
         let body = json_body(rejected).await;
         assert_eq!(body["subsonic-response"]["error"]["code"], 40, "{path}");
         // A failed response still identifies the server. WaveFlow Desktop
@@ -1841,12 +1853,15 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let cases = [
         ("getLicense", String::new()),
         ("getOpenSubsonicExtensions", String::new()),
+        ("tokenInfo", String::new()),
         ("getBookmarks", String::new()),
         ("getIndexes", format!("&musicFolderId={library}")),
         ("getArtists", format!("&musicFolderId={library}")),
         ("getArtist", format!("&id={artist}")),
         ("getArtistInfo", format!("&id={artist}")),
         ("getArtistInfo2", format!("&id={artist}")),
+        ("getAlbumInfo", format!("&id={album}")),
+        ("getAlbumInfo2", format!("&id={album}")),
         ("getAlbum", format!("&id={album}")),
         ("getSong", format!("&id={song}")),
         ("getLyrics", "&title=Matrix%20wav".into()),
@@ -1935,6 +1950,29 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
                 serde_json::json!({})
             );
         }
+        // Feishin and Symfonium open an album with this call. WaveFlow enriches
+        // nothing yet, so the honest answer is the standard empty container —
+        // not the code 0 that made the client treat the album as broken.
+        if method == "getAlbumInfo" || method == "getAlbumInfo2" {
+            let container = if method == "getAlbumInfo" {
+                "albumInfo"
+            } else {
+                "albumInfo2"
+            };
+            assert_eq!(
+                response["subsonic-response"][container],
+                serde_json::json!({})
+            );
+        }
+        // The second half of apiKeyAuthentication: a key holder can ask which
+        // account it speaks for. The extension is advertised, so this must
+        // answer.
+        if method == "tokenInfo" {
+            assert_eq!(
+                response["subsonic-response"]["tokenInfo"]["username"],
+                "sub-admin"
+            );
+        }
     }
 
     let artist_info = router
@@ -2010,7 +2048,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         )
         .await
         .unwrap();
-    assert_eq!(hidden_lyrics.status(), StatusCode::NOT_FOUND);
+    assert_eq!(hidden_lyrics.status(), StatusCode::OK);
     let hidden_lyrics = json_body(hidden_lyrics).await;
     assert_eq!(hidden_lyrics["subsonic-response"]["status"], "failed");
     assert_eq!(hidden_lyrics["subsonic-response"]["error"]["code"], 70);
@@ -2081,6 +2119,9 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         ("getArtistInfo", foreign_artist),
         ("getArtistInfo2", foreign_artist),
         ("getArtistInfo2", Uuid::nil()),
+        ("getAlbumInfo", foreign_album),
+        ("getAlbumInfo2", foreign_album),
+        ("getAlbumInfo2", Uuid::nil()),
     ] {
         let hidden_artist_info = router
             .clone()
@@ -2093,7 +2134,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
             )
             .await
             .unwrap();
-        assert_eq!(hidden_artist_info.status(), StatusCode::NOT_FOUND);
+        assert_eq!(hidden_artist_info.status(), StatusCode::OK);
         let hidden_artist_info = json_body(hidden_artist_info).await;
         assert_eq!(hidden_artist_info["subsonic-response"]["status"], "failed");
         assert_eq!(hidden_artist_info["subsonic-response"]["error"]["code"], 70);
@@ -2157,6 +2198,13 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .as_str()
         .unwrap()
         .to_owned();
+    // Feishin decides whether a playlist is editable from `owner`. Playlist
+    // reads are already scoped to their owner, so the empty string this used to
+    // emit made every playlist look like someone else's.
+    assert_eq!(
+        created["subsonic-response"]["playlist"]["owner"],
+        "sub-admin"
+    );
     for (method, extra) in [
         ("getPlaylists", String::new()),
         ("getPlaylist", format!("&id={playlist}")),
@@ -2180,6 +2228,18 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     ] {
         let response = subsonic_json(&router, method, api_key, &extra).await;
         assert_eq!(response["subsonic-response"]["status"], "ok", "{method}");
+        if method == "getPlaylists" {
+            assert_eq!(
+                response["subsonic-response"]["playlists"]["playlist"][0]["owner"],
+                "sub-admin"
+            );
+        }
+        if method == "getPlaylist" {
+            assert_eq!(
+                response["subsonic-response"]["playlist"]["owner"],
+                "sub-admin"
+            );
+        }
     }
 
     let decorated_song = subsonic_json(&router, "getSong", api_key, &format!("&id={song}")).await;
@@ -2269,6 +2329,12 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let share_id = share["subsonic-response"]["shares"]["share"][0]["id"]
         .as_str()
         .unwrap();
+    // Same reasoning as playlist.owner: a share is read by its owner, so the
+    // empty username told the client the share belonged to nobody.
+    assert_eq!(
+        share["subsonic-response"]["shares"]["share"][0]["username"],
+        "sub-admin"
+    );
     let share_url = share["subsonic-response"]["shares"]["share"][0]["url"]
         .as_str()
         .unwrap();
@@ -2318,6 +2384,10 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(listed_shares["subsonic-response"]["shares"]["share"][0]
         .get("url")
         .is_none());
+    assert_eq!(
+        listed_shares["subsonic-response"]["shares"]["share"][0]["username"],
+        "sub-admin"
+    );
     assert_eq!(
         subsonic_json(
             &router,
@@ -2493,7 +2563,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         )
         .await
         .unwrap();
-    assert_eq!(denied_admin.status(), StatusCode::FORBIDDEN);
+    assert_eq!(denied_admin.status(), StatusCode::OK);
     assert_eq!(
         json_body(denied_admin).await["subsonic-response"]["error"]["code"],
         50
@@ -2749,7 +2819,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         )
         .await
         .unwrap();
-    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.status(), StatusCode::OK);
     assert_eq!(
         json_body(wrong).await["subsonic-response"]["error"]["code"],
         40
@@ -2865,9 +2935,18 @@ async fn subsonic_blurs_foreign_catalog_and_rate_limits_failed_authentication() 
         .create_account("sub-outsider", &web_hash, AccountRole::User, now_ms())
         .await
         .unwrap();
+    // A dedicated account for the throttling assertion: the rate window is a
+    // process-wide map keyed by the supplied username, so reusing one of the
+    // accounts asserted on elsewhere would leak between tests.
+    let throttled = state
+        .db
+        .create_account("sub-throttled", &web_hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
     for (actor, user, password, key) in [
         (owner, owner, "owner-sub-password", "wfsk_owner"),
         (owner, outsider, "outsider-sub-password", "wfsk_outsider"),
+        (owner, throttled, "throttled-sub-password", "wfsk_throttled"),
     ] {
         state
             .db
@@ -2919,7 +2998,7 @@ async fn subsonic_blurs_foreign_catalog_and_rate_limits_failed_authentication() 
         )
         .await
         .unwrap();
-    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_eq!(foreign.status(), StatusCode::OK);
     assert_eq!(
         json_body(foreign).await["subsonic-response"]["error"]["code"],
         70
@@ -2934,26 +3013,46 @@ async fn subsonic_blurs_foreign_catalog_and_rate_limits_failed_authentication() 
         )
         .await
         .unwrap();
-    assert_eq!(foreign_star.status(), StatusCode::NOT_FOUND);
+    assert_eq!(foreign_star.status(), StatusCode::OK);
     assert_eq!(
         json_body(foreign_star).await["subsonic-response"]["error"]["code"],
         70
     );
 
-    let mut last = StatusCode::OK;
+    // Repeated failures throttle the credential. That refusal is no longer
+    // visible in the status line — every Subsonic answer is HTTP 200 — so the
+    // limiter is asserted where it actually bites: once the window is full,
+    // even the correct password is refused.
     for _ in 0..=20 {
-        last = router
+        let refused = router
             .clone()
             .oneshot(
-                Request::get("/rest/ping?u=rate-limited-user&p=wrong&f=json")
+                Request::get("/rest/ping?u=sub-throttled&p=wrong&f=json")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
-            .unwrap()
-            .status();
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(refused).await["subsonic-response"]["error"]["code"],
+            40
+        );
     }
-    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+    let throttled_but_correct = router
+        .clone()
+        .oneshot(
+            Request::get("/rest/ping?u=sub-throttled&p=throttled-sub-password&f=json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(throttled_but_correct.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(throttled_but_correct).await["subsonic-response"]["error"]["code"],
+        40
+    );
 
     let unknown = router
         .clone()
@@ -4961,25 +5060,26 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     );
 
     // The other server namespaces answer as themselves rather than falling
-    // through: /rest keeps its Subsonic error contract (400 for a missing
-    // credential), /share is a plain 404. Neither may return the client shell.
-    for uri in ["/rest/nope", "/share/nope"] {
-        let response = get(uri).await;
-        assert!(
-            response.status().is_client_error(),
-            "{uri} answered {}",
-            response.status()
-        );
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .map(|value| value.to_str().unwrap().to_owned())
-            .unwrap_or_default();
-        assert!(
-            !content_type.starts_with("text/html"),
-            "{uri} must not return the client shell"
-        );
-    }
+    // through. /rest keeps its Subsonic contract — HTTP 200 with the failure in
+    // the body — and /share is a plain 404. Neither may return the client shell.
+    let unknown_method = get("/rest/nope").await;
+    assert_eq!(unknown_method.status(), StatusCode::OK);
+    assert!(!unknown_method.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    let unknown_method = body_text(unknown_method).await;
+    assert!(unknown_method.starts_with("<subsonic-response"));
+    assert!(unknown_method.contains("status=\"failed\""));
+
+    let unknown_share = get("/share/nope").await;
+    assert_eq!(unknown_share.status(), StatusCode::NOT_FOUND);
+    assert!(!unknown_share
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default()
+        .starts_with("text/html"));
 
     // A client route that merely starts like a reserved endpoint is not one.
     let lookalike = get("/reference-guide").await;
