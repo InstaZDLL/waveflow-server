@@ -5735,6 +5735,36 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
         .unwrap();
     assert_eq!(read_attempt.status(), StatusCode::OK);
 
+    // The media routes go through the same door now, and reading needs no
+    // scope, so a read-only token still plays. Requiring a literal `read`
+    // scope would strand every token an operator has already issued.
+    let ticket = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/v2/tracks/{track}/stream-ticket"))
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ticket.status(), StatusCode::OK);
+    // An unauthenticated one is still refused, so the door did not open.
+    let anonymous = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/v2/tracks/{track}/stream-ticket"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
     // `write` admits the mutation and stops at the instance: the two levels
     // are separate, and `admin` implies `write` rather than the reverse.
     let writer = json_body(
