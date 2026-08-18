@@ -42,7 +42,8 @@ logical mutation.
   "ratings": [],
   "queue": null,
   "history": [],
-  "shares": []
+  "shares": [],
+  "bookmarks": []
 }
 ```
 

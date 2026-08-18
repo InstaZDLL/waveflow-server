@@ -99,6 +99,9 @@ pub struct CatalogTrackInput {
     pub comment: Option<String>,
     /// Multi-valued, split like `artist` and `genre`.
     pub isrc: Option<String>,
+    pub moods: Option<String>,
+    /// Normalised to `explicit` or `clean`; any other tag value is no value.
+    pub explicit_status: Option<String>,
     pub artwork: Option<ArtworkInput>,
     pub lyrics_hash: String,
     pub lyrics: Vec<crate::lyrics::LyricsInput>,
@@ -563,9 +566,10 @@ impl Database {
                codec, musical_key, tag_rating, musicbrainz_recording_id, musicbrainz_release_id, \
                musicbrainz_artist_id, replay_gain_track_gain, replay_gain_track_peak, \
                replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, comment, isrc, \
+               moods, explicit_status, \
                lyrics_hash, is_available, last_seen_scan_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
                      1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
@@ -584,7 +588,8 @@ impl Database {
                replay_gain_album_gain=excluded.replay_gain_album_gain, \
                replay_gain_album_peak=excluded.replay_gain_album_peak, \
                bpm=excluded.bpm, sort_title=excluded.sort_title, comment=excluded.comment, \
-               isrc=excluded.isrc, \
+               isrc=excluded.isrc, moods=excluded.moods, \
+               explicit_status=excluded.explicit_status, \
                lyrics_hash=excluded.lyrics_hash, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
@@ -603,6 +608,7 @@ impl Database {
         .bind(input.replay_gain_album_gain).bind(input.replay_gain_album_peak)
         .bind(input.bpm).bind(input.sort_title.as_deref()).bind(input.comment.as_deref())
         .bind(input.isrc.as_deref())
+        .bind(input.moods.as_deref()).bind(input.explicit_status.as_deref())
         .bind(&input.lyrics_hash)
         .bind(scan_id.to_string()).bind(now).bind(now)
         .execute(&mut **tx).await?;
