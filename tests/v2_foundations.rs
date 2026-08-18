@@ -7954,6 +7954,55 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         StatusCode::UNAUTHORIZED
     );
 
+    // A narrowed credential cannot mint an unrestricted one. The session the
+    // code flow returns carries the account's whole authority and records
+    // nothing about what asked for it, so a `write` token reaching this route
+    // came back holding a session that answered to `Admin`: two requests from
+    // a token deliberately issued without `admin`.
+    let scoped = json_body(
+        router
+            .clone()
+            .oneshot(
+                Request::post("/api/v2/admin/users/pkce-user/tokens")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "agent", "scopes": ["write"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    let scoped = scoped["secret"].as_str().expect("the secret").to_owned();
+    assert_eq!(
+        authorize(grant.clone(), Some(scoped.clone()))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    // It is the narrowing that refuses, not the account: the same account's
+    // session still grants, and the token still writes what it was given.
+    let writes = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/v2/ratings/track/00000000-0000-4000-8000-000000000000")
+                .header("authorization", format!("Bearer {scoped}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"rating": 3}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        writes.status(),
+        StatusCode::FORBIDDEN,
+        "the write scope should still write"
+    );
+
     // A redirect that could carry the code off the machine is refused.
     let mut remote = grant.clone();
     remote["redirect_uri"] = "http://evil.example.com/cb".into();
