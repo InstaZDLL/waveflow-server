@@ -93,6 +93,8 @@ pub struct AppState {
         http::list_artists,
         http::get_artist,
         http::search_catalog,
+        http::list_random_songs,
+        http::list_songs_by_genre,
         http::list_playlists,
         http::create_playlist,
         http::get_playlist,

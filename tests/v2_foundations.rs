@@ -5176,6 +5176,68 @@ async fn genre_matching_is_canonical_on_every_surface() {
         1
     );
 
+    // The native surface answers the same two questions the facade does, on
+    // the same services: an asymmetry the audit left open, where the query
+    // existed and only the HTTP adapter was missing.
+    let login = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": "genre-owner",
+                "password": "correct horse battery staple",
+                "device_name": "Integration"
+            }),
+        ))
+        .await
+        .unwrap();
+    let access = json_body(login).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let native = |path: String| {
+        let router = router.clone();
+        let access = access.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(path)
+                        .header("authorization", format!("Bearer {access}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    // Any spelling reaches the same three tracks, natively too.
+    let by_genre = json_body(native("/api/v2/songs?genre=hip%20hop&limit=50".into()).await).await;
+    assert_eq!(by_genre.as_array().expect("a list").len(), 3);
+    let random =
+        json_body(native("/api/v2/songs/random?genre=HIP%20%20HOP&limit=50".into()).await).await;
+    assert_eq!(random.as_array().expect("a list").len(), 3);
+    // The year filter narrows, and a genre nobody uses is empty rather than
+    // an error.
+    let narrowed = json_body(
+        native("/api/v2/songs/random?genre=Hip-Hop&limit=50&from_year=2010&to_year=2020".into())
+            .await,
+    )
+    .await;
+    assert!(narrowed.as_array().expect("a list").is_empty());
+    let unused = json_body(native("/api/v2/songs?genre=Polka".into()).await).await;
+    assert!(unused.as_array().expect("a list").is_empty());
+    // The genre is what the request is about, so its absence is a malformed
+    // request and not an unfiltered catalogue.
+    assert_eq!(
+        native("/api/v2/songs".into()).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    // Search pages each kind on its own offset.
+    let paged =
+        json_body(native("/api/v2/search?q=Boom&limit=10&song_offset=5".into()).await).await;
+    assert!(paged["songs"].as_array().expect("songs").is_empty());
+    assert_eq!(paged["albums"].as_array().expect("albums").len(), 1);
+
     // The album carries the credits and genres of its tracks, folded the same
     // way, which is what AlbumID3 asks for.
     let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
@@ -5639,6 +5701,80 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
         get("/api/v2/admin/users".into()).await.status(),
         StatusCode::OK
     );
+
+    // Reading is all a `catalog:read` token may do. Before the scope check
+    // reached the mutations it could still write playlists, shares, ratings,
+    // the queue and these very bookmarks: only the administrative door was
+    // closed, which shut the worst case and left the principle open.
+    let write_attempt = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/v2/bookmarks/{track}"))
+                .header("authorization", format!("Bearer {secret}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"position_ms": 1}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(write_attempt.status(), StatusCode::FORBIDDEN);
+    // And it still reads, so the refusal is the mutation and not the token.
+    let read_attempt = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/bookmarks")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_attempt.status(), StatusCode::OK);
+
+    // `write` admits the mutation and stops at the instance: the two levels
+    // are separate, and `admin` implies `write` rather than the reverse.
+    let writer = json_body(
+        json_request(
+            Method::POST,
+            "/api/v2/admin/users/token-admin/tokens".into(),
+            serde_json::json!({"name": "sync agent", "scopes": ["write"]}),
+        )
+        .await,
+    )
+    .await;
+    let writer = writer["secret"].as_str().unwrap().to_owned();
+    let allowed = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/v2/bookmarks/{track}"))
+                .header("authorization", format!("Bearer {writer}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"position_ms": 1}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::NO_CONTENT);
+    let refused = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {writer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    state.services.delete_bookmark(admin, track).await.unwrap();
 
     // A scope list grants the union of its entries: naming `admin` beside
     // another scope admits these routes, because a token that explicitly

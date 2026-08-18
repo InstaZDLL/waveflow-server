@@ -138,7 +138,7 @@ Wildcards are rejected.
 
 Native interactive clients should use the system browser:
 
-1. Generate a 43–128 character PKCE verifier and keep it private.
+1. Generate a 43â128 character PKCE verifier and keep it private.
 2. Compute `challenge = base64url_no_padding(sha256(verifier))`.
 3. Generate and retain an unpredictable `state` value.
 4. Open the embedded UI route below in the system browser:
@@ -195,6 +195,17 @@ curl https://music.example.com/api/v2/albums/ALBUM_UUID \
 curl https://music.example.com/api/v2/artists/ARTIST_UUID \
   -H "Authorization: Bearer ACCESS_TOKEN"
 ```
+
+`GET /api/v2/songs` takes a required `genre` and pages through it; `GET
+/api/v2/songs/random` draws a selection in SQL, with optional `genre`,
+`from_year` and `to_year`. Both match the genre on its canonical name like
+every other genre filter, and both are the native form of a Subsonic method
+(`getSongsByGenre`, `getRandomSongs`) resolving through the same service.
+
+`GET /api/v2/search` applies `offset` to all three kinds, and accepts
+`artist_offset`, `album_offset` and `song_offset` to page one of them on its
+own — which is what a client that has exhausted the artists but not the songs
+needs, and what `search3` has always allowed.
 
 Browse and search pages accept `offset >= 0` and `1 <= limit <= 500`.
 `GET /api/v2/albums` and `/artists` additionally accept an optional
@@ -388,10 +399,10 @@ Other user-data routes:
 |---|---|
 | Playlists | `GET/POST /api/v2/playlists`, `GET/PATCH/DELETE /api/v2/playlists/{id}` |
 | Favorites | `GET /api/v2/favorites`, `PUT/DELETE /api/v2/favorites/{track|album|artist}/{id}` |
-| Ratings | `GET /api/v2/ratings`, `PUT /api/v2/ratings/{track|album|artist}/{id}` with `rating` 0–5 |
+| Ratings | `GET /api/v2/ratings`, `PUT /api/v2/ratings/{track|album|artist}/{id}` with `rating` 0â5 |
 | Playback activity | `POST /api/v2/scrobbles`, `GET /api/v2/history`, `GET /api/v2/now-playing` |
 | Queue | `GET/PUT /api/v2/queue` (`track_ids` allows repeated tracks; maximum 400) |
-| Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks) |
+| Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1â400 tracks) |
 
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
 idempotent replay. Later list, snapshot and update responses omit it because
@@ -415,7 +426,7 @@ curl "https://music.example.com/api/v2/sync/changes?after=CURSOR&limit=100" \
 ```
 
 Apply every event idempotently, advance to `next_cursor`, and continue while
-`has_more` is true. Limits are 1–500. After durable local application, ACK the
+`has_more` is true. Limits are 1â500. After durable local application, ACK the
 device cursor:
 
 ```bash
@@ -508,13 +519,33 @@ SHA-256 hash is stored, so the secret appears there and never again: the
 listing returns names, scopes and timestamps, and a caller who loses a token
 issues another rather than reading it back.
 
-**Scopes are enforced.** A token issued with a non-empty `scopes` list is
-restricted to it, whatever the account behind it may do: the administrative
-routes require the `admin` scope, so a `catalog:read` token belonging to an
-administrator is refused with `403`. A token issued **without** scopes is
-unrestricted and carries the account's full authority, which is what the CLI
-has always produced and what tokens created before this release hold. Sessions
-and Authorization Code grants are likewise unrestricted. `DELETE` revokes one; the token
+**Scopes are enforced on every route.** A token issued with a non-empty
+`scopes` list is restricted to it, whatever the account behind it may do. Two
+scopes are checked:
+
+| Scope | Admits |
+|---|---|
+| `write` | any mutation: playlists, favorites, ratings, the queue, bookmarks, shares, scrobbles, scans, issuing an OAuth code |
+| `admin` | the administrative routes, and everything `write` admits |
+
+Reading needs no scope, so a token naming neither is read-only. **A scope this
+server does not know grants nothing**, which is why `catalog:read` reads and
+does no more: there is no vocabulary to learn, only these two names to use.
+
+A token issued **without** scopes is unrestricted and carries the account's full
+authority. That is what the CLI has always produced, what tokens created before
+this release hold, and what sessions and Authorization Code grants carry, so
+nothing that works today stops working.
+
+The check happens where the caller is resolved, not in each handler, so a route
+cannot be added without choosing what it needs — the compiler asks. This
+matters because the previous release stored scopes, returned them from the API
+and printed them from the CLI while reading them nowhere.
+
+Issuing a token is administrative: an account cannot mint one for itself. A
+token carries the authority of the account it belongs to, so who may create one
+is a question about the instance rather than about the account, and the answer
+is the same from the CLI and from the API. `DELETE` revokes one; the token
 stops authenticating immediately, and revoking it again answers `404`,
 because it is already not working.
 
