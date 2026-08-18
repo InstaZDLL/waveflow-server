@@ -203,24 +203,6 @@ pub async fn handle(
     Path(raw_method): Path<String>,
     request: Request,
 ) -> Response {
-    let format_hint = request.uri().query().unwrap_or_default().to_owned();
-    match handle_inner(state, raw_method, request).await {
-        Ok(response) => response,
-        // A protocol failure is still an HTTP success: the Subsonic contract
-        // puts the outcome in the body, never in the status line.
-        Err(error) => render_protocol(
-            error_node(error.code, error.message),
-            wants_json_query(&format_hint),
-        ),
-    }
-}
-
-async fn handle_inner(
-    state: AppState,
-    raw_method: String,
-    request: Request,
-) -> Result<Response, ProtocolError> {
-    let method = raw_method.strip_suffix(".view").unwrap_or(&raw_method);
     let request_method = request.method().clone();
     let query = request.uri().query().unwrap_or_default().to_owned();
     let range = request
@@ -228,44 +210,97 @@ async fn handle_inner(
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let mut params = parse_pairs(&query)?;
-    if request_method == Method::POST {
-        let content_type = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
-        if !content_type.starts_with("application/x-www-form-urlencoded") {
-            return Err(invalid("POST requires application/x-www-form-urlencoded"));
+
+    // Format negotiation has to survive a failure, and under the `formPost`
+    // extension `f=json` arrives in the body rather than the query string.
+    // Collecting the parameters here, outside the fallible path, is what lets a
+    // POST that fails to authenticate still answer in the format it asked for
+    // instead of falling back to XML.
+    let mut wants_json = false;
+    let params = match parse_pairs(&query) {
+        Ok(mut params) => {
+            wants_json = json_requested(&params);
+            if request_method == Method::POST {
+                match form_params(request).await {
+                    Ok(body) => {
+                        params.0.extend(body.0);
+                        wants_json = json_requested(&params);
+                        Ok(params)
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                Ok(params)
+            }
         }
-        let body = to_bytes(request.into_body(), MAX_FORM_BYTES)
+        Err(error) => Err(error),
+    };
+
+    let outcome = match params {
+        Ok(params) => {
+            handle_inner(
+                &state,
+                &raw_method,
+                &request_method,
+                &params,
+                range.as_deref(),
+            )
             .await
-            .map_err(|_| invalid("Invalid form body"))?;
-        params.0.extend(
-            parse_pairs(std::str::from_utf8(&body).map_err(|_| invalid("Invalid form body"))?)?.0,
-        );
+        }
+        Err(error) => Err(error),
+    };
+    match outcome {
+        Ok(response) => response,
+        // A protocol failure is still an HTTP success: the Subsonic contract
+        // puts the outcome in the body, never in the status line.
+        Err(error) => render_protocol(error_node(error.code, error.message), wants_json),
     }
-    let wants_json = params.first("f").is_some_and(|value| value == "json");
-    if is_symfonium_discovery_probe(method, &request_method, &params) {
+}
+
+/// Parameters carried in a POST body, as the `formPost` extension allows in
+/// place of a query string too long for a URL.
+async fn form_params(request: Request) -> Result<Params, ProtocolError> {
+    let form_encoded = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .starts_with("application/x-www-form-urlencoded");
+    if !form_encoded {
+        return Err(invalid("POST requires application/x-www-form-urlencoded"));
+    }
+    let body = to_bytes(request.into_body(), MAX_FORM_BYTES)
+        .await
+        .map_err(|_| invalid("Invalid form body"))?;
+    parse_pairs(std::str::from_utf8(&body).map_err(|_| invalid("Invalid form body"))?)
+}
+
+fn json_requested(params: &Params) -> bool {
+    params.first("f").is_some_and(|value| value == "json")
+}
+
+async fn handle_inner(
+    state: &AppState,
+    raw_method: &str,
+    request_method: &Method,
+    params: &Params,
+    range: Option<&str>,
+) -> Result<Response, ProtocolError> {
+    let method = raw_method.strip_suffix(".view").unwrap_or(raw_method);
+    let wants_json = json_requested(params);
+    if is_symfonium_discovery_probe(method, request_method, params) {
         return Ok(render_protocol(ok_node(), wants_json));
     }
-    let principal = authenticate(&state, &params).await?;
+    let principal = authenticate(state, params).await?;
 
     if matches!(method, "stream" | "download") {
-        return media_response(
-            &state,
-            &principal,
-            &params,
-            method == "download",
-            range.as_deref(),
-        )
-        .await;
+        return media_response(state, &principal, params, method == "download", range).await;
     }
     if method == "getCoverArt" {
-        return cover_art_response(&state, &principal, &params).await;
+        return cover_art_response(state, &principal, params).await;
     }
 
-    let payload = dispatch(&state, &principal, method, &params).await?;
+    let payload = dispatch(state, &principal, method, params).await?;
     let root = if method == "ping" || empty_success_method(method) {
         ok_node()
     } else {
@@ -1978,13 +2013,6 @@ fn parse_pairs(raw: &str) -> Result<Params, ProtocolError> {
         .map_err(|_| invalid("Invalid parameters"))
 }
 
-fn wants_json_query(query: &str) -> bool {
-    parse_pairs(query)
-        .ok()
-        .and_then(|params| params.first("f").map(str::to_owned))
-        .as_deref()
-        == Some("json")
-}
 fn content_type(suffix: &str) -> &'static str {
     match suffix {
         "mp3" => "audio/mpeg",

@@ -50,7 +50,7 @@ Both `/rest/<method>` and `/rest/<method>.view` accept GET query parameters and 
 
 Symfonium 14.1.0 performs a discovery request with the exact unauthenticated tuple `GET ping`, `c=Symfonium`, `u=test`, `p=test` after validating the configured account. WaveFlow returns only the standard successful `ping` envelope for that exact probe and does not create a principal or session. Duplicate identity parameters, alternate clients, POST requests, extra token authentication parameters and every method other than `ping` remain authenticated normally.
 
-The response root freezes `status`, `version=1.16.1`, `type=waveflow`, `serverVersion` and `openSubsonic=true`. XML uses the Subsonic namespace. JSON collection fields are arrays even when they contain one item. Media items freeze the common fields `id`, `parent`, `isDir`, `title`, optional `album`/`artist`/`genre`/`year`/disc-track numbers, seconds-based `duration`, `bitRate`, `size`, `suffix`, `contentType`, `type=music`, optional `coverArt`/`albumId`, and ISO-8601 `created`. Album and artist records include UUID, display name, counts and available artwork/year metadata. Optional metadata follows the OpenSubsonic presence rule rather than the original omission rule; see *Deliberate deviations from the v2.0-beta freeze*.
+The response root freezes `status`, `version=1.16.1`, `type=waveflow`, `serverVersion` and `openSubsonic=true`. XML uses the Subsonic namespace. JSON collection fields are arrays even when they contain one item. Media items freeze the common fields `id`, `parent`, `isDir`, `title`, optional `album`/`artist`/`genre`/`year`/disc-track numbers, seconds-based `duration`, `bitRate`, `size`, `suffix`, `contentType`, `type=music`, optional `coverArt`/`albumId`, and ISO-8601 `created`. Album and artist records include UUID, display name, counts and available artwork/year metadata. Unknown optional metadata is omitted rather than emitted as an empty sentinel. Replacing that with the OpenSubsonic presence rule is an accepted decision but is not yet in force; see *Deliberate deviations from the v2.0-beta freeze*.
 
 Pagination is capped at 500 items per page. `offset` is zero-based; `search3` applies its independent `artistOffset`, `albumOffset` and `songOffset` after tenant filtering. Repeated `songId`, `songIdToAdd`, `songIndexToRemove`, scrobble `id`/`time`, queue `id`, star IDs, share IDs and `musicFolderId` values retain request order. Catalogue endpoints accept the union of repeated authorized `musicFolderId` values and return no foreign data for inaccessible IDs. `createUser` grants every current library when the parameter is absent or exactly the repeated selection when present; `updateUser` replaces Subsonic-managed listener memberships only, preserving owner/manager roles. `getUser` and `getUsers` expose the effective UUID list as `folder[]`. Default catalogue order is Unicode case-insensitive display name; indexes group by uppercase ASCII initial with `#` fallback. Album lists implement `random`, `newest`, `highest`, `frequent`, `recent`, `starred`, both alphabetical modes, `byYear` (including reversed ranges) and `byGenre`; non-random ties use stable title/UUID ordering. Random-song year and genre filters are applied after repository authorization. Playlist positions are contiguous and removals are applied from highest index downward before additions. The legacy `getAlbumList` method remains an alias for older clients and uses the `albumList` response container; `getAlbumList2` uses `albumList2`. `star` and `unstar` accept the generic `id` form for tracks, albums and artists in addition to the typed album/artist parameters; resolution remains tenant-scoped and rejects ambiguous or invisible entities.
 
@@ -72,8 +72,10 @@ Original downloads and streams use repository authorization and the M2 path guar
 
 The freeze exists to protect clients validated against v2.0-beta, not to preserve
 divergences from the specification. Where the two conflict, WaveFlow now follows
-OpenSubsonic. Two such deviations are accepted, both requiring the compatibility
-matrix in `docs/subsonic-compatibility.md` to be re-run before the next tag.
+OpenSubsonic. Two such deviations are accepted. The first is implemented; the
+second is a recorded decision whose implementation is still outstanding. Both
+require the compatibility matrix in `docs/subsonic-compatibility.md` to be re-run
+before the next tag.
 
 **Every `/rest` answer is HTTP 200.** The Subsonic contract carries the outcome
 in the response body: `status="failed"` and an `error` element with its code.
@@ -86,14 +88,20 @@ responses still answer 206 and 416, and `/share` and `/api/v2` are unaffected.
 Authentication throttling is no longer distinguishable from a wrong password on
 the wire, by design — both are error code 40.
 
-**A supported field is emitted even when empty.** OpenSubsonic uses presence to
-advertise support: a client tells "this server does not implement `comment`"
-from "this track has no comment" only by whether the field appears at all. The
-original rule — omit unknown optional metadata — made every unset field look
-unsupported. It is replaced: a field WaveFlow populates from a real source is
-emitted whenever the source exists, empty value included; a field WaveFlow does
-not implement at all stays absent. Frozen common fields keep their existing
-shapes.
+**Accepted, not yet implemented: a supported field is emitted even when empty.**
+OpenSubsonic uses presence to advertise support: a client tells "this server does
+not implement `comment`" from "this track has no comment" only by whether the
+field appears at all. The original rule — omit unknown optional metadata — makes
+every unset field look unsupported, so it will be replaced by the presence rule:
+a field WaveFlow populates from a real source is to be emitted whenever the
+source exists, empty value included, while a field WaveFlow does not implement at
+all stays absent. Frozen common fields keep their existing shapes.
+
+Until that lands, **omission remains the behaviour on the wire**. The rule takes
+effect only with the change that emits the modern OpenSubsonic media fields, and
+is not in force before that change ships with XML and JSON coverage for both
+cases — a populated field and a supported-but-empty one. Treat this paragraph as
+the recorded decision, not as a description of what the server does today.
 
 ### Reconciliation
 
