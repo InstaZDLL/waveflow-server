@@ -234,7 +234,13 @@ with Subsonic error code `0`, like every other protocol failure.
 
 Album-list types are `random`, `newest`, `highest`, `frequent`, `recent`,
 `starred`, `alphabeticalByName`, `alphabeticalByArtist`, `byYear` and `byGenre`.
-Non-random results use stable title/UUID tie-breaking.
+Non-random results use stable title/UUID tie-breaking. `byGenre` matches the
+canonical genre name, folding case, punctuation and spacing, so `Hip-Hop` and
+`hip hop` select the same albums; it requires `genre` and answers error code 10
+without it, rather than returning the catalogue unfiltered. A reversed
+`fromYear`/`toYear` pair returns the range in descending order. `size=0` answers with an empty container. All ten
+types are ordered and paged in SQL; the same vocabulary is available natively as
+`GET /api/v2/albums?sort=`.
 
 Repeated parameters such as `songId`, `songIdToAdd`, `songIndexToRemove`,
 `musicFolderId`, scrobble `id`/`time`, queue `id` and share IDs retain wire

@@ -23,7 +23,10 @@ use crate::{
     database::AccountRole,
     media::{MediaError, OutputFormat, StreamQuery},
     security,
-    services::{AlbumItem, ArtistItem, CatalogSnapshot, PlaylistItem, ServiceError, SongItem},
+    services::{
+        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, BrowsePage, CatalogSnapshot,
+        PlaylistItem, ServiceError, SongItem,
+    },
     AppState,
 };
 
@@ -606,7 +609,7 @@ async fn get_artist(
         .albums
         .iter()
         .filter(|album| album.artist_id == Some(id))
-        .map(|album| album_node(album, &snapshot.songs))
+        .map(album_node)
         .collect::<Vec<_>>();
     Ok(artist_node(artist, albums.len()).children(albums))
 }
@@ -651,7 +654,7 @@ async fn get_album(
         .iter()
         .find(|album| album.id == id)
         .ok_or_else(not_found)?;
-    Ok(album_node(album, &snapshot.songs).children(
+    Ok(album_node(album).children(
         snapshot
             .songs
             .iter()
@@ -737,39 +740,23 @@ fn structured_lyrics_node(lyrics: &crate::lyrics::StructuredLyrics) -> Node {
         }))
 }
 
+/// Parameter adapter over [`crate::services::DomainServices::list_genres`].
 async fn genres(
     state: &AppState,
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let snapshot = snapshot(state, principal, params).await?;
-    let mut counts: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-    for song in &snapshot.songs {
-        for genre in split_multi(song.genre.as_deref()) {
-            counts.entry(genre).or_default().0 += 1;
-        }
-    }
-    for album in &snapshot.albums {
-        let mut seen = Vec::new();
-        for song in snapshot
-            .songs
-            .iter()
-            .filter(|song| song.album_id == Some(album.id))
-        {
-            for genre in split_multi(song.genre.as_deref()) {
-                if !seen.contains(&genre) {
-                    seen.push(genre.clone());
-                    counts.entry(genre).or_default().1 += 1;
-                }
-            }
-        }
-    }
+    let genres = state
+        .services
+        .list_genres(principal.id, &params.uuids("musicFolderId")?)
+        .await
+        .map_err(internal)?;
     Ok(
-        Node::new("genres").children(counts.into_iter().map(|(name, (songs, albums))| {
+        Node::new("genres").children(genres.into_iter().map(|genre| {
             Node::new("genre")
-                .attr("songCount", songs as i64)
-                .attr("albumCount", albums as i64)
-                .text(name)
+                .attr("songCount", genre.song_count)
+                .attr("albumCount", genre.album_count)
+                .text(genre.name)
         })),
     )
 }
@@ -796,11 +783,7 @@ async fn music_directory(
                 .albums
                 .iter()
                 .filter(|album| album.artist_id == Some(id))
-                .map(|album| {
-                    album_node(album, &snapshot.songs)
-                        .renamed("child")
-                        .attr("isDir", true)
-                }),
+                .map(|album| album_node(album).renamed("child").attr("isDir", true)),
         );
     } else if let Some(album) = snapshot.albums.iter().find(|item| item.id == id) {
         directory = directory.attr("name", album.title.clone()).children(
@@ -816,108 +799,45 @@ async fn music_directory(
     Ok(directory)
 }
 
+/// Parameter adapter over [`crate::services::DomainServices::list_albums`].
+///
+/// The ten ordering modes used to live here, sorted in Rust over a full
+/// `catalog_snapshot`. They now resolve in SQL, so this maps Subsonic spelling
+/// onto the shared query and does nothing else — which is what M4 asks of a
+/// facade, and it stops one album page from reading the tenant's whole
+/// catalogue.
 async fn album_list(
     state: &AppState,
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let kind = params.first("type").unwrap_or("alphabeticalByName");
+    let order = params
+        .first("type")
+        .unwrap_or("alphabeticalByName")
+        .parse::<AlbumOrder>()
+        .map_err(|_| invalid("Invalid album list type"))?;
     let offset = params.usize_or("offset", 0, 100_000)?;
     let size = params.usize_or("size", 10, 500)?;
-    let snapshot = snapshot(state, principal, params).await?;
-    let mut albums = snapshot.albums.iter().collect::<Vec<_>>();
-    match kind {
-        "alphabeticalByName" => albums.sort_by_key(|album| (album.title.to_lowercase(), album.id)),
-        "alphabeticalByArtist" => albums.sort_by_key(|album| {
-            (
-                album.artist.clone().unwrap_or_default().to_lowercase(),
-                album.title.to_lowercase(),
-                album.id,
-            )
-        }),
-        "newest" => albums.sort_by_key(|album| (std::cmp::Reverse(album.created_at), album.id)),
-        "highest" => {
-            albums.retain(|album| album.user_rating.is_some_and(|rating| rating > 0));
-            albums.sort_by_key(|album| {
-                (
-                    std::cmp::Reverse(album.user_rating.unwrap_or_default()),
-                    album.title.to_lowercase(),
-                    album.id,
-                )
-            });
-        }
-        "frequent" => {
-            albums.retain(|album| album.play_count > 0);
-            albums.sort_by_key(|album| {
-                (
-                    std::cmp::Reverse(album.play_count),
-                    album.title.to_lowercase(),
-                    album.id,
-                )
-            });
-        }
-        "recent" => {
-            albums.retain(|album| album.last_played_at.is_some());
-            albums.sort_by_key(|album| {
-                (
-                    std::cmp::Reverse(album.last_played_at.unwrap_or_default()),
-                    album.title.to_lowercase(),
-                    album.id,
-                )
-            });
-        }
-        "starred" => {
-            albums.retain(|album| album.starred_at.is_some());
-            albums.sort_by_key(|album| {
-                (
-                    std::cmp::Reverse(album.starred_at.unwrap_or_default()),
-                    album.title.to_lowercase(),
-                    album.id,
-                )
-            });
-        }
-        "random" => albums.shuffle(&mut rand::thread_rng()),
-        "byYear" => {
-            let from = params.i64_or("fromYear", i64::MIN)?;
-            let to = params.i64_or("toYear", i64::MAX)?;
-            albums.retain(|album| {
-                album
-                    .year
-                    .is_some_and(|year| year >= from.min(to) && year <= from.max(to))
-            });
-            if from <= to {
-                albums.sort_by_key(|album| (album.year, album.title.to_lowercase(), album.id));
-            } else {
-                albums.sort_by_key(|album| {
-                    (
-                        std::cmp::Reverse(album.year),
-                        album.title.to_lowercase(),
-                        album.id,
-                    )
-                });
-            }
-        }
-        "byGenre" => {
-            let genre = params.first("genre").ok_or_else(missing)?;
-            albums.retain(|album| {
-                snapshot
-                    .songs
-                    .iter()
-                    .filter(|song| song.album_id == Some(album.id))
-                    .flat_map(|song| split_multi(song.genre.as_deref()))
-                    .any(|value| value.eq_ignore_ascii_case(genre))
-            });
-            albums.sort_by_key(|album| (album.title.to_lowercase(), album.id));
-        }
-        _ => return Err(invalid("Invalid album list type")),
+    // A page of nothing is a valid Subsonic request and used to answer with an
+    // empty container. `BrowsePage` rejects a zero limit, so the short-circuit
+    // keeps that shape rather than turning it into error code 10.
+    if size == 0 {
+        return Ok(Node::new("albumList2"));
     }
-    Ok(Node::new("albumList2").children(
-        albums
-            .into_iter()
-            .skip(offset)
-            .take(size)
-            .map(|album| album_node(album, &snapshot.songs)),
-    ))
+    let query = AlbumListQuery {
+        library_ids: params.uuids("musicFolderId")?,
+        order,
+        genre: params.first("genre").map(str::to_owned),
+        from_year: params.i64_optional("fromYear")?,
+        to_year: params.i64_optional("toYear")?,
+        page: BrowsePage::new(Some(offset as i64), Some(size as i64)).map_err(service_protocol)?,
+    };
+    let albums = state
+        .services
+        .list_albums(principal.id, &query)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("albumList2").children(albums.iter().map(album_node)))
 }
 
 async fn random_songs(
@@ -992,7 +912,6 @@ async fn search(
             snapshot.artists.iter(),
             snapshot.albums.iter(),
             snapshot.songs.iter(),
-            &snapshot.songs,
             (artist_offset, artist_count),
             (album_offset, album_count),
             (song_offset, song_count),
@@ -1009,7 +928,6 @@ async fn search(
         found.artists.iter(),
         found.albums.iter(),
         found.songs.iter(),
-        &found.album_tracks,
         (artist_offset, artist_count),
         (album_offset, album_count),
         (song_offset, song_count),
@@ -1017,16 +935,11 @@ async fn search(
 }
 
 /// Renders a `searchResult3` from already-selected entities.
-///
-/// `album_tracks` is what `album_node` derives songCount and duration from, and
-/// it is deliberately not the matching songs: an album must report its own size,
-/// not how much of it the query happened to hit.
 #[allow(clippy::too_many_arguments)]
 fn search_result<'a>(
     artists: impl Iterator<Item = &'a ArtistItem>,
     albums: impl Iterator<Item = &'a AlbumItem>,
     songs: impl Iterator<Item = &'a SongItem>,
-    album_tracks: &[SongItem],
     (artist_offset, artist_count): (usize, usize),
     (album_offset, album_count): (usize, usize),
     (song_offset, song_count): (usize, usize),
@@ -1038,12 +951,7 @@ fn search_result<'a>(
                 .take(artist_count)
                 .map(|artist| artist_node(artist, 0)),
         )
-        .children(
-            albums
-                .skip(album_offset)
-                .take(album_count)
-                .map(|album| album_node(album, album_tracks)),
-        )
+        .children(albums.skip(album_offset).take(album_count).map(album_node))
         .children(songs.skip(song_offset).take(song_count).map(song_node))
 }
 
@@ -1209,7 +1117,7 @@ async fn starred(
             "album" => {
                 if let Some(item) = snapshot.albums.iter().find(|item| item.id == id) {
                     node.children
-                        .push(album_node(item, &snapshot.songs).attr("starred", iso_time(at)));
+                        .push(album_node(item).attr("starred", iso_time(at)));
                 }
             }
             "artist" => {
@@ -1597,11 +1505,10 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
         .maybe_attr("userRating", artist.user_rating)
 }
 
-fn album_node(album: &AlbumItem, songs: &[SongItem]) -> Node {
-    let children = songs
-        .iter()
-        .filter(|song| song.album_id == Some(album.id))
-        .collect::<Vec<_>>();
+/// `songCount` and `duration` come from the album projection rather than from
+/// a slice of loaded tracks: counting them caller-side is what forced every
+/// album listing to materialise the tenant's whole track list first.
+fn album_node(album: &AlbumItem) -> Node {
     Node::new("album")
         .attr("id", album.id.to_string())
         .attr("name", album.title.clone())
@@ -1612,14 +1519,8 @@ fn album_node(album: &AlbumItem, songs: &[SongItem]) -> Node {
         .maybe_attr("year", album.year)
         .maybe_attr("starred", album.starred_at.map(iso_time))
         .maybe_attr("userRating", album.user_rating)
-        .attr("songCount", children.len() as i64)
-        .attr(
-            "duration",
-            children
-                .iter()
-                .map(|song| song.duration_ms / 1000)
-                .sum::<i64>(),
-        )
+        .attr("songCount", album.song_count)
+        .attr("duration", album.duration_ms / 1000)
         .attr("created", iso_time(album.created_at))
 }
 
@@ -1988,6 +1889,11 @@ impl Params {
             .ok_or_else(missing)?
             .parse()
             .map_err(|_| invalid("Invalid number"))
+    }
+    fn i64_optional(&self, key: &str) -> Result<Option<i64>, ProtocolError> {
+        self.first(key)
+            .map(|value| value.parse().map_err(|_| invalid("Invalid number")))
+            .transpose()
     }
     fn i64_or(&self, key: &str, default: i64) -> Result<i64, ProtocolError> {
         self.first(key)
