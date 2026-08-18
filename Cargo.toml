@@ -32,7 +32,7 @@ dashmap = "6"
 dotenvy = "0.15"
 futures-util = "0.3"
 hex = "0.4"
-lofty = "0.24"
+lofty = "0.25"
 libc = "0.2"
 md-5 = "0.11"
 rand = "0.8"
@@ -56,7 +56,7 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "d4c44eb5024a7b8e3aa42170c0ab5bd693788297", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "7e4c84273e80b54e6b7e63efb9cffc4e96415b44", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"
