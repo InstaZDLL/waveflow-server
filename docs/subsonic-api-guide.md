@@ -232,6 +232,31 @@ with Subsonic error code `0`, like every other protocol failure.
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
 | Compatibility | `getBookmarks` | Returns the standard empty container until audiobook progress is implemented. |
 
+### OpenSubsonic fields on media items
+
+Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
+`playCount`, `displayArtist`, `artists[]` and `genres[]`; albums add
+`isCompilation`, `playCount` and `displayArtist`. Both carry `played` when they
+have been played.
+
+These follow the OpenSubsonic presence rule: a supported field is present even
+when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,
+`displayArtist=""` and an empty `genres` array. **Do not read an absent field as
+an empty one** — absence means the field is not implemented at all. The fields
+WaveFlow does not implement, and therefore never sends, are `bpm`, `comment`,
+`sortName`, `musicBrainzId`, `isrc`, `moods`, `replayGain` and `explicitStatus`.
+
+`played` is the one exception: it is sent only once the item has been played,
+because its empty value would be an empty string rather than a timestamp.
+`playCount` is always present and signals the same support.
+
+`artists[]` is every credited artist in tag order, each with `id` and `name`;
+`artist` and `artistId` remain the display string and the primary credit.
+`genres[]` is the split, deduplicated genre list ordered by name, while `genre`
+remains the raw tag string. In XML both are repeated child elements
+(`<artists id="..." name="..."/>`, `<genres name="..."/>`); in JSON both are
+arrays, `[]` when empty.
+
 Album-list types are `random`, `newest`, `highest`, `frequent`, `recent`,
 `starred`, `alphabeticalByName`, `alphabeticalByArtist`, `byYear` and `byGenre`.
 Non-random results use stable title/UUID tie-breaking. `byGenre` matches the
