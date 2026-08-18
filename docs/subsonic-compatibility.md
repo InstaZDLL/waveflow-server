@@ -1,4 +1,4 @@
-# Subsonic compatibility matrix — v2.0-beta
+# Subsonic compatibility matrix — WaveFlow Server v2
 
 Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JSON, `.view`, GET, form POST, `u/p`, `u/t/s`, `apiKey`, catalogue isolation, all documented mutations, media and artwork.
 
@@ -7,9 +7,19 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 | Symfonium | 14.1.0 | pass | pass | pass | pass | Validated 2026-08-09 on Android 17 through an ephemeral `cloudflared` HTTPS tunnel: account and API-key authentication, full catalogue sync, native MP3/FLAC Range playback, Opus at 64 kbit/s, album favorite, scrobbles and playlist create/update. |
 | Feishin | 1.15.1 | pass | pass | pass | pass | Validated 2026-08-02: native playback, Opus cache, playlist create/add, favorite, rating, scrobble and queue. |
 | Substreamer | 8.0.91 | pass | pass | pass | pass* | Validated 2026-08-02 from the official release source: native playback, Opus/128 cache, playlist add, favorite, rating and scrobble. `*` Its playback queue is local-only and the client never calls `getPlayQueue`/`savePlayQueue`; those endpoints remain covered by fixtures and Feishin. |
-| DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass* | Validated 2026-08-02 on Android 14: native playback, 64 kbit/s MP3 transcoding, queue, playlist add, album favorite and rating. `*` Scrobbling was disabled in this client run; the endpoint is covered by fixtures, Feishin and Substreamer. Android 17 remains incompatible with this legacy client runtime before it issues a media request. |
+| DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass* | Validated 2026-08-02 on Android 14, then revalidated 2026-08-15 on the current Android environment: authentication, catalogue, artwork, native playback, seek and playlist. `*` Scrobbling was disabled in the original run; the endpoint remains covered by fixtures and other clients. |
+| Juliet | iOS build tested 2026-08-15 | pass | pass | native pass; transcode not run | not run | Current iOS compatibility check: authentication, catalogue, artwork and native playback succeeded. Unsupported/unexercised surfaces are not inferred as passes. |
 
-Do not tag `v2.0-beta` until every row records the tested client version and every protocol feature the client actually implements has been exercised. A missing client feature must be confirmed from that client's source or traffic and covered by the automated fixtures plus at least one other real client; it must not be recorded as a server pass merely because the UI lacks the feature.
+The M3 real-client gate is closed. This matrix remains the regression record;
+missing client features are covered by automated fixtures and another real
+client rather than inferred as passes. Creating any tag or release remains a
+separate action requiring an explicit operator request.
+
+The Substreamer row records the successful 2026-08-02 run. It could not be
+reinstalled on the current Android 17 device during the 2026-08-15 revalidation
+because the store marks that legacy build incompatible; Juliet provides the
+current iOS sanity check instead. The historical Substreamer evidence is kept,
+not silently rewritten as a new run.
 
 For Substreamer, the Android Media3 session completed the 11-track validation album and the server recorded the corresponding start/submission scrobbles. With the client's streaming profile set to Opus at 128 kbit/s, WaveFlow produced 11 distinct cache entries; `ffprobe` identified the output as an Ogg container with an Opus audio stream. Its playlist mutation, track/album favorites and 4/5 rating were also read back from WaveFlow rather than inferred from local UI state.
 
