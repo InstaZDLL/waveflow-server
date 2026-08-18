@@ -222,15 +222,36 @@ with Subsonic error code `0`, like every other protocol failure.
 | Catalogue roots | `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getGenres`, `getMusicDirectory` | IDs and `musicFolderId` values are UUIDs. |
 | Artist and album information | `getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the standard empty container; enrichment is not implemented. |
 | Album discovery | `getAlbumList`, `getAlbumList2`, `getRandomSongs`, `getSongsByGenre` | Both legacy and ID3 album-list containers are supported. |
-| Search | `search3` | Independent artist, album and song pagination. |
+| Search | `search3`, `search2` | Independent artist, album and song pagination. `search2` is the same payload in the `searchResult2` container. |
 | Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. |
 | Media | `stream`, `download`, `getCoverArt` | Tenant-authorized streaming and artwork. |
 | Lyrics | `getLyrics`, `getLyricsBySongId` | OpenSubsonic `songLyrics` v1 plus legacy lookup. |
-| Favorites and ratings | `star`, `unstar`, `getStarred2`, `setRating` | Track, album and artist IDs are tenant scoped. |
+| Favorites and ratings | `star`, `unstar`, `getStarred2`, `getStarred`, `setRating` | Track, album and artist IDs are tenant scoped. `getStarred` is the same payload in the `starred` container. |
 | Activity and queue | `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue` | Queue order and duplicate tracks are preserved. |
 | Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Creation returns the public URL; later reads omit the bearer token. |
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
-| Compatibility | `getBookmarks` | Returns the standard empty container until audiobook progress is implemented. |
+| Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account can reach and reports progress. |
+| Compatibility | `getBookmarks`, `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2`, `getInternetRadioStations` | Return the standard empty container. WaveFlow computes no recommendations and hosts no radio; bookmarks wait on audiobook progress. |
+| Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
+
+### Rescanning
+
+`startScan` takes no library parameter — it rescans every library the
+authenticated account can reach, and answers with the same `scanStatus`
+element `getScanStatus` returns, so a client that only calls `startScan`
+still learns the state:
+
+```xml
+<scanStatus scanning="true" count="1234"/>
+```
+
+`count` is the number of available tracks **this account** can reach, not
+what the instance holds. `scanning` is true while any of those libraries has
+a queued or running job. Scans are asynchronous: a `scanning="false"`
+immediately after `startScan` means the work finished, not that it never
+started. The equivalents are `POST /api/v2/libraries/{library_id}/scans`,
+which scans one library, and `GET /api/v2/scans/{scan_id}` with its
+server-sent progress stream.
 
 ### OpenSubsonic fields on media items
 

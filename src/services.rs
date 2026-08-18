@@ -462,6 +462,7 @@ pub struct DomainServices {
     db: Database,
     secret_box: Arc<SecretBox>,
     sync: SyncService,
+    scanner: crate::scanner::ScanManager,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -498,11 +499,79 @@ impl From<crate::sync::SyncError> for ServiceError {
 }
 
 impl DomainServices {
-    pub fn new(db: Database, secret_box: Arc<SecretBox>, sync: SyncService) -> Self {
+    pub fn new(
+        db: Database,
+        secret_box: Arc<SecretBox>,
+        sync: SyncService,
+        scanner: crate::scanner::ScanManager,
+    ) -> Self {
         Self {
             db,
             secret_box,
             sync,
+            scanner,
+        }
+    }
+
+    /// Queues a rescan of one library the user can reach.
+    ///
+    /// The single implementation behind `POST /api/v2/libraries/{id}/scans`
+    /// and the Subsonic `startScan`. Both surfaces have to answer the same
+    /// question about who may scan what, so the membership check cannot sit
+    /// in a handler where the two copies can drift apart.
+    pub async fn start_library_scan(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+    ) -> Result<Uuid, ServiceError> {
+        let library = self
+            .db
+            .library_for_user(user_id, library_id)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        // The lookup above reads the root path; it is not what authorises the
+        // job. The insert tests `library_member` itself, so a membership
+        // revoked between the two refuses the job instead of queuing work for
+        // a library the requester can no longer reach.
+        let scan_id = self
+            .db
+            .create_scan_job_for_user(user_id, library_id, "manual")
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        self.scanner.spawn(scan_id, library);
+        Ok(scan_id)
+    }
+
+    /// Queues a rescan of every library the user can reach, for the Subsonic
+    /// `startScan`, which takes no library parameter.
+    ///
+    /// An account that can reach no library queues nothing and succeeds: there
+    /// is no missing resource to report, and every other catalogue-wide method
+    /// answers such an account with an empty result rather than an error.
+    ///
+    /// Best effort by design: a library whose job cannot be queued does not
+    /// cancel the ones that can. Aborting on the first failure would leave
+    /// the caller reading an error while half the catalogue is already
+    /// rescanning, which is the worst of both answers. The error surfaces
+    /// only when nothing at all could be queued.
+    ///
+    /// Re-queuing a library that is already scanning is deliberately allowed,
+    /// exactly as calling the native endpoint twice is: [`crate::scanner::ScanManager`]
+    /// serialises jobs per library and a scan converges on file content, so a
+    /// redundant pass costs time and changes nothing.
+    pub async fn start_visible_scans(&self, user_id: Uuid) -> Result<Vec<Uuid>, ServiceError> {
+        let libraries = self.db.libraries_for_user(user_id).await?;
+        let mut queued = Vec::new();
+        let mut failure = None;
+        for access in libraries {
+            match self.start_library_scan(user_id, access.id).await {
+                Ok(scan_id) => queued.push(scan_id),
+                Err(error) => failure = Some(error),
+            }
+        }
+        match failure {
+            Some(error) if queued.is_empty() => Err(error),
+            _ => Ok(queued),
         }
     }
 
