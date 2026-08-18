@@ -1522,6 +1522,11 @@ fn album_node(album: &AlbumItem) -> Node {
         .attr("songCount", album.song_count)
         .attr("duration", album.duration_ms / 1000)
         .attr("created", iso_time(album.created_at))
+        // OpenSubsonic additions, under the same presence rule as `song`.
+        .attr("isCompilation", album.is_compilation)
+        .attr("playCount", album.play_count)
+        .attr("displayArtist", album.artist.clone().unwrap_or_default())
+        .maybe_attr("played", album.last_played_at.map(iso_time))
 }
 
 fn song_node(song: &SongItem) -> Node {
@@ -1551,6 +1556,33 @@ fn song_node(song: &SongItem) -> Node {
         .maybe_attr("starred", song.starred_at.map(iso_time))
         .maybe_attr("userRating", song.user_rating)
         .attr("created", iso_time(song.created_at))
+        // From here down the fields are OpenSubsonic additions, and they follow
+        // its presence rule rather than the omission rule the frozen 1.16
+        // fields above use: a field the server supports is emitted even when
+        // the value is unknown, because presence is the only way a client can
+        // tell "this server does not implement it" from "this track has none".
+        .attr("mediaType", "song")
+        .attr("isVideo", false)
+        .attr("samplingRate", song.sample_rate.unwrap_or_default())
+        .attr("channelCount", song.channels.unwrap_or_default())
+        .attr("bitDepth", song.bit_depth.unwrap_or_default())
+        .attr("playCount", song.play_count)
+        .attr("displayArtist", song.artist.clone().unwrap_or_default())
+        // `played` is the one exception. Its default would be the empty
+        // string, which is not a timestamp: a client parsing it strictly would
+        // fail on every track nobody has played. `playCount` is always present
+        // and already tells the client play statistics are supported.
+        .maybe_attr("played", song.last_played_at.map(iso_time))
+        .children(song.artists.iter().map(|artist| {
+            Node::new("artists")
+                .attr("id", artist.id.to_string())
+                .attr("name", artist.name.clone())
+        }))
+        .children(
+            song.genres
+                .iter()
+                .map(|genre| Node::new("genres").attr("name", genre.clone())),
+        )
 }
 
 /// `owner` is the caller: playlist reads are already scoped to their owner, so
@@ -1721,6 +1753,10 @@ fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
     match parent {
         "lyricsList" => &["structuredLyrics"],
         "structuredLyrics" => &["line"],
+        // Emitted as `[]` rather than omitted when a track has no credited
+        // artist or no genre: under the OpenSubsonic presence rule an absent
+        // key means the server does not support the field at all.
+        "song" | "entry" | "child" | "album" => &["artists", "genres"],
         _ => &[],
     }
 }
@@ -1786,6 +1822,10 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("openSubsonicExtensions", "openSubsonicExtension")
             | ("lyricsList", "structuredLyrics")
             | ("structuredLyrics", "line")
+            // A media item is rendered as `song`, and renamed to `entry` inside
+            // a playlist or share and to `child` inside a directory. Its
+            // OpenSubsonic relations are arrays under all three names.
+            | ("song" | "entry" | "child" | "album", "artists" | "genres")
     )
 }
 

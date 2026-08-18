@@ -27,7 +27,14 @@ macro_rules! song_select {
                  ORDER BY ta.position LIMIT 1) AS artist_id, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
-                us.starred_at, ur.rating AS user_rating \
+                us.starred_at, ur.rating AS user_rating, \
+                t.sample_rate, t.channels, t.bit_depth, \
+                (SELECT COUNT(*) FROM play_event pe \
+                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pe.track_id=t.id) \
+                 AS play_count, \
+                (SELECT MAX(pe.played_at) FROM play_event pe \
+                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pe.track_id=t.id) \
+                 AS last_played_at \
          FROM track t JOIN library_member m ON m.library_id=t.library_id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
@@ -38,7 +45,8 @@ macro_rules! song_select {
 macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
-                al.artwork_hash, al.year, al.created_at, us.starred_at, ur.rating AS user_rating, \
+                al.artwork_hash, al.year, al.is_compilation, al.created_at, us.starred_at, \
+                ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
                  WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
                 (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
@@ -112,6 +120,7 @@ pub struct AlbumItem {
     pub artist_id: Option<Uuid>,
     pub artwork_hash: Option<String>,
     pub year: Option<i64>,
+    pub is_compilation: bool,
     pub created_at: i64,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
@@ -157,6 +166,27 @@ pub struct SongItem {
     pub created_at: i64,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
+    pub sample_rate: Option<i64>,
+    pub channels: Option<i64>,
+    pub bit_depth: Option<i64>,
+    pub play_count: i64,
+    pub last_played_at: Option<i64>,
+    /// Every credited artist, in tag order. `artist` and `artist_id` stay the
+    /// display string and the primary credit; these are the structured form
+    /// `track_artist` has always held and no surface ever read.
+    pub artists: Vec<ArtistRef>,
+    /// Every genre of the track, from `track_genre` rather than from the
+    /// semicolon-joined `genre` display string.
+    pub genres: Vec<String>,
+}
+
+/// One credited artist of a track. Only `id` and `name` are carried: those are
+/// the required `ArtistID3` fields, and OpenSubsonic asks for no more than the
+/// required ones inside a media item.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ArtistRef {
+    pub id: Uuid,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -635,7 +665,7 @@ impl DomainServices {
         });
         let folder_filter = folder_filter.as_deref();
 
-        let songs = sqlx::query(concat!(
+        let mut songs = sqlx::query(concat!(
             song_select!(),
             " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
                AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
@@ -650,6 +680,7 @@ impl DomainServices {
         .into_iter()
         .map(song_from_row)
         .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
 
         let albums = sqlx::query(concat!(
             album_select!(),
@@ -859,7 +890,7 @@ impl DomainServices {
             .map(album_from_row)
             .transpose()?
             .ok_or(ServiceError::NotFound)?;
-        let songs = sqlx::query(concat!(
+        let mut songs = sqlx::query(concat!(
             song_select!(),
             // SQLite orders NULL first, which would put an untagged track ahead
             // of track 1. Incomplete disc/track tags are common in real
@@ -875,6 +906,7 @@ impl DomainServices {
         .into_iter()
         .map(song_from_row)
         .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
         Ok(AlbumDetail { album, songs })
     }
 
@@ -957,7 +989,7 @@ impl DomainServices {
                 songs: Vec::new(),
             });
         };
-        let songs = sqlx::query(concat!(
+        let mut songs = sqlx::query(concat!(
             song_select!(),
             " AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
               ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
@@ -971,6 +1003,7 @@ impl DomainServices {
         .into_iter()
         .map(song_from_row)
         .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
         let albums = sqlx::query(concat!(
             album_select!(),
             " AND al.id IN (SELECT t.album_id FROM track t \
@@ -1190,10 +1223,12 @@ impl DomainServices {
         .bind(ids_json)
         .fetch_all(&mut *connection)
         .await?;
-        let available = rows
+        let mut resolved = rows
             .into_iter()
             .map(song_from_row)
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(connection, user_id, &mut resolved).await?;
+        let available = resolved
             .into_iter()
             .map(|song| (song.id, song))
             .collect::<HashMap<_, _>>();
@@ -2887,6 +2922,76 @@ impl DomainServices {
     }
 }
 
+/// Fills in the relations a single projected row cannot carry.
+///
+/// `song_select!` collapses credited artists and genres into the display strings
+/// the tags happened to contain; the structured form lives in `track_artist` and
+/// `track_genre`, ordered and deduplicated by the scanner. Reading them per song
+/// would be two queries per row on every listing, so both are fetched once for
+/// the whole batch and distributed by track id.
+///
+/// Tenancy is re-checked here rather than inherited from the caller: the batch
+/// is keyed by track id alone, and a join that trusted those ids would be the
+/// one place in the read path where membership is not proven.
+async fn attach_song_relations(
+    connection: &mut SqliteConnection,
+    user_id: Uuid,
+    songs: &mut [SongItem],
+) -> Result<(), sqlx::Error> {
+    if songs.is_empty() {
+        return Ok(());
+    }
+    let ids = serde_json::to_string(&songs.iter().map(|song| song.id).collect::<Vec<_>>())
+        .expect("UUID list serialization cannot fail");
+    let mut artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
+    for row in sqlx::query(
+        "SELECT ta.track_id, ar.id, ar.name FROM track_artist ta \
+         JOIN artist ar ON ar.id=ta.artist_id \
+         JOIN library_member m ON m.library_id=ta.library_id \
+         WHERE m.user_id=? AND ta.track_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY ta.track_id, ta.position",
+    )
+    .bind(user_id.to_string())
+    .bind(&ids)
+    .fetch_all(&mut *connection)
+    .await?
+    {
+        artists
+            .entry(parse_uuid(row.try_get("track_id")?)?)
+            .or_default()
+            .push(ArtistRef {
+                id: parse_uuid(row.try_get("id")?)?,
+                name: row.try_get("name")?,
+            });
+    }
+    let mut genres: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for row in sqlx::query(
+        // `track_genre` has no position column, so the order is the genre name.
+        // It has to be deterministic: a client diffing two responses would
+        // otherwise see a change that is not one.
+        "SELECT tg.track_id, g.name FROM track_genre tg \
+         JOIN genre g ON g.id=tg.genre_id \
+         JOIN library_member m ON m.library_id=tg.library_id \
+         WHERE m.user_id=? AND tg.track_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY tg.track_id, g.name COLLATE NOCASE, g.id",
+    )
+    .bind(user_id.to_string())
+    .bind(&ids)
+    .fetch_all(&mut *connection)
+    .await?
+    {
+        genres
+            .entry(parse_uuid(row.try_get("track_id")?)?)
+            .or_default()
+            .push(row.try_get("name")?);
+    }
+    for song in songs {
+        song.artists = artists.remove(&song.id).unwrap_or_default();
+        song.genres = genres.remove(&song.id).unwrap_or_default();
+    }
+    Ok(())
+}
+
 async fn fetch_songs(
     db: &Database,
     user_id: Uuid,
@@ -2894,7 +2999,7 @@ async fn fetch_songs(
     id: Option<Uuid>,
 ) -> Result<Vec<SongItem>, sqlx::Error> {
     let id = id.map(|id| id.to_string());
-    sqlx::query(concat!(
+    let mut songs = sqlx::query(concat!(
         song_select!(),
         " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
            AND (? IS NULL OR t.id=?) ORDER BY t.title COLLATE NOCASE"
@@ -2908,7 +3013,9 @@ async fn fetch_songs(
     .await?
     .into_iter()
     .map(song_from_row)
-    .collect()
+    .collect::<Result<Vec<_>, _>>()?;
+    attach_song_relations(&mut *db.pool().acquire().await?, user_id, &mut songs).await?;
+    Ok(songs)
 }
 
 fn credential_from_row(
@@ -2965,6 +3072,7 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
             .transpose()?,
         artwork_hash: row.try_get("artwork_hash")?,
         year: row.try_get("year")?,
+        is_compilation: row.try_get::<i64, _>("is_compilation")? != 0,
         created_at: row.try_get("created_at")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
@@ -3038,6 +3146,14 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         created_at: row.try_get("created_at")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
+        sample_rate: row.try_get("sample_rate")?,
+        channels: row.try_get("channels")?,
+        bit_depth: row.try_get("bit_depth")?,
+        play_count: row.try_get("play_count")?,
+        last_played_at: row.try_get("last_played_at")?,
+        // Filled in by `attach_song_relations`: one row cannot carry them.
+        artists: Vec::new(),
+        genres: Vec::new(),
     })
 }
 
