@@ -155,6 +155,10 @@ pub struct AccessRecord {
     pub user_id: Uuid,
     pub username: String,
     pub role: AccountRole,
+    /// The scopes of the API token this request arrived on. Empty for a
+    /// session or an OAuth grant, which carry the account's full authority,
+    /// and for a token issued without any.
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -734,6 +738,7 @@ impl Database {
                 user_id: parse_uuid(row.try_get("id")?)?,
                 username: row.try_get("username")?,
                 role: parse_role(row.try_get("role")?)?,
+                scopes: Vec::new(),
             })
         })
         .transpose()
@@ -745,7 +750,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<AccessRecord>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT a.id, a.username, a.role, t.last_used_at FROM api_token t \
+            "SELECT a.id, a.username, a.role, t.scopes_json, t.last_used_at FROM api_token t \
              JOIN account a ON a.id = t.user_id \
              WHERE t.token_hash = ? AND t.revoked_at IS NULL \
                AND (t.expires_at IS NULL OR t.expires_at > ?) AND a.disabled = 0",
@@ -762,6 +767,8 @@ impl Database {
             user_id: parse_uuid(row.try_get("id")?)?,
             username: row.try_get("username")?,
             role: parse_role(row.try_get("role")?)?,
+            scopes: serde_json::from_str(row.try_get::<&str, _>("scopes_json")?)
+                .map_err(|error| sqlx::Error::Decode(error.into()))?,
         };
         if last_used_at.is_none_or(|last_used| last_used <= now_ms.saturating_sub(60_000)) {
             let _writer = self.writer_guard().await;
@@ -843,6 +850,11 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    /// Issues a token and returns its record.
+    ///
+    /// `RETURNING` rather than an insert followed by a read: the caller wants
+    /// the row it just wrote, and looking it up afterwards meant listing every
+    /// token the account holds to find one whose id was already known.
     pub async fn create_api_token(
         &self,
         user_id: Uuid,
@@ -850,12 +862,13 @@ impl Database {
         token_hash: &[u8],
         scopes: &[String],
         now_ms: i64,
-    ) -> Result<Uuid, sqlx::Error> {
+    ) -> Result<ApiTokenRecord, sqlx::Error> {
         let _writer = self.writer_guard().await;
         let id = Uuid::new_v4();
-        sqlx::query(
+        let row = sqlx::query(
             "INSERT INTO api_token (id, user_id, name, token_hash, scopes_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?) \
+             RETURNING id, name, scopes_json, expires_at, created_at, last_used_at, revoked_at",
         )
         .bind(id.to_string())
         .bind(user_id.to_string())
@@ -863,9 +876,9 @@ impl Database {
         .bind(token_hash)
         .bind(serde_json::to_string(scopes).expect("string list serializes"))
         .bind(now_ms)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
-        Ok(id)
+        api_token_from_row(row)
     }
 
     pub async fn revoke_api_token_by_hash(

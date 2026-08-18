@@ -506,7 +506,15 @@ curl -X POST https://music.example.com/api/v2/admin/users/scripts/tokens \
 The response carries the record and a `secret` beginning `wfapi_`. Only its
 SHA-256 hash is stored, so the secret appears there and never again: the
 listing returns names, scopes and timestamps, and a caller who loses a token
-issues another rather than reading it back. `DELETE` revokes one; the token
+issues another rather than reading it back.
+
+**Scopes are enforced.** A token issued with a non-empty `scopes` list is
+restricted to it, whatever the account behind it may do: the administrative
+routes require the `admin` scope, so a `catalog:read` token belonging to an
+administrator is refused with `403`. A token issued **without** scopes is
+unrestricted and carries the account's full authority, which is what the CLI
+has always produced and what tokens created before this release hold. Sessions
+and Authorization Code grants are likewise unrestricted. `DELETE` revokes one; the token
 stops authenticating immediately, and revoking it again answers `404`,
 because it is already not working.
 

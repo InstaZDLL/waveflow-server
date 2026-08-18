@@ -5617,6 +5617,53 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
         .unwrap();
     assert_eq!(with_token.status(), StatusCode::OK);
 
+    // Scopes are enforced, not decorated. The token names `catalog:read`, so it
+    // reads the catalogue and nothing else, even though the account behind it
+    // is an administrator. Storing a scope list, returning it from the API and
+    // printing it from the CLI while ignoring it is worse than having none: the
+    // operator believes the token is limited.
+    let admin_route = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_route.status(), StatusCode::FORBIDDEN);
+    // The session it was issued from still reaches that route, so the refusal
+    // belongs to the token and not to the account.
+    assert_eq!(
+        get("/api/v2/admin/users".into()).await.status(),
+        StatusCode::OK
+    );
+
+    // A token issued without scopes is unrestricted, which is what the CLI has
+    // always produced and what existing tokens carry.
+    let unscoped = json_body(
+        json_request(
+            Method::POST,
+            "/api/v2/admin/users/token-admin/tokens".into(),
+            serde_json::json!({"name": "full access"}),
+        )
+        .await,
+    )
+    .await;
+    let unscoped = unscoped["secret"].as_str().unwrap().to_owned();
+    let allowed = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {unscoped}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+
     let revoked = router
         .clone()
         .oneshot(

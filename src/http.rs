@@ -2165,8 +2165,28 @@ async fn authenticated(
     state.auth.authenticate(token).await.map_err(ApiError::from)
 }
 
+/// The scope that admits the administrative routes.
+///
+/// A token issued with an explicit scope list has to carry it. Without
+/// this the list was decoration: the scopes were stored, returned by the
+/// administrator's account could still create users, which is worse than
+/// administrator's account could still create users :  which is worse than
+/// having no scopes at all, because the operator believes the token is
+/// limited.
+const ADMIN_SCOPE: &str = "admin";
+
+/// Administrative authority: an active administrator, on a credential that
+/// has not been narrowed away from it.
+///
+/// An empty scope list is unrestricted, which is what a session, an OAuth
+/// grant and a token issued without scopes all carry. Both conditions have
+/// to hold: being an administrator does not widen a token, and a token
+/// cannot promote an ordinary account.
 fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError> {
-    if user.role == crate::database::AccountRole::Admin {
+    let is_admin = user.role == crate::database::AccountRole::Admin;
+    let in_scope =
+        user.scopes.is_empty() || user.scopes.iter().any(|scope| scope.trim() == ADMIN_SCOPE);
+    if is_admin && in_scope {
         Ok(())
     } else {
         Err(ApiError::Forbidden)
