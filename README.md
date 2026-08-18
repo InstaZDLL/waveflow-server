@@ -6,6 +6,15 @@ WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the 
 
 The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The v1 PostgreSQL/JWKS implementation has been removed; it remains available in git history.
 
+Integration documentation:
+
+- [Native API v2 guide](docs/api-v2-guide.md): authentication, PKCE, catalogue,
+  media tickets, mutations, synchronization, errors and administration;
+- [Subsonic/OpenSubsonic guide](docs/subsonic-api-guide.md): client setup,
+  authentication, examples, supported methods and advertised extensions;
+- [Interactive API reference](http://127.0.0.1:4533/reference) and
+  [OpenAPI JSON](http://127.0.0.1:4533/openapi.json) on a running local server.
+
 ## Current quick start
 
 Requirements: Rust 1.94 or newer plus `ffmpeg` and `ffprobe` on `PATH`. No external database or authentication service is required.
@@ -53,7 +62,7 @@ The server listens on `127.0.0.1:4533` by default and exposes:
 - `GET /api/v2/tracks/{id}/lyrics`: embedded or sidecar plain/synchronized
   lyrics;
 - `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.
-- `GET /api/v2/tracks/{id}/stream?format=raw|mp3|opus&bitrate=...&offsetMs=...`: authorized playback. Byte ranges apply to originals and completed cache entries; live transcodes use temporal seek and chunked transfer.
+- `GET /api/v2/tracks/{id}/stream?format=raw|mp3|opus&bitrate=...&offset_ms=...`: authorized playback. Byte ranges apply to originals and completed cache entries; live transcodes use temporal seek and chunked transfer.
 - `/rest/<method>` and `/rest/<method>.view`: Subsonic/OpenSubsonic XML or `f=json`, via GET or form POST.
 - `/share/{token}`: public metadata plus token-scoped stream URLs for an unexpired share.
 
