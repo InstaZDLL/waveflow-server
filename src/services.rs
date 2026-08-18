@@ -3316,7 +3316,15 @@ impl DomainServices {
         if name.is_empty() || name.chars().count() > 120 {
             return Err(ServiceError::Invalid);
         }
-        if scopes.iter().any(|scope| scope.trim().is_empty()) {
+        // Normalised on the way in, so the value a listing shows is the value
+        // authorization compares. Trimming at the check instead would let a
+        // stored `" admin "` grant what a reader of the listing would not
+        // expect it to.
+        let scopes = scopes
+            .iter()
+            .map(|scope| scope.trim().to_owned())
+            .collect::<Vec<_>>();
+        if scopes.iter().any(String::is_empty) {
             return Err(ServiceError::Invalid);
         }
         let account = self
@@ -3331,7 +3339,7 @@ impl DomainServices {
                 account.id,
                 name,
                 &security::token_hash(&token),
-                scopes,
+                &scopes,
                 now_ms(),
             )
             .await?;

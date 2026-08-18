@@ -5640,6 +5640,33 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
         StatusCode::OK
     );
 
+    // A scope list grants the union of its entries: naming `admin` beside
+    // another scope admits these routes, because a token that explicitly
+    // carries a permission must not be refused it. The stored form is
+    // normalised, so what the listing shows is what authorization compares.
+    let combined = json_body(
+        json_request(
+            Method::POST,
+            "/api/v2/admin/users/token-admin/tokens".into(),
+            serde_json::json!({"name": "ops", "scopes": ["  admin  ", "catalog:read"]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(combined["scopes"][0], "admin", "scopes are stored trimmed");
+    let combined = combined["secret"].as_str().unwrap().to_owned();
+    let admitted = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users")
+                .header("authorization", format!("Bearer {combined}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+
     // A token issued without scopes is unrestricted, which is what the CLI has
     // always produced and what existing tokens carry.
     let unscoped = json_body(
