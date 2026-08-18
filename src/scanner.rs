@@ -453,6 +453,8 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
         sort_title: extended.sort_title,
         comment: extended.comment,
         isrc: extended.isrc,
+        moods: extended.moods,
+        explicit_status: extended.explicit_status,
         tag_rating: tag
             .and_then(waveflow_core::scanner::extract_rating)
             .map(i64::from),
@@ -555,6 +557,8 @@ fn extract_dsd(
         sort_title: extended.sort_title,
         comment: extended.comment,
         isrc: extended.isrc,
+        moods: extended.moods,
+        explicit_status: extended.explicit_status,
         artwork,
         lyrics_hash,
         lyrics,
@@ -579,6 +583,8 @@ struct ExtendedTags {
     sort_title: Option<String>,
     comment: Option<String>,
     isrc: Option<String>,
+    moods: Option<String>,
+    explicit_status: Option<String>,
 }
 
 fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
@@ -623,6 +629,20 @@ fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
         sort_title: text(ItemKey::TrackTitleSortOrder),
         comment: text(ItemKey::Comment),
         isrc: text(ItemKey::Isrc),
+        moods: text(ItemKey::Mood),
+        // Normalised to the two words the specification defines. The tag
+        // spells the same thing differently per format — MP4 writes the
+        // iTunes rating as 1 or 2, others write words — and a client only
+        // ever compares against `explicit` and `clean`. A tag that says
+        // "no advisory" is not a claim that the work is clean, so it maps to
+        // no value rather than to the second word.
+        explicit_status: text(ItemKey::ParentalAdvisory).and_then(|value| {
+            match value.to_ascii_lowercase().as_str() {
+                "1" | "true" | "explicit" => Some("explicit".to_owned()),
+                "2" | "clean" | "edited" => Some("clean".to_owned()),
+                _ => None,
+            }
+        }),
     }
 }
 
@@ -733,6 +753,8 @@ mod tests {
         assert!(tag.insert_text(ItemKey::MusicBrainzRecordingId, "  rec-1  ".into()));
         assert!(tag.insert_text(ItemKey::Comment, "   ".into()));
         assert!(tag.insert_text(ItemKey::Isrc, "FRZ039800212".into()));
+        assert!(tag.insert_text(ItemKey::Mood, "Melancholic; Warm".into()));
+        assert!(tag.insert_text(ItemKey::ParentalAdvisory, "2".into()));
         let extended = extended_tags(Some(&tag));
         assert_eq!(extended.replay_gain_track_gain, Some(-7.32));
         assert_eq!(extended.replay_gain_album_gain, Some(1.5));
@@ -745,6 +767,10 @@ mod tests {
         assert_eq!(extended.musicbrainz_recording_id.as_deref(), Some("rec-1"));
         assert_eq!(extended.comment, None);
         assert_eq!(extended.isrc.as_deref(), Some("FRZ039800212"));
+        assert_eq!(extended.moods.as_deref(), Some("Melancholic; Warm"));
+        // The per-format spelling is normalised to the two words the
+        // specification defines; a client compares against nothing else.
+        assert_eq!(extended.explicit_status.as_deref(), Some("clean"));
 
         // Unparseable measurements are dropped rather than stored: a NaN gain
         // would reach a player as a volume adjustment.
@@ -756,6 +782,10 @@ mod tests {
         assert_eq!(broken.replay_gain_track_gain, None);
         assert_eq!(broken.replay_gain_album_peak, None);
         assert_eq!(broken.bpm, None);
+        // A tag saying "no advisory" is not a claim that the work is clean.
+        let mut neutral = Tag::new(TagType::Mp4Ilst);
+        assert!(neutral.insert_text(ItemKey::ParentalAdvisory, "0".into()));
+        assert_eq!(extended_tags(Some(&neutral)).explicit_status, None);
 
         // The DSD path has no tag reader and must produce the same shape.
         let absent = extended_tags(None);

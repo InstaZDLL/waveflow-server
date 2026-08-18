@@ -160,6 +160,7 @@ pub struct AppState {
         services::QueueItem,
         services::RatingItem,
         services::HistoryItem,
+        services::BookmarkItem,
         services::UserItem,
         http::CreatePlaylistRequest,
         http::UpdatePlaylistRequest,
