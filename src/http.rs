@@ -111,6 +111,27 @@ pub struct GenreQuery {
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: String,
+    /// Applied to every kind unless the per-kind offset below overrides it.
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub artist_offset: Option<i64>,
+    pub album_offset: Option<i64>,
+    pub song_offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RandomSongQuery {
+    pub library_id: Option<Uuid>,
+    pub genre: Option<String>,
+    pub from_year: Option<i64>,
+    pub to_year: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenreSongQuery {
+    pub genre: String,
+    pub library_id: Option<Uuid>,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -373,6 +394,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/artists", get(list_artists))
         .route("/api/v2/artists/{artist_id}", get(get_artist))
         .route("/api/v2/search", get(search_catalog))
+        .route("/api/v2/songs", get(list_songs_by_genre))
+        .route("/api/v2/songs/random", get(list_random_songs))
         .route(
             "/api/v2/playlists",
             get(list_playlists).post(create_playlist),
@@ -662,7 +685,7 @@ pub async fn start_scan(
     Path(library_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<ScanQueuedResponse>), ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let scan_id = state
         .services
         .start_library_scan(user.id, library_id)
@@ -676,7 +699,7 @@ pub async fn list_libraries(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::catalog::LibraryAccess>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .db
         .libraries_for_user(user.id)
@@ -691,8 +714,7 @@ pub async fn create_library(
     headers: HeaderMap,
     Json(request): Json<CreateLibraryRequest>,
 ) -> Result<(StatusCode, Json<CreateLibraryResponse>), ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     let path = std::path::PathBuf::from(&request.path);
     let metadata = tokio::fs::symlink_metadata(&path)
         .await
@@ -746,8 +768,7 @@ pub async fn set_library_member(
     headers: HeaderMap,
     Json(request): Json<SetLibraryMemberRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     if request.role == crate::database::LibraryRole::Owner
         || state
             .db
@@ -785,8 +806,7 @@ pub async fn remove_library_member(
     Path((library_id, user_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     if state
         .db
         .remove_library_member(
@@ -810,7 +830,7 @@ pub async fn scan_status(
     Path(scan_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::catalog::ScanJobRecord>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .db
         .scan_job_for_user(user.id, scan_id)
@@ -826,7 +846,7 @@ pub async fn scan_events(
     Path(scan_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let initial = state
         .db
         .scan_job_for_user(user.id, scan_id)
@@ -856,7 +876,7 @@ pub async fn list_tracks(
     Query(query): Query<TrackQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::catalog::TrackRecord>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     if state
         .db
         .library_for_user(user.id, library_id)
@@ -886,7 +906,7 @@ pub async fn get_track(
     Path(track_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::services::SongItem>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .songs_by_ids(user.id, &[track_id])
@@ -904,7 +924,7 @@ pub async fn get_track_lyrics(
     Path(track_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .lyrics(user.id, track_id)
@@ -919,7 +939,7 @@ pub async fn list_albums(
     Query(query): Query<AlbumBrowseQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::AlbumItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let order = query
         .sort
         .as_deref()
@@ -949,7 +969,7 @@ pub async fn list_genres(
     Query(query): Query<GenreQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::GenreItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let libraries = query.library_id.into_iter().collect::<Vec<_>>();
     state
         .services
@@ -965,7 +985,7 @@ pub async fn get_album(
     Path(album_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::services::AlbumDetail>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .album(user.id, album_id)
@@ -980,7 +1000,7 @@ pub async fn list_artists(
     Query(query): Query<BrowseQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::ArtistSummary>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let page =
         crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
     state
@@ -997,7 +1017,7 @@ pub async fn get_artist(
     Path(artist_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::services::ArtistDetail>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .artist(user.id, artist_id)
@@ -1012,12 +1032,70 @@ pub async fn search_catalog(
     Query(query): Query<SearchQuery>,
     headers: HeaderMap,
 ) -> Result<Json<crate::services::SearchResult>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    // One offset for all three kinds unless the caller names one, which is
+    // what `search3` has always allowed and what a client paging songs past
+    // the end of the artists needs.
+    let page = |offset: Option<i64>| {
+        crate::services::BrowsePage::new(offset.or(query.offset), query.limit)
+            .map_err(service_error)
+    };
+    state
+        .services
+        .search(
+            user.id,
+            &query.q,
+            page(query.artist_offset)?,
+            page(query.album_offset)?,
+            page(query.song_offset)?,
+        )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// The native form of `getRandomSongs`.
+///
+/// The selection is drawn in SQL, so a request for ten reads ten. `genre`
+/// matches the canonical name, like every other genre filter on either
+/// surface, and a reversed year range is read as a range rather than as an
+/// empty one.
+#[utoipa::path(get, path = "/api/v2/songs/random", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("genre" = Option<String>, Query), ("from_year" = Option<i64>, Query), ("to_year" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_random_songs(
+    State(state): State<AppState>,
+    Query(query): Query<RandomSongQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::SongItem>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .random_songs(
+            user.id,
+            query.library_id.as_slice(),
+            query.genre.as_deref(),
+            query.from_year,
+            query.to_year,
+            query.limit.unwrap_or(10),
+        )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// The native form of `getSongsByGenre`. `genre` is required: answering an
+/// unfiltered catalogue would drop the filter in silence.
+#[utoipa::path(get, path = "/api/v2/songs", tag = "catalog", params(("genre" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 400, description = "genre is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_songs_by_genre(
+    State(state): State<AppState>,
+    Query(query): Query<GenreSongQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::SongItem>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let page =
         crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
     state
         .services
-        .search(user.id, &query.q, page)
+        .songs_by_genre(user.id, query.library_id.as_slice(), &query.genre, page)
         .await
         .map(Json)
         .map_err(service_error)
@@ -1031,7 +1109,7 @@ pub async fn oauth_authorize(
 ) -> Result<Json<AuthorizeResponse>, ApiError> {
     // The browser session is the proof of identity; the consent screen is a
     // route of the embedded client, so this is a JSON call rather than a form.
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let redirect_to = state
         .services
         .authorize_native_client(
@@ -1087,7 +1165,7 @@ pub async fn list_playlists(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::PlaylistItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .playlists(user.id)
@@ -1102,7 +1180,7 @@ pub async fn create_playlist(
     headers: HeaderMap,
     Json(request): Json<CreatePlaylistRequest>,
 ) -> Result<(StatusCode, Json<crate::services::PlaylistItem>), ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     let playlist = state
         .services
@@ -1118,7 +1196,7 @@ pub async fn get_playlist(
     Path(playlist_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<crate::services::PlaylistItem>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .playlist(user.id, playlist_id)
@@ -1161,7 +1239,7 @@ pub async fn update_playlist(
     headers: HeaderMap,
     Json(request): Json<UpdatePlaylistRequest>,
 ) -> Result<Json<crate::services::PlaylistItem>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1187,7 +1265,7 @@ pub async fn delete_playlist(
     Path(playlist_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1202,7 +1280,7 @@ pub async fn list_favorites(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<StarredEntry>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let entries = state
         .services
         .starred_ids(user.id)
@@ -1243,7 +1321,7 @@ async fn set_favorite(
     entity_id: Uuid,
     starred: bool,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1260,7 +1338,7 @@ pub async fn set_rating(
     headers: HeaderMap,
     Json(request): Json<RatingRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1286,7 +1364,7 @@ pub async fn list_bookmarks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::BookmarkItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .bookmarks(user.id)
@@ -1308,7 +1386,7 @@ pub async fn set_bookmark(
     headers: HeaderMap,
     Json(request): Json<BookmarkRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1333,7 +1411,7 @@ pub async fn delete_bookmark(
     Path(track_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1368,8 +1446,7 @@ pub async fn list_api_tokens(
     Path(username): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::database::ApiTokenRecord>>, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .api_tokens(actor.id, &username)
@@ -1391,8 +1468,7 @@ pub async fn create_api_token(
     headers: HeaderMap,
     Json(request): Json<CreateApiTokenRequest>,
 ) -> Result<(StatusCode, Json<CreateApiTokenResponse>), ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     let (token, secret) = state
         .services
         .create_api_token(actor.id, &username, &request.name, &request.scopes)
@@ -1410,8 +1486,7 @@ pub async fn revoke_api_token(
     Path((username, token_id)): Path<(String, Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .revoke_api_token(actor.id, &username, token_id)
@@ -1425,7 +1500,7 @@ pub async fn list_ratings(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::RatingItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .ratings(user.id)
@@ -1440,7 +1515,7 @@ pub async fn create_scrobble(
     headers: HeaderMap,
     Json(request): Json<ScrobbleRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1462,7 +1537,7 @@ pub async fn list_history(
     headers: HeaderMap,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<crate::services::HistoryItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let limit = query.limit.unwrap_or(200);
     if !(1..=crate::sync::MAX_SYNC_LIMIT).contains(&limit) {
         return Err(ApiError::Validation);
@@ -1480,7 +1555,7 @@ pub async fn transcode_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<TranscodeStatusResponse>, ApiError> {
-    authenticated(&state, &headers).await?;
+    authenticated(&state, &headers, Access::Read).await?;
     Ok(Json(TranscodeStatusResponse {
         available: state.media.transcoding_available(),
         active: state.media.active_transcodes(),
@@ -1492,8 +1567,7 @@ pub async fn list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::UserItem>>, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .users(actor.id)
@@ -1508,8 +1582,7 @@ pub async fn create_user(
     headers: HeaderMap,
     Json(request): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<crate::services::UserItem>), ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     let user = state
         .services
         .create_web_user(
@@ -1530,8 +1603,7 @@ pub async fn update_user(
     headers: HeaderMap,
     Json(request): Json<UpdateUserRequest>,
 ) -> Result<Json<crate::services::UserItem>, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .update_user(
@@ -1558,8 +1630,7 @@ pub async fn delete_user(
     Path(username): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .delete_user(actor.id, &username)
@@ -1575,8 +1646,7 @@ pub async fn set_subsonic_credential(
     headers: HeaderMap,
     Json(request): Json<SetSubsonicCredentialRequest>,
 ) -> Result<Json<SubsonicCredentialResponse>, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     let api_key = state
         .services
         .set_subsonic_credential(actor.id, &username, &request.password)
@@ -1591,8 +1661,7 @@ pub async fn revoke_subsonic_credential(
     Path(username): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let actor = authenticated(&state, &headers).await?;
-    require_admin(&actor)?;
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
         .revoke_subsonic_credential(actor.id, &username)
@@ -1606,7 +1675,7 @@ pub async fn list_now_playing(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<NowPlayingEntry>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let entries = state
         .services
         .now_playing(user.id)
@@ -1627,7 +1696,7 @@ pub async fn get_queue(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Option<crate::services::QueueItem>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .queue(user.id)
@@ -1642,7 +1711,7 @@ pub async fn save_queue(
     headers: HeaderMap,
     Json(request): Json<SaveQueueRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1664,7 +1733,7 @@ pub async fn list_shares(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ShareResponse>>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let shares = state
         .services
         .shares(user.id)
@@ -1682,7 +1751,7 @@ pub async fn create_share(
     headers: HeaderMap,
     Json(request): Json<CreateShareRequest>,
 ) -> Result<(StatusCode, Json<ShareResponse>), ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     let share = state
         .services
@@ -1705,7 +1774,7 @@ pub async fn update_share(
     headers: HeaderMap,
     Json(request): Json<UpdateShareRequest>,
 ) -> Result<Json<ShareResponse>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     let share = state
         .services
@@ -1728,7 +1797,7 @@ pub async fn delete_share(
     Path(share_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let context = mutation_context(&state, &headers, user.id).await?;
     state
         .services
@@ -1781,7 +1850,7 @@ pub async fn sync_changes(
     headers: HeaderMap,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<crate::sync::SyncPage>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let after = query.after.unwrap_or(0);
     let limit = query.limit.unwrap_or(crate::sync::DEFAULT_SYNC_LIMIT);
     if after < 0 || limit <= 0 || limit > crate::sync::MAX_SYNC_LIMIT {
@@ -1805,7 +1874,7 @@ pub async fn sync_snapshot(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<SyncSnapshot>, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let snapshot = state
         .services
         .sync_snapshot(user.id, crate::sync::MAX_SYNC_LIMIT)
@@ -1853,7 +1922,7 @@ pub async fn sync_ack(
     headers: HeaderMap,
     Json(request): Json<SyncAckRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let acknowledged = state
         .sync
         .acknowledge(user.id, request.device_id, request.cursor)
@@ -1885,7 +1954,7 @@ pub async fn sync_socket(
     Query(query): Query<SyncQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    let user = authenticated(&state, &headers).await?;
+    let user = authenticated(&state, &headers, Access::Read).await?;
     let after = query.after.unwrap_or(0);
     if after < 0 {
         return Err(ApiError::Validation);
@@ -2157,42 +2226,75 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-async fn authenticated(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<crate::authentication::AuthUser, ApiError> {
-    let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
-    state.auth.authenticate(token).await.map_err(ApiError::from)
+/// What a route needs of the credential it was called with.
+///
+/// Chosen at every call of [`authenticated`], which is the only way into a
+/// route, so a new route cannot be written without deciding: the compiler asks
+/// the question. That is the whole reason this is a parameter rather than a
+/// second helper a handler may forget to call — which is exactly what happened
+/// to the scope list, stored since the foundations and read by nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Access {
+    /// Reads the caller's own catalogue and user data.
+    Read,
+    /// Writes on the caller's behalf: playlists, favorites, ratings, the queue,
+    /// bookmarks, shares, scrobbles, scans, and issuing an OAuth code.
+    Write,
+    /// Acts on the instance: accounts, libraries, memberships, credentials.
+    Admin,
 }
 
 /// The scope that admits the administrative routes.
-///
-/// A token issued with an explicit scope list has to carry it. Without that
-/// the list was decoration: the scopes were stored, returned by the API and
-/// printed by the CLI, while a `catalog:read` token on an administrator's
-/// account could still create users. That is worse than having no scopes at
-/// all, because the operator believes the token is limited.
 const ADMIN_SCOPE: &str = "admin";
+/// The scope that admits any mutation.
+const WRITE_SCOPE: &str = "write";
 
-/// Administrative authority: an active administrator, on a credential that
-/// has not been narrowed away from it.
+impl Access {
+    /// Whether a credential carrying `scopes` may do this.
+    ///
+    /// An empty list is unrestricted: a session, an OAuth grant and a token
+    /// issued without scopes all carry the account's full authority, so nothing
+    /// that works today stops working.
+    ///
+    /// A non-empty list grants only what it names, and a name this server does
+    /// not know grants nothing — so `catalog:read` reads and does no more,
+    /// without needing a vocabulary of every possible scope. `admin` implies
+    /// `write`: a credential trusted to create accounts is not usefully barred
+    /// from creating a playlist, and the surprise would be the other way round.
+    fn granted_by(self, scopes: &[String]) -> bool {
+        if scopes.is_empty() {
+            return true;
+        }
+        let holds = |wanted: &str| scopes.iter().any(|scope| scope == wanted);
+        match self {
+            Self::Read => true,
+            Self::Write => holds(WRITE_SCOPE) || holds(ADMIN_SCOPE),
+            Self::Admin => holds(ADMIN_SCOPE),
+        }
+    }
+}
+
+/// Resolves the caller and checks, in one place, that the credential may do
+/// what the route is about to do.
 ///
-/// An empty scope list is unrestricted, which is what a session, an OAuth
-/// grant and a token issued without scopes all carry. Both conditions have
-/// to hold: being an administrator does not widen a token, and a token
-/// cannot promote an ordinary account.
-///
-/// A scope list grants the union of its entries, as scope lists do
-/// everywhere: `admin` beside `catalog:read` admits these routes, because a
-/// token that explicitly names a permission must not be refused it. The
-/// comparison is exact rather than trimmed, which it can be because
-/// `DomainServices::create_api_token` normalises what it stores: the value
-/// a listing shows is the value this compares.
-fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError> {
-    let is_admin = user.role == crate::database::AccountRole::Admin;
-    let in_scope = user.scopes.is_empty() || user.scopes.iter().any(|scope| scope == ADMIN_SCOPE);
-    if is_admin && in_scope {
-        Ok(())
+/// Both halves of administrative authority live here: an active administrator,
+/// on a credential that has not been narrowed away from it. Being an
+/// administrator does not widen a token, and a token cannot promote an
+/// ordinary account.
+pub(crate) async fn authenticated(
+    state: &AppState,
+    headers: &HeaderMap,
+    access: Access,
+) -> Result<crate::authentication::AuthUser, ApiError> {
+    let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
+    let user = state
+        .auth
+        .authenticate(token)
+        .await
+        .map_err(ApiError::from)?;
+    let role_ok = access != Access::Admin || user.role == crate::database::AccountRole::Admin;
+    if role_ok && access.granted_by(&user.scopes) {
+        Ok(user)
     } else {
         Err(ApiError::Forbidden)
     }
