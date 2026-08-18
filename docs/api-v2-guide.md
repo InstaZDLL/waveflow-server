@@ -217,7 +217,8 @@ pass to carry them.
 An `AlbumItem` carries `song_count` and `duration_ms` for the whole album, so a
 listing never has to load the tracks to size it, plus `is_compilation`,
 `play_count`, `last_played_at` and `musicbrainz_id`. An `ArtistItem` carries
-`musicbrainz_id` too.
+`musicbrainz_id` too. An `AlbumItem` also carries `artists` and `genres`, derived
+from its available tracks.
 
 Those two are release and artist identifiers, not the recording identifier a
 `SongItem` carries under the same name, and neither is read from a single file.
@@ -437,6 +438,24 @@ heartbeat. If changes returns `409` with `code=cursor_expired`, discard the
 local projection, obtain a new snapshot and resume from that snapshot's cursor.
 Do not confuse it with `code=conflict`.
 
+## Bookmarks
+
+One playback position per account and track, for audiobooks and long-form
+listening. `GET /api/v2/bookmarks` lists them, most recently changed first.
+`PUT /api/v2/bookmarks/{track_id}` takes `{"position_ms": 180000,
+"comment": "chapter two"}`; `PUT` rather than `POST` because the track names
+the resource, so calling it again **moves** the existing bookmark rather than
+adding a second, and omitting `comment` clears it rather than keeping the old
+one. `DELETE /api/v2/bookmarks/{track_id}` succeeds whether or not a bookmark
+was there: the caller asked for the track to carry none, and it does not.
+
+A bookmark on a track that has become unavailable, or in a library the
+account has lost, stops being listed rather than being returned pointing at
+nothing. These are the same domain methods behind the Subsonic
+`getBookmarks`/`createBookmark`/`deleteBookmark`, so the two surfaces cannot
+disagree, and bookmarks reach `/api/v2/sync/changes` under the `bookmark`
+entity type like every other piece of user data.
+
 ## Administration and scans
 
 Admin Bearer tokens can manage:
@@ -448,6 +467,7 @@ Admin Bearer tokens can manage:
 | Libraries | `GET/POST /api/v2/libraries` |
 | Membership | `PUT/DELETE /api/v2/libraries/{library_id}/members/{user_id}` |
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
+| API tokens | `GET/POST /api/v2/admin/users/{username}/tokens`, `DELETE /api/v2/admin/users/{username}/tokens/{token_id}` |
 
 Starting a scan needs more than membership. A scan walks the owner's files and
 takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
@@ -468,6 +488,30 @@ curl -X PUT https://music.example.com/api/v2/admin/users/listener/subsonic-crede
   -H "Content-Type: application/json" \
   -d '{"password":"a separate app password"}'
 ```
+
+### API tokens
+
+Long-lived tokens for scripts and integrations, as opposed to the session a
+person signs into or the Authorization Code flow a native client uses. They
+were a first-class table with scopes, expiry and revocation whose only entry
+point was a shell on the host; issuing one is now a route.
+
+```bash
+curl -X POST https://music.example.com/api/v2/admin/users/scripts/tokens \
+  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"nightly backup","scopes":["catalog:read"]}'
+```
+
+The response carries the record and a `secret` beginning `wfapi_`. Only its
+SHA-256 hash is stored, so the secret appears there and never again: the
+listing returns names, scopes and timestamps, and a caller who loses a token
+issues another rather than reading it back. `DELETE` revokes one; the token
+stops authenticating immediately, and revoking it again answers `404`,
+because it is already not working.
+
+The `token create` CLI command remains, for bootstrapping an instance that
+has no administrator session yet. Both paths go through the same service.
 
 ## Errors and retry rules
 
