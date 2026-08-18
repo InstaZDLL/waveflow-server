@@ -81,3 +81,9 @@ jobs:
       # post-login hop from navigating to attacker-supplied targets.
       - name: Test
         run: bun run test
+
+      - name: Install Playwright browser
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser test
+        run: bun run test:e2e

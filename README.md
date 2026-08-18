@@ -2,7 +2,7 @@
 
 WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the catalogue and user data; FFmpeg streaming, OpenSubsonic compatibility, WaveFlow Desktop sync and the embedded web player land through independently verified milestones.
 
-> **Status:** M0 through M3 pass their release gates. The OpenSubsonic facade has completed its real-client matrix with Feishin 1.15.1, Substreamer 8.0.91, DSub 5.5.3 and Symfonium 14.1.0. M4 is implemented; no release tag is created without an explicit operator request.
+> **Status:** M0 through M5 pass their release gates. The OpenSubsonic facade has completed its real-client matrix with Feishin, DSub, Symfonium and Juliet, and the native Desktop integration plus conservative reconciliation are validated end to end. M6 delivers the bilingual studio-nocturne web experience; no release tag is created without an explicit operator request.
 
 The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The v1 PostgreSQL/JWKS implementation has been removed; it remains available in git history.
 
@@ -84,6 +84,8 @@ The web client lives in `webapp/` and is compiled into the binary, so it must be
 ```bash
 bun --cwd=webapp install
 bun run build          # webapp then cargo, in that order
+bun --cwd=webapp x playwright install chromium
+bun --cwd=webapp run test:e2e
 ```
 
 `cargo build` alone still works: a placeholder page is embedded when no client build is present.

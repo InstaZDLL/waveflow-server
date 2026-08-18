@@ -43,9 +43,13 @@ export type Album = {
 
 export type Song = {
   id: string;
+  library_id: string;
+  album_id: string | null;
   title: string;
   album: string | null;
   artist: string | null;
+  artist_id: string | null;
+  artwork_hash: string | null;
   duration_ms: number;
   track: number | null;
   disc: number | null;
@@ -154,6 +158,14 @@ async function parse<T>(response: Response): Promise<T> {
  * instead.
  */
 let pendingRefresh: Promise<boolean> | null = null;
+const artworkUrls = new Map<string, Promise<string | null>>();
+
+function clearArtworkUrls(): void {
+  for (const pending of artworkUrls.values()) {
+    void pending.then((url) => url && URL.revokeObjectURL(url));
+  }
+  artworkUrls.clear();
+}
 
 function refresh(): Promise<boolean> {
   if (!pendingRefresh) {
@@ -231,6 +243,7 @@ export async function login(username: string, password: string): Promise<void> {
     throw new ApiError(response.status, "login failed");
   }
   session = await parse<WebSession>(response);
+  clearArtworkUrls();
 }
 
 export const setupRequired = () =>
@@ -261,6 +274,7 @@ export async function logout(): Promise<void> {
     });
   } finally {
     session = null;
+    clearArtworkUrls();
   }
 }
 
@@ -293,6 +307,32 @@ export const getArtist = (id: string) =>
 export const search = (query: string) =>
   call<SearchResult>(`/api/v2/search?q=${encodeURIComponent(query)}`);
 export const getTrack = (id: string) => call<Song>(`/api/v2/tracks/${id}`);
+
+async function loadArtworkUrl(
+  id: string,
+  retry = true,
+): Promise<string | null> {
+  const headers = new Headers();
+  if (session) headers.set("authorization", `Bearer ${session.access_token}`);
+  const response = await fetch(`/api/v2/artwork/${encodeURIComponent(id)}`, {
+    headers,
+  });
+  if (response.status === 401 && retry && (await refresh())) {
+    return loadArtworkUrl(id, false);
+  }
+  if (!response.ok) return null;
+  return URL.createObjectURL(await response.blob());
+}
+
+/** Resolve authenticated artwork to a browser-safe object URL for <img>. */
+export function artworkUrl(id: string | null): Promise<string | null> {
+  if (!id) return Promise.resolve(null);
+  const cached = artworkUrls.get(id);
+  if (cached) return cached;
+  const pending = loadArtworkUrl(id).catch(() => null);
+  artworkUrls.set(id, pending);
+  return pending;
+}
 
 export const listPlaylists = () => call<Playlist[]>("/api/v2/playlists");
 export const createPlaylist = (name: string, trackIds: string[] = []) =>
@@ -387,12 +427,14 @@ export const scrobble = (trackId: string, submission: boolean) =>
  * credential; it authorises this one track and is re-checked on every range
  * request the browser makes while seeking.
  */
-export async function streamUrl(trackId: string): Promise<string> {
+export type StreamUrl = { url: string; expiresAt: number };
+
+export async function streamUrl(trackId: string): Promise<StreamUrl> {
   const ticket = await call<{ url: string; expires_at: number }>(
     `/api/v2/tracks/${trackId}/stream-ticket`,
     { method: "POST" },
   );
-  return ticket.url;
+  return { url: ticket.url, expiresAt: ticket.expires_at };
 }
 
 export function formatDuration(ms: number): string {
