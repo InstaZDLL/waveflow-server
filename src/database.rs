@@ -119,6 +119,18 @@ impl FromStr for LibraryRole {
     }
 }
 
+/// One issued API token, without its secret.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ApiTokenRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<i64>,
+    pub created_at: i64,
+    pub last_used_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AccountRecord {
     pub id: Uuid,
@@ -873,6 +885,66 @@ impl Database {
         Ok(result.rows_affected() == 1)
     }
 
+    /// The tokens issued to one account, newest first, secrets excluded.
+    ///
+    /// `token_hash` is never projected. The secret exists once, in the creation
+    /// response; a listing that could return it would make every read of this
+    /// route as sensitive as issuing a new one.
+    pub async fn api_tokens_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<ApiTokenRecord>, sqlx::Error> {
+        sqlx::query(
+            "SELECT id, name, scopes_json, expires_at, created_at, last_used_at, revoked_at \
+             FROM api_token WHERE user_id = ? ORDER BY created_at DESC, id",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(api_token_from_row)
+        .collect()
+    }
+
+    /// Revokes one token of one account.
+    ///
+    /// The account is part of the condition rather than checked beforehand, so
+    /// an administrator cannot revoke a token by naming the wrong owner, and a
+    /// token already revoked answers the same as one that never existed: the
+    /// caller asked for it to stop working, and it does not.
+    pub async fn revoke_api_token(
+        &self,
+        actor_id: Uuid,
+        user_id: Uuid,
+        token_id: Uuid,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE api_token SET revoked_at = ? \
+             WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(now_ms)
+        .bind(token_id.to_string())
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        let revoked = result.rows_affected() == 1;
+        if revoked {
+            insert_audit(
+                &mut tx,
+                Some(actor_id),
+                "api_token.revoked",
+                Some(token_id),
+                now_ms,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(revoked)
+    }
+
     pub async fn create_library(
         &self,
         owner_id: Uuid,
@@ -1068,6 +1140,19 @@ fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
 
 fn parse_role(value: String) -> Result<AccountRole, sqlx::Error> {
     AccountRole::from_str(&value).map_err(|error| sqlx::Error::Decode(error.into_boxed_dyn_error()))
+}
+
+fn api_token_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ApiTokenRecord, sqlx::Error> {
+    Ok(ApiTokenRecord {
+        id: parse_uuid(row.try_get("id")?)?,
+        name: row.try_get("name")?,
+        scopes: serde_json::from_str(row.try_get::<&str, _>("scopes_json")?)
+            .map_err(|error| sqlx::Error::Decode(error.into()))?,
+        expires_at: row.try_get("expires_at")?,
+        created_at: row.try_get("created_at")?,
+        last_used_at: row.try_get("last_used_at")?,
+        revoked_at: row.try_get("revoked_at")?,
+    })
 }
 
 async fn insert_audit(

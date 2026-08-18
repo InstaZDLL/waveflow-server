@@ -189,7 +189,7 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
             CredentialCommand::Revoke(args) => revoke_credential(db, args).await,
         },
         Command::Token { command } => match command {
-            TokenCommand::Create(args) => create_token(db, args).await,
+            TokenCommand::Create(args) => create_token(state, args).await,
         },
         Command::Database { command } => match command {
             DatabaseCommand::Check => {
@@ -419,18 +419,19 @@ async fn revoke_credential(db: &Database, args: RevokeCredentialArgs) -> anyhow:
     Ok(())
 }
 
-async fn create_token(db: &Database, args: CreateTokenArgs) -> anyhow::Result<()> {
-    require_admin(db, &args.actor).await?;
-    let user = db
-        .account_by_username(&args.username)
-        .await?
-        .with_context(|| format!("account not found: {}", args.username))?;
-    let token = security::generate_token("wfapi_");
-    let hash = security::token_hash(&token);
-    let id = db
-        .create_api_token(user.id, &args.name, &hash, &args.scopes, now_ms())
+/// Bootstraps a token on an instance with no administrator session yet.
+///
+/// Issuing one is also an HTTP route now, so this goes through the same
+/// domain service rather than writing the row itself: a token minted here and
+/// one minted over the API must carry the same validation and the same audit
+/// trail, which is exactly what two copies of the insert would not guarantee.
+async fn create_token(state: &AppState, args: CreateTokenArgs) -> anyhow::Result<()> {
+    let actor = require_admin(&state.db, &args.actor).await?;
+    let (record, token) = state
+        .services
+        .create_api_token(actor.id, &args.username, &args.name, &args.scopes)
         .await?;
-    println!("Created API token {id} for {}", args.username);
+    println!("Created API token {} for {}", record.id, args.username);
     println!("Token (shown once): {token}");
     Ok(())
 }

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     authentication::now_ms,
-    database::{AccountRecord, AccountRole, Database},
+    database::{AccountRecord, AccountRole, ApiTokenRecord, Database},
     lyrics::{self, LyricsList, StructuredLyrics},
     security::{self, EncryptedSecret, SecretBox},
     sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},
@@ -42,6 +42,33 @@ macro_rules! song_select {
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
          WHERE m.user_id=? AND t.is_available=1"
+    };
+}
+
+/// Narrows [`song_select!`] to an optional set of libraries. Binds the JSON
+/// library list twice, as the album and artist scopes do.
+macro_rules! song_folder_clause {
+    () => {
+        " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))"
+    };
+}
+
+/// Restricts [`song_select!`] to one genre, matched on `genre.canonical_name`
+/// so case, punctuation and spacing fold exactly as they do in `getGenres` and
+/// in the `byGenre` album filter. Binds the canonical name once.
+macro_rules! song_genre_clause {
+    () => {
+        " AND t.id IN (SELECT tg.track_id FROM track_genre tg \
+            JOIN genre g ON g.id=tg.genre_id WHERE g.canonical_name=?)"
+    };
+}
+
+/// An optional inclusive year range. Binds a flag and the two bounds, so one
+/// literal serves both the filtered and the unfiltered request rather than
+/// forking the statement.
+macro_rules! song_year_clause {
+    () => {
+        " AND (? = 0 OR (t.year IS NOT NULL AND t.year BETWEEN ? AND ?))"
     };
 }
 
@@ -212,10 +239,26 @@ pub struct ArtistRef {
     pub name: String,
 }
 
+/// A browse view that stops short of the tracks.
+#[derive(Debug, Clone)]
+pub struct CatalogOverview {
+    pub folders: Vec<MusicFolderItem>,
+    pub artists: Vec<ArtistItem>,
+    pub albums: Vec<AlbumItem>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CatalogSnapshot {
     pub folders: Vec<MusicFolderItem>,
     pub artists: Vec<ArtistItem>,
+    pub albums: Vec<AlbumItem>,
+    pub songs: Vec<SongItem>,
+}
+
+/// Everything one account has starred, across the three entity kinds.
+#[derive(Debug, Clone)]
+pub struct StarredCatalog {
+    pub artists: Vec<ArtistSummary>,
     pub albums: Vec<AlbumItem>,
     pub songs: Vec<SongItem>,
 }
@@ -684,15 +727,17 @@ impl DomainServices {
             .map_err(Into::into)
     }
 
-    pub async fn catalog_snapshot(
+    /// The libraries one account can reach.
+    ///
+    /// `getMusicFolders` needs nothing else, and used to read the whole
+    /// catalogue to answer with a handful of names.
+    pub async fn music_folders(
         &self,
         user_id: Uuid,
         folder_ids: &[Uuid],
-    ) -> Result<CatalogSnapshot, ServiceError> {
-        let folder_filter = (!folder_ids.is_empty()).then(|| {
-            serde_json::to_string(folder_ids).expect("UUID list serialization cannot fail")
-        });
-        let folders = sqlx::query(
+    ) -> Result<Vec<MusicFolderItem>, ServiceError> {
+        let folder_filter = folder_filter(folder_ids);
+        Ok(sqlx::query(
             "SELECT l.id, l.name FROM library l JOIN library_member m ON m.library_id=l.id \
              WHERE m.user_id=? AND (? IS NULL OR l.id IN (SELECT value FROM json_each(?))) \
              ORDER BY l.name COLLATE NOCASE",
@@ -709,7 +754,24 @@ impl DomainServices {
                 name: row.try_get("name")?,
             })
         })
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        .collect::<Result<Vec<_>, sqlx::Error>>()?)
+    }
+
+    /// Folders, artists and albums, without the tracks.
+    ///
+    /// Most of what browses the catalogue never looks at a track: an index of
+    /// artists, an artist's albums, a folder's contents. Those used to read
+    /// every visible track anyway, because one snapshot served every browse
+    /// method, and the track read is by far the largest of the three — and
+    /// since the OpenSubsonic fields landed it carries two relation loads of
+    /// its own.
+    pub async fn catalog_overview(
+        &self,
+        user_id: Uuid,
+        folder_ids: &[Uuid],
+    ) -> Result<CatalogOverview, ServiceError> {
+        let folder_filter = folder_filter(folder_ids);
+        let folders = self.music_folders(user_id, folder_ids).await?;
         let artists = sqlx::query(
             "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
                     us.starred_at, ur.rating AS user_rating FROM artist ar \
@@ -740,11 +802,34 @@ impl DomainServices {
         .into_iter()
         .map(album_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-        let songs = fetch_songs(&self.db, user_id, folder_filter.as_deref(), None).await?;
-        Ok(CatalogSnapshot {
+        Ok(CatalogOverview {
             folders,
             artists,
             albums,
+        })
+    }
+
+    /// The overview plus every visible track.
+    ///
+    /// Only the methods that genuinely need the whole track list should reach
+    /// for this. Everything with an id in hand has a targeted query.
+    pub async fn catalog_snapshot(
+        &self,
+        user_id: Uuid,
+        folder_ids: &[Uuid],
+    ) -> Result<CatalogSnapshot, ServiceError> {
+        let overview = self.catalog_overview(user_id, folder_ids).await?;
+        let songs = fetch_songs(
+            &self.db,
+            user_id,
+            folder_filter(folder_ids).as_deref(),
+            None,
+        )
+        .await?;
+        Ok(CatalogSnapshot {
+            folders: overview.folders,
+            artists: overview.artists,
+            albums: overview.albums,
             songs,
         })
     }
@@ -992,6 +1077,168 @@ impl DomainServices {
         .collect::<Result<Vec<_>, sqlx::Error>>()?)
     }
 
+    /// Songs of one genre, ordered and paged in SQL.
+    ///
+    /// Matching is on `genre.canonical_name`, the same key `list_genres` groups
+    /// by and `byGenre` filters on. It was `eq_ignore_ascii_case` against the
+    /// joined display string, which folds case but not punctuation or spacing:
+    /// `getGenres` answered one row for "Hip-Hop" and "Hip Hop", and asking for
+    /// that row returned only the tracks spelled the way the caller happened to
+    /// send. A client showed a genre it had just been given, and it was empty.
+    pub async fn songs_by_genre(
+        &self,
+        user_id: Uuid,
+        library_ids: &[Uuid],
+        genre: &str,
+        page: BrowsePage,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        let folders = folder_filter(library_ids);
+        let canonical = waveflow_core::scanner::canonical_name(genre);
+        let mut songs = sqlx::query(concat!(
+            song_select!(),
+            song_folder_clause!(),
+            song_genre_clause!(),
+            " ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(&canonical)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(songs)
+    }
+
+    /// A random selection, drawn in SQL rather than by shuffling the catalogue.
+    ///
+    /// The facade used to read every visible track, filter in Rust and shuffle
+    /// the result to answer with ten. `ORDER BY RANDOM() LIMIT` asks SQLite for
+    /// the same thing without materialising the rest, and the genre filter
+    /// matches the canonical name like every other genre predicate.
+    ///
+    /// A reversed year range is how Subsonic asks for one, so the bounds are
+    /// normalised rather than rejected.
+    pub async fn random_songs(
+        &self,
+        user_id: Uuid,
+        library_ids: &[Uuid],
+        genre: Option<&str>,
+        from_year: Option<i64>,
+        to_year: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        if limit <= 0 || limit > MAX_BROWSE_LIMIT {
+            return Err(ServiceError::Invalid);
+        }
+        let folders = folder_filter(library_ids);
+        let canonical = genre.map(waveflow_core::scanner::canonical_name);
+        let from = from_year.unwrap_or(i64::MIN);
+        let to = to_year.unwrap_or(i64::MAX);
+        let bounded = from_year.is_some() || to_year.is_some();
+        let sql = match canonical.is_some() {
+            true => concat!(
+                song_select!(),
+                song_folder_clause!(),
+                song_genre_clause!(),
+                song_year_clause!(),
+                " ORDER BY RANDOM() LIMIT ?"
+            ),
+            false => concat!(
+                song_select!(),
+                song_folder_clause!(),
+                song_year_clause!(),
+                " ORDER BY RANDOM() LIMIT ?"
+            ),
+        };
+        let mut statement = sqlx::query(sql)
+            .bind(user_id.to_string())
+            .bind(folders.as_deref())
+            .bind(folders.as_deref());
+        if let Some(canonical) = canonical.as_deref() {
+            statement = statement.bind(canonical);
+        }
+        let mut songs = statement
+            .bind(bounded)
+            .bind(from.min(to))
+            .bind(from.max(to))
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(song_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(songs)
+    }
+
+    /// Everything the account has starred, most recent first.
+    ///
+    /// The three projections already `LEFT JOIN user_star`, so this is the same
+    /// read with the join made mandatory. The facade used to load the whole
+    /// catalogue and look each starred id up inside it, which cost a full
+    /// catalogue read to answer a list that is usually short.
+    pub async fn starred(
+        &self,
+        user_id: Uuid,
+        library_ids: &[Uuid],
+    ) -> Result<StarredCatalog, ServiceError> {
+        let folders = folder_filter(library_ids);
+        let artists = sqlx::query(concat!(
+            artist_select!(),
+            " AND us.starred_at IS NOT NULL \
+              AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY us.starred_at DESC, ar.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_summary_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND us.starred_at IS NOT NULL \
+              AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY us.starred_at DESC, al.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let mut songs = sqlx::query(concat!(
+            song_select!(),
+            " AND us.starred_at IS NOT NULL",
+            song_folder_clause!(),
+            " ORDER BY us.starred_at DESC, t.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(StarredCatalog {
+            artists,
+            albums,
+            songs,
+        })
+    }
+
     /// One album with its tracks in sleeve order. Returns [`ServiceError::NotFound`]
     /// both when the album does not exist and when it belongs to a library the
     /// user cannot see, so the surface never leaks another tenant's catalogue.
@@ -1079,6 +1326,79 @@ impl DomainServices {
             artist: summary.artist,
             album_count: summary.album_count,
             albums,
+        })
+    }
+
+    /// The whole visible catalogue, each kind ordered and paged in SQL.
+    ///
+    /// Subsonic clients send the literal `""` to `search3` as the documented
+    /// match-all query, and page through it to build their initial library.
+    /// FTS5 has no expression meaning "everything", so this is not a search at
+    /// all — it is three ordinary listings under the search response. It used
+    /// to read the entire catalogue and slice it in Rust, once per page, which
+    /// made a client's first synchronization quadratic in the library.
+    ///
+    /// A page beyond the end is an empty list rather than an error: that is how
+    /// a client learns it has reached the end.
+    pub async fn browse_all(
+        &self,
+        user_id: Uuid,
+        library_ids: &[Uuid],
+        artists: BrowsePage,
+        albums: BrowsePage,
+        songs: BrowsePage,
+    ) -> Result<CatalogSearch, ServiceError> {
+        let folders = folder_filter(library_ids);
+        let artists = sqlx::query(concat!(
+            artist_select!(),
+            " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(artists.limit)
+        .bind(artists.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(artist_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let albums = sqlx::query(concat!(
+            album_select!(),
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(albums.limit)
+        .bind(albums.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let mut songs = sqlx::query(concat!(
+            song_select!(),
+            song_folder_clause!(),
+            " ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(songs.limit)
+        .bind(songs.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(CatalogSearch {
+            artists,
+            albums,
+            songs,
         })
     }
 
@@ -2938,6 +3258,99 @@ impl DomainServices {
         }
     }
 
+    /// The API tokens issued to one account.
+    ///
+    /// Administrative like the Subsonic credential routes beside it: a token
+    /// carries the authority of the account it belongs to, so who may mint one
+    /// is a question about the instance, not about the account itself.
+    pub async fn api_tokens(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+    ) -> Result<Vec<ApiTokenRecord>, ServiceError> {
+        self.require_admin(actor_id).await?;
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        Ok(self.db.api_tokens_for_user(account.id).await?)
+    }
+
+    /// Issues a token and returns it beside its record.
+    ///
+    /// The secret is returned once and stored only as a SHA-256 hash, exactly
+    /// as `set_subsonic_credential` returns its API key: a caller that loses it
+    /// issues another one rather than reading it back.
+    pub async fn create_api_token(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        name: &str,
+        scopes: &[String],
+    ) -> Result<(ApiTokenRecord, String), ServiceError> {
+        self.require_admin(actor_id).await?;
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 120 {
+            return Err(ServiceError::Invalid);
+        }
+        if scopes.iter().any(|scope| scope.trim().is_empty()) {
+            return Err(ServiceError::Invalid);
+        }
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        let token = security::generate_token("wfapi_");
+        let id = self
+            .db
+            .create_api_token(
+                account.id,
+                name,
+                &security::token_hash(&token),
+                scopes,
+                now_ms(),
+            )
+            .await?;
+        let record = self
+            .db
+            .api_tokens_for_user(account.id)
+            .await?
+            .into_iter()
+            .find(|record| record.id == id)
+            .ok_or(ServiceError::NotFound)?;
+        Ok((record, token))
+    }
+
+    /// Revokes one token of one account.
+    ///
+    /// A token that is not this account's, or is already revoked, answers as a
+    /// missing one: the caller asked for it to stop working, and naming the
+    /// wrong owner must not confirm that it exists elsewhere.
+    pub async fn revoke_api_token(
+        &self,
+        actor_id: Uuid,
+        username: &str,
+        token_id: Uuid,
+    ) -> Result<(), ServiceError> {
+        self.require_admin(actor_id).await?;
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        if self
+            .db
+            .revoke_api_token(actor_id, account.id, token_id, now_ms())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(ServiceError::NotFound)
+        }
+    }
+
     pub async fn create_subsonic_user(
         &self,
         actor_id: Uuid,
@@ -3241,6 +3654,15 @@ impl DomainServices {
 /// Tenancy is re-checked here rather than inherited from the caller: the batch
 /// is keyed by track id alone, and a join that trusted those ids would be the
 /// one place in the read path where membership is not proven.
+/// The JSON library list a scoped projection binds, or `None` for "every
+/// library the account can reach". Built once here because every scoped
+/// query binds the same value twice and a second spelling of it would be a
+/// second chance to get the empty case wrong.
+fn folder_filter(library_ids: &[Uuid]) -> Option<String> {
+    (!library_ids.is_empty())
+        .then(|| serde_json::to_string(library_ids).expect("UUID list serialization cannot fail"))
+}
+
 async fn attach_song_relations(
     connection: &mut SqliteConnection,
     user_id: Uuid,
