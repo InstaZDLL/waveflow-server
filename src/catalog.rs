@@ -242,6 +242,41 @@ impl Database {
         Ok(id)
     }
 
+    /// Creates a scan job only if the user still holds membership of the
+    /// library, testing it inside the insert rather than before it.
+    ///
+    /// A caller that checked membership with a separate read leaves a window
+    /// where a revocation lands between the check and the insert, queuing
+    /// work for a library the requester can no longer reach. Making the
+    /// membership row a condition of the statement closes it: there is no
+    /// moment at which the job exists without the grant that justified it.
+    ///
+    /// Returns `None` when the user is not, or no longer, a member.
+    pub async fn create_scan_job_for_user(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+        trigger: &str,
+    ) -> Result<Option<Uuid>, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let id = Uuid::new_v4();
+        let inserted = sqlx::query(
+            "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, created_at) \
+             SELECT ?, ?, ?, ?, 'queued', ? WHERE EXISTS \
+               (SELECT 1 FROM library_member WHERE library_id=? AND user_id=?)",
+        )
+        .bind(id.to_string())
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .bind(trigger)
+        .bind(now_ms())
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .execute(self.pool())
+        .await?;
+        Ok((inserted.rows_affected() > 0).then_some(id))
+    }
+
     pub async fn start_scan_job(&self, scan_id: Uuid, total: i64) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let now = now_ms();

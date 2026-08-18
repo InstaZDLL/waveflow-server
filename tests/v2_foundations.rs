@@ -4144,6 +4144,48 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
     assert_eq!(status["scanning"], false);
     assert_eq!(status["count"], 3);
 
+    // A membership revoked between the lookup and the queuing must not leave
+    // a job behind. The window cannot be interleaved deterministically, so
+    // what is asserted is the property that makes it safe: the insert itself
+    // requires a library_member row, and a non-member is exactly the state a
+    // revocation leaves behind.
+    assert!(state
+        .db
+        .create_scan_job_for_user(outsider, library, "manual")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        state.services.start_library_scan(outsider, library).await,
+        Err(ServiceError::NotFound)
+    ));
+    // Scoped to the owner's library: the outsider legitimately has jobs against
+    // their own.
+    let intruder_jobs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM scan_job WHERE requested_by = ? AND library_id = ?",
+    )
+    .bind(outsider.to_string())
+    .bind(library.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(intruder_jobs, 0, "a non-member queued a scan");
+
+    // An account that can reach no library has nothing to scan. That is an
+    // empty result, not an error: there is no missing resource to report, and
+    // every other catalogue-wide method answers such an account the same way.
+    let stranger = state
+        .db
+        .create_account("asym-stranger", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    assert!(state
+        .services
+        .start_visible_scans(stranger)
+        .await
+        .unwrap()
+        .is_empty());
+
     // Container-only aliases for browse-by-folder clients. The payload is the
     // ID3 one; only the wrapper name differs, as for getAlbumList.
     let search2 = subsonic_json(&router, "search2", api_key, "&query=One&songCount=10").await;
