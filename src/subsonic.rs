@@ -93,6 +93,11 @@ impl Node {
         self
     }
 
+    fn without(mut self, key: &str) -> Self {
+        self.attrs.remove(key);
+        self
+    }
+
     fn children(mut self, children: impl IntoIterator<Item = Node>) -> Self {
         self.children.extend(children);
         self
@@ -684,18 +689,33 @@ async fn artist_info(
     Ok(Node::new(container))
 }
 
+/// `getAlbumInfo` and `getAlbumInfo2`.
+///
+/// WaveFlow queries no remote source, so notes and biography images stay
+/// absent. The release identifier is the one part of the answer the catalogue
+/// actually holds, and it is emitted when the album has one. `AlbumInfo`
+/// predates the OpenSubsonic presence rule, so an album without a release id
+/// omits the element rather than sending it empty.
+///
+/// The lookup runs first and for its refusal: it is what turns an album the
+/// caller cannot reach into the same answer as one that does not exist.
 async fn album_info(
     state: &AppState,
     principal: &Principal,
     params: &Params,
     container: &'static str,
 ) -> Result<Node, ProtocolError> {
-    state
+    let album = state
         .services
         .album(principal.id, params.uuid("id")?)
         .await
         .map_err(service_protocol)?;
-    Ok(Node::new(container))
+    Ok(Node::new(container).children(
+        album
+            .album
+            .musicbrainz_id
+            .map(|id| Node::new("musicBrainzId").text(id)),
+    ))
 }
 
 async fn get_album(
@@ -817,6 +837,19 @@ async fn genres(
     )
 }
 
+/// Renders an artist or album as a browsing entry of `getMusicDirectory`.
+///
+/// `musicBrainzId` is dropped on the way. On a `Child` the specification
+/// defines it as the *recording* identifier, and a folder standing for an
+/// artist or a release has no recording: carrying the release or artist id
+/// under that name would be a different identifier wearing the same label.
+/// The `album` and `artist` responses keep it, where it means what it says.
+fn directory_child(node: Node) -> Node {
+    node.renamed("child")
+        .attr("isDir", true)
+        .without("musicBrainzId")
+}
+
 async fn music_directory(
     state: &AppState,
     principal: &Principal,
@@ -831,7 +864,7 @@ async fn music_directory(
                 .artists
                 .iter()
                 .filter(|artist| artist.library_id == id)
-                .map(|artist| artist_node(artist, 0).renamed("child").attr("isDir", true)),
+                .map(|artist| directory_child(artist_node(artist, 0))),
         );
     } else if let Some(artist) = snapshot.artists.iter().find(|item| item.id == id) {
         directory = directory.attr("name", artist.name.clone()).children(
@@ -839,7 +872,7 @@ async fn music_directory(
                 .albums
                 .iter()
                 .filter(|album| album.artist_id == Some(id))
-                .map(|album| album_node(album).renamed("child").attr("isDir", true)),
+                .map(|album| directory_child(album_node(album))),
         );
     } else if let Some(album) = snapshot.albums.iter().find(|item| item.id == id) {
         directory = directory.attr("name", album.title.clone()).children(
@@ -1603,6 +1636,14 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
         .maybe_attr("coverArt", artist.artwork_hash.clone())
         .maybe_attr("starred", artist.starred_at.map(iso_time))
         .maybe_attr("userRating", artist.user_rating)
+        // An OpenSubsonic addition, under the presence rule the media items
+        // already follow: on an artist the identifier means the artist, and it
+        // is emitted empty rather than omitted so a client can tell an untagged
+        // artist from a server that does not read the tag at all.
+        .attr(
+            "musicBrainzId",
+            artist.musicbrainz_id.clone().unwrap_or_default(),
+        )
 }
 
 /// `songCount` and `duration` come from the album projection rather than from
@@ -1627,6 +1668,13 @@ fn album_node(album: &AlbumItem) -> Node {
         .attr("playCount", album.play_count)
         .attr("displayArtist", album.artist.clone().unwrap_or_default())
         .maybe_attr("played", album.last_played_at.map(iso_time))
+        // On an album the identifier means the release, not the recording the
+        // song carries. It is derived from the album's own tracks at scan time,
+        // so it is a plain column read here.
+        .attr(
+            "musicBrainzId",
+            album.musicbrainz_id.clone().unwrap_or_default(),
+        )
 }
 
 fn song_node(song: &SongItem) -> Node {
