@@ -42,34 +42,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # `gh cache delete` fails the same way whether the cache is already
-          # gone or the token may not delete it. Only the first is tolerable: a
-          # cache can disappear between the listing and the delete, through
-          # eviction or a concurrent run. Anything else is a real failure, and
-          # swallowing it would report a successful cleanup that freed nothing
-          # — which is exactly how the cap gets reached unnoticed.
-          delete_cache() {
-            local id=$1 output
-            if output=$(gh cache delete "$id" 2>&1); then
-              return 0
-            fi
-            if grep -qiE 'could not find a cache|not found|404' <<<"$output"; then
-              echo "  $id already gone"
-              return 0
-            fi
-            echo "::error::deleting cache $id failed: $output"
-            return 1
-          }
-
+          # One bulk call rather than a listing and a loop. Listing first
+          # meant a limit, and a limit here is silent: caches past it stay
+          # behind while the job reports success. It also removes the
+          # listing-then-delete race the stale sweep has to tolerate, since
+          # the server resolves the ref itself.
+          #
+          # --succeed-on-no-caches covers the ordinary case of a request
+          # that never built anything. Every other failure still fails the
+          # step under set -e, which is the point: a cleanup that could not
+          # delete must not report that it did.
           echo "Cleaning caches for $BRANCH"
-          gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id' > ids.txt
-          echo "$(wc -l < ids.txt) cache(s) to delete"
-          failed=0
-          while read -r id; do
-            echo "delete $id"
-            delete_cache "$id" || failed=1
-          done < ids.txt
-          exit "$failed"
+          gh cache delete --all --ref "$BRANCH" --succeed-on-no-caches
 
   # Age alone does not bound this repository: dependencies change often enough
   # that a single week holds several generations. The sweep is therefore first
