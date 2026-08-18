@@ -210,13 +210,24 @@ identifier), `bpm`, `sort_name`, `comment`, the `isrc` list and the four
 that only wants one name needs no change.
 
 Each tag field is filled by the first scan that runs after the release adding it,
-and reads empty before that — `moods` and `explicit_status` are the most recent,
-so a library scanned for the earlier tag fields still needs one more pass to
-carry those two.
+and reads empty before that — the album and artist `musicbrainz_id` are the
+most recent, so a library scanned for the earlier tag fields still needs one more
+pass to carry them.
 
 An `AlbumItem` carries `song_count` and `duration_ms` for the whole album, so a
 listing never has to load the tracks to size it, plus `is_compilation`,
-`play_count` and `last_played_at`.
+`play_count`, `last_played_at` and `musicbrainz_id`. An `ArtistItem` carries
+`musicbrainz_id` too.
+
+Those two are release and artist identifiers, not the recording identifier a
+`SongItem` carries under the same name, and neither is read from a single file.
+Tracks of one album routinely disagree — a library assembled over years holds
+files tagged against different releases of the same record — so an album takes
+the identifier most of its available tracks agree on, recomputed at the end of
+every scan, with ties falling to the earliest disc and track so two scans of
+unchanged files answer the same thing. An artist takes it from the tracks it is
+the first credit of, because the tag is one value on a file that may credit
+several artists.
 
 ## Album discovery
 
@@ -437,6 +448,12 @@ Admin Bearer tokens can manage:
 | Libraries | `GET/POST /api/v2/libraries` |
 | Membership | `PUT/DELETE /api/v2/libraries/{library_id}/members/{user_id}` |
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
+
+Starting a scan needs more than membership. A scan walks the owner's files and
+takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
+is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
+same answer as for a library that does not exist. Reading the catalogue is
+unaffected.
 | FFmpeg status | `GET /api/v2/transcode/status` |
 
 Creating a library starts its first scan and returns both `library_id` and

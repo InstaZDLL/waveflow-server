@@ -230,7 +230,7 @@ with Subsonic error code `0`, like every other protocol failure.
 | Activity and queue | `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue` | Queue order and duplicate tracks are preserved. |
 | Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Creation returns the public URL; later reads omit the bearer token. |
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
-| Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account can reach and reports progress. |
+| Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account owns or manages and reports progress. |
 | Bookmarks | `getBookmarks`, `createBookmark`, `deleteBookmark` | One position per account and track; setting it again moves it. |
 | Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2`, `getInternetRadioStations` | Return the standard empty container. WaveFlow computes no recommendations and hosts no radio. |
 | Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
@@ -256,7 +256,7 @@ Bookmarks are user data like favorites and ratings, so they reach
 ### Rescanning
 
 `startScan` takes no library parameter — it rescans every library the
-authenticated account can reach, and answers with the same `scanStatus`
+authenticated account may scan, and answers with the same `scanStatus`
 element `getScanStatus` returns, so a client that only calls `startScan`
 still learns the state:
 
@@ -272,6 +272,15 @@ started. The equivalents are `POST /api/v2/libraries/{library_id}/scans`,
 which scans one library, and `GET /api/v2/scans/{scan_id}` with its
 server-sent progress stream.
 
+Being a member of a library is not enough to rescan it. A scan walks the
+owner's files and takes the instance's write lock, so it is reserved to the
+`owner` and `manager` roles; a `listener` reads the catalogue only. Libraries
+the account may only listen to are skipped, not refused: `startScan` names no
+library, so an account whose every library is read-only queues nothing and
+still answers `ok`, and `count` keeps reporting what that account can reach.
+The per-library native route, which does name one, answers `404` — the same
+answer a library that does not exist gets.
+
 ### OpenSubsonic fields on media items
 
 Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
@@ -286,9 +295,33 @@ when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`
 an empty one** — absence means the field is not implemented at all. `explicitStatus` is normalised to `explicit` or `clean`; a tag that says "no
 advisory" is not a claim that the work is clean, so it sends the empty value.
 
-`musicBrainzId` on a song is the MusicBrainz **recording** identifier — the
-performance. The release and artist identifiers are stored but not sent at track
-level, where they would name a different entity.
+`musicBrainzId` means a different entity on each item, which is why it is not
+the same value everywhere. On a song it is the MusicBrainz **recording**
+identifier — the performance. On an `album` it is the **release**, and on an
+`artist` the **artist**; both are also under the presence rule, so an untagged
+album answers `musicBrainzId=""`. The release and artist identifiers are never
+sent at track level, where they would name a different entity.
+
+An album's identifier is derived, not read from one file. Tracks of one album
+routinely disagree — a library assembled over years holds files tagged against
+different releases of the same record — so the album takes the identifier most
+of its available tracks agree on, recomputed at the end of every scan. Ties fall
+to the earliest disc and track, so two scans of unchanged files answer the same
+thing. An artist takes the identifier from the tracks it is the *first* credit
+of, because the tag is one value on a file that may credit several artists.
+
+`getAlbumInfo` and `getAlbumInfo2` carry that release identifier as their
+`musicBrainzId` element. They remain otherwise empty: WaveFlow queries no remote
+source, so there are no notes and no biography images. Being a classic Subsonic
+response rather than an OpenSubsonic one, the element is omitted when the album
+has no identifier instead of being sent empty.
+
+Browsing entries are the exception. `getMusicDirectory` renders artists and
+albums as `child` elements, and on a `child` the specification defines
+`musicBrainzId` as the recording id; a folder standing for an artist or a
+release has no recording, so the field is dropped there rather than carrying a
+different identifier under that name. Read album and artist identifiers from
+`getAlbum`, `getArtist`, `getAlbumList2`, `getArtists` and `search3`.
 
 `replayGain` is an object whose *members* are omitted when unknown, on the
 specification's instruction; the object itself is always present, so an untagged

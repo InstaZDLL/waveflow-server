@@ -88,6 +88,15 @@ pub enum LibraryRole {
 }
 
 impl LibraryRole {
+    /// Whether the role may spend the owner's disk on a rescan.
+    ///
+    /// The same rule the `scan_job` insert enforces in SQL, named once here
+    /// so the Subsonic fan-out over every reachable library agrees with it
+    /// instead of discovering the refusal one insert at a time.
+    pub fn may_scan(self) -> bool {
+        matches!(self, Self::Owner | Self::Manager)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",

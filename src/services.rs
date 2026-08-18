@@ -48,7 +48,8 @@ macro_rules! song_select {
 macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
-                al.artwork_hash, al.year, al.is_compilation, al.created_at, us.starred_at, \
+                al.artwork_hash, al.year, al.is_compilation, al.musicbrainz_id, \
+                al.created_at, us.starred_at, \
                 ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
                  WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
@@ -83,7 +84,8 @@ macro_rules! album_scope {
 
 macro_rules! artist_select {
     () => {
-        "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, us.starred_at, \
+        "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
+                us.starred_at, \
                 ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count \
          FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
@@ -110,6 +112,7 @@ pub struct ArtistItem {
     pub library_id: Uuid,
     pub name: String,
     pub artwork_hash: Option<String>,
+    pub musicbrainz_id: Option<String>,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
 }
@@ -124,6 +127,7 @@ pub struct AlbumItem {
     pub artwork_hash: Option<String>,
     pub year: Option<i64>,
     pub is_compilation: bool,
+    pub musicbrainz_id: Option<String>,
     pub created_at: i64,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
@@ -562,9 +566,9 @@ impl DomainServices {
             .await?
             .ok_or(ServiceError::NotFound)?;
         // The lookup above reads the root path; it is not what authorises the
-        // job. The insert tests `library_member` itself, so a membership
-        // revoked between the two refuses the job instead of queuing work for
-        // a library the requester can no longer reach.
+        // job. The insert tests `library_member` itself — membership and role
+        // together — so an access revoked or downgraded between the two refuses
+        // the job instead of queuing work the requester may no longer ask for.
         let scan_id = self
             .db
             .create_scan_job_for_user(user_id, library_id, "manual")
@@ -574,12 +578,18 @@ impl DomainServices {
         Ok(scan_id)
     }
 
-    /// Queues a rescan of every library the user can reach, for the Subsonic
+    /// Queues a rescan of every library the user may scan, for the Subsonic
     /// `startScan`, which takes no library parameter.
     ///
-    /// An account that can reach no library queues nothing and succeeds: there
-    /// is no missing resource to report, and every other catalogue-wide method
-    /// answers such an account with an empty result rather than an error.
+    /// Libraries the account only listens to are skipped rather than attempted
+    /// and reported: `startScan` names no library, so refusing the whole call
+    /// because one of the account's libraries is read-only would put the
+    /// scannable ones out of reach from Subsonic entirely.
+    ///
+    /// An account that may scan nothing therefore queues nothing and succeeds,
+    /// like an account that reaches no library at all: there is no missing
+    /// resource to report, and every other catalogue-wide method answers such
+    /// an account with an empty result rather than an error.
     ///
     /// Best effort by design: a library whose job cannot be queued does not
     /// cancel the ones that can. Aborting on the first failure would leave
@@ -595,7 +605,10 @@ impl DomainServices {
         let libraries = self.db.libraries_for_user(user_id).await?;
         let mut queued = Vec::new();
         let mut failure = None;
-        for access in libraries {
+        for access in libraries
+            .into_iter()
+            .filter(|access| access.role.may_scan())
+        {
             match self.start_library_scan(user_id, access.id).await {
                 Ok(scan_id) => queued.push(scan_id),
                 Err(error) => failure = Some(error),
@@ -698,7 +711,7 @@ impl DomainServices {
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
         let artists = sqlx::query(
-            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, \
+            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
                     us.starred_at, ur.rating AS user_rating FROM artist ar \
              JOIN library_member m ON m.library_id=ar.library_id \
              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
@@ -801,7 +814,7 @@ impl DomainServices {
         .collect::<Result<Vec<_>, _>>()?;
 
         let artists = sqlx::query(
-            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, \
+            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
                     us.starred_at, ur.rating AS user_rating FROM artist ar \
              JOIN library_member m ON m.library_id=ar.library_id \
              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
@@ -3342,6 +3355,7 @@ fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Err
         library_id: parse_uuid(row.try_get("library_id")?)?,
         name: row.try_get("name")?,
         artwork_hash: row.try_get("artwork_hash")?,
+        musicbrainz_id: row.try_get("musicbrainz_id")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
     })
@@ -3368,6 +3382,7 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
         artwork_hash: row.try_get("artwork_hash")?,
         year: row.try_get("year")?,
         is_compilation: row.try_get::<i64, _>("is_compilation")? != 0,
+        musicbrainz_id: row.try_get("musicbrainz_id")?,
         created_at: row.try_get("created_at")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
