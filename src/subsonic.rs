@@ -350,7 +350,9 @@ async fn dispatch(
         // Symfonium includes bookmarks in its initial sync even when the
         // server does not expose audiobook progress. Returning the standard
         // empty container keeps that optional capability non-destructive.
-        "getBookmarks" => Ok(Node::new("bookmarks")),
+        "getBookmarks" => bookmarks(state, principal).await,
+        "createBookmark" => create_bookmark(state, principal, params).await,
+        "deleteBookmark" => delete_bookmark(state, principal, params).await,
         // Recommendation and radio surfaces WaveFlow does not compute. The
         // standard empty container is the honest answer and, unlike the
         // not-implemented error, does not read to a client as a broken
@@ -1009,6 +1011,50 @@ fn search_result<'a>(
         .children(songs.skip(song_offset).take(song_count).map(song_node))
 }
 
+async fn bookmarks(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {
+    let bookmarks = state
+        .services
+        .bookmarks(principal.id)
+        .await
+        .map_err(internal)?;
+    Ok(Node::new("bookmarks").children(
+        bookmarks
+            .iter()
+            .map(|bookmark| bookmark_node(bookmark, &principal.username)),
+    ))
+}
+
+async fn create_bookmark(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+) -> Result<Node, ProtocolError> {
+    state
+        .services
+        .set_bookmark(
+            principal.id,
+            params.uuid("id")?,
+            params.i64("position")?,
+            params.first("comment"),
+        )
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("createBookmark"))
+}
+
+async fn delete_bookmark(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+) -> Result<Node, ProtocolError> {
+    state
+        .services
+        .delete_bookmark(principal.id, params.uuid("id")?)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("deleteBookmark"))
+}
+
 async fn playlists(state: &AppState, principal: &Principal) -> Result<Node, ProtocolError> {
     let playlists = state
         .services
@@ -1649,6 +1695,15 @@ fn song_node(song: &SongItem) -> Node {
                 .iter()
                 .map(|isrc| Node::new("isrc").text(isrc.clone())),
         )
+        .children(
+            song.moods
+                .iter()
+                .map(|mood| Node::new("moods").text(mood.clone())),
+        )
+        .attr(
+            "explicitStatus",
+            song.explicit_status.clone().unwrap_or_default(),
+        )
         // ReplayGain is the one addition whose *members* are omitted when
         // unknown, on the specification's own instruction. The container is
         // still always present, because that is what says the server reads
@@ -1665,6 +1720,23 @@ fn song_node(song: &SongItem) -> Node {
 /// `owner` is the caller: playlist reads are already scoped to their owner, so
 /// there is no other name this could carry. Leaving it empty made Feishin
 /// treat every playlist as someone else's and refuse to edit it.
+/// `bookmarkPosition` is set on the entry rather than on every song node: it
+/// is a legacy optional field, and a track only has a position inside the
+/// bookmark that holds it.
+fn bookmark_node(bookmark: &crate::services::BookmarkItem, owner: &str) -> Node {
+    Node::new("bookmark")
+        .attr("position", bookmark.position_ms)
+        .attr("username", owner)
+        .maybe_attr("comment", bookmark.comment.clone())
+        .attr("created", iso_time(bookmark.created_at))
+        .attr("changed", iso_time(bookmark.updated_at))
+        .child(
+            song_node(&bookmark.song)
+                .renamed("entry")
+                .attr("bookmarkPosition", bookmark.position_ms),
+        )
+}
+
 fn playlist_node(playlist: &PlaylistItem, owner: &str) -> Node {
     Node::new("playlist")
         .attr("id", playlist.id.to_string())
@@ -1833,7 +1905,7 @@ fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
         // Emitted as `[]` rather than omitted when a track has no credited
         // artist or no genre: under the OpenSubsonic presence rule an absent
         // key means the server does not support the field at all.
-        "song" | "entry" | "child" => &["artists", "genres", "isrc"],
+        "song" | "entry" | "child" => &["artists", "genres", "isrc", "moods"],
         "album" => &["artists", "genres"],
         _ => &[],
     }
@@ -1890,6 +1962,7 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("searchResult3" | "searchResult2", "artist" | "album" | "song")
             | ("playlists", "playlist")
             | ("playlist", "entry")
+            | ("bookmarks", "bookmark")
             | ("starred2" | "starred", "artist" | "album" | "song")
             | ("nowPlaying", "song")
             | ("playQueue", "song")
@@ -1904,7 +1977,7 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             // a playlist or share and to `child` inside a directory. Its
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
-            | ("song" | "entry" | "child", "isrc")
+            | ("song" | "entry" | "child", "isrc" | "moods")
     )
 }
 
@@ -1918,6 +1991,8 @@ fn empty_success_method(method: &str) -> bool {
             | "setRating"
             | "scrobble"
             | "savePlayQueue"
+            | "createBookmark"
+            | "deleteBookmark"
             | "deleteShare"
             | "createUser"
             | "updateUser"

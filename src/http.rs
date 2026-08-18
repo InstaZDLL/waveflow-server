@@ -336,6 +336,7 @@ pub struct SyncSnapshot {
     pub queue: Option<crate::services::QueueItem>,
     pub history: Vec<crate::services::HistoryItem>,
     pub shares: Vec<ShareResponse>,
+    pub bookmarks: Vec<crate::services::BookmarkItem>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -1669,6 +1670,7 @@ pub async fn sync_snapshot(
         queue: snapshot.queue,
         history: snapshot.history,
         shares,
+        bookmarks: snapshot.bookmarks,
     }))
 }
 

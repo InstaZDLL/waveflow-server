@@ -3201,6 +3201,8 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         sort_title: None,
         comment: None,
         isrc: None,
+        moods: None,
+        explicit_status: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -3903,6 +3905,8 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     tagged.sort_title = Some("Tagged, The".into());
     tagged.comment = Some("ripped from vinyl".into());
     tagged.isrc = Some("FRZ039800212; GBAYE0601498".into());
+    tagged.moods = Some("Melancholic; Warm".into());
+    tagged.explicit_status = Some("clean".into());
     state
         .db
         .apply_catalog_track(library, scan, &tagged, None, false)
@@ -3985,6 +3989,11 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
             "albumPeak": 1.0
         })
     );
+    assert_eq!(
+        tagged_json["moods"],
+        serde_json::json!(["Melancholic", "Warm"])
+    );
+    assert_eq!(tagged_json["explicitStatus"], "clean");
     // Genres are ordered by name so two identical catalogues answer identically.
     let genres = tagged_json["genres"]
         .as_array()
@@ -4010,6 +4019,8 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert_eq!(bare_json["sortName"], "");
     assert_eq!(bare_json["comment"], "");
     assert_eq!(bare_json["isrc"], serde_json::json!([]));
+    assert_eq!(bare_json["moods"], serde_json::json!([]));
+    assert_eq!(bare_json["explicitStatus"], "");
     // replayGain is the one addition whose members the specification says to
     // omit when unknown. The container still has to be there: it is what says
     // the server reads gain tags at all.
@@ -4053,6 +4064,8 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
     assert!(tagged_xml.contains("<isrc>FRZ039800212</isrc>"));
     assert!(tagged_xml.contains("<isrc>GBAYE0601498</isrc>"));
     assert!(tagged_xml.contains("trackGain=\"-7.32\""));
+    assert!(tagged_xml.contains("<moods>Melancholic</moods>"));
+    assert!(tagged_xml.contains("explicitStatus=\"clean\""));
 
     let bare_xml = xml_song(bare_id).await;
     assert!(bare_xml.contains("samplingRate=\"0\""));
@@ -4377,6 +4390,221 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
     );
 }
 
+/// Bookmarks are the last Subsonic mutation that had nowhere to write. They go
+/// through the domain services like every other piece of user data, which is
+/// what puts them in the sync journal and the bootstrap snapshot rather than
+/// only in one client's view.
+#[tokio::test]
+async fn bookmarks_round_trip_sync_and_isolate_tenants() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_bookmark-key";
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("bookmark-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"bookmark-secret").unwrap(),
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let outsider = state
+        .db
+        .create_account("bookmark-outsider", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+
+    let seed = |account: Uuid, name: &'static str, offset: usize| {
+        let state = state.clone();
+        let root = config.data_dir.join(name);
+        async move {
+            std::fs::create_dir_all(&root).unwrap();
+            let library = state
+                .db
+                .create_library(
+                    account,
+                    name,
+                    &std::fs::canonicalize(&root).unwrap(),
+                    LibraryVisibility::Private,
+                    now_ms(),
+                )
+                .await
+                .unwrap();
+            let scan = state
+                .db
+                .create_scan_job(library, Some(account), "manual")
+                .await
+                .unwrap();
+            state.db.start_scan_job(scan, 1).await.unwrap();
+            let mut input = browse_input(
+                offset,
+                "Long Form",
+                "Bookmark Album",
+                "Bookmark Artist",
+                Some(1),
+                Some(1),
+            );
+            input.relative_path = format!("{name}.flac");
+            input.quick_hash = format!("{:064x}", offset + 20_000);
+            input.full_hash = format!("{:064x}", offset + 21_000);
+            state
+                .db
+                .apply_catalog_track(library, scan, &input, None, false)
+                .await
+                .unwrap();
+            state.db.finish_scan_job(scan, 0).await.unwrap();
+            state
+                .services
+                .catalog_snapshot(account, &[])
+                .await
+                .unwrap()
+                .songs[0]
+                .id
+        }
+    };
+    let track = seed(owner, "bookmark-own", 200).await;
+    let foreign_track = seed(outsider, "bookmark-foreign", 201).await;
+
+    let router = waveflow_server::app(&config, state.clone());
+
+    // Nothing set yet: the container is present and empty, as it always was.
+    let empty = subsonic_json(&router, "getBookmarks", api_key, "").await;
+    assert!(empty["subsonic-response"]["bookmarks"].is_object());
+    assert!(empty["subsonic-response"]["bookmarks"]
+        .get("bookmark")
+        .is_none());
+
+    let created = subsonic_json(
+        &router,
+        "createBookmark",
+        api_key,
+        &format!("&id={track}&position=125000&comment=where%20I%20stopped"),
+    )
+    .await;
+    assert_eq!(created["subsonic-response"]["status"], "ok");
+    // A mutation with no result answers the bare envelope.
+    assert!(created["subsonic-response"].get("createBookmark").is_none());
+
+    let listed = subsonic_json(&router, "getBookmarks", api_key, "").await;
+    let bookmark = &listed["subsonic-response"]["bookmarks"]["bookmark"][0];
+    assert_eq!(bookmark["position"], 125_000);
+    assert_eq!(bookmark["username"], "bookmark-owner");
+    assert_eq!(bookmark["comment"], "where I stopped");
+    assert!(bookmark["created"].is_string());
+    assert!(bookmark["changed"].is_string());
+    // The entry is a full media item, carrying the position it is bookmarked at.
+    assert_eq!(bookmark["entry"]["id"], track.to_string());
+    assert_eq!(bookmark["entry"]["title"], "Long Form");
+    assert_eq!(bookmark["entry"]["bookmarkPosition"], 125_000);
+    // It goes through the shared projection, so the modern fields are there too.
+    assert_eq!(bookmark["entry"]["samplingRate"], 44_100);
+    assert!(bookmark["entry"]["artists"].is_array());
+
+    // A bookmark answers "where did I stop in this file", so setting it again
+    // moves it rather than adding a second one.
+    subsonic_json(
+        &router,
+        "createBookmark",
+        api_key,
+        &format!("&id={track}&position=250000"),
+    )
+    .await;
+    let moved = subsonic_json(&router, "getBookmarks", api_key, "").await;
+    let moved = &moved["subsonic-response"]["bookmarks"]["bookmark"];
+    assert_eq!(moved.as_array().unwrap().len(), 1);
+    assert_eq!(moved[0]["position"], 250_000);
+    // Omitting the comment clears it rather than keeping the old one.
+    assert!(moved[0].get("comment").is_none());
+
+    // It reaches the sync surfaces because it is a domain mutation, not a
+    // facade-local one: a desktop client sees it without a second contract.
+    let snapshot = state.services.sync_snapshot(owner, 50).await.unwrap();
+    assert_eq!(snapshot.bookmarks.len(), 1);
+    assert_eq!(snapshot.bookmarks[0].position_ms, 250_000);
+    assert_eq!(snapshot.bookmarks[0].song.id, track);
+    let changes = state.sync.changes(owner, 0, 100).await.unwrap();
+    assert!(
+        changes
+            .changes
+            .iter()
+            .any(|change| change.entity_type == "bookmark" && change.entity_id == track),
+        "no bookmark event in the journal: {:?}",
+        changes
+            .changes
+            .iter()
+            .map(|change| change.entity_type.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // And the native bootstrap carries them, so a desktop client that only
+    // ever calls /sync/snapshot receives bookmarks without a second contract.
+    let token = login_token(&router, "bookmark-owner", "correct horse battery staple").await;
+    let native = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/sync/snapshot")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native.status(), StatusCode::OK);
+    let native = json_body(native).await;
+    assert_eq!(native["bookmarks"].as_array().unwrap().len(), 1);
+    assert_eq!(native["bookmarks"][0]["position_ms"], 250_000);
+    assert_eq!(native["bookmarks"][0]["song"]["id"], track.to_string());
+
+    // Another account's track is not bookmarkable, and the refusal does not
+    // confirm that the track exists.
+    let foreign = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/createBookmark.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={foreign_track}&position=1000"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(foreign).await["subsonic-response"]["error"]["code"],
+        70
+    );
+    let unknown = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/createBookmark.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={}&position=1000",
+                Uuid::nil()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(unknown).await["subsonic-response"]["error"]["code"],
+        70
+    );
+    assert!(state.services.bookmarks(outsider).await.unwrap().is_empty());
+
+    subsonic_json(&router, "deleteBookmark", api_key, &format!("&id={track}")).await;
+    assert!(state.services.bookmarks(owner).await.unwrap().is_empty());
+    // Deleting one that is not there is not an error: the caller asked for the
+    // track to carry no bookmark, and it does not.
+    subsonic_json(&router, "deleteBookmark", api_key, &format!("&id={track}")).await;
+}
+
 /// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
 /// it is not a compilation, so `album_artist_id` is populated and the artist
 /// drill-down has something to resolve.
@@ -4423,6 +4651,8 @@ fn browse_input(
         sort_title: None,
         comment: None,
         isrc: None,
+        moods: None,
+        explicit_status: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),

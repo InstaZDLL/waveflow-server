@@ -231,8 +231,27 @@ with Subsonic error code `0`, like every other protocol failure.
 | Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Creation returns the public URL; later reads omit the bearer token. |
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
 | Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account can reach and reports progress. |
-| Compatibility | `getBookmarks`, `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2`, `getInternetRadioStations` | Return the standard empty container. WaveFlow computes no recommendations and hosts no radio; bookmarks wait on audiobook progress. |
+| Bookmarks | `getBookmarks`, `createBookmark`, `deleteBookmark` | One position per account and track; setting it again moves it. |
+| Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2`, `getInternetRadioStations` | Return the standard empty container. WaveFlow computes no recommendations and hosts no radio. |
 | Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
+
+### Bookmarks
+
+`createBookmark` takes `id` (a track) and `position` in milliseconds, plus an
+optional `comment`. There is one bookmark per account and track — it answers
+"where did I stop in this file" — so calling it again moves the existing one
+and omitting `comment` clears it. `deleteBookmark` takes `id` and succeeds
+whether or not a bookmark was there.
+
+`getBookmarks` returns each one with `position`, `username`, `created`,
+`changed`, an optional `comment` and an `entry` holding the full media item,
+which additionally carries `bookmarkPosition`. A bookmark on a track that has
+become unavailable, or in a library the account has lost, stops being listed
+rather than being returned pointing at nothing.
+
+Bookmarks are user data like favorites and ratings, so they reach
+`/api/v2/sync/changes` under the `bookmark` entity type and the bootstrap
+`/api/v2/sync/snapshot`.
 
 ### Rescanning
 
@@ -257,15 +276,15 @@ server-sent progress stream.
 
 Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
 `playCount`, `displayArtist`, `artists[]`, `genres[]`, `musicBrainzId`, `bpm`,
-`sortName`, `comment`, `isrc[]` and `replayGain`; albums add `isCompilation`,
-`playCount` and `displayArtist`. Both carry `played` when they have been played.
+`sortName`, `comment`, `isrc[]`, `moods[]`, `explicitStatus` and `replayGain`;
+albums add `isCompilation`, `playCount` and `displayArtist`. Both carry `played`
+when they have been played. No OpenSubsonic media field is left unimplemented.
 
 These follow the OpenSubsonic presence rule: a supported field is present even
 when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,
 `displayArtist=""` and an empty `genres` array. **Do not read an absent field as
-an empty one** — absence means the field is not implemented at all. The fields
-WaveFlow does not implement, and therefore never sends, are `moods` and
-`explicitStatus`.
+an empty one** — absence means the field is not implemented at all. `explicitStatus` is normalised to `explicit` or `clean`; a tag that says "no
+advisory" is not a claim that the work is clean, so it sends the empty value.
 
 `musicBrainzId` on a song is the MusicBrainz **recording** identifier — the
 performance. The release and artist identifiers are stored but not sent at track
