@@ -42,11 +42,31 @@ macro_rules! album_select {
                 (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
                  WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
                 (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
-                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at \
+                 WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at, \
+                (SELECT COUNT(*) FROM track t2 WHERE t2.album_id=al.id AND t2.is_available=1) \
+                 AS song_count, \
+                (SELECT COALESCE(SUM(t2.duration_ms), 0) FROM track t2 \
+                 WHERE t2.album_id=al.id AND t2.is_available=1) AS duration_ms \
          FROM album al JOIN library_member m ON m.library_id=al.library_id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='album' AND ur.entity_id=al.id \
          WHERE m.user_id=?"
+    };
+}
+
+/// [`album_select!`] narrowed to an optional set of libraries and wrapped so a
+/// caller can filter and order on the projected aggregates — `play_count`,
+/// `last_played_at`, `song_count` — instead of repeating their subqueries.
+/// SQLite does not accept a result alias in `WHERE`, hence the wrapper rather
+/// than a longer predicate list. Binds are the user id, then the JSON library
+/// list twice.
+macro_rules! album_scope {
+    () => {
+        concat!(
+            "SELECT * FROM (",
+            album_select!(),
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?)))) AS a"
+        )
     };
 }
 
@@ -97,6 +117,12 @@ pub struct AlbumItem {
     pub user_rating: Option<i64>,
     pub play_count: i64,
     pub last_played_at: Option<i64>,
+    /// Available tracks in the album, and their total duration in
+    /// milliseconds. Projected here rather than derived by the caller: album
+    /// listings used to compute both by loading every track of the tenant, so
+    /// the counts cost a full catalogue read per request.
+    pub song_count: i64,
+    pub duration_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -147,13 +173,6 @@ pub struct CatalogSearch {
     pub artists: Vec<ArtistItem>,
     pub albums: Vec<AlbumItem>,
     pub songs: Vec<SongItem>,
-    /// Every track of every returned album — not only the matching ones.
-    ///
-    /// `album` nodes carry `songCount` and `duration` derived from the track
-    /// list they are rendered with. Handing them only the matches would make an
-    /// album of twelve tracks report two, wrongly and silently, whenever the
-    /// query happened to hit two of them.
-    pub album_tracks: Vec<SongItem>,
 }
 
 /// Upper bound on a native browse page. It matches the Subsonic contract's
@@ -193,6 +212,79 @@ impl Default for BrowsePage {
             limit: DEFAULT_BROWSE_LIMIT,
         }
     }
+}
+
+/// How an album listing is ordered and filtered.
+///
+/// This is the single implementation of the ten Subsonic `getAlbumList2` modes,
+/// and it lives in the domain services rather than in the facade for two
+/// reasons. The facade used to sort in Rust over [`DomainServices::catalog_snapshot`],
+/// which materialises every folder, artist, album *and track* the tenant can
+/// see on each call — `byGenre` then rescanned every track once per album, and
+/// `songCount` needed the whole track list just to be counted. And the native
+/// API had no ordering at all, so the web client could not ask for "recently
+/// added" without paging the entire catalogue itself.
+///
+/// The variant names are the Subsonic `type` values verbatim, so the facade
+/// stays a parameter adapter with no vocabulary of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlbumOrder {
+    #[default]
+    AlphabeticalByName,
+    AlphabeticalByArtist,
+    Newest,
+    Highest,
+    Frequent,
+    Recent,
+    Starred,
+    Random,
+    ByYear,
+    ByGenre,
+}
+
+impl FromStr for AlbumOrder {
+    type Err = ServiceError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(match value {
+            "alphabeticalByName" => Self::AlphabeticalByName,
+            "alphabeticalByArtist" => Self::AlphabeticalByArtist,
+            "newest" => Self::Newest,
+            "highest" => Self::Highest,
+            "frequent" => Self::Frequent,
+            "recent" => Self::Recent,
+            "starred" => Self::Starred,
+            "random" => Self::Random,
+            "byYear" => Self::ByYear,
+            "byGenre" => Self::ByGenre,
+            _ => return Err(ServiceError::Invalid),
+        })
+    }
+}
+
+/// One album listing request.
+#[derive(Debug, Clone, Default)]
+pub struct AlbumListQuery {
+    /// Restrict to these libraries. Empty means every library the user can see.
+    /// It is a set because Subsonic sends repeated `musicFolderId` values.
+    pub library_ids: Vec<Uuid>,
+    pub order: AlbumOrder,
+    /// Required by [`AlbumOrder::ByGenre`], ignored otherwise.
+    pub genre: Option<String>,
+    /// Bounds for [`AlbumOrder::ByYear`], inclusive. Supplying them reversed is
+    /// how Subsonic asks for descending years, and that is preserved here.
+    pub from_year: Option<i64>,
+    pub to_year: Option<i64>,
+    pub page: BrowsePage,
+}
+
+/// A genre with the size of what it holds, aggregated across the libraries the
+/// user can see.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct GenreItem {
+    pub name: String,
+    pub song_count: i64,
+    pub album_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -497,7 +589,11 @@ impl DomainServices {
                     (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
                      WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS play_count, \
                     (SELECT MAX(pe.played_at) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
-                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at \
+                     WHERE pe.user_id=m.user_id AND pe.submission=1 AND pt.album_id=al.id) AS last_played_at, \
+                    (SELECT COUNT(*) FROM track t2 WHERE t2.album_id=al.id AND t2.is_available=1) \
+                     AS song_count, \
+                    (SELECT COALESCE(SUM(t2.duration_ms), 0) FROM track t2 \
+                     WHERE t2.album_id=al.id AND t2.is_available=1) AS duration_ms \
              FROM album al \
              JOIN library_member m ON m.library_id=al.library_id \
              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
@@ -545,7 +641,6 @@ impl DomainServices {
                 artists: Vec::new(),
                 albums: Vec::new(),
                 songs: Vec::new(),
-                album_tracks: Vec::new(),
             });
         };
         let folder_filter = (!folder_ids.is_empty()).then(|| {
@@ -614,61 +709,155 @@ impl DomainServices {
         .map(artist_from_row)
         .collect::<Result<Vec<_>, _>>()?;
 
-        // Reload every track of the returned albums, so their songCount and
-        // duration describe the album rather than the query.
-        let album_tracks = if albums.is_empty() {
-            Vec::new()
-        } else {
-            let ids =
-                serde_json::to_string(&albums.iter().map(|album| album.id).collect::<Vec<_>>())
-                    .expect("UUID list serialization cannot fail");
-            sqlx::query(concat!(
-                song_select!(),
-                " AND t.album_id IN (SELECT value FROM json_each(?)) \
-                 ORDER BY t.title COLLATE NOCASE, t.id"
-            ))
-            .bind(user_id.to_string())
-            .bind(&ids)
-            .fetch_all(self.db.pool())
-            .await?
-            .into_iter()
-            .map(song_from_row)
-            .collect::<Result<Vec<_>, _>>()?
-        };
-
         Ok(CatalogSearch {
             artists,
             albums,
             songs,
-            album_tracks,
         })
     }
 
-    /// Albums visible to the user, paginated. Unlike [`Self::catalog_snapshot`],
-    /// which materialises the whole catalogue for the Subsonic surface, this
-    /// pages in SQL so a large library never loads in full to render one screen.
+    /// Albums visible to the user, ordered, filtered and paged entirely in SQL.
+    ///
+    /// See [`AlbumOrder`] for why the ten orderings live here rather than in the
+    /// Subsonic facade. Every mode reads a single static literal — sqlx only
+    /// accepts static SQL, so the composition stays injection-proof by
+    /// construction and the user id is always the first bind.
     pub async fn list_albums(
         &self,
         user_id: Uuid,
-        library_id: Option<Uuid>,
-        page: BrowsePage,
+        query: &AlbumListQuery,
     ) -> Result<Vec<AlbumItem>, ServiceError> {
-        let library = library_id.map(|id| id.to_string());
-        Ok(sqlx::query(concat!(
-            album_select!(),
-            " AND (? IS NULL OR al.library_id=?) \
-              ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
-        ))
+        let folders = (!query.library_ids.is_empty()).then(|| {
+            serde_json::to_string(&query.library_ids).expect("UUID list serialization cannot fail")
+        });
+        // `byGenre` without a genre is a malformed request, not an empty one:
+        // answering with the whole catalogue would drop the filter in silence.
+        // Matching is on the canonical form, so "Hip-Hop" and "hip hop" are the
+        // same genre — the facade previously compared display strings with
+        // `eq_ignore_ascii_case`, which they are not.
+        let genre = match query.order {
+            AlbumOrder::ByGenre => Some(waveflow_core::scanner::canonical_name(
+                query.genre.as_deref().ok_or(ServiceError::Invalid)?,
+            )),
+            _ => None,
+        };
+        // An absent bound is unbounded, and a reversed range is how Subsonic
+        // asks for descending years.
+        let from = query.from_year.unwrap_or(i64::MIN);
+        let to = query.to_year.unwrap_or(i64::MAX);
+        let sql = match (query.order, from <= to) {
+            (AlbumOrder::AlphabeticalByName, _) => concat!(
+                album_scope!(),
+                " ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::AlphabeticalByArtist, _) => concat!(
+                album_scope!(),
+                " ORDER BY COALESCE(album_artist_name, '') COLLATE NOCASE, \
+                   title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Newest, _) => concat!(
+                album_scope!(),
+                " ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Highest, _) => concat!(
+                album_scope!(),
+                " WHERE user_rating > 0 \
+                  ORDER BY user_rating DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Frequent, _) => concat!(
+                album_scope!(),
+                " WHERE play_count > 0 \
+                  ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Recent, _) => concat!(
+                album_scope!(),
+                " WHERE last_played_at IS NOT NULL \
+                  ORDER BY last_played_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Starred, _) => concat!(
+                album_scope!(),
+                " WHERE starred_at IS NOT NULL \
+                  ORDER BY starred_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::Random, _) => {
+                concat!(album_scope!(), " ORDER BY RANDOM() LIMIT ? OFFSET ?")
+            }
+            (AlbumOrder::ByYear, true) => concat!(
+                album_scope!(),
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::ByYear, false) => concat!(
+                album_scope!(),
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (AlbumOrder::ByGenre, _) => concat!(
+                album_scope!(),
+                " WHERE EXISTS (SELECT 1 FROM track t2 \
+                    JOIN track_genre tg ON tg.track_id=t2.id \
+                    JOIN genre g ON g.id=tg.genre_id \
+                    WHERE t2.album_id=a.id AND t2.is_available=1 AND g.canonical_name=?) \
+                  ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+        };
+        let mut statement = sqlx::query(sql)
+            .bind(user_id.to_string())
+            .bind(folders.as_deref())
+            .bind(folders.as_deref());
+        if let Some(genre) = genre {
+            statement = statement.bind(genre);
+        }
+        if query.order == AlbumOrder::ByYear {
+            statement = statement.bind(from.min(to)).bind(from.max(to));
+        }
+        Ok(statement
+            .bind(query.page.limit)
+            .bind(query.page.offset)
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(album_from_row)
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Genres visible to the user, with the size of what each holds.
+    ///
+    /// Grouping is by `genre.canonical_name`, so one genre spelled differently
+    /// across two libraries — or differing only in case — is a single row. The
+    /// facade previously grouped the raw `genre_display` fragments, which
+    /// listed "Rock" and "rock" as two genres with split counts.
+    pub async fn list_genres(
+        &self,
+        user_id: Uuid,
+        library_ids: &[Uuid],
+    ) -> Result<Vec<GenreItem>, ServiceError> {
+        let folders = (!library_ids.is_empty()).then(|| {
+            serde_json::to_string(library_ids).expect("UUID list serialization cannot fail")
+        });
+        Ok(sqlx::query(
+            "SELECT MIN(g.name) AS name, COUNT(DISTINCT t.id) AS song_count, \
+                    COUNT(DISTINCT t.album_id) AS album_count \
+             FROM genre g JOIN library_member m ON m.library_id=g.library_id \
+             JOIN track_genre tg ON tg.genre_id=g.id \
+             JOIN track t ON t.id=tg.track_id AND t.is_available=1 \
+             WHERE m.user_id=? AND (? IS NULL OR g.library_id IN (SELECT value FROM json_each(?))) \
+             GROUP BY g.canonical_name ORDER BY name COLLATE NOCASE",
+        )
         .bind(user_id.to_string())
-        .bind(library.as_deref())
-        .bind(library.as_deref())
-        .bind(page.limit)
-        .bind(page.offset)
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
-        .map(album_from_row)
-        .collect::<Result<Vec<_>, _>>()?)
+        .map(|row| {
+            Ok(GenreItem {
+                name: row.try_get("name")?,
+                song_count: row.try_get("song_count")?,
+                album_count: row.try_get("album_count")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?)
     }
 
     /// One album with its tracks in sleeve order. Returns [`ServiceError::NotFound`]
@@ -2794,6 +2983,8 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
         user_rating: row.try_get("user_rating")?,
         play_count: row.try_get("play_count")?,
         last_played_at: row.try_get("last_played_at")?,
+        song_count: row.try_get("song_count")?,
+        duration_ms: row.try_get("duration_ms")?,
     })
 }
 
