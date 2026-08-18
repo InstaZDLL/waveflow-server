@@ -200,6 +200,57 @@ Browse and search pages accept `offset >= 0` and `1 <= limit <= 500`.
 `GET /api/v2/albums` and `/artists` additionally accept an optional
 `library_id`. A `SongItem` contains stable `id`, optional `album_id` and
 `artist_id`, metadata, `artwork_hash`, and the full-file BLAKE3 `full_hash`.
+An `AlbumItem` carries `song_count` and `duration_ms` for the whole album, so a
+listing never has to load the tracks to size it.
+
+## Album discovery
+
+`GET /api/v2/albums` orders and filters in SQL. `sort` takes the same ten values
+as the Subsonic `type` parameter — both surfaces resolve to the same query — so
+a home screen is one request rather than a full catalogue page-through:
+
+| `sort` | Result |
+|---|---|
+| `alphabeticalByName` (default) | By title, case-insensitive |
+| `alphabeticalByArtist` | By album artist, then title |
+| `newest` | Most recently added first |
+| `highest` | Rated albums only, best first |
+| `frequent` | Played albums only, most played first |
+| `recent` | Played albums only, most recently played first |
+| `starred` | Favorited albums only, most recently starred first |
+| `random` | Shuffled |
+| `byYear` | Within `from_year`/`to_year`, ascending |
+| `byGenre` | Albums holding at least one track of `genre` |
+
+`byGenre` requires `genre` and answers `422` without it, rather than silently
+returning an unfiltered catalogue. Genre matching is on the canonical form, so
+`hip hop`, `Hip-Hop` and `HIP HOP` are one genre. For `byYear`, supplying the
+bounds reversed (`from_year=2020&to_year=2000`) returns the range in descending
+order, matching Subsonic. An unknown `sort` is a `422`.
+
+```bash
+# Recently added, first page
+curl "https://music.example.com/api/v2/albums?sort=newest&limit=20" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+# One decade, oldest first
+curl "https://music.example.com/api/v2/albums?sort=byYear&from_year=1990&to_year=1999" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+`GET /api/v2/genres` lists the genres the account can see with their song and
+album counts, optionally narrowed by `library_id`. Counting groups by canonical
+name, so one genre spelled differently across libraries is a single row:
+
+```bash
+curl https://music.example.com/api/v2/genres \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+```json
+[{ "name": "Ambient", "song_count": 128, "album_count": 11 }]
+```
+
 
 Artwork accepts either an `artwork_hash` or an authorized track, album or
 artist ID:
