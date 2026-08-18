@@ -1462,7 +1462,22 @@ dependencies = [
  "byteorder",
  "data-encoding",
  "flate2",
- "lofty_attr",
+ "lofty_attr 0.12.0",
+ "log",
+ "ogg_pager",
+ "paste",
+]
+
+[[package]]
+name = "lofty"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e14b9bf7c3438887f72d71d21368a6a9ad120d8408a168ef61272907304fc3c"
+dependencies = [
+ "byteorder",
+ "data-encoding",
+ "flate2",
+ "lofty_attr 0.13.0",
  "log",
  "ogg_pager",
  "paste",
@@ -1477,6 +1492,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "lofty_attr"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdbca1b60ba7cea959ffc84ac27f3dbdbacd6dfda168c7eabbc00e48654bb9fd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -3431,7 +3457,7 @@ dependencies = [
  "hex",
  "id3",
  "image",
- "lofty",
+ "lofty 0.24.0",
  "md-5",
  "regex",
  "reqwest",
@@ -3467,7 +3493,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "libc",
- "lofty",
+ "lofty 0.25.0",
  "md-5",
  "rand 0.8.7",
  "rust-embed",
