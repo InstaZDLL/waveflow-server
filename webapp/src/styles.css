@@ -8,6 +8,8 @@
   --ambient-bg: #101311;
   --color-surface-dark: #121513;
   --color-surface-dark-elevated: #191d1a;
+  --color-surface-light: #fff;
+  --color-surface-light-elevated: #fafafa;
   --bg: var(--ambient-bg);
   --panel: color-mix(in srgb, var(--color-surface-dark-elevated) 92%, white 8%);
   --panel-soft: color-mix(in srgb, var(--color-surface-dark) 93%, white 7%);
@@ -25,6 +27,7 @@
   --danger: #ef9a9a;
   --shadow: 0 1.5rem 4rem color-mix(in srgb, var(--bg) 76%, transparent);
   --sidebar-width: 15.5rem;
+
   color-scheme: dark;
   font-synthesis: none;
 }
@@ -50,6 +53,7 @@
   --accent-soft: color-mix(in srgb, var(--accent-300) 27%, transparent);
   --danger: #a53d3d;
   --shadow: 0 1.5rem 4rem color-mix(in srgb, #59645d 19%, transparent);
+
   color-scheme: light;
 }
 
@@ -75,7 +79,7 @@ body {
     "Segoe UI Variable Text",
     "Segoe UI",
     sans-serif;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizelegibility;
 }
 
 body::before {
@@ -312,7 +316,7 @@ h3 {
   height: 0.26rem;
   margin-left: auto;
   border-radius: 50%;
-  background: currentColor;
+  background: currentcolor;
   content: "";
 }
 
@@ -911,7 +915,8 @@ button.danger {
   text-align: center;
 }
 
-.empty-state {
+.empty-state,
+.error-state {
   display: grid;
 }
 

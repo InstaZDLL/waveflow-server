@@ -12,7 +12,12 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { currentUser, ensureSession, logout } from "./api";
-import { I18nProvider, LanguagePicker, useI18n } from "./i18n";
+import {
+  I18nProvider,
+  LanguagePicker,
+  type TranslationKey,
+  useI18n,
+} from "./i18n";
 import { Icon, type IconName } from "./icons";
 import {
   AdminPage,
@@ -43,27 +48,29 @@ const navigation: Array<{
     | "/queue"
     | "/shares"
     | "/admin";
-  label:
-    | "Albums"
-    | "Artists"
-    | "Search"
-    | "Favourites"
-    | "Playlists"
-    | "Queue"
-    | "Shares"
-    | "Admin";
+  labelKey: TranslationKey;
   icon: IconName;
   admin?: boolean;
   primary?: boolean;
 }> = [
-  { to: "/", label: "Albums", icon: "albums", primary: true },
-  { to: "/artists", label: "Artists", icon: "artists" },
-  { to: "/search", label: "Search", icon: "search", primary: true },
-  { to: "/favourites", label: "Favourites", icon: "heart", primary: true },
-  { to: "/playlists", label: "Playlists", icon: "playlists", primary: true },
-  { to: "/queue", label: "Queue", icon: "queue", primary: true },
-  { to: "/shares", label: "Shares", icon: "shares" },
-  { to: "/admin", label: "Admin", icon: "admin", admin: true },
+  { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
+  { to: "/artists", labelKey: "nav.artists", icon: "artists" },
+  { to: "/search", labelKey: "nav.search", icon: "search", primary: true },
+  {
+    to: "/favourites",
+    labelKey: "nav.favourites",
+    icon: "heart",
+    primary: true,
+  },
+  {
+    to: "/playlists",
+    labelKey: "nav.playlists",
+    icon: "playlists",
+    primary: true,
+  },
+  { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
+  { to: "/shares", labelKey: "nav.shares", icon: "shares" },
+  { to: "/admin", labelKey: "nav.admin", icon: "admin", admin: true },
 ];
 
 function Brand() {
@@ -85,16 +92,6 @@ function Brand() {
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const user = currentUser();
   const { t } = useI18n();
-  const labels = {
-    Albums: t("nav.albums"),
-    Artists: t("nav.artists"),
-    Search: t("nav.search"),
-    Favourites: t("nav.favourites"),
-    Playlists: t("nav.playlists"),
-    Queue: t("nav.queue"),
-    Shares: t("nav.shares"),
-    Admin: t("nav.admin"),
-  };
   return (
     <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
       {navigation
@@ -107,11 +104,11 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           <Link
             key={item.to}
             to={item.to}
-            aria-label={mobile ? labels[item.label] : undefined}
+            aria-label={mobile ? t(item.labelKey) : undefined}
             activeOptions={{ exact: item.to === "/" }}
           >
             <Icon name={item.icon} />
-            <span>{labels[item.label]}</span>
+            <span>{t(item.labelKey)}</span>
           </Link>
         ))}
     </nav>
@@ -147,7 +144,12 @@ function Shell() {
               type="button"
               className="nav-action"
               onClick={async () => {
-                await logout();
+                try {
+                  await logout();
+                } catch {
+                  // logout always clears local session state in its finally
+                  // block; an unavailable server must not trap the user here.
+                }
                 await navigate({ to: "/login" });
               }}
             >

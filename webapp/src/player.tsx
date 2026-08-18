@@ -45,6 +45,20 @@ type PlayerProgress = {
 const PlayerContext = createContext<PlayerState | null>(null);
 const PlayerProgressContext = createContext<PlayerProgress | null>(null);
 
+export function setDirectionalMediaSessionHandlers(
+  mediaSession: Pick<MediaSession, "setActionHandler">,
+  element: Pick<HTMLAudioElement, "paused">,
+  play: () => void,
+  pause: () => void,
+): void {
+  mediaSession.setActionHandler("play", () => {
+    if (element.paused) play();
+  });
+  mediaSession.setActionHandler("pause", () => {
+    if (!element.paused) pause();
+  });
+}
+
 export function usePlayer(): PlayerState {
   const player = useContext(PlayerContext);
   if (!player) throw new Error("usePlayer requires PlayerProvider");
@@ -82,7 +96,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const autoplay = useRef(false);
   const suppressedPauseEvents = useRef(0);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
-  const streamUrls = useRef(new Map<string, string>());
+  const streamUrls = useRef(
+    new Map<string, { url: string; expiresAt: number }>(),
+  );
   const preloader = useRef<HTMLAudioElement | null>(null);
 
   const current = queue[index] ?? null;
@@ -103,10 +119,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const resolveStream = useCallback(async (trackId: string) => {
     const cached = streamUrls.current.get(trackId);
-    if (cached) return cached;
-    const url = await streamUrl(trackId);
-    streamUrls.current.set(trackId, url);
-    return url;
+    if (cached && cached.expiresAt > Date.now() + 5_000) return cached.url;
+    const ticket = await streamUrl(trackId);
+    streamUrls.current.set(trackId, ticket);
+    return ticket.url;
   }, []);
 
   useEffect(() => {
@@ -206,6 +222,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     submitted.current = null;
     const shouldAutoplay = autoplay.current;
     autoplay.current = false;
+    const onError = () => {
+      if (cancelled) return;
+      streamUrls.current.delete(current.id);
+      element.pause();
+      setPlaying(false);
+      setPlaybackError(true);
+    };
+    element.addEventListener("error", onError);
     void (async () => {
       try {
         const url = await resolveStream(current.id);
@@ -231,6 +255,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      element.removeEventListener("error", onError);
     };
   }, [current, resolveStream]);
 
@@ -293,16 +318,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [queue, current, hydrated, persistQueue]);
 
-  const toggle = useCallback(() => {
+  const startPlayback = useCallback(() => {
     const element = audio.current;
-    if (!element || !current) return;
-    if (element.paused) {
-      void element
-        .play()
-        .then(() => scrobble(current.id, false))
-        .catch(() => undefined);
-    } else element.pause();
+    if (!element || !current || !element.paused) return;
+    void element
+      .play()
+      .then(() => scrobble(current.id, false))
+      .catch(() => undefined);
   }, [current]);
+
+  const pausePlayback = useCallback(() => {
+    const element = audio.current;
+    if (element && !element.paused) element.pause();
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (audio.current?.paused) startPlayback();
+    else pausePlayback();
+  }, [pausePlayback, startPlayback]);
 
   const next = useCallback(() => {
     localMutation.current = true;
@@ -343,9 +376,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const mediaSession = navigator.mediaSession;
-    if (!mediaSession) return;
-    mediaSession.setActionHandler("play", toggle);
-    mediaSession.setActionHandler("pause", toggle);
+    const element = audio.current;
+    if (!mediaSession || !element) return;
+    setDirectionalMediaSessionHandlers(
+      mediaSession,
+      element,
+      startPlayback,
+      pausePlayback,
+    );
     mediaSession.setActionHandler("previoustrack", previous);
     mediaSession.setActionHandler("nexttrack", next);
     mediaSession.setActionHandler("seekto", (details) => {
@@ -362,7 +400,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         mediaSession.setActionHandler(action, null);
       }
     };
-  }, [next, previous, seek, toggle]);
+  }, [next, pausePlayback, previous, seek, startPlayback]);
 
   useEffect(() => {
     if (!navigator.mediaSession) return;
