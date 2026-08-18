@@ -1084,7 +1084,7 @@ pub async fn list_random_songs(
 
 /// The native form of `getSongsByGenre`. `genre` is required: answering an
 /// unfiltered catalogue would drop the filter in silence.
-#[utoipa::path(get, path = "/api/v2/songs", tag = "catalog", params(("genre" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/songs", tag = "catalog", params(("genre" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 400, description = "genre is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_songs_by_genre(
     State(state): State<AppState>,
     Query(query): Query<GenreSongQuery>,
@@ -2234,7 +2234,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 /// second helper a handler may forget to call — which is exactly what happened
 /// to the scope list, stored since the foundations and read by nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Access {
+pub(crate) enum Access {
     /// Reads the caller's own catalogue and user data.
     Read,
     /// Writes on the caller's behalf: playlists, favorites, ratings, the queue,
@@ -2281,7 +2281,7 @@ impl Access {
 /// on a credential that has not been narrowed away from it. Being an
 /// administrator does not widen a token, and a token cannot promote an
 /// ordinary account.
-async fn authenticated(
+pub(crate) async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
     access: Access,

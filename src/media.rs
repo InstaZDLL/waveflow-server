@@ -473,6 +473,27 @@ pub struct StreamTicketResponse {
     pub expires_at: i64,
 }
 
+/// Resolves a Bearer caller for the media routes through the same door as
+/// every other route.
+///
+/// These three used to extract the header and call the authenticator
+/// themselves, which meant they were outside the one place scopes are
+/// checked. They are reads, so today the check grants what it already
+/// granted; the point is that a mutation added here cannot quietly skip it,
+/// which is exactly how the scope list came to be stored and never read.
+///
+/// `/api/v2/stream/{ticket}` is deliberately not routed through this: its
+/// credential is the sealed ticket in the path, because `<audio src>` cannot
+/// send an Authorization header.
+async fn bearer_principal(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<crate::authentication::AuthUser, MediaError> {
+    crate::http::authenticated(state, headers, crate::http::Access::Read)
+        .await
+        .map_err(|_| MediaError::Unauthorized)
+}
+
 #[utoipa::path(
     get,
     path = "/api/v2/artwork/{artwork_id}",
@@ -502,17 +523,7 @@ pub async fn artwork(
     AxumPath(artwork_id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<Response, MediaError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
-        .ok_or(MediaError::Unauthorized)?;
-    let user = state
-        .auth
-        .authenticate(token)
-        .await
-        .map_err(|_| MediaError::Unauthorized)?;
+    let user = bearer_principal(&state, &headers).await?;
     let (hash, format) = state
         .services
         .artwork_for_user(user.id, &artwork_id)
@@ -554,17 +565,7 @@ pub async fn create_stream_ticket(
     AxumPath(track_id): AxumPath<Uuid>,
     headers: HeaderMap,
 ) -> Result<axum::Json<StreamTicketResponse>, MediaError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
-        .ok_or(MediaError::Unauthorized)?;
-    let user = state
-        .auth
-        .authenticate(token)
-        .await
-        .map_err(|_| MediaError::Unauthorized)?;
+    let user = bearer_principal(&state, &headers).await?;
     // Minting proves access now; redeeming re-proves it, so a ticket cannot
     // outlive the membership that justified it.
     state
@@ -671,17 +672,7 @@ pub async fn stream_track(
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Result<Response, MediaError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
-        .ok_or(MediaError::Unauthorized)?;
-    let user = state
-        .auth
-        .authenticate(token)
-        .await
-        .map_err(|_| MediaError::Unauthorized)?;
+    let user = bearer_principal(&state, &headers).await?;
     let track = state
         .db
         .stream_track_for_user(user.id, track_id)
