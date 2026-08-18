@@ -824,8 +824,14 @@ impl DomainServices {
 
     /// The overview plus every visible track.
     ///
-    /// Only the methods that genuinely need the whole track list should reach
-    /// for this. Everything with an id in hand has a targeted query.
+    /// **No route calls this.** Every browse method that used to now asks for
+    /// what it renders, and nothing should reach for this again: it is the
+    /// shape that made one album page read a tenant's whole catalogue.
+    ///
+    /// It survives as a fixture. The integration suite builds ids from it —
+    /// "give me an album of this account so I can ask for it" — which is a
+    /// legitimate use of a full read in a test with three tracks in it, and
+    /// not one in a request.
     pub async fn catalog_snapshot(
         &self,
         user_id: Uuid,
@@ -1427,11 +1433,17 @@ impl DomainServices {
     /// through the FTS5 index built in M1, which folds case and diacritics, so
     /// "echo" finds "Écho". Albums and artists are derived from the same index
     /// rather than a second scan, keeping one source of truth for relevance.
+    ///
+    /// Each kind is paged independently, as `search3` has always allowed:
+    /// a client that has read every matching song should be able to ask for
+    /// the next page of songs without re-reading the artists beside them.
     pub async fn search(
         &self,
         user_id: Uuid,
         query: &str,
-        page: BrowsePage,
+        artists: BrowsePage,
+        albums: BrowsePage,
+        songs: BrowsePage,
     ) -> Result<SearchResult, ServiceError> {
         // Prefix on the trailing term, like the Subsonic surface: a client
         // querying on each keystroke would otherwise get nothing until the word
@@ -1451,8 +1463,8 @@ impl DomainServices {
         ))
         .bind(user_id.to_string())
         .bind(&fts)
-        .bind(page.limit)
-        .bind(page.offset)
+        .bind(songs.limit)
+        .bind(songs.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -1468,8 +1480,8 @@ impl DomainServices {
         ))
         .bind(user_id.to_string())
         .bind(&fts)
-        .bind(page.limit)
-        .bind(page.offset)
+        .bind(albums.limit)
+        .bind(albums.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -1484,8 +1496,8 @@ impl DomainServices {
         ))
         .bind(user_id.to_string())
         .bind(&fts)
-        .bind(page.limit)
-        .bind(page.offset)
+        .bind(artists.limit)
+        .bind(artists.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
