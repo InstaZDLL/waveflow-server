@@ -260,13 +260,20 @@ pub async fn handle(
 /// Parameters carried in a POST body, as the `formPost` extension allows in
 /// place of a query string too long for a URL.
 async fn form_params(request: Request) -> Result<Params, ProtocolError> {
-    let form_encoded = request
+    // A media type is case-insensitive and may carry parameters, so the type is
+    // compared on its own rather than as a prefix of the raw header value:
+    // `Application/X-WWW-Form-Urlencoded; charset=UTF-8` is a conformant way to
+    // say the same thing, and `application/x-www-form-urlencodedish` is not.
+    let media_type = request
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
-        .starts_with("application/x-www-form-urlencoded");
-    if !form_encoded {
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if !media_type.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
         return Err(invalid("POST requires application/x-www-form-urlencoded"));
     }
     let body = to_bytes(request.into_body(), MAX_FORM_BYTES)

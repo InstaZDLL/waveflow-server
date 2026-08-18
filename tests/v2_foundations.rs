@@ -1873,6 +1873,48 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert!(folder_ids.contains(&library.to_string()));
     assert!(folder_ids.contains(&secondary_library.to_string()));
 
+    // The same request with a conformant spelling of the media type: case is not
+    // significant and a charset parameter is allowed, so neither may turn a
+    // valid form POST into a protocol error.
+    let cased = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/getMusicFolders.view")
+                .header(
+                    "content-type",
+                    "Application/X-WWW-Form-Urlencoded; charset=UTF-8",
+                )
+                .body(Body::from(format!(
+                    "apiKey={api_key}&v=1.16.1&c=golden&f=json"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cased.status(), StatusCode::OK);
+    assert_eq!(json_body(cased).await["subsonic-response"]["status"], "ok");
+
+    // A type that merely starts with the expected one is a different type. The
+    // format comes from the query string here because a rejected body is never
+    // read, so it cannot carry `f`.
+    let lookalike = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/getMusicFolders.view?f=json")
+                .header("content-type", "application/x-www-form-urlencodedish")
+                .body(Body::from(format!(
+                    "apiKey={api_key}&v=1.16.1&c=golden&f=json"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lookalike.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(lookalike).await["subsonic-response"]["error"]["code"],
+        10
+    );
+
     let cases = [
         ("getLicense", String::new()),
         ("getOpenSubsonicExtensions", String::new()),
