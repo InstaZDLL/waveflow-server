@@ -2180,11 +2180,37 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     let dsub_artist_info = body_text(dsub_artist_info).await;
     assert!(dsub_artist_info.contains("<artistInfo2/>"));
 
+    // XML is the default, and an empty container renders as a self-closing tag
+    // there rather than as the `{}` the JSON branch produces. Album pages open on
+    // this call, so both encodings are asserted.
+    for (method, container) in [
+        ("getAlbumInfo", "<albumInfo/>"),
+        ("getAlbumInfo2", "<albumInfo2/>"),
+    ] {
+        let empty_album_info = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/rest/{method}.view?{plain_auth}&id={album}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty_album_info.status(), StatusCode::OK, "{method}");
+        let empty_album_info = body_text(empty_album_info).await;
+        assert!(
+            empty_album_info.starts_with("<subsonic-response"),
+            "{method}"
+        );
+        assert!(empty_album_info.contains(container), "{method}");
+    }
+
     for (method, id) in [
         ("getArtistInfo", foreign_artist),
         ("getArtistInfo2", foreign_artist),
         ("getArtistInfo2", Uuid::nil()),
         ("getAlbumInfo", foreign_album),
+        ("getAlbumInfo", Uuid::nil()),
         ("getAlbumInfo2", foreign_album),
         ("getAlbumInfo2", Uuid::nil()),
     ] {
