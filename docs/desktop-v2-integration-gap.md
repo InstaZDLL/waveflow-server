@@ -1,16 +1,23 @@
-# WaveFlow Desktop ↔ serveur v2 : inventaire de l'écart
+# WaveFlow Desktop ↔ serveur v2 : inventaire historique de l'écart fermé
+
+> **Statut final (2026-08-18) : écart fermé.** L'intégration Desktop `/api/v2`
+> avec PKCE a été validée de bout en bout, puis la réconciliation conservatrice
+> M5 a été fusionnée. Ce document reste un relevé historique des décisions de
+> migration ; il ne constitue plus une liste de travail. Voir le
+> [handoff final](M4-handoff.md) et la [RFC-004](rfcs/RFC-004-local-server-reconciliation.md).
 
 > Relevé du 2026-08-10, établi en lecture seule sur
 > [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) à `802f189b`.
-> Il décrit ce que le Desktop attend aujourd'hui, ce que le serveur v2 offre, et
-> ce qui n'a pas d'équivalent. Aucun code n'a été modifié dans l'un ou l'autre
-> dépôt. Le contrat cible est [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md).
+> Il décrit ce que le Desktop attendait à cette date, ce que le serveur v2
+> offrait, et ce qui n'avait pas d'équivalent. Aucun code n'avait été modifié
+> pendant ce relevé. Le contrat cible est
+> [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md).
 
-## Constat
+## Constat au 2026-08-10
 
-Le Desktop parle intégralement au serveur **v1**, qui n'existe plus. Les six
-routes qu'il consomme ont zéro occurrence dans le code du serveur v2, et son
-flux de connexion s'appuie sur un front web supprimé par la PR #84.
+Le Desktop parlait intégralement au serveur **v1**, qui n'existait déjà plus.
+Les six routes qu'il consommait avaient zéro occurrence dans le code du serveur
+v2, et son flux de connexion s'appuyait sur un front web supprimé par la PR #84.
 
 Ce n'est donc pas une adaptation de la couche de synchronisation : c'est le
 remplacement d'un protocole bidirectionnel à horloges logiques par un journal
@@ -39,7 +46,7 @@ Plus deux fichiers TypeScript : `src/lib/tauri/serverAuth.ts` et
 
 ## Correspondance des routes
 
-| Desktop aujourd'hui | Serveur v2 | Nature |
+| Desktop au 2026-08-10 | Serveur v2 | Nature |
 | --- | --- | --- |
 | `GET /api/v1/sync/ops?since=N` | `GET /api/v2/sync/changes?after=N&limit=` | Renommage + pagination explicite (`next_cursor`, `has_more`) |
 | `POST /api/v1/sync/ops` | *(aucun)* | **Disparu.** Les mutations passent par les endpoints REST métier, porteurs de `X-WaveFlow-Operation-Id` |
@@ -74,7 +81,7 @@ protocole ne demande plus.
   mais **le remplacer par une reprise de snapshot** plutôt que le supprimer sans
   substitut.
 
-## Ce qui reste nécessaire
+## Ce qui devait rester dans la nouvelle architecture
 
 - **`device_id`.** Toujours central : le serveur refuse un appareil appartenant
   à un autre compte, et l'ACK est par appareil.

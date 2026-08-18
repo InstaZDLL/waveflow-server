@@ -2,7 +2,7 @@
 
 WaveFlow Server v2 is a self-hosted music server built in Rust. SQLite owns the catalogue and user data; FFmpeg streaming, OpenSubsonic compatibility, WaveFlow Desktop sync and the embedded web player land through independently verified milestones.
 
-> **Status:** M0 through M5 pass their release gates. The OpenSubsonic facade has completed its real-client matrix with Feishin, DSub, Symfonium and Juliet, and the native Desktop integration plus conservative reconciliation are validated end to end. M6 delivers the bilingual studio-nocturne web experience; no release tag is created without an explicit operator request.
+> **Status:** M0 through M6 pass their release gates. The OpenSubsonic facade has completed its real-client matrix with Feishin, DSub, Symfonium and Juliet; native Desktop integration, conservative reconciliation and the bilingual studio-nocturne web client are validated end to end. No release tag is created without an explicit operator request.
 
 The accepted architecture is documented in [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). The v1 PostgreSQL/JWKS implementation has been removed; it remains available in git history.
 
@@ -48,6 +48,10 @@ The server listens on `127.0.0.1:4533` by default and exposes:
   revoke the dedicated Subsonic password and API key;
 - `POST /api/v2/libraries/{id}/scans`: manual scan trigger;
 - `GET /api/v2/scans/{id}` and `/events`: status and SSE progress;
+- `GET /api/v2/artwork/{artwork_id}`: authenticated artwork for native and web
+  clients;
+- `GET /api/v2/tracks/{id}/lyrics`: embedded or sidecar plain/synchronized
+  lyrics;
 - `GET /api/v2/libraries/{id}/tracks?q=...&offset=...&limit=...`: tenant-scoped catalogue/FTS browsing, paged up to 500 tracks per request.
 - `GET /api/v2/tracks/{id}/stream?format=raw|mp3|opus&bitrate=...&offsetMs=...`: authorized playback. Byte ranges apply to originals and completed cache entries; live transcodes use temporal seek and chunked transfer.
 - `/rest/<method>` and `/rest/<method>.view`: Subsonic/OpenSubsonic XML or `f=json`, via GET or form POST.
@@ -89,6 +93,12 @@ bun --cwd=webapp run test:e2e
 ```
 
 `cargo build` alone still works: a placeholder page is embedded when no client build is present.
+
+The embedded client provides the complete functional player and administration
+surface with authenticated artwork, persistent queue, Media Session,
+preloading, keyboard controls, 14 localized themes, English/French UI and
+responsive desktop/mobile navigation. Vitest plus Playwright/axe cover the web
+release gate.
 
 ## Data and security posture
 
