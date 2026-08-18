@@ -2167,12 +2167,11 @@ async fn authenticated(
 
 /// The scope that admits the administrative routes.
 ///
-/// A token issued with an explicit scope list has to carry it. Without
-/// this the list was decoration: the scopes were stored, returned by the
-/// administrator's account could still create users, which is worse than
-/// administrator's account could still create users :  which is worse than
-/// having no scopes at all, because the operator believes the token is
-/// limited.
+/// A token issued with an explicit scope list has to carry it. Without that
+/// the list was decoration: the scopes were stored, returned by the API and
+/// printed by the CLI, while a `catalog:read` token on an administrator's
+/// account could still create users. That is worse than having no scopes at
+/// all, because the operator believes the token is limited.
 const ADMIN_SCOPE: &str = "admin";
 
 /// Administrative authority: an active administrator, on a credential that
@@ -2182,10 +2181,16 @@ const ADMIN_SCOPE: &str = "admin";
 /// grant and a token issued without scopes all carry. Both conditions have
 /// to hold: being an administrator does not widen a token, and a token
 /// cannot promote an ordinary account.
+///
+/// A scope list grants the union of its entries, as scope lists do
+/// everywhere: `admin` beside `catalog:read` admits these routes, because a
+/// token that explicitly names a permission must not be refused it. The
+/// comparison is exact rather than trimmed, which it can be because
+/// `DomainServices::create_api_token` normalises what it stores: the value
+/// a listing shows is the value this compares.
 fn require_admin(user: &crate::authentication::AuthUser) -> Result<(), ApiError> {
     let is_admin = user.role == crate::database::AccountRole::Admin;
-    let in_scope =
-        user.scopes.is_empty() || user.scopes.iter().any(|scope| scope.trim() == ADMIN_SCOPE);
+    let in_scope = user.scopes.is_empty() || user.scopes.iter().any(|scope| scope == ADMIN_SCOPE);
     if is_admin && in_scope {
         Ok(())
     } else {
