@@ -256,16 +256,27 @@ server-sent progress stream.
 ### OpenSubsonic fields on media items
 
 Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
-`playCount`, `displayArtist`, `artists[]` and `genres[]`; albums add
-`isCompilation`, `playCount` and `displayArtist`. Both carry `played` when they
-have been played.
+`playCount`, `displayArtist`, `artists[]`, `genres[]`, `musicBrainzId`, `bpm`,
+`sortName`, `comment`, `isrc[]` and `replayGain`; albums add `isCompilation`,
+`playCount` and `displayArtist`. Both carry `played` when they have been played.
 
 These follow the OpenSubsonic presence rule: a supported field is present even
 when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,
 `displayArtist=""` and an empty `genres` array. **Do not read an absent field as
 an empty one** — absence means the field is not implemented at all. The fields
-WaveFlow does not implement, and therefore never sends, are `bpm`, `comment`,
-`sortName`, `musicBrainzId`, `isrc`, `moods`, `replayGain` and `explicitStatus`.
+WaveFlow does not implement, and therefore never sends, are `moods` and
+`explicitStatus`.
+
+`musicBrainzId` on a song is the MusicBrainz **recording** identifier — the
+performance. The release and artist identifiers are stored but not sent at track
+level, where they would name a different entity.
+
+`replayGain` is an object whose *members* are omitted when unknown, on the
+specification's instruction; the object itself is always present, so an untagged
+track answers an empty one. `isrc` is an array, repeated `<isrc>` elements in
+XML. Both are filled by a scan: a library indexed before this release reports
+these fields supported and empty until it is rescanned, which is exactly what the
+presence rule means and needs no client change.
 
 `played` is the one exception: it is sent only once the item has been played,
 because its empty value would be an empty string rather than a timestamp.

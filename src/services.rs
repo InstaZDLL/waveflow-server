@@ -34,7 +34,10 @@ macro_rules! song_select {
                  AS play_count, \
                 (SELECT MAX(pe.played_at) FROM play_event pe \
                  WHERE pe.user_id=m.user_id AND pe.submission=1 AND pe.track_id=t.id) \
-                 AS last_played_at \
+                 AS last_played_at, \
+                t.musicbrainz_recording_id, t.replay_gain_track_gain, t.replay_gain_track_peak, \
+                t.replay_gain_album_gain, t.replay_gain_album_peak, t.bpm, t.sort_title, \
+                t.comment, t.isrc \
          FROM track t JOIN library_member m ON m.library_id=t.library_id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
@@ -178,6 +181,19 @@ pub struct SongItem {
     /// Every genre of the track, from `track_genre` rather than from the
     /// semicolon-joined `genre` display string.
     pub genres: Vec<String>,
+    /// The MusicBrainz recording identifier: the performance, which is what
+    /// OpenSubsonic means by a song's `musicBrainzId`. RFC-004 keeps a match
+    /// on it a candidate the user confirms, never an automatic link.
+    pub musicbrainz_id: Option<String>,
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
+    pub bpm: Option<i64>,
+    pub sort_name: Option<String>,
+    pub comment: Option<String>,
+    /// Split from the tag the same way artists and genres are.
+    pub isrc: Vec<String>,
 }
 
 /// One credited artist of a track. Only `id` and `name` are carried: those are
@@ -3181,6 +3197,19 @@ fn lyrics_list_from_rows(
     })
 }
 
+/// Splits a multi-valued tag string the way the scanner stored it.
+///
+/// The scanner writes these joined on `;`, so a reader that did not split
+/// them would hand a client one value that is really several.
+fn split_tag_values(raw: Option<&str>) -> Vec<String> {
+    raw.into_iter()
+        .flat_map(|value| value.split(';'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> {
     let relative: String = row.try_get("relative_path")?;
     Ok(SongItem {
@@ -3223,6 +3252,15 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         // Filled in by `attach_song_relations`: one row cannot carry them.
         artists: Vec::new(),
         genres: Vec::new(),
+        musicbrainz_id: row.try_get("musicbrainz_recording_id")?,
+        replay_gain_track_gain: row.try_get("replay_gain_track_gain")?,
+        replay_gain_track_peak: row.try_get("replay_gain_track_peak")?,
+        replay_gain_album_gain: row.try_get("replay_gain_album_gain")?,
+        replay_gain_album_peak: row.try_get("replay_gain_album_peak")?,
+        bpm: row.try_get("bpm")?,
+        sort_name: row.try_get("sort_title")?,
+        comment: row.try_get("comment")?,
+        isrc: split_tag_values(row.try_get::<Option<String>, _>("isrc")?.as_deref()),
     })
 }
 
