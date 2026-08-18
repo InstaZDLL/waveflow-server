@@ -1,6 +1,6 @@
 //! M0 HTTP surface: probes, OpenAPI and local session lifecycle.
 
-use std::{convert::Infallible, time::Duration};
+use std::{convert::Infallible, str::FromStr, time::Duration};
 
 use axum::{
     extract::{
@@ -85,6 +85,27 @@ pub struct BrowseQuery {
     pub library_id: Option<Uuid>,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
+}
+
+/// Album discovery parameters. `sort` accepts the same vocabulary as the
+/// Subsonic `type` parameter — both surfaces resolve to [`AlbumOrder`], so the
+/// web client can build a home screen ("recently added", "most played") in one
+/// call instead of paging the whole catalogue and sorting locally.
+#[derive(Debug, Deserialize)]
+pub struct AlbumBrowseQuery {
+    pub library_id: Option<Uuid>,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub sort: Option<String>,
+    /// Required by `sort=byGenre`, ignored otherwise.
+    pub genre: Option<String>,
+    pub from_year: Option<i64>,
+    pub to_year: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenreQuery {
+    pub library_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -346,6 +367,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/tracks/{track_id}", get(get_track))
         .route("/api/v2/tracks/{track_id}/lyrics", get(get_track_lyrics))
         .route("/api/v2/albums", get(list_albums))
+        .route("/api/v2/genres", get(list_genres))
         .route("/api/v2/albums/{album_id}", get(get_album))
         .route("/api/v2/artists", get(list_artists))
         .route("/api/v2/artists/{artist_id}", get(get_artist))
@@ -886,18 +908,47 @@ pub async fn get_track_lyrics(
         .map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/albums", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query), ("genre" = Option<String>, Query), ("from_year" = Option<i64>, Query), ("to_year" = Option<i64>, Query)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_albums(
     State(state): State<AppState>,
-    Query(query): Query<BrowseQuery>,
+    Query(query): Query<AlbumBrowseQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::AlbumItem>>, ApiError> {
     let user = authenticated(&state, &headers).await?;
-    let page =
-        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    let order = query
+        .sort
+        .as_deref()
+        .map(crate::services::AlbumOrder::from_str)
+        .transpose()
+        .map_err(service_error)?
+        .unwrap_or_default();
+    let request = crate::services::AlbumListQuery {
+        library_ids: query.library_id.into_iter().collect(),
+        order,
+        genre: query.genre,
+        from_year: query.from_year,
+        to_year: query.to_year,
+        page: crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?,
+    };
     state
         .services
-        .list_albums(user.id, query.library_id, page)
+        .list_albums(user.id, &request)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[utoipa::path(get, path = "/api/v2/genres", tag = "catalog", params(("library_id" = Option<Uuid>, Query)), responses((status = 200, body = [crate::services::GenreItem]), (status = 401, body = ErrorResponse)))]
+pub async fn list_genres(
+    State(state): State<AppState>,
+    Query(query): Query<GenreQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::GenreItem>>, ApiError> {
+    let user = authenticated(&state, &headers).await?;
+    let libraries = query.library_id.into_iter().collect::<Vec<_>>();
+    state
+        .services
+        .list_genres(user.id, &libraries)
         .await
         .map(Json)
         .map_err(service_error)
