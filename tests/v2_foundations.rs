@@ -2339,6 +2339,32 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         created["subsonic-response"]["playlist"]["owner"],
         "sub-admin"
     );
+    // Given a playlistId, songId names every song of the playlist. A client
+    // that removes a song sends back what remains, so treating those ids as
+    // additions left the removed song in place and the edit looked lost.
+    let replaced = subsonic_json(
+        &router,
+        "createPlaylist",
+        api_key,
+        &format!("&playlistId={playlist}&songId={no_artist_song}"),
+    )
+    .await;
+    assert_eq!(replaced["subsonic-response"]["playlist"]["songCount"], 1);
+    let reread = subsonic_json(&router, "getPlaylist", api_key, &format!("&id={playlist}")).await;
+    let entries = reread["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], no_artist_song.to_string());
+    // Put the original song back, so the checks below see the playlist they
+    // were written against.
+    subsonic_json(
+        &router,
+        "createPlaylist",
+        api_key,
+        &format!("&playlistId={playlist}&songId={song}"),
+    )
+    .await;
     for (method, extra) in [
         ("getPlaylists", String::new()),
         ("getPlaylist", format!("&id={playlist}")),

@@ -503,6 +503,11 @@ pub struct ShareClear {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlaylistClear {
     pub comment: bool,
+    /// Drop the existing track list before applying `add`, which turns an
+    /// update into a replacement. Subsonic's `createPlaylist` needs it: given a
+    /// `playlistId`, its `songId` values are the whole playlist rather than
+    /// additions to it. The native surface does not expose it.
+    pub tracks: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1950,6 +1955,7 @@ impl DomainServices {
                 "add": add,
                 "remove_indexes": &removes,
                 "clear_comment": clear.comment,
+                "clear_tracks": clear.tracks,
             }),
         );
         let _writer = self.db.writer_guard().await;
@@ -1969,7 +1975,11 @@ impl DomainServices {
             validate_name(name)?;
         }
         self.songs_by_ids_on(&mut tx, user_id, add).await?;
-        let mut ids = self.playlist_track_ids_on(&mut tx, user_id, id).await?;
+        let mut ids = if clear.tracks {
+            Vec::new()
+        } else {
+            self.playlist_track_ids_on(&mut tx, user_id, id).await?
+        };
         for index in removes {
             if index >= ids.len() {
                 return Err(ServiceError::Invalid);
