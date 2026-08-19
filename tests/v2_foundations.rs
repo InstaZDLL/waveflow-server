@@ -5066,6 +5066,46 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         split_bills, 2,
         "same title and same lead credit, different second artist: two albums"
     );
+
+    // Where the credits divide matters as much as what they say: canonicalising
+    // the joined string would flatten both of these to the same words and merge
+    // two records that credit different people.
+    let boundary = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(boundary, 2).await.unwrap();
+    for (index, credit) in ["Vale; Ivy Trench", "Vale; Ivy; Trench"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut edge = browse_input(820 + index, "Edge", "Boundary", credit, Some(1), None);
+        edge.relative_path = format!("boundary-{index}.flac");
+        edge.quick_hash = format!("{:064x}", 85_000 + index);
+        edge.full_hash = format!("{:064x}", 86_000 + index);
+        state
+            .db
+            .apply_catalog_track(library, boundary, &edge, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(boundary, 0).await.unwrap();
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    assert_eq!(
+        state
+            .services
+            .catalog_snapshot(owner, &[])
+            .await
+            .unwrap()
+            .albums
+            .iter()
+            .filter(|album| album.title == "Boundary")
+            .count(),
+        2,
+        "`A; B C` and `A; B; C` are different credits and different albums"
+    );
 }
 
 /// A release identifier belongs to the release, not to whichever file was

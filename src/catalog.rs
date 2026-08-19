@@ -1078,7 +1078,15 @@ fn album_identity(
         .unwrap_or_else(|| "none".into());
     let credits = split_values(album_artist);
     if credits.len() > 1 {
-        let joined = waveflow_core::scanner::canonical_name(&credits.join(" "));
+        // Canonicalised one credit at a time and rejoined on a separator the
+        // canonical form cannot contain. Canonicalising the joined string
+        // instead would erase where one credit ends and the next begins, so
+        // `A; B C` and `A; B; C` would answer the same key and merge.
+        let joined = credits
+            .iter()
+            .map(|credit| waveflow_core::scanner::canonical_name(credit))
+            .collect::<Vec<_>>()
+            .join(";");
         format!("{canonical_title}:{artist}:{joined}")
     } else {
         format!("{canonical_title}:{artist}")
