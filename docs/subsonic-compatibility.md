@@ -23,11 +23,13 @@ artist index, and an iOS player that probes a resource before reading it.
 Missing client features stay covered by automated fixtures and another real
 client rather than inferred as passes.
 
-What remains before a tag is a short re-play of the cold-transcode path on
-Feishin and Juliet, since both found their defect rather than passing it: the
-fixed behaviour was verified by replaying each client's exact request sequence,
-which is not the same as the client itself replaying it. Creating any tag or
-release remains a separate action requiring an explicit operator request.
+Feishin and Juliet found their defect rather than passing it, so each one
+re-played the fixed path itself rather than being credited on a replayed
+request sequence: Feishin's MP3 transcode now starts, caches and seeks, and
+Juliet's two-byte probe answers 200 cold with no refusal left in the log. The
+five rows therefore record the behaviour of the server as it stands. Creating
+any tag or release remains a separate action requiring an explicit operator
+request.
 
 The Substreamer row records the successful 2026-08-02 run. It could not be
 reinstalled on the current Android 17 device during the 2026-08-15 revalidation
