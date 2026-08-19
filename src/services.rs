@@ -503,6 +503,11 @@ pub struct ShareClear {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlaylistClear {
     pub comment: bool,
+    /// Drop the existing track list before applying `add`, which turns an
+    /// update into a replacement. Subsonic's `createPlaylist` needs it: given a
+    /// `playlistId`, its `songId` values are the whole playlist rather than
+    /// additions to it. The native surface does not expose it.
+    pub tracks: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1940,18 +1945,22 @@ impl DomainServices {
         let mut removes = remove_indexes.to_vec();
         removes.sort_unstable_by(|a, b| b.cmp(a));
         removes.dedup();
-        let intent = MutationIntent::new(
-            "update",
-            &format!("playlist:{id}"),
-            &serde_json::json!({
-                "name": name.map(str::trim),
-                "comment": comment,
-                "public": public,
-                "add": add,
-                "remove_indexes": &removes,
-                "clear_comment": clear.comment,
-            }),
-        );
+        let mut intent_payload = serde_json::json!({
+            "name": name.map(str::trim),
+            "comment": comment,
+            "public": public,
+            "add": add,
+            "remove_indexes": &removes,
+            "clear_comment": clear.comment,
+        });
+        // Added to the payload only when set. The intent is hashed and compared
+        // on replay, so naming a new field unconditionally would change the
+        // hash of every update this server version ever saw before, and turn a
+        // client's retry across an upgrade into a conflict.
+        if clear.tracks {
+            intent_payload["clear_tracks"] = serde_json::Value::Bool(true);
+        }
+        let intent = MutationIntent::new("update", &format!("playlist:{id}"), &intent_payload);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
@@ -1969,7 +1978,11 @@ impl DomainServices {
             validate_name(name)?;
         }
         self.songs_by_ids_on(&mut tx, user_id, add).await?;
-        let mut ids = self.playlist_track_ids_on(&mut tx, user_id, id).await?;
+        let mut ids = if clear.tracks {
+            Vec::new()
+        } else {
+            self.playlist_track_ids_on(&mut tx, user_id, id).await?
+        };
         for index in removes {
             if index >= ids.len() {
                 return Err(ServiceError::Invalid);

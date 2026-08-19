@@ -1514,6 +1514,80 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
         "duplicate consumers must create only one file per cache key"
     );
 
+    // A browser audio element opens every resource with `Range: bytes=0-`, so
+    // a cold transcode must answer it rather than refuse the range. Refusing
+    // made a web client fail on the first play of a track and succeed on the
+    // second, once the cache existed.
+    let cold_open = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=128"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_open.status(), StatusCode::OK);
+    assert_eq!(cold_open.headers()["content-type"], "audio/mpeg");
+    assert!(
+        cold_open
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len()
+            > 100
+    );
+
+    // iOS probes a resource with a two-byte range before it plays anything, so
+    // a bounded range from zero has to open the stream too. Juliet failed on
+    // the first play of every track until it did.
+    let cold_probe = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=136"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_probe.status(), StatusCode::OK);
+    assert_eq!(cold_probe.headers()["content-type"], "audio/mpeg");
+    // Drained and awaited: an unread transcode holds its per-user permit, and
+    // the checks below would meet 429 instead of what they are testing.
+    cold_probe.into_body().collect().await.unwrap();
+    for _ in 0..100 {
+        if media.active_transcodes() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        media.active_transcodes(),
+        0,
+        "a drained transcode must release its permit"
+    );
+
+    // A range that actually seeks still has no meaning before the transcode
+    // exists, and keeps its refusal.
+    let cold_seek = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=144"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=64-")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_seek.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+
     let live_seek = router
         .clone()
         .oneshot(
@@ -2296,6 +2370,32 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         created["subsonic-response"]["playlist"]["owner"],
         "sub-admin"
     );
+    // Given a playlistId, songId names every song of the playlist. A client
+    // that removes a song sends back what remains, so treating those ids as
+    // additions left the removed song in place and the edit looked lost.
+    let replaced = subsonic_json(
+        &router,
+        "createPlaylist",
+        api_key,
+        &format!("&playlistId={playlist}&songId={no_artist_song}"),
+    )
+    .await;
+    assert_eq!(replaced["subsonic-response"]["playlist"]["songCount"], 1);
+    let reread = subsonic_json(&router, "getPlaylist", api_key, &format!("&id={playlist}")).await;
+    let entries = reread["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], no_artist_song.to_string());
+    // Put the original song back, so the checks below see the playlist they
+    // were written against.
+    subsonic_json(
+        &router,
+        "createPlaylist",
+        api_key,
+        &format!("&playlistId={playlist}&songId={song}"),
+    )
+    .await;
     for (method, extra) in [
         ("getPlaylists", String::new()),
         ("getPlaylist", format!("&id={playlist}")),
@@ -4711,6 +4811,312 @@ async fn bookmarks_round_trip_sync_and_isolate_tenants() {
     // Deleting one that is not there is not an error: the caller asked for the
     // track to carry no bookmark, and it does not.
     subsonic_json(&router, "deleteBookmark", api_key, &format!("&id={track}")).await;
+}
+
+/// An album artist tag holding two credits is two artists, not one artist whose
+/// name contains a semicolon. Feeding the joined string to the artist table
+/// minted an entity named after it, gave that entity the album, and left both
+/// real artists with nothing: DSub browsed to either of them and found no
+/// album. The association is re-derived at the end of every scan, because a
+/// library indexed by the earlier version has unchanged files and would
+/// otherwise never be repaired.
+#[tokio::test]
+async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
+    let (_temp, config, state) = test_app().await;
+    let owner = state
+        .db
+        .create_account(
+            "credit-owner",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("credit-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Credits",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = browse_input(
+        800,
+        "Paired",
+        "Convergence",
+        "Nova Kern; Lior Sand",
+        Some(1),
+        None,
+    );
+    input.relative_path = "credit-0.flac".into();
+    input.quick_hash = format!("{:064x}", 81_000);
+    input.full_hash = format!("{:064x}", 82_000);
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let names = |state: waveflow_server::AppState| async move {
+        state
+            .services
+            .list_artists(owner, None, Default::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|summary| (summary.artist.name, summary.artist.id))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    // Checked before the post-scan pass runs, so indexing itself has to be
+    // right rather than leaning on the repair below.
+    let artists = names(state.clone()).await;
+    assert_eq!(
+        artists.keys().cloned().collect::<Vec<_>>(),
+        vec!["Lior Sand".to_owned(), "Nova Kern".to_owned()],
+        "the joined credit must not become an artist of its own"
+    );
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(albums.albums[0].artist_id, Some(artists["Nova Kern"]));
+    // The album still displays the whole credit; only the entity it hangs off
+    // is the first artist.
+    assert_eq!(
+        albums.albums[0].artist.as_deref(),
+        Some("Nova Kern; Lior Sand")
+    );
+
+    // Now the repair path. Put the catalogue back into the shape the earlier
+    // version produced - a third artist named after the joined credit, holding
+    // the album - and let a scan pass fix it.
+    let stale = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, 'Nova Kern; Lior Sand', ?, ?, ?)",
+    )
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    // What the production canonicaliser makes of the joined credit: every
+    // non-alphanumeric character becomes a space, so no semicolon survives.
+    .bind(waveflow_core::scanner::canonical_name(
+        "Nova Kern; Lior Sand",
+    ))
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    // The identity key embeds the album artist, so the stale state has the
+    // stale key too - that is what indexing would later fail to match.
+    sqlx::query(
+        "UPDATE album SET album_artist_id = ?, identity_key = canonical_title || ':' || ? \
+         WHERE library_id = ?",
+    )
+    .bind(stale.to_string())
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(names(state.clone()).await.len(), 3);
+
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let repaired = names(state.clone()).await;
+    assert_eq!(
+        repaired.keys().cloned().collect::<Vec<_>>(),
+        vec!["Lior Sand".to_owned(), "Nova Kern".to_owned()],
+        "the stale entity holds nothing once the album moves, so it goes"
+    );
+    let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(albums.albums[0].artist_id, Some(repaired["Nova Kern"]));
+    // The sweep drops what holds nothing, not what merely holds no album: the
+    // second credited artist keeps its tracks and stays.
+    assert!(repaired.contains_key("Lior Sand"));
+    assert_eq!(
+        state
+            .services
+            .artist(owner, repaired["Lior Sand"])
+            .await
+            .unwrap()
+            .albums
+            .len(),
+        0
+    );
+
+    // Reindexing a track of a stale album is the case that made recomputing the
+    // identity key necessary: indexing creates the album under the new key
+    // while the stale row still carries the old one, and the repair has to
+    // merge them rather than fail the scan on the uniqueness constraint.
+    let rescan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(rescan, 1).await.unwrap();
+    // The sweep above removed the stale entity, so put it back to rebuild the
+    // starting state.
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, 'Nova Kern; Lior Sand', ?, ?, ?)",
+    )
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .bind(waveflow_core::scanner::canonical_name(
+        "Nova Kern; Lior Sand",
+    ))
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE album SET album_artist_id = ?, identity_key = canonical_title || ':' || ? \
+         WHERE library_id = ?",
+    )
+    .bind(stale.to_string())
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    input.file_size += 1;
+    let existing = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    state
+        .db
+        .apply_catalog_track(library, rescan, &input, Some(existing), false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(rescan, 0).await.unwrap();
+    assert_eq!(
+        state
+            .services
+            .catalog_snapshot(owner, &[])
+            .await
+            .unwrap()
+            .albums
+            .len(),
+        2,
+        "indexing under the new key leaves the stale album behind"
+    );
+
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let merged = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(merged.albums.len(), 1, "the two rows are one record");
+    assert_eq!(merged.songs.len(), 1);
+    assert_eq!(merged.songs[0].album_id, Some(merged.albums[0].id));
+    assert_eq!(
+        merged.albums[0].artist_id,
+        Some(names(state.clone()).await["Nova Kern"])
+    );
+
+    // Two records can share a title and a lead credit and still be different
+    // albums. Hanging both off the first artist would give them one identity
+    // key and silently merge them, so the key carries the rest of the credit.
+    let split = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(split, 2).await.unwrap();
+    for (index, credit) in [("Nova Kern; Ivy Trench"), ("Nova Kern; Rue Delacour")]
+        .into_iter()
+        .enumerate()
+    {
+        let mut split_input =
+            browse_input(810 + index, "Facing", "Split Bill", credit, Some(1), None);
+        split_input.relative_path = format!("split-{index}.flac");
+        split_input.quick_hash = format!("{:064x}", 83_000 + index);
+        split_input.full_hash = format!("{:064x}", 84_000 + index);
+        state
+            .db
+            .apply_catalog_track(library, split, &split_input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(split, 0).await.unwrap();
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let all = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    let split_bills = all
+        .albums
+        .iter()
+        .filter(|album| album.title == "Split Bill")
+        .count();
+    assert_eq!(
+        split_bills, 2,
+        "same title and same lead credit, different second artist: two albums"
+    );
+
+    // Where the credits divide matters as much as what they say: canonicalising
+    // the joined string would flatten both of these to the same words and merge
+    // two records that credit different people.
+    let boundary = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(boundary, 2).await.unwrap();
+    for (index, credit) in ["Vale; Ivy Trench", "Vale; Ivy; Trench"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut edge = browse_input(820 + index, "Edge", "Boundary", credit, Some(1), None);
+        // The two tracks share a track artist, so only the album credit can be
+        // what tells the records apart.
+        edge.artist = Some("Vale".to_owned());
+        edge.album_artist = Some(credit.to_owned());
+        edge.relative_path = format!("boundary-{index}.flac");
+        edge.quick_hash = format!("{:064x}", 85_000 + index);
+        edge.full_hash = format!("{:064x}", 86_000 + index);
+        state
+            .db
+            .apply_catalog_track(library, boundary, &edge, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(boundary, 0).await.unwrap();
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let boundaries = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .into_iter()
+        .filter(|album| album.title == "Boundary")
+        .filter_map(|album| album.artist)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        boundaries,
+        [
+            "Vale; Ivy Trench".to_owned(),
+            "Vale; Ivy; Trench".to_owned()
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>(),
+        "`A; B C` and `A; B; C` are different credits and different albums"
+    );
 }
 
 /// A release identifier belongs to the release, not to whichever file was
