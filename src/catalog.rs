@@ -414,6 +414,48 @@ impl Database {
         .bind(library_id.to_string())
         .execute(&mut *tx)
         .await?;
+        // Re-derive which artist an album hangs off, for the same reason the
+        // identifiers above are re-derived: a library indexed by an earlier
+        // version has its albums pointing at an entity named after the joined
+        // credit, and its files have not changed, so nothing would ever be
+        // reindexed. Deriving it here repairs those albums on the next scan
+        // instead of requiring a rebuilt library.
+        let joined: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, album_artist_name FROM album \
+             WHERE library_id = ? AND album_artist_name LIKE '%;%'",
+        )
+        .bind(library_id.to_string())
+        .fetch_all(&mut *tx)
+        .await?;
+        let now = now_ms();
+        for (album_id, credit) in joined {
+            let names = split_values(Some(credit.as_str()));
+            let mut first = None;
+            for name in &names {
+                let id = upsert_artist(&mut tx, library_id, name, now).await?;
+                first.get_or_insert(id);
+            }
+            if let Some(first) = first {
+                sqlx::query("UPDATE album SET album_artist_id = ? WHERE id = ?")
+                    .bind(first.to_string())
+                    .bind(album_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        // An artist row outlives the tag that created it: rename a credit, or
+        // fix a server that used to mint one entity per joined album-artist
+        // string, and the old name stays in the index forever. An artist that
+        // holds neither a track nor an album is no longer part of the
+        // catalogue, so it goes with the same scan that made it unreferenced.
+        sqlx::query(
+            "DELETE FROM artist WHERE library_id = ? \
+               AND NOT EXISTS (SELECT 1 FROM album al WHERE al.album_artist_id = artist.id) \
+               AND NOT EXISTS (SELECT 1 FROM track_artist ta WHERE ta.artist_id = artist.id)",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -608,10 +650,20 @@ impl Database {
             .map(str::to_owned)
             .or_else(|| input.is_compilation.then(|| "Various Artists".to_owned()))
             .or_else(|| artist_names.first().cloned());
-        let album_artist_id = match album_artist.as_deref() {
-            Some(name) => Some(upsert_artist(tx, library_id, name, now).await?),
-            None => None,
-        };
+        // The album artist tag carries the same multi-value separator as the
+        // track artist tag, so it is split the same way. Feeding the whole
+        // string to upsert_artist created one entity named after the joined
+        // credit, gave it the album, and left the real artists holding
+        // nothing: browsing to either of them found no album at all.
+        //
+        // The album keeps the joined string as its display name, and hangs
+        // off the first credited artist.
+        let album_artist_names = split_values(album_artist.as_deref());
+        let mut album_artist_id = None;
+        for name in &album_artist_names {
+            let id = upsert_artist(tx, library_id, name, now).await?;
+            album_artist_id.get_or_insert(id);
+        }
         let album_id = upsert_album(
             tx,
             library_id,

@@ -4782,6 +4782,126 @@ async fn bookmarks_round_trip_sync_and_isolate_tenants() {
     subsonic_json(&router, "deleteBookmark", api_key, &format!("&id={track}")).await;
 }
 
+/// An album artist tag holding two credits is two artists, not one artist whose
+/// name contains a semicolon. Feeding the joined string to the artist table
+/// minted an entity named after it, gave that entity the album, and left both
+/// real artists with nothing: DSub browsed to either of them and found no
+/// album. The association is re-derived at the end of every scan, because a
+/// library indexed by the earlier version has unchanged files and would
+/// otherwise never be repaired.
+#[tokio::test]
+async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
+    let (_temp, config, state) = test_app().await;
+    let owner = state
+        .db
+        .create_account(
+            "credit-owner",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("credit-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Credits",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = browse_input(
+        800,
+        "Paired",
+        "Convergence",
+        "Nova Kern; Lior Sand",
+        Some(1),
+        None,
+    );
+    input.relative_path = "credit-0.flac".into();
+    input.quick_hash = format!("{:064x}", 81_000);
+    input.full_hash = format!("{:064x}", 82_000);
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let names = |state: waveflow_server::AppState| async move {
+        state
+            .services
+            .list_artists(owner, None, Default::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|summary| (summary.artist.name, summary.artist.id))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    // Checked before the post-scan pass runs, so indexing itself has to be
+    // right rather than leaning on the repair below.
+    let artists = names(state.clone()).await;
+    assert_eq!(
+        artists.keys().cloned().collect::<Vec<_>>(),
+        vec!["Lior Sand".to_owned(), "Nova Kern".to_owned()],
+        "the joined credit must not become an artist of its own"
+    );
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(albums.albums[0].artist_id, Some(artists["Nova Kern"]));
+    // The album still displays the whole credit; only the entity it hangs off
+    // is the first artist.
+    assert_eq!(
+        albums.albums[0].artist.as_deref(),
+        Some("Nova Kern; Lior Sand")
+    );
+
+    // Now the repair path. Put the catalogue back into the shape the earlier
+    // version produced - a third artist named after the joined credit, holding
+    // the album - and let a scan pass fix it.
+    let stale = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, 'Nova Kern; Lior Sand', 'nova kern; lior sand', ?, ?)",
+    )
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE album SET album_artist_id = ? WHERE library_id = ?")
+        .bind(stale.to_string())
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(names(state.clone()).await.len(), 3);
+
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let repaired = names(state.clone()).await;
+    assert_eq!(
+        repaired.keys().cloned().collect::<Vec<_>>(),
+        vec!["Lior Sand".to_owned(), "Nova Kern".to_owned()],
+        "the stale entity holds nothing once the album moves, so it goes"
+    );
+    let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(albums.albums[0].artist_id, Some(repaired["Nova Kern"]));
+}
+
 /// A release identifier belongs to the release, not to whichever file was
 /// scanned last. Tracks of one album routinely disagree — a library assembled
 /// over years holds files tagged against different releases of the same record
