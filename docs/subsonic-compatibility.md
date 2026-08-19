@@ -8,18 +8,26 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 | Feishin | 1.15.1 | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on Windows desktop. **This run found the two server defects fixed in the same change**: a cold transcode refused the `Range: bytes=0-` that a browser sends to open any resource, so playback failed on every track no earlier client had transcoded; and `createPlaylist` appended its `songId` values instead of replacing the list, so every playlist edit looked lost. Both were then replayed against the fixed server through a logging proxy and confirmed from server state: cold transcode, cache hit and seek all answer, a removal drops to one track, a reorder lands. The rest of the run exercised search (23 `search3`), 145 cover-art reads, genre browsing including 8 `getSongsByGenre`, artists, `getStarred`, `getRandomSongs`, 9 scrobbles, favorites on tracks/album/artists and ratings — all read back from the server rather than from the client. `getAlbumInfo`/`getAlbumInfo2` were never called by this version, so they stay unexercised here rather than counted as a pass, as do the bookmark and play-queue methods. `getTopSongs`, `getArtistInfo` and `getInternetRadioStations` answer empty containers, which is what this server has to say about them. |
 | Substreamer | 8.0.91 | pass | pass | pass | pass* | Validated 2026-08-02 from the official release source: native playback, Opus/128 cache, playlist add, favorite, rating and scrobble. `*` Its playback queue is local-only and the client never calls `getPlayQueue`/`savePlayQueue`; those endpoints remain covered by fixtures and Feishin. |
 | DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on an Android 17 emulator, read from `logcat -s RESTMusicService` and DSub's own disk cache rather than from its interface. **This run found the album-artist defect fixed in the same change**: an album credited to two artists hung off a third entity named after the joined string, and browsing to either real artist found no album. The rest passed: sleeve order in both browse modes, two album genres, one canonical `Jazz` answering 4 tracks, artwork, native FLAC and MP3 with seek, a failed login decoded as an error now that it arrives as HTTP 200, playlist create/add/remove/rename/delete — the removal going through `songIndexToRemove`, by index — and a rating. It settles a question Symfonium left open: DSub does submit the scrobble of the last track in a queue. Two of its three unique surfaces needed the brief corrected. The legacy `getAlbumList` is used **only** when "Browse By Tags" is off, `getAlbumList2` otherwise; both were exercised. And `maxBitRate` is never sent above the source — DSub emits `min(setting, track bitrate)` — so "ceiling above the source" is not expressible from this client; the two reachable cases are correct (128 ceiling on a 128 kbit/s MP3 streams natively, 64 transcodes). The generic `star?id` form resolved a track, an album and an artist, all three surviving a resync. Unresolved, and not a server fault: one FLAC (`Drift`) is fetched repeatedly and never completed by the client, though the server answers 200 with the exact `content-length` and the bytes arrive md5-identical to the source file through the same tunnel. Absent from the client, recorded as absent: the explicit marker, and any separate display of two album artists. |
-| Juliet | iOS build tested 2026-08-15 | pass | pass | native pass; transcode not run | not run | Current iOS compatibility check: authentication, catalogue, artwork and native playback succeeded. Unsupported/unexercised surfaces are not inferred as passes. |
+| Juliet | 1.5 (iOS 26.6) | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on a physical iPhone — the previous entry was a narrower check that never reached transcoding or user data. **This run found the second half of the cold-transcode defect**: iOS AVFoundation opens a resource with a `bytes=0-1` probe, which the first fix still classified as a seek and refused, so the first play of each track failed and the second succeeded off the cache the failed request had built. Fixed in the same change and verified by replaying the client's exact sequence: `bytes=0-1` cold answers 200, warm answers 206 with two bytes, a real seek answers 206, and a seek into a cold transcode is still refused. The rest of the run: 306 cover-art reads, 115 streams, 64 scrobbles, `getAlbumList2`, `search3`, `getRandomSongs`, `getSongsByGenre`, `getSimilarSongs2`, `getLyrics`, favorites, and playlist create/update/delete. It is also the first real client to exercise `savePlayQueue`/`getPlayQueue`, which the matrix had covered only through Feishin and fixtures. Absent from the client, recorded as absent: Juliet has no rating feature, so `setRating` was never sent; and it saves its queue with `position=0` every time, so playback restarts at zero — the server stores and returns what it is given, queue, current track and `changedBy` included. |
 
-**Symfonium, Feishin and DSub are the rows re-run against the current
-contract.** The two others predate the move to HTTP 200 on every `/rest` answer: each records a
-real run against the previous status behaviour and is kept as a historical
-result, but none of them validates what the server answers today. The M3
-real-client gate was closed on that earlier behaviour, so it is not a satisfied
-gate for the next tag: Juliet must be re-run against the current contract and
-its row re-dated first, Substreamer being out of the replayed set for the reason
-given below. Missing client features stay covered by automated fixtures and
-another real client rather than inferred as passes. Creating any tag or release
-remains a separate action requiring an explicit operator request.
+**Symfonium, Feishin, DSub and Juliet were all re-run on 2026-08-19 against the
+current contract**, each on a real device or desktop and each read from server
+state rather than from the client's own display. Substreamer is out of the
+replayed set for the reason given below, and its row remains a historical
+result against the previous status behaviour.
+
+The replay found **four server defects**, all fixed in the same change and none
+of which the automated suite could have produced: it took a browser, a client
+that edits a playlist by sending back what remains, a client that browses by
+artist index, and an iOS player that probes a resource before reading it.
+Missing client features stay covered by automated fixtures and another real
+client rather than inferred as passes.
+
+What remains before a tag is a short re-play of the cold-transcode path on
+Feishin and Juliet, since both found their defect rather than passing it: the
+fixed behaviour was verified by replaying each client's exact request sequence,
+which is not the same as the client itself replaying it. Creating any tag or
+release remains a separate action requiring an explicit operator request.
 
 The Substreamer row records the successful 2026-08-02 run. It could not be
 reinstalled on the current Android 17 device during the 2026-08-15 revalidation
