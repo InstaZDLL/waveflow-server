@@ -1567,6 +1567,11 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert_eq!(
+        media.active_transcodes(),
+        0,
+        "a drained transcode must release its permit"
+    );
 
     // A range that actually seeks still has no meaning before the transcode
     // exists, and keeps its refusal.
@@ -4899,21 +4904,32 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
     let stale = uuid::Uuid::new_v4();
     sqlx::query(
         "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
-         VALUES (?, ?, 'Nova Kern; Lior Sand', 'nova kern; lior sand', ?, ?)",
+         VALUES (?, ?, 'Nova Kern; Lior Sand', ?, ?, ?)",
     )
     .bind(stale.to_string())
     .bind(library.to_string())
+    // What the production canonicaliser makes of the joined credit: every
+    // non-alphanumeric character becomes a space, so no semicolon survives.
+    .bind(waveflow_core::scanner::canonical_name(
+        "Nova Kern; Lior Sand",
+    ))
     .bind(now_ms())
     .bind(now_ms())
     .execute(state.db.pool())
     .await
     .unwrap();
-    sqlx::query("UPDATE album SET album_artist_id = ? WHERE library_id = ?")
-        .bind(stale.to_string())
-        .bind(library.to_string())
-        .execute(state.db.pool())
-        .await
-        .unwrap();
+    // The identity key embeds the album artist, so the stale state has the
+    // stale key too - that is what indexing would later fail to match.
+    sqlx::query(
+        "UPDATE album SET album_artist_id = ?, identity_key = canonical_title || ':' || ? \
+         WHERE library_id = ?",
+    )
+    .bind(stale.to_string())
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
     assert_eq!(names(state.clone()).await.len(), 3);
 
     state.db.consolidate_musicbrainz_ids(library).await.unwrap();
@@ -4926,6 +4942,92 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
     );
     let albums = state.services.catalog_snapshot(owner, &[]).await.unwrap();
     assert_eq!(albums.albums[0].artist_id, Some(repaired["Nova Kern"]));
+    // The sweep drops what holds nothing, not what merely holds no album: the
+    // second credited artist keeps its tracks and stays.
+    assert!(repaired.contains_key("Lior Sand"));
+    assert_eq!(
+        state
+            .services
+            .artist(owner, repaired["Lior Sand"])
+            .await
+            .unwrap()
+            .albums
+            .len(),
+        0
+    );
+
+    // Reindexing a track of a stale album is the case that made recomputing the
+    // identity key necessary: indexing creates the album under the new key
+    // while the stale row still carries the old one, and the repair has to
+    // merge them rather than fail the scan on the uniqueness constraint.
+    let rescan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(rescan, 1).await.unwrap();
+    // The sweep above removed the stale entity, so put it back to rebuild the
+    // starting state.
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, 'Nova Kern; Lior Sand', ?, ?, ?)",
+    )
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .bind(waveflow_core::scanner::canonical_name(
+        "Nova Kern; Lior Sand",
+    ))
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE album SET album_artist_id = ?, identity_key = canonical_title || ':' || ? \
+         WHERE library_id = ?",
+    )
+    .bind(stale.to_string())
+    .bind(stale.to_string())
+    .bind(library.to_string())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    input.file_size += 1;
+    let existing = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    state
+        .db
+        .apply_catalog_track(library, rescan, &input, Some(existing), false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(rescan, 0).await.unwrap();
+    assert_eq!(
+        state
+            .services
+            .catalog_snapshot(owner, &[])
+            .await
+            .unwrap()
+            .albums
+            .len(),
+        2,
+        "indexing under the new key leaves the stale album behind"
+    );
+
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let merged = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    assert_eq!(merged.albums.len(), 1, "the two rows are one record");
+    assert_eq!(merged.songs.len(), 1);
+    assert_eq!(merged.songs[0].album_id, Some(merged.albums[0].id));
+    assert_eq!(
+        merged.albums[0].artist_id,
+        Some(names(state.clone()).await["Nova Kern"])
+    );
 }
 
 /// A release identifier belongs to the release, not to whichever file was
