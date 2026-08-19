@@ -15,16 +15,21 @@ three others predate the move to HTTP 200 on every `/rest` answer: each records 
 real run against the previous status behaviour and is kept as a historical
 result, but none of them validates what the server answers today. The M3
 real-client gate was closed on that earlier behaviour, so it is not a satisfied
-gate for the next tag: Substreamer, DSub and Juliet must be re-run against the
-current contract and their rows re-dated first. Missing client features stay covered by automated fixtures and
+gate for the next tag: DSub and Juliet must be re-run against the current
+contract and their rows re-dated first, Substreamer being out of the replayed
+set for the reason given below. Missing client features stay covered by automated fixtures and
 another real client rather than inferred as passes. Creating any tag or release
 remains a separate action requiring an explicit operator request.
 
 The Substreamer row records the successful 2026-08-02 run. It could not be
 reinstalled on the current Android 17 device during the 2026-08-15 revalidation
-because the store marks that legacy build incompatible; Juliet provides the
-current iOS sanity check instead. The historical Substreamer evidence is kept,
-not silently rewritten as a new run.
+because the store marks that legacy build incompatible, and the 2026-08-19
+re-run confirmed it: that build no longer launches on the current emulator. It
+is therefore **out of the replayed set** — its row stays as historical evidence
+of a real run against the old contract, and is not counted toward the next tag.
+Juliet on a physical iPhone takes its place as the fifth client, which also
+moves the iOS check off an emulator. The historical Substreamer evidence is
+kept, not silently rewritten as a new run.
 
 For Substreamer, the Android Media3 session completed the 11-track validation album and the server recorded the corresponding start/submission scrobbles. With the client's streaming profile set to Opus at 128 kbit/s, WaveFlow produced 11 distinct cache entries; `ffprobe` identified the output as an Ogg container with an Opus audio stream. Its playlist mutation, track/album favorites and 4/5 rating were also read back from WaveFlow rather than inferred from local UI state.
 
