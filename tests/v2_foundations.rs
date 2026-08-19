@@ -5081,6 +5081,10 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         .enumerate()
     {
         let mut edge = browse_input(820 + index, "Edge", "Boundary", credit, Some(1), None);
+        // The two tracks share a track artist, so only the album credit can be
+        // what tells the records apart.
+        edge.artist = Some("Vale".to_owned());
+        edge.album_artist = Some(credit.to_owned());
         edge.relative_path = format!("boundary-{index}.flac");
         edge.quick_hash = format!("{:064x}", 85_000 + index);
         edge.full_hash = format!("{:064x}", 86_000 + index);
@@ -5093,17 +5097,24 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
     state.db.finish_scan_job(boundary, 0).await.unwrap();
     state.db.consolidate_musicbrainz_ids(library).await.unwrap();
 
+    let boundaries = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .into_iter()
+        .filter(|album| album.title == "Boundary")
+        .filter_map(|album| album.artist)
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        state
-            .services
-            .catalog_snapshot(owner, &[])
-            .await
-            .unwrap()
-            .albums
-            .iter()
-            .filter(|album| album.title == "Boundary")
-            .count(),
-        2,
+        boundaries,
+        [
+            "Vale; Ivy Trench".to_owned(),
+            "Vale; Ivy; Trench".to_owned()
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>(),
         "`A; B C` and `A; B; C` are different credits and different albums"
     );
 }
