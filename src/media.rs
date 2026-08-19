@@ -174,9 +174,12 @@ impl MediaService {
             return serve_file(&cache_path, range, mime_for_format(query.format)).await;
         }
 
-        // A byte range has no stable meaning until a transcode is complete.
-        // Clients seek a live transcode with offset_ms instead.
-        if range.is_some() {
+        // A byte range has no stable meaning until a transcode is complete, so
+        // seeking a live transcode goes through offset_ms instead. `bytes=0-`
+        // is not a seek: it is what a browser audio element sends to open any
+        // resource, and refusing it made every web client fail on the first
+        // play of a track and succeed on the second, once the cache existed.
+        if range.is_some_and(|value| !opens_whole_resource(value)) {
             return Err(MediaError::RangeNotSatisfiable(0));
         }
 
@@ -849,6 +852,14 @@ async fn serve_partial(
     Ok(response)
 }
 
+/// Whether a `Range` header asks for the resource from its first byte with no
+/// end, which is how browsers open an audio element rather than how they seek.
+fn opens_whole_resource(value: &str) -> bool {
+    value
+        .strip_prefix("bytes=")
+        .is_some_and(|spec| spec.trim() == "0-")
+}
+
 fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if size == 0 {
         return None;
@@ -989,7 +1000,7 @@ mod tests {
     use dashmap::DashMap;
     use tokio::sync::Semaphore;
 
-    use super::{parse_range, prune_cache, secure_track_path, MediaInner};
+    use super::{opens_whole_resource, parse_range, prune_cache, secure_track_path, MediaInner};
 
     #[test]
     fn ranges_are_bounded_and_validated() {
@@ -999,6 +1010,18 @@ mod tests {
         assert_eq!(parse_range("bytes=10-", 10), None);
         assert_eq!(parse_range("bytes=5-2", 10), None);
         assert_eq!(parse_range("bytes=0-1,4-5", 10), None);
+    }
+
+    #[test]
+    fn only_an_unbounded_range_from_zero_opens_a_resource() {
+        assert!(opens_whole_resource("bytes=0-"));
+        assert!(opens_whole_resource("bytes= 0- "));
+        // Anything that names an end, or starts elsewhere, is a seek.
+        assert!(!opens_whole_resource("bytes=0-1023"));
+        assert!(!opens_whole_resource("bytes=1-"));
+        assert!(!opens_whole_resource("bytes=-3"));
+        assert!(!opens_whole_resource("bytes=0-,2-3"));
+        assert!(!opens_whole_resource("items=0-"));
     }
 
     #[tokio::test]
