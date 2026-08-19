@@ -53,12 +53,11 @@ The contract audit additionally covers administrative folder access: `createUser
 
 Protocol failures now answer HTTP 200 and report the outcome in the body
 (`status="failed"` plus an `error` code), as the Subsonic contract requires.
-Previously WaveFlow also set 401, 403, 404, 409 or 429. All five clients in the
-matrix above were validated against that old behaviour. Each reads `error/code`,
-so none is expected to break — but that is an expectation, not a result, and the
-matrix records runs rather than inferences: **every row must be re-run and
-re-dated before the next tag**. Range responses keep 206/416, and `/share` and
-`/api/v2` are unchanged.
+Previously WaveFlow also set 401, 403, 404, 409 or 429. That this would not
+break the clients was an expectation until the 2026-08-19 replay made it a
+result: **each re-run row above was given a deliberate wrong password and
+decoded it as an authentication error**. Range responses keep 206/416, and
+`/share` and `/api/v2` are unchanged.
 
 The same release adds `tokenInfo` — the half of `apiKeyAuthentication` that was
 advertised but never served — and `getAlbumInfo`/`getAlbumInfo2`, so Feishin
@@ -67,8 +66,8 @@ opens. `playlist.owner` and
 `share.username` now carry the authenticated username instead of an empty
 string, which is what Feishin reads to decide whether a playlist is editable.
 
-Five further batches of wire changes have landed against the same unvalidated
-matrix, and the re-run covers them all: media items gained the remaining
+Five further batches of wire changes landed while the matrix was still
+unvalidated, and the 2026-08-19 replay covers them all: media items gained the remaining
 OpenSubsonic fields under the presence rule (`moods`, `explicitStatus`, `isrc`,
 `replayGain`, `bpm` and the rest); `startScan`, `getScanStatus`, `search2`,
 `getStarred` and the bookmark methods were added or backed by real state;
