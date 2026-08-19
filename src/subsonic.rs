@@ -1143,8 +1143,13 @@ async fn create_playlist(
     let playlist = if let Some(id) = params.uuid_optional("playlistId")? {
         state
             .services
+            // Given a playlistId, songId names every song of the playlist, so
+            // the call replaces the track list rather than adding to it. A
+            // client that removes a song sends back what remains, and would
+            // otherwise see nothing change.
+            //
             // The Subsonic contract is frozen: it has no way to ask for a
-            // field to be blanked, so clearing stays off on this surface.
+            // text field to be blanked, so clearing the comment stays off.
             .update_playlist(
                 principal.id,
                 id,
@@ -1153,7 +1158,10 @@ async fn create_playlist(
                 None,
                 &ids,
                 &[],
-                Default::default(),
+                crate::services::PlaylistClear {
+                    comment: false,
+                    tracks: true,
+                },
             )
             .await
             .map_err(service_protocol)?
