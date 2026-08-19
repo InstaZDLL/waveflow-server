@@ -1514,6 +1514,49 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
         "duplicate consumers must create only one file per cache key"
     );
 
+    // A browser audio element opens every resource with `Range: bytes=0-`, so
+    // a cold transcode must answer it rather than refuse the range. Refusing
+    // made a web client fail on the first play of a track and succeed on the
+    // second, once the cache existed.
+    let cold_open = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=128"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_open.status(), StatusCode::OK);
+    assert_eq!(cold_open.headers()["content-type"], "audio/mpeg");
+    assert!(
+        cold_open
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len()
+            > 100
+    );
+
+    // A range that actually seeks still has no meaning before the transcode
+    // exists, and keeps its refusal.
+    let cold_seek = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=144"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=64-")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_seek.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+
     let live_seek = router
         .clone()
         .oneshot(
