@@ -5028,6 +5028,44 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         merged.albums[0].artist_id,
         Some(names(state.clone()).await["Nova Kern"])
     );
+
+    // Two records can share a title and a lead credit and still be different
+    // albums. Hanging both off the first artist would give them one identity
+    // key and silently merge them, so the key carries the rest of the credit.
+    let split = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(split, 2).await.unwrap();
+    for (index, credit) in [("Nova Kern; Ivy Trench"), ("Nova Kern; Rue Delacour")]
+        .into_iter()
+        .enumerate()
+    {
+        let mut split_input =
+            browse_input(810 + index, "Facing", "Split Bill", credit, Some(1), None);
+        split_input.relative_path = format!("split-{index}.flac");
+        split_input.quick_hash = format!("{:064x}", 83_000 + index);
+        split_input.full_hash = format!("{:064x}", 84_000 + index);
+        state
+            .db
+            .apply_catalog_track(library, split, &split_input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(split, 0).await.unwrap();
+    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+
+    let all = state.services.catalog_snapshot(owner, &[]).await.unwrap();
+    let split_bills = all
+        .albums
+        .iter()
+        .filter(|album| album.title == "Split Bill")
+        .count();
+    assert_eq!(
+        split_bills, 2,
+        "same title and same lead credit, different second artist: two albums"
+    );
 }
 
 /// A release identifier belongs to the release, not to whichever file was
