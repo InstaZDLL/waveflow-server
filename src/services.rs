@@ -77,7 +77,7 @@ macro_rules! song_year_clause {
 macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
-                al.artwork_hash, al.year, al.is_compilation, al.musicbrainz_id, \
+                al.artwork_hash, al.year, al.is_compilation, al.musicbrainz_id, al.sort_name, \
                 al.created_at, us.starred_at, \
                 ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
@@ -114,7 +114,7 @@ macro_rules! album_scope {
 macro_rules! artist_select {
     () => {
         "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                us.starred_at, \
+                ar.sort_name, us.starred_at, \
                 ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count \
          FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
@@ -142,6 +142,10 @@ pub struct ArtistItem {
     pub name: String,
     pub artwork_hash: Option<String>,
     pub musicbrainz_id: Option<String>,
+    /// The tagged sort form of the name, `None` when no file supplied one.
+    /// The Subsonic node emits it empty in that case rather than omitting it:
+    /// the field is supported, and this artist is untagged.
+    pub sort_name: Option<String>,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
 }
@@ -157,6 +161,8 @@ pub struct AlbumItem {
     pub year: Option<i64>,
     pub is_compilation: bool,
     pub musicbrainz_id: Option<String>,
+    /// The tagged sort form of the title, on the same terms as the artist's.
+    pub sort_name: Option<String>,
     /// Every artist credited on the album's available tracks, and every
     /// genre they carry. Derived rather than stored: an album has no credit
     /// or genre of its own in the schema, only the union of its files'.
@@ -429,6 +435,10 @@ pub struct AuthorizationRequest<'a> {
     pub code_challenge_method: &'a str,
     pub device_name: &'a str,
     pub state: Option<&'a str>,
+    /// The scopes of the credential authorizing this grant. Recorded on the
+    /// grant so the session redeemed from it inherits them, which is what
+    /// keeps a session from ever being broader than what asked for it.
+    pub scopes: &'a [String],
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -791,7 +801,7 @@ impl DomainServices {
         let folders = self.music_folders(user_id, folder_ids).await?;
         let artists = sqlx::query(
             "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                    us.starred_at, ur.rating AS user_rating FROM artist ar \
+                    ar.sort_name, us.starred_at, ur.rating AS user_rating FROM artist ar \
              JOIN library_member m ON m.library_id=ar.library_id \
              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
              LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
@@ -925,7 +935,7 @@ impl DomainServices {
 
         let artists = sqlx::query(
             "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                    us.starred_at, ur.rating AS user_rating FROM artist ar \
+                    ar.sort_name, us.starred_at, ur.rating AS user_rating FROM artist ar \
              JOIN library_member m ON m.library_id=ar.library_id \
              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
              LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
@@ -1133,6 +1143,38 @@ impl DomainServices {
         .bind(&canonical)
         .bind(page.limit)
         .bind(page.offset)
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(songs)
+    }
+
+    /// The available tracks of one library that belong to no album.
+    ///
+    /// A track without an album has no album id to be the `parent` of its
+    /// Subsonic `child`, so it names its library instead. That was a
+    /// dead end until now: browsing to that identifier listed the library's
+    /// artists and nothing else, so a track reachable by search was reachable
+    /// by no amount of browsing. Answering here is what makes the `parent`
+    /// it already advertised true.
+    ///
+    /// Scoped to one library rather than paged: it is the tail of a folder
+    /// listing that already answers with every artist of that library.
+    pub async fn songs_without_album(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        let mut songs = sqlx::query(concat!(
+            song_select!(),
+            " AND t.library_id=? AND t.album_id IS NULL \
+              ORDER BY t.title COLLATE NOCASE, t.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(library_id.to_string())
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -1553,6 +1595,7 @@ impl DomainServices {
                 device_name,
                 now_ms: now,
                 expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
+                scopes: request.scopes,
             })
             .await?;
         Ok(crate::oauth::redirect_with_code(
@@ -3905,6 +3948,7 @@ fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Err
         name: row.try_get("name")?,
         artwork_hash: row.try_get("artwork_hash")?,
         musicbrainz_id: row.try_get("musicbrainz_id")?,
+        sort_name: row.try_get("sort_name")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,
     })
@@ -3931,6 +3975,7 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
         artwork_hash: row.try_get("artwork_hash")?,
         year: row.try_get("year")?,
         is_compilation: row.try_get::<i64, _>("is_compilation")? != 0,
+        sort_name: row.try_get("sort_name")?,
         musicbrainz_id: row.try_get("musicbrainz_id")?,
         // Loaded in a batch by `attach_album_relations`, never row by row.
         artists: Vec::new(),

@@ -1026,7 +1026,7 @@ pub async fn get_artist(
         .map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 400, description = "q is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn search_catalog(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
@@ -1110,10 +1110,12 @@ pub async fn oauth_authorize(
     // The browser session is the proof of identity; the consent screen is a
     // route of the embedded client, so this is a JSON call rather than a form.
     //
-    // Unrestricted rather than Write: this mints a credential, and the one it
-    // mints carries the account's whole authority. A `write` token reaching
-    // here came back holding a session that answered to `Admin`.
-    let user = authenticated(&state, &headers, Access::Unrestricted).await?;
+    // A write, because pairing a device is a mutation on the account and
+    // nothing more. What used to make this Unrestricted — that the session it
+    // minted carried the account's whole authority whatever asked for it — is
+    // gone: the caller's scopes are recorded on the grant just below and the
+    // redeemed session is issued under them, so this cannot widen a credential.
+    let user = authenticated(&state, &headers, Access::Write).await?;
     let redirect_to = state
         .services
         .authorize_native_client(
@@ -1125,6 +1127,7 @@ pub async fn oauth_authorize(
                 code_challenge_method: &request.code_challenge_method,
                 device_name: &request.device_name,
                 state: request.state.as_deref(),
+                scopes: &user.scopes,
             },
         )
         .await
@@ -1155,7 +1158,7 @@ pub async fn oauth_token(
     }
     state
         .auth
-        .issue_session_for_account(grant.user_id, &grant.device_name)
+        .issue_session_for_account(grant.user_id, &grant.device_name, &grant.scopes)
         .await
         .map(Json)
         .map_err(|error| match error {
@@ -2246,25 +2249,6 @@ pub(crate) enum Access {
     Write,
     /// Acts on the instance: accounts, libraries, memberships, credentials.
     Admin,
-    /// Mints a new credential from this one.
-    ///
-    /// Only an unrestricted credential may, because the credential minted is
-    /// itself unrestricted: a session issued through the authorization code
-    /// flow carries the account's whole authority, and nothing on the grant
-    /// records what asked for it. Letting a narrowed credential mint one is
-    /// how a token widens itself — `write` was enough to reach the code flow,
-    /// and the session that came back answered to `Admin`.
-    ///
-    /// This is a restriction, not a role: an ordinary account pairs its own
-    /// devices from its own session, which is what the flow is for. What it
-    /// refuses is doing so on behalf of a credential that was deliberately
-    /// narrowed.
-    ///
-    /// The durable fix is to carry the scopes through the grant, so a session
-    /// is never broader than what issued it. That needs a column on
-    /// `oauth_authorization` and on `session`; until then, this closes the
-    /// path without a migration.
-    Unrestricted,
 }
 
 /// The scope that admits the administrative routes.
@@ -2293,9 +2277,6 @@ impl Access {
             Self::Read => true,
             Self::Write => holds(WRITE_SCOPE) || holds(ADMIN_SCOPE),
             Self::Admin => holds(ADMIN_SCOPE),
-            // Unreachable: the early return above already answered for every
-            // empty list, and a non-empty one is by definition restricted.
-            Self::Unrestricted => false,
         }
     }
 }
@@ -2308,8 +2289,11 @@ impl Access {
 /// promote an ordinary account, and an administrator's token is not widened by
 /// whose account it belongs to.
 ///
-/// It could widen itself, once. Minting a credential is [`Access::Unrestricted`]
-/// for that reason, and not merely a write.
+/// It could widen itself, once: minting a session through the authorization
+/// code flow returned one carrying the account's whole authority, whatever the
+/// credential that asked. That is closed where it belongs now — the grant
+/// records the caller's scopes and the session inherits them — rather than by
+/// a rule this function has to know about.
 pub(crate) async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
