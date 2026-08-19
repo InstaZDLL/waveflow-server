@@ -440,7 +440,7 @@ impl Database {
             // without recomputing it would leave a row that indexing can no
             // longer find: the next reindexed track would compute the new key,
             // miss, and insert a duplicate album.
-            let identity = album_identity(&canonical_title, Some(first));
+            let identity = album_identity(&canonical_title, Some(first), Some(credit.as_str()));
             let collision: Option<String> = sqlx::query_scalar(
                 "SELECT id FROM album WHERE library_id = ? AND identity_key = ? AND id <> ?",
             )
@@ -1048,7 +1048,7 @@ async fn upsert_album(
         return Ok(None);
     };
     let canonical = waveflow_core::scanner::canonical_name(title);
-    let identity = album_identity(&canonical, album_artist_id);
+    let identity = album_identity(&canonical, album_artist_id, album_artist);
     let id = Uuid::new_v4();
     let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
@@ -1061,14 +1061,28 @@ async fn upsert_album(
 
 /// How an album is recognised across scans. It embeds the album artist, so any
 /// code that moves an album to another artist has to recompute it.
-fn album_identity(canonical_title: &str, album_artist_id: Option<Uuid>) -> String {
-    format!(
-        "{}:{}",
-        canonical_title,
-        album_artist_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "none".into())
-    )
+///
+/// A joined credit adds its whole canonical form. Hanging every album off its
+/// first credited artist would otherwise merge two different records that share
+/// a title and a lead: "Live" by `A; B` and "Live" by `A; C` are one key
+/// without it. A single credit keeps the historical two-part shape, so the keys
+/// already stored for the overwhelming majority of albums still match what
+/// indexing computes.
+fn album_identity(
+    canonical_title: &str,
+    album_artist_id: Option<Uuid>,
+    album_artist: Option<&str>,
+) -> String {
+    let artist = album_artist_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "none".into());
+    let credits = split_values(album_artist);
+    if credits.len() > 1 {
+        let joined = waveflow_core::scanner::canonical_name(&credits.join(" "));
+        format!("{canonical_title}:{artist}:{joined}")
+    } else {
+        format!("{canonical_title}:{artist}")
+    }
 }
 
 fn split_values(raw: Option<&str>) -> Vec<String> {

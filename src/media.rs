@@ -888,7 +888,10 @@ fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if value.contains(',') {
         return None;
     }
-    let (start, end) = value.split_once('-')?;
+    let (start, end) = value.trim().split_once('-')?;
+    // Trimmed on both bounds, like `starts_at_the_first_byte`: a spelling the
+    // cold path accepts must not be refused once the cache exists.
+    let (start, end) = (start.trim(), end.trim());
     if start.is_empty() {
         let suffix = end.parse::<u64>().ok()?.min(size).min(MAX_RANGE_BYTES);
         if suffix == 0 {
@@ -1032,6 +1035,10 @@ mod tests {
         assert_eq!(parse_range("bytes=10-", 10), None);
         assert_eq!(parse_range("bytes=5-2", 10), None);
         assert_eq!(parse_range("bytes=0-1,4-5", 10), None);
+        // Whitespace is tolerated on both bounds, so that a range the cold
+        // transcode path accepts is still satisfiable from the cache.
+        assert_eq!(parse_range("bytes= 0- ", 10), Some((0, 9)));
+        assert_eq!(parse_range("bytes= 2 - 5 ", 10), Some((2, 5)));
     }
 
     #[test]
