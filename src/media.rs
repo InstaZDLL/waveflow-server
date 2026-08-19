@@ -210,7 +210,10 @@ impl MediaService {
             self.inner
                 .cache_access
                 .insert(cache_path.clone(), SystemTime::now());
-            return serve_file(&cache_path, None, mime_for_format(query.format)).await;
+            // Whoever held the lock finished the transcode, so the range that
+            // had no meaning a moment ago has one now, and the second caller
+            // gets the same partial answer it would have got from the cache.
+            return serve_file(&cache_path, range, mime_for_format(query.format)).await;
         }
 
         self.stream_transcode(
@@ -866,12 +869,14 @@ async fn serve_partial(
 /// `Content-Range`, so a partial answer is not available to give.
 fn starts_at_the_first_byte(value: &str) -> bool {
     value.strip_prefix("bytes=").is_some_and(|spec| {
-        let spec = spec.trim();
         // A multipart range is several ranges, and this answers with one body.
-        !spec.contains(',')
-            && spec
-                .split_once('-')
-                .is_some_and(|(start, _)| start.trim().parse::<u64>() == Ok(0))
+        let Some((start, end)) = spec.trim().split_once('-') else {
+            return false;
+        };
+        start.trim().parse::<u64>() == Ok(0)
+            // A malformed end - a second hyphen, a word - is not a range this
+            // understands, so it is refused rather than read as an open.
+            && (end.trim().is_empty() || end.trim().parse::<u64>().is_ok())
     })
 }
 
@@ -1044,6 +1049,9 @@ mod tests {
         assert!(!starts_at_the_first_byte("bytes=0-1,4-5"));
         assert!(!starts_at_the_first_byte("items=0-"));
         assert!(!starts_at_the_first_byte("bytes=00x-1"));
+        // A malformed end is not an open either.
+        assert!(!starts_at_the_first_byte("bytes=0-1-2"));
+        assert!(!starts_at_the_first_byte("bytes=0-invalid"));
     }
 
     #[tokio::test]
