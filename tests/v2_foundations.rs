@@ -1542,6 +1542,32 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
             > 100
     );
 
+    // iOS probes a resource with a two-byte range before it plays anything, so
+    // a bounded range from zero has to open the stream too. Juliet failed on
+    // the first play of every track until it did.
+    let cold_probe = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{uri}?format=mp3&bitrate=136"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("range", "bytes=0-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cold_probe.status(), StatusCode::OK);
+    assert_eq!(cold_probe.headers()["content-type"], "audio/mpeg");
+    // Drained and awaited: an unread transcode holds its per-user permit, and
+    // the checks below would meet 429 instead of what they are testing.
+    cold_probe.into_body().collect().await.unwrap();
+    for _ in 0..100 {
+        if media.active_transcodes() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
     // A range that actually seeks still has no meaning before the transcode
     // exists, and keeps its refusal.
     let cold_seek = router
