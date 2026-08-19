@@ -1945,19 +1945,22 @@ impl DomainServices {
         let mut removes = remove_indexes.to_vec();
         removes.sort_unstable_by(|a, b| b.cmp(a));
         removes.dedup();
-        let intent = MutationIntent::new(
-            "update",
-            &format!("playlist:{id}"),
-            &serde_json::json!({
-                "name": name.map(str::trim),
-                "comment": comment,
-                "public": public,
-                "add": add,
-                "remove_indexes": &removes,
-                "clear_comment": clear.comment,
-                "clear_tracks": clear.tracks,
-            }),
-        );
+        let mut intent_payload = serde_json::json!({
+            "name": name.map(str::trim),
+            "comment": comment,
+            "public": public,
+            "add": add,
+            "remove_indexes": &removes,
+            "clear_comment": clear.comment,
+        });
+        // Added to the payload only when set. The intent is hashed and compared
+        // on replay, so naming a new field unconditionally would change the
+        // hash of every update this server version ever saw before, and turn a
+        // client's retry across an upgrade into a conflict.
+        if clear.tracks {
+            intent_payload["clear_tracks"] = serde_json::Value::Bool(true);
+        }
+        let intent = MutationIntent::new("update", &format!("playlist:{id}"), &intent_payload);
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
         if let OperationClaim::Replayed(receipt) = self
