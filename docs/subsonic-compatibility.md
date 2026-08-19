@@ -4,20 +4,21 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 
 | Client | Version | Login | Browse/search | Native/transcode | Playlists/user data | Status |
 |---|---:|---:|---:|---:|---:|---|
-| Symfonium | 14.1.0 | pass | pass | pass | pass | Validated 2026-08-09 on Android 17 through an ephemeral `cloudflared` HTTPS tunnel: account and API-key authentication, full catalogue sync, native MP3/FLAC Range playback, Opus at 64 kbit/s, album favorite, scrobbles and playlist create/update. |
+| Symfonium | 14.1.0 | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on an Android 17 emulator through an ephemeral `cloudflared` HTTPS tunnel. Every observable change of the six batches was checked against server state rather than against the client's own display: sleeve order in both the album and a synced playlist, two distinct album artists with no composite entity in the artist list, two album genres, a genre spelled four ways answering as one (4 tracks), the extended fields including `explicitStatus`, and a failed login decoded correctly now that it arrives as HTTP 200. User data round-tripped: track and album ratings, track/album/artist favorites, 21 scrobbles, a bookmark resumed at 37 s, three playlists owned by the authenticated user, and 13 Opus cache entries across the 64 and 128 kbit/s ceilings. The earlier 2026-08-09 run on a physical Android 17 device additionally covered API-key authentication, which this one did not re-run. |
 | Feishin | 1.15.1 | pass | pass | pass | pass | Validated 2026-08-02: native playback, Opus cache, playlist create/add, favorite, rating, scrobble and queue. |
 | Substreamer | 8.0.91 | pass | pass | pass | pass* | Validated 2026-08-02 from the official release source: native playback, Opus/128 cache, playlist add, favorite, rating and scrobble. `*` Its playback queue is local-only and the client never calls `getPlayQueue`/`savePlayQueue`; those endpoints remain covered by fixtures and Feishin. |
 | DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass* | Validated 2026-08-02 on Android 14, then revalidated 2026-08-15 on the current Android environment: authentication, catalogue, artwork, native playback, seek and playlist. `*` Scrobbling was disabled in the original run; the endpoint remains covered by fixtures and other clients. |
 | Juliet | iOS build tested 2026-08-15 | pass | pass | native pass; transcode not run | not run | Current iOS compatibility check: authentication, catalogue, artwork and native playback succeeded. Unsupported/unexercised surfaces are not inferred as passes. |
 
-**Every row above predates the move to HTTP 200 on every `/rest` answer.** Each
-records a real run against the previous status behaviour and is kept as a
-historical result; none of them validates the current Subsonic contract. The M3
-real-client gate was closed on that earlier behaviour, so it is not a satisfied
-gate for the next tag: every client must be re-run against the current contract
-and its row re-dated first. Missing client features stay covered by automated
-fixtures and another real client rather than inferred as passes. Creating any tag
-or release remains a separate action requiring an explicit operator request.
+**Symfonium is the only row re-run against the current contract.** The four
+others predate the move to HTTP 200 on every `/rest` answer: each records a real
+run against the previous status behaviour and is kept as a historical result, but
+none of them validates what the server answers today. The M3 real-client gate was
+closed on that earlier behaviour, so it is not a satisfied gate for the next tag:
+the remaining clients must be re-run against the current contract and their rows
+re-dated first. Missing client features stay covered by automated fixtures and
+another real client rather than inferred as passes. Creating any tag or release
+remains a separate action requiring an explicit operator request.
 
 The Substreamer row records the successful 2026-08-02 run. It could not be
 reinstalled on the current Android 17 device during the 2026-08-15 revalidation
