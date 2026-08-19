@@ -420,27 +420,63 @@ impl Database {
         // credit, and its files have not changed, so nothing would ever be
         // reindexed. Deriving it here repairs those albums on the next scan
         // instead of requiring a rebuilt library.
-        let joined: Vec<(String, String)> = sqlx::query_as(
-            "SELECT id, album_artist_name FROM album \
+        let joined: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT id, canonical_title, album_artist_name FROM album \
              WHERE library_id = ? AND album_artist_name LIKE '%;%'",
         )
         .bind(library_id.to_string())
         .fetch_all(&mut *tx)
         .await?;
         let now = now_ms();
-        for (album_id, credit) in joined {
+        for (album_id, canonical_title, credit) in joined {
             let names = split_values(Some(credit.as_str()));
             let mut first = None;
             for name in &names {
                 let id = upsert_artist(&mut tx, library_id, name, now).await?;
                 first.get_or_insert(id);
             }
-            if let Some(first) = first {
-                sqlx::query("UPDATE album SET album_artist_id = ? WHERE id = ?")
+            let Some(first) = first else { continue };
+            // The identity key embeds the album artist id, so moving the album
+            // without recomputing it would leave a row that indexing can no
+            // longer find: the next reindexed track would compute the new key,
+            // miss, and insert a duplicate album.
+            let identity = album_identity(&canonical_title, Some(first));
+            let collision: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM album WHERE library_id = ? AND identity_key = ? AND id <> ?",
+            )
+            .bind(library_id.to_string())
+            .bind(&identity)
+            .bind(&album_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            match collision {
+                // Indexing already created the album this one is becoming, so
+                // the two are one record: the tracks move over and the stale
+                // row goes. Updating in place would violate the identity
+                // uniqueness and fail the whole scan.
+                Some(target) => {
+                    sqlx::query("UPDATE track SET album_id = ? WHERE album_id = ?")
+                        .bind(&target)
+                        .bind(&album_id)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("DELETE FROM album WHERE id = ?")
+                        .bind(&album_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                None => {
+                    sqlx::query(
+                        "UPDATE album SET album_artist_id = ?, identity_key = ?, updated_at = ? \
+                         WHERE id = ?",
+                    )
                     .bind(first.to_string())
-                    .bind(album_id)
+                    .bind(&identity)
+                    .bind(now)
+                    .bind(&album_id)
                     .execute(&mut *tx)
                     .await?;
+                }
             }
         }
         // An artist row outlives the tag that created it: rename a credit, or
@@ -1012,13 +1048,7 @@ async fn upsert_album(
         return Ok(None);
     };
     let canonical = waveflow_core::scanner::canonical_name(title);
-    let identity = format!(
-        "{}:{}",
-        canonical,
-        album_artist_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "none".into())
-    );
+    let identity = album_identity(&canonical, album_artist_id);
     let id = Uuid::new_v4();
     let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
@@ -1027,6 +1057,18 @@ async fn upsert_album(
         .bind(album_artist_id.map(|id| id.to_string())).bind(album_artist).bind(i64::from(input.is_compilation))
         .bind(input.year).bind(artwork).bind(now).bind(now).fetch_one(&mut **tx).await?;
     parse_uuid(value).map(Some)
+}
+
+/// How an album is recognised across scans. It embeds the album artist, so any
+/// code that moves an album to another artist has to recompute it.
+fn album_identity(canonical_title: &str, album_artist_id: Option<Uuid>) -> String {
+    format!(
+        "{}:{}",
+        canonical_title,
+        album_artist_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "none".into())
+    )
 }
 
 fn split_values(raw: Option<&str>) -> Vec<String> {
