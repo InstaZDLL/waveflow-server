@@ -174,9 +174,14 @@ impl MediaService {
             return serve_file(&cache_path, range, mime_for_format(query.format)).await;
         }
 
-        // A byte range has no stable meaning until a transcode is complete.
-        // Clients seek a live transcode with offset_ms instead.
-        if range.is_some() {
+        // A byte range has no stable meaning until a transcode is complete, so
+        // seeking a live transcode goes through offset_ms instead. A range
+        // that starts at the first byte is not a seek though: it is how every
+        // player opens a resource. Refusing it made a client fail on the first
+        // play of a track and succeed on the second, once the cache existed —
+        // Feishin with `bytes=0-`, then Juliet with the `bytes=0-1` probe iOS
+        // sends before anything else.
+        if range.is_some_and(|value| !starts_at_the_first_byte(value)) {
             return Err(MediaError::RangeNotSatisfiable(0));
         }
 
@@ -205,7 +210,10 @@ impl MediaService {
             self.inner
                 .cache_access
                 .insert(cache_path.clone(), SystemTime::now());
-            return serve_file(&cache_path, None, mime_for_format(query.format)).await;
+            // Whoever held the lock finished the transcode, so the range that
+            // had no meaning a moment ago has one now, and the second caller
+            // gets the same partial answer it would have got from the cache.
+            return serve_file(&cache_path, range, mime_for_format(query.format)).await;
         }
 
         self.stream_transcode(
@@ -849,6 +857,29 @@ async fn serve_partial(
     Ok(response)
 }
 
+/// Whether a `Range` header starts at the first byte, which is how a player
+/// opens a resource rather than how it seeks into one. Browsers send `bytes=0-`;
+/// iOS AVFoundation first probes with `bytes=0-1` to learn the size and type.
+/// Both mean "begin here", and neither can be refused without breaking the
+/// first play of every track.
+///
+/// The answer to such a request is the whole stream rather than the bytes
+/// asked for, which HTTP allows: a server may always ignore `Range` and answer
+/// 200. Before the transcode exists there is no total length to put in a
+/// `Content-Range`, so a partial answer is not available to give.
+fn starts_at_the_first_byte(value: &str) -> bool {
+    value.strip_prefix("bytes=").is_some_and(|spec| {
+        // A multipart range is several ranges, and this answers with one body.
+        let Some((start, end)) = spec.trim().split_once('-') else {
+            return false;
+        };
+        start.trim().parse::<u64>() == Ok(0)
+            // A malformed end - a second hyphen, a word - is not a range this
+            // understands, so it is refused rather than read as an open.
+            && (end.trim().is_empty() || end.trim().parse::<u64>().is_ok())
+    })
+}
+
 fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if size == 0 {
         return None;
@@ -857,7 +888,10 @@ fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if value.contains(',') {
         return None;
     }
-    let (start, end) = value.split_once('-')?;
+    let (start, end) = value.trim().split_once('-')?;
+    // Trimmed on both bounds, like `starts_at_the_first_byte`: a spelling the
+    // cold path accepts must not be refused once the cache exists.
+    let (start, end) = (start.trim(), end.trim());
     if start.is_empty() {
         let suffix = end.parse::<u64>().ok()?.min(size).min(MAX_RANGE_BYTES);
         if suffix == 0 {
@@ -989,7 +1023,9 @@ mod tests {
     use dashmap::DashMap;
     use tokio::sync::Semaphore;
 
-    use super::{parse_range, prune_cache, secure_track_path, MediaInner};
+    use super::{
+        parse_range, prune_cache, secure_track_path, starts_at_the_first_byte, MediaInner,
+    };
 
     #[test]
     fn ranges_are_bounded_and_validated() {
@@ -999,6 +1035,30 @@ mod tests {
         assert_eq!(parse_range("bytes=10-", 10), None);
         assert_eq!(parse_range("bytes=5-2", 10), None);
         assert_eq!(parse_range("bytes=0-1,4-5", 10), None);
+        // Whitespace is tolerated on both bounds, so that a range the cold
+        // transcode path accepts is still satisfiable from the cache.
+        assert_eq!(parse_range("bytes= 0- ", 10), Some((0, 9)));
+        assert_eq!(parse_range("bytes= 2 - 5 ", 10), Some((2, 5)));
+    }
+
+    #[test]
+    fn a_range_from_the_first_byte_opens_a_resource() {
+        // How a browser opens an audio element, and how iOS probes one.
+        assert!(starts_at_the_first_byte("bytes=0-"));
+        assert!(starts_at_the_first_byte("bytes=0-1"));
+        assert!(starts_at_the_first_byte("bytes=0-1023"));
+        assert!(starts_at_the_first_byte("bytes= 0- "));
+        // Starting anywhere else is a seek, and has no meaning yet.
+        assert!(!starts_at_the_first_byte("bytes=1-"));
+        assert!(!starts_at_the_first_byte("bytes=19924-429882"));
+        assert!(!starts_at_the_first_byte("bytes=-3"));
+        // One body cannot answer several ranges.
+        assert!(!starts_at_the_first_byte("bytes=0-1,4-5"));
+        assert!(!starts_at_the_first_byte("items=0-"));
+        assert!(!starts_at_the_first_byte("bytes=00x-1"));
+        // A malformed end is not an open either.
+        assert!(!starts_at_the_first_byte("bytes=0-1-2"));
+        assert!(!starts_at_the_first_byte("bytes=0-invalid"));
     }
 
     #[tokio::test]
