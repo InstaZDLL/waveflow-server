@@ -96,6 +96,11 @@ pub struct CatalogTrackInput {
     pub replay_gain_album_peak: Option<f64>,
     pub bpm: Option<i64>,
     pub sort_title: Option<String>,
+    /// Sort forms of the album title and of the two artist credits, as
+    /// tagged. Multi-valued credits carry them joined by the same separator.
+    pub sort_album: Option<String>,
+    pub sort_album_artist: Option<String>,
+    pub sort_artist: Option<String>,
     pub comment: Option<String>,
     /// Multi-valued, split like `artist` and `genre`.
     pub isrc: Option<String>,
@@ -432,7 +437,10 @@ impl Database {
             let names = split_values(Some(credit.as_str()));
             let mut first = None;
             for name in &names {
-                let id = upsert_artist(&mut tx, library_id, name, now).await?;
+                // The repair pass works from stored credits, not from tags:
+                // it has no sort form to offer. `COALESCE` on the stored side
+                // means passing none leaves whatever a scan already wrote.
+                let id = upsert_artist(&mut tx, library_id, name, None, now).await?;
                 first.get_or_insert(id);
             }
             let Some(first) = first else { continue };
@@ -675,9 +683,10 @@ impl Database {
         let track_id = existing_id.unwrap_or_else(Uuid::new_v4);
         let artwork_hash = upsert_artwork(tx, input.artwork.as_ref(), now).await?;
         let artist_names = split_values(input.artist.as_deref());
+        let artist_sorts = sort_names_for(&artist_names, input.sort_artist.as_deref());
         let mut artist_ids = Vec::with_capacity(artist_names.len());
-        for artist in &artist_names {
-            artist_ids.push(upsert_artist(tx, library_id, artist, now).await?);
+        for (artist, sort) in artist_names.iter().zip(&artist_sorts) {
+            artist_ids.push(upsert_artist(tx, library_id, artist, sort.as_deref(), now).await?);
         }
         let album_artist = input
             .album_artist
@@ -695,9 +704,11 @@ impl Database {
         // The album keeps the joined string as its display name, and hangs
         // off the first credited artist.
         let album_artist_names = split_values(album_artist.as_deref());
+        let album_artist_sorts =
+            sort_names_for(&album_artist_names, input.sort_album_artist.as_deref());
         let mut album_artist_id = None;
-        for name in &album_artist_names {
-            let id = upsert_artist(tx, library_id, name, now).await?;
+        for (name, sort) in album_artist_names.iter().zip(&album_artist_sorts) {
+            let id = upsert_artist(tx, library_id, name, sort.as_deref(), now).await?;
             album_artist_id.get_or_insert(id);
         }
         let album_id = upsert_album(
@@ -1008,15 +1019,36 @@ async fn upsert_artist(
     tx: &mut Transaction<'_, Sqlite>,
     library: Uuid,
     name: &str,
+    sort_name: Option<&str>,
     now: i64,
 ) -> Result<Uuid, sqlx::Error> {
     let id = Uuid::new_v4();
     let canonical = waveflow_core::scanner::canonical_name(name);
-    let value: String = sqlx::query_scalar("INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, canonical_name) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at RETURNING id")
-        .bind(id.to_string()).bind(library.to_string()).bind(name.trim()).bind(canonical).bind(now).bind(now)
+    // COALESCE on the stored side: a file that carries no sort tag must not
+    // erase the one a sibling file supplied, and the artist row is written
+    // once per track of every album it appears on.
+    let value: String = sqlx::query_scalar("INSERT INTO artist (id, library_id, name, canonical_name, sort_name, created_at, updated_at) \
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, canonical_name) DO UPDATE SET name=excluded.name, \
+        sort_name=COALESCE(excluded.sort_name, artist.sort_name), updated_at=excluded.updated_at RETURNING id")
+        .bind(id.to_string()).bind(library.to_string()).bind(name.trim()).bind(canonical).bind(sort_name).bind(now).bind(now)
         .fetch_one(&mut **tx).await?;
     parse_uuid(value)
+}
+
+/// Pairs a split credit with its split sort form.
+///
+/// `ARTISTSORT` carries the same separator as `ARTIST` when a credit is
+/// joined, so the two lists line up position by position — that is the
+/// convention taggers write. When they do not line up, the tag is describing
+/// something this cannot map, and guessing would file an artist under another
+/// artist's name: every credit then gets no sort form rather than a wrong one.
+fn sort_names_for(names: &[String], raw_sort: Option<&str>) -> Vec<Option<String>> {
+    let sorts = split_values(raw_sort);
+    if sorts.len() == names.len() {
+        sorts.into_iter().map(Some).collect()
+    } else {
+        vec![None; names.len()]
+    }
 }
 
 async fn upsert_genre(
@@ -1050,12 +1082,13 @@ async fn upsert_album(
     let canonical = waveflow_core::scanner::canonical_name(title);
     let identity = album_identity(&canonical, album_artist_id, album_artist);
     let id = Uuid::new_v4();
-    let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
-        is_compilation=excluded.is_compilation, year=COALESCE(excluded.year, album.year), artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), updated_at=excluded.updated_at RETURNING id")
+    let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, sort_name, created_at, updated_at) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
+        is_compilation=excluded.is_compilation, year=COALESCE(excluded.year, album.year), artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
+        sort_name=COALESCE(excluded.sort_name, album.sort_name), updated_at=excluded.updated_at RETURNING id")
         .bind(id.to_string()).bind(library.to_string()).bind(title.trim()).bind(canonical).bind(identity)
         .bind(album_artist_id.map(|id| id.to_string())).bind(album_artist).bind(i64::from(input.is_compilation))
-        .bind(input.year).bind(artwork).bind(now).bind(now).fetch_one(&mut **tx).await?;
+        .bind(input.year).bind(artwork).bind(input.sort_album.as_deref()).bind(now).bind(now).fetch_one(&mut **tx).await?;
     parse_uuid(value).map(Some)
 }
 

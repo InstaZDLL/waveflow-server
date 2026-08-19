@@ -852,13 +852,25 @@ async fn music_directory(
     let overview = overview(state, principal, params).await?;
     let mut directory = Node::new("directory").attr("id", id.to_string());
     if let Some(folder) = overview.folders.iter().find(|item| item.id == id) {
-        directory = directory.attr("name", folder.name.clone()).children(
-            overview
-                .artists
-                .iter()
-                .filter(|artist| artist.library_id == id)
-                .map(|artist| directory_child(artist_node(artist, 0))),
-        );
+        // The artists of the library, then the tracks that belong to no album.
+        // Those name this folder as their `parent` for want of an album id, so
+        // this is the level that has to answer for them — otherwise a track
+        // advertises a parent that does not contain it.
+        let orphans = state
+            .services
+            .songs_without_album(principal.id, id)
+            .await
+            .map_err(service_protocol)?;
+        directory = directory
+            .attr("name", folder.name.clone())
+            .children(
+                overview
+                    .artists
+                    .iter()
+                    .filter(|artist| artist.library_id == id)
+                    .map(|artist| directory_child(artist_node(artist, 0))),
+            )
+            .children(orphans.iter().map(|song| song_node(song).renamed("child")));
     } else if let Some(artist) = overview.artists.iter().find(|item| item.id == id) {
         directory = directory.attr("name", artist.name.clone()).children(
             overview
@@ -1654,6 +1666,10 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
             "musicBrainzId",
             artist.musicbrainz_id.clone().unwrap_or_default(),
         )
+        // Now that the column exists the field is supported, so it is emitted
+        // with its default rather than omitted: absent would go on saying the
+        // server cannot answer, which stopped being true.
+        .attr("sortName", artist.sort_name.clone().unwrap_or_default())
 }
 
 /// `songCount` and `duration` come from the album projection rather than from
@@ -1677,6 +1693,7 @@ fn album_node(album: &AlbumItem) -> Node {
         .attr("isCompilation", album.is_compilation)
         .attr("playCount", album.play_count)
         .attr("displayArtist", album.artist.clone().unwrap_or_default())
+        .attr("sortName", album.sort_name.clone().unwrap_or_default())
         .maybe_attr("played", album.last_played_at.map(iso_time))
         .children(album.artists.iter().map(|artist| {
             Node::new("artists")
