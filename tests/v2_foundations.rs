@@ -9223,12 +9223,17 @@ async fn an_artist_reference_is_not_an_artist_record() {
             // Split on the quote rather than on whitespace: an attribute
             // value holds spaces, and `name="The Nocturnes"` would otherwise
             // read as two attributes.
-            let attributes: Vec<String> = element
+            let mut attributes: Vec<String> = element
                 .split('"')
                 .step_by(2)
                 .map(|key| key.trim().trim_end_matches('=').trim().to_owned())
                 .filter(|key| !key.is_empty())
                 .collect();
+            // Sorted before comparing, like the JSON side: which attributes
+            // are present is the contract, the order they are written in is
+            // not, and pinning it would fail a reordering that changes
+            // nothing observable.
+            attributes.sort_unstable();
             assert_eq!(
                 attributes,
                 vec!["id".to_owned(), "name".to_owned()],
