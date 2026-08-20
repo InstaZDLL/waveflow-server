@@ -9067,3 +9067,148 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         Some("")
     );
 }
+
+/// Two artist projections that are deliberately not the same shape, pinned in
+/// both encodings so neither drifts into the other.
+///
+/// `artists[]` and `albumArtists[]` are *references*: an identifier and a
+/// display name, and nothing else. The entries `getMusicDirectory` renders as
+/// `child` are the artist and album nodes themselves, minus `musicBrainzId`,
+/// so they do carry `sortName` and the rest. A field added to the node reaches
+/// the second and must not leak into the first.
+#[tokio::test]
+async fn an_artist_reference_is_not_an_artist_record() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_reference-key";
+    let admin = state
+        .db
+        .create_account(
+            "reference-admin",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state.secret_box.encrypt(b"subsonic-secret-123").unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            admin,
+            admin,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("reference-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(admin, "Refs", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = catalog_input(0, "The Nocturnes");
+    input.title = "Opening".into();
+    input.album = Some("The Night Sessions".into());
+    input.album_artist = Some("The Nocturnes".into());
+    input.is_compilation = false;
+    input.sort_album = Some("Night Sessions, The".into());
+    input.sort_album_artist = Some("Nocturnes, The".into());
+    input.sort_artist = Some("Nocturnes, The".into());
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.consolidate_sort_names(library).await.unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    // JSON: the album carries its own sortName; its `artists[]` entry carries
+    // an identifier and a name, and no third key.
+    let albums = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=alphabeticalByName",
+    )
+    .await;
+    let album = albums["subsonic-response"]["albumList2"]["album"][0].clone();
+    assert_eq!(album["sortName"], serde_json::json!("Night Sessions, The"));
+    let reference = album["artists"][0]
+        .as_object()
+        .expect("an album lists its credited artists");
+    let mut keys: Vec<&str> = reference.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["id", "name"],
+        "an artists[] entry is a reference, not an ArtistID3: {reference:?}"
+    );
+
+    // XML: the same statement, in the encoding where an absent attribute is
+    // absent rather than a missing key.
+    let directory = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getMusicDirectory.view?apiKey={api_key}&v=1.16.1&c=fixtures&id={library}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(directory.status(), StatusCode::OK);
+    let directory = body_text(directory).await;
+    // The browsing child is the artist node minus musicBrainzId, so the sort
+    // name reaches it, carrying the tagged value.
+    assert!(
+        directory.contains(r#"sortName="Nocturnes, The""#),
+        "a getMusicDirectory child carries the artist's sortName: {directory}"
+    );
+    // ...while the references carry neither that field nor any other one
+    // belonging to the record. They live on the album and on its songs, so
+    // this reads the album document rather than the folder listing — where a
+    // library holding no album-less track has no song child at all.
+    let album_xml = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getAlbum.view?apiKey={api_key}&v=1.16.1&c=fixtures&id={}",
+                album["id"].as_str().expect("the album id")
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(album_xml.status(), StatusCode::OK);
+    let album_xml = body_text(album_xml).await;
+    let mut references = 0;
+    for element in album_xml.split("<artists ").skip(1) {
+        let element = element.split("/>").next().unwrap_or_default();
+        references += 1;
+        assert!(
+            !element.contains("sortName"),
+            "an artists[] reference must not grow a sortName: {element}"
+        );
+        assert!(
+            !element.contains("albumCount"),
+            "nor any other ArtistID3 field: {element}"
+        );
+    }
+    assert!(
+        references > 0,
+        "the fixture must exercise a reference: {album_xml}"
+    );
+}
