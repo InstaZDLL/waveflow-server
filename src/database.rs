@@ -148,6 +148,10 @@ pub struct SessionRecord {
     pub username: String,
     pub role: AccountRole,
     pub refresh_expires_at: i64,
+    /// The scopes this session was issued under. Empty for a password login
+    /// and for a grant made by an unscoped credential; a narrowed token that
+    /// authorized a device leaves its narrowing here.
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +175,9 @@ pub struct NewSession<'a> {
     pub access_expires_at: i64,
     pub refresh_expires_at: i64,
     pub now_ms: i64,
+    /// Carried from the credential that issued this session, so it can never
+    /// be broader than what asked for it.
+    pub scopes: &'a [String],
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +190,8 @@ pub struct NewAuthorization<'a> {
     pub device_name: &'a str,
     pub now_ms: i64,
     pub expires_at: i64,
+    /// The scopes of the credential that authorized this grant.
+    pub scopes: &'a [String],
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +201,8 @@ pub struct AuthorizationRecord {
     pub redirect_uri: String,
     pub code_challenge: String,
     pub device_name: String,
+    /// Handed to the session this grant is redeemed for.
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -555,8 +566,8 @@ impl Database {
         sqlx::query(
             "INSERT INTO oauth_authorization \
                (code_hash, user_id, client_id, redirect_uri, code_challenge, device_name, \
-                created_at, expires_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                created_at, expires_at, scopes_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(grant.code_hash.as_slice())
         .bind(grant.user_id.to_string())
@@ -566,6 +577,7 @@ impl Database {
         .bind(grant.device_name)
         .bind(grant.now_ms)
         .bind(grant.expires_at)
+        .bind(encode_scopes(grant.scopes)?)
         .execute(&mut *tx)
         .await?;
         // Delegating access to another application is exactly the kind of event
@@ -602,7 +614,8 @@ impl Database {
         let row = sqlx::query(
             "UPDATE oauth_authorization SET redeemed_at = ? \
              WHERE code_hash = ? AND redeemed_at IS NULL AND expires_at > ? \
-             RETURNING user_id, client_id, redirect_uri, code_challenge, device_name",
+             RETURNING user_id, client_id, redirect_uri, code_challenge, device_name, \
+                       scopes_json",
         )
         .bind(now_ms)
         .bind(code_hash)
@@ -616,6 +629,7 @@ impl Database {
                 redirect_uri: row.try_get("redirect_uri")?,
                 code_challenge: row.try_get("code_challenge")?,
                 device_name: row.try_get("device_name")?,
+                scopes: decode_scopes(row.try_get("scopes_json")?)?,
             })
         })
         .transpose()
@@ -682,8 +696,8 @@ impl Database {
         sqlx::query(
             "INSERT INTO session \
              (id, user_id, device_id, access_token_hash, refresh_token_hash, access_expires_at, \
-              refresh_expires_at, created_at, last_used_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              refresh_expires_at, created_at, last_used_at, scopes_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(session.user_id.to_string())
@@ -694,6 +708,7 @@ impl Database {
         .bind(session.refresh_expires_at)
         .bind(session.now_ms)
         .bind(session.now_ms)
+        .bind(encode_scopes(session.scopes)?)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -705,7 +720,8 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<SessionRecord>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT s.id, s.user_id, s.device_id, a.username, a.role, s.refresh_expires_at \
+            "SELECT s.id, s.user_id, s.device_id, a.username, a.role, s.refresh_expires_at, \
+                    s.scopes_json \
              FROM session s JOIN account a ON a.id = s.user_id \
              WHERE s.refresh_token_hash = ? AND s.revoked_at IS NULL \
                AND s.refresh_expires_at > ? AND a.disabled = 0",
@@ -723,7 +739,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<AccessRecord>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT a.id, a.username, a.role FROM session s \
+            "SELECT a.id, a.username, a.role, s.scopes_json FROM session s \
              JOIN account a ON a.id = s.user_id \
              JOIN device d ON d.id = s.device_id \
              WHERE s.access_token_hash = ? AND s.revoked_at IS NULL \
@@ -738,7 +754,7 @@ impl Database {
                 user_id: parse_uuid(row.try_get("id")?)?,
                 username: row.try_get("username")?,
                 role: parse_role(row.try_get("role")?)?,
-                scopes: Vec::new(),
+                scopes: decode_scopes(row.try_get("scopes_json")?)?,
             })
         })
         .transpose()
@@ -767,8 +783,7 @@ impl Database {
             user_id: parse_uuid(row.try_get("id")?)?,
             username: row.try_get("username")?,
             role: parse_role(row.try_get("role")?)?,
-            scopes: serde_json::from_str(row.try_get::<&str, _>("scopes_json")?)
-                .map_err(|error| sqlx::Error::Decode(error.into()))?,
+            scopes: decode_scopes(row.try_get("scopes_json")?)?,
         };
         if last_used_at.is_none_or(|last_used| last_used <= now_ms.saturating_sub(60_000)) {
             let _writer = self.writer_guard().await;
@@ -874,7 +889,7 @@ impl Database {
         .bind(user_id.to_string())
         .bind(name.trim())
         .bind(token_hash)
-        .bind(serde_json::to_string(scopes).expect("string list serializes"))
+        .bind(encode_scopes(scopes)?)
         .bind(now_ms)
         .fetch_one(&self.pool)
         .await?;
@@ -1144,7 +1159,22 @@ fn session_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SessionRecord, sqlx:
         username: row.try_get("username")?,
         role: parse_role(row.try_get("role")?)?,
         refresh_expires_at: row.try_get("refresh_expires_at")?,
+        scopes: decode_scopes(row.try_get("scopes_json")?)?,
     })
+}
+
+/// Scopes are stored as a JSON array so a credential's limit travels as one
+/// column, on the three tables that can carry one: `api_token`, and now
+/// `oauth_authorization` and `session`.
+fn encode_scopes(scopes: &[String]) -> Result<String, sqlx::Error> {
+    serde_json::to_string(scopes).map_err(|error| sqlx::Error::Encode(error.into()))
+}
+
+/// Counterpart of [`encode_scopes`]. An unreadable list is a decode error
+/// rather than an empty one: silently reading a corrupt limit as "no limit"
+/// would widen a credential exactly where it must not.
+fn decode_scopes(value: &str) -> Result<Vec<String>, sqlx::Error> {
+    serde_json::from_str(value).map_err(|error| sqlx::Error::Decode(error.into()))
 }
 
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
@@ -1159,8 +1189,7 @@ fn api_token_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ApiTokenRecord, sq
     Ok(ApiTokenRecord {
         id: parse_uuid(row.try_get("id")?)?,
         name: row.try_get("name")?,
-        scopes: serde_json::from_str(row.try_get::<&str, _>("scopes_json")?)
-            .map_err(|error| sqlx::Error::Decode(error.into()))?,
+        scopes: decode_scopes(row.try_get("scopes_json")?)?,
         expires_at: row.try_get("expires_at")?,
         created_at: row.try_get("created_at")?,
         last_used_at: row.try_get("last_used_at")?,
