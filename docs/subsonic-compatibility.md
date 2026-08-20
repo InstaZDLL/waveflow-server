@@ -81,4 +81,26 @@ the request; media items gained `albumArtists[]` and `displayAlbumArtist`, and
 albums gained `artists[]` and `genres[]`; and `getAlbum` returns an album in
 sleeve order rather than alphabetically.
 
+Two wire changes land after that replay, both additive. `album` and `artist`
+gained `sortName`, emitted with its default like every other supported
+OpenSubsonic addition, so an album whose files carry no `ALBUMSORT` reports it
+empty rather than omitting it — the difference between unknown and
+unsupported. And the folder level of `getMusicDirectory` now lists the tracks
+of that library which belong to no album, alongside its artists: those tracks
+already named the library as their `parent`, and browsing there used to find
+none of them. No existing attribute changed value, so a client validated
+against the 2026-08-19 replay sees the same catalogue with two more fields on
+it and one directory that is no longer a dead end.
+
+One deviation is worth stating rather than leaving to be discovered. The
+`artists[]` and `albumArtists[]` arrays on media items and albums are typed as
+`ArtistID3` but carry only `id` and `name`. They are references: no
+`musicBrainzId`, no `albumCount`, no `starred`, and — since sort names landed —
+no `sortName` either. A client reading an artist's own fields out of one of
+those entries finds them missing and should fetch the artist by the identifier
+the entry carries. The artist and album entries `getMusicDirectory` returns as
+`child` are a different shape and do carry those fields, `musicBrainzId`
+excepted; the two projections are pinned against each other in the test suite,
+in JSON and in XML.
+
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.

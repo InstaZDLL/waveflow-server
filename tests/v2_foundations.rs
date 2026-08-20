@@ -3299,6 +3299,9 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         replay_gain_album_peak: None,
         bpm: None,
         sort_title: None,
+        sort_album: None,
+        sort_album_artist: None,
+        sort_artist: None,
         comment: None,
         isrc: None,
         moods: None,
@@ -3438,6 +3441,18 @@ fn generate_audio_fixture(path: &std::path::Path, codec: &str, extension: &str) 
         "FFmpeg failed for {extension}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Pulls the authorization code out of the redirect the consent step returns.
+fn code_from(redirect_to: &str) -> String {
+    redirect_to
+        .split("code=")
+        .nth(1)
+        .expect("the redirect carries a code")
+        .split('&')
+        .next()
+        .expect("the code is delimited")
+        .to_owned()
 }
 
 fn json_request(uri: &str, body: serde_json::Value) -> Request<Body> {
@@ -6362,6 +6377,9 @@ fn browse_input(
         replay_gain_album_peak: None,
         bpm: None,
         sort_title: None,
+        sort_album: None,
+        sort_album_artist: None,
+        sort_artist: None,
         comment: None,
         isrc: None,
         moods: None,
@@ -8398,11 +8416,13 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         StatusCode::UNAUTHORIZED
     );
 
-    // A narrowed credential cannot mint an unrestricted one. The session the
-    // code flow returns carries the account's whole authority and records
-    // nothing about what asked for it, so a `write` token reaching this route
-    // came back holding a session that answered to `Admin`: two requests from
-    // a token deliberately issued without `admin`.
+    // A narrowed credential may mint one, and what it mints is narrowed the
+    // same way: the grant records the caller's scopes and the redeemed session
+    // is issued under them. `write` in, `write` out.
+    //
+    // Before the scopes travelled, the session came back carrying the
+    // account's whole authority whatever asked for it, so a token deliberately
+    // issued without `admin` reached `Admin` in two requests.
     let scoped = json_body(
         router
             .clone()
@@ -8420,21 +8440,70 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
     )
     .await;
     let scoped = scoped["secret"].as_str().expect("the secret").to_owned();
-    assert_eq!(
-        authorize(grant.clone(), Some(scoped.clone()))
-            .await
-            .status(),
-        StatusCode::FORBIDDEN
+    let mut narrowed = grant.clone();
+    narrowed["device_name"] = "Scoped Agent".into();
+    let granted_narrow = authorize(narrowed, Some(scoped.clone())).await;
+    assert_eq!(granted_narrow.status(), StatusCode::OK);
+    let narrow_code = code_from(
+        json_body(granted_narrow).await["redirect_to"]
+            .as_str()
+            .unwrap(),
     );
-    // It is the narrowing that refuses, not the account: the same account's
-    // session still grants, and the token still writes what it was given.
+    let narrow_session = json_body(
+        exchange(serde_json::json!({
+            "code": narrow_code,
+            "code_verifier": verifier,
+            "client_id": "com.waveflow.desktop",
+            "redirect_uri": redirect_uri
+        }))
+        .await,
+    )
+    .await;
+    let narrow_access = narrow_session["access_token"].as_str().unwrap().to_owned();
+    let narrow_refresh = narrow_session["refresh_token"].as_str().unwrap().to_owned();
+    // The client is told what it holds, rather than having to discover the
+    // limit by being refused.
+    assert_eq!(
+        narrow_session["user"]["scopes"],
+        serde_json::json!(["write"])
+    );
+
+    // `pkce-user` is an administrator — it minted the token above — so the
+    // only thing that can refuse an admin route to this session is the scope
+    // list it inherited from the token that authorized it. Drop the carrying
+    // and this answers 200.
+    let admin_route = |bearer: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get("/api/v2/admin/users")
+                        .header("authorization", format!("Bearer {bearer}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(
+        admin_route(narrow_access.clone()).await,
+        StatusCode::FORBIDDEN,
+        "a session redeemed from a `write` grant must not answer to `admin`"
+    );
+    // It is the narrowing that refuses and not the account: the same account's
+    // password session still reaches the same route.
+    assert_eq!(admin_route(token.clone()).await, StatusCode::OK);
+
+    // And it is a working session, not a broken one: what `write` names, it does.
     let writes = router
         .clone()
         .oneshot(
             Request::builder()
                 .method(Method::PUT)
                 .uri(format!("/api/v2/ratings/track/{track}"))
-                .header("authorization", format!("Bearer {scoped}"))
+                .header("authorization", format!("Bearer {narrow_access}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::json!({"rating": 3}).to_string()))
                 .unwrap(),
@@ -8448,6 +8517,27 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
     assert_eq!(ratings.len(), 1);
     assert_eq!(ratings[0].entity_id, track);
     assert_eq!(ratings[0].rating, 3);
+
+    // Rotation must not widen either: the refreshed session answers to exactly
+    // the scopes the original was issued under.
+    let rotated = json_body(
+        router
+            .clone()
+            .oneshot(json_request(
+                "/api/v2/auth/refresh",
+                serde_json::json!({"refresh_token": narrow_refresh}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(rotated["user"]["scopes"], serde_json::json!(["write"]));
+    let rotated = rotated["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        admin_route(rotated).await,
+        StatusCode::FORBIDDEN,
+        "refreshing a narrowed session must not hand back a wide one"
+    );
 
     // A redirect that could carry the code off the machine is refused.
     let mut remote = grant.clone();
@@ -8698,4 +8788,461 @@ async fn subsonic_search_matches_through_the_fts_index() {
     )
     .await;
     assert_eq!(titles(&all).len(), 3);
+}
+
+/// The three OpenSubsonic gaps the fifth audit named, pinned together because
+/// they are one statement: what the catalogue can answer, it now says.
+///
+/// `sortName` moves from absent to present-and-possibly-empty — the presence
+/// rule's difference between "not supported" and "not tagged". `song.parent`
+/// stops naming a directory that would not list the song. And the native
+/// search documents the 400 its required parameter already produced.
+#[tokio::test]
+async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
+    let (_temp, config, state) = test_app().await;
+    let subsonic_password = "subsonic-secret-123";
+    let api_key = "wfsk_sortname-key";
+    let admin = state
+        .db
+        .create_account(
+            "sort-admin",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(subsonic_password.as_bytes())
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            admin,
+            admin,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("sort-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(admin, "Sorted", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3).await.unwrap();
+
+    // A tagged album, whose sort forms differ from the display forms — the
+    // only case where the field carries information.
+    let mut tagged = catalog_input(0, "The Nocturnes");
+    tagged.title = "Opening".into();
+    tagged.album = Some("The Night Sessions".into());
+    tagged.album_artist = Some("The Nocturnes".into());
+    tagged.is_compilation = false;
+    tagged.sort_album = Some("Night Sessions, The".into());
+    tagged.sort_album_artist = Some("Nocturnes, The".into());
+    tagged.sort_artist = Some("Nocturnes, The".into());
+    state
+        .db
+        .apply_catalog_track(library, scan, &tagged, None, false)
+        .await
+        .unwrap();
+
+    // An untagged album by another artist: supported and unknown, which is not
+    // the same statement as unsupported.
+    let mut untagged = catalog_input(1, "Plain Ensemble");
+    untagged.title = "Untitled".into();
+    untagged.album = Some("Plain Record".into());
+    untagged.album_artist = Some("Plain Ensemble".into());
+    untagged.is_compilation = false;
+    state
+        .db
+        .apply_catalog_track(library, scan, &untagged, None, false)
+        .await
+        .unwrap();
+
+    // And a track belonging to no album at all: the one that names its library
+    // as its parent for want of an album id.
+    let mut orphan = catalog_input(2, "Lone Voice");
+    orphan.title = "Single Only".into();
+    orphan.album = None;
+    orphan.album_artist = None;
+    orphan.is_compilation = false;
+    state
+        .db
+        .apply_catalog_track(library, scan, &orphan, None, false)
+        .await
+        .unwrap();
+    // Sort names are derived at the end of a scan, like the identifiers: the
+    // scanner runs both passes here, so a test driving the catalogue directly
+    // runs them too.
+    state.db.consolidate_sort_names(library).await.unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    // --- sortName on AlbumID3 -------------------------------------------
+    let albums = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=alphabeticalByName",
+    )
+    .await;
+    let albums = albums["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("the album list")
+        .clone();
+    let sort_of = |name: &str| -> String {
+        albums
+            .iter()
+            .find(|album| album["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed"))["sortName"]
+            .as_str()
+            .expect("sortName is emitted for every album")
+            .to_owned()
+    };
+    assert_eq!(sort_of("The Night Sessions"), "Night Sessions, The");
+    // Emitted empty rather than omitted: the difference between a server that
+    // cannot answer and an album no file supplied a sort tag for.
+    assert_eq!(sort_of("Plain Record"), "");
+
+    // --- sortName on ArtistID3 ------------------------------------------
+    let artists = subsonic_json(&router, "getArtists", api_key, "").await;
+    let mut seen = std::collections::BTreeMap::new();
+    for index in artists["subsonic-response"]["artists"]["index"]
+        .as_array()
+        .expect("the artist index")
+    {
+        for artist in index["artist"].as_array().expect("an index holds artists") {
+            seen.insert(
+                artist["name"].as_str().unwrap().to_owned(),
+                artist["sortName"]
+                    .as_str()
+                    .expect("sortName is emitted for every artist")
+                    .to_owned(),
+            );
+        }
+    }
+    assert_eq!(
+        seen.get("The Nocturnes").map(String::as_str),
+        Some("Nocturnes, The")
+    );
+    assert_eq!(seen.get("Plain Ensemble").map(String::as_str), Some(""));
+
+    // --- the parent of a song without an album --------------------------
+    let directory = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={library}"),
+    )
+    .await;
+    let children = directory["subsonic-response"]["directory"]["child"]
+        .as_array()
+        .expect("the folder lists children")
+        .clone();
+    let orphan_child = children
+        .iter()
+        .find(|child| child["title"] == "Single Only")
+        .expect("a song with no album is reachable by browsing its library");
+    // The claim is coherence, not a new identifier: the song already said this
+    // was its parent, and browsing there now finds it.
+    assert_eq!(
+        orphan_child["parent"].as_str(),
+        Some(library.to_string()).as_deref()
+    );
+    assert_eq!(orphan_child["isDir"], serde_json::json!(false));
+    // The artists of the library are still listed alongside it.
+    assert!(
+        children
+            .iter()
+            .any(|child| child["title"] == "The Nocturnes" || child["name"] == "The Nocturnes"),
+        "the folder still lists its artists: {children:?}"
+    );
+    // An album's own track is not duplicated into the folder level.
+    assert!(
+        !children.iter().any(|child| child["title"] == "Opening"),
+        "only album-less tracks belong at the folder level"
+    );
+
+    // --- the native search's required parameter -------------------------
+    let token = login_token(&router, "sort-admin", "correct horse battery staple").await;
+    let missing_q = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/search")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        missing_q.status(),
+        StatusCode::BAD_REQUEST,
+        "the OpenAPI document now says 400, so the route must mean it"
+    );
+
+    // --- a sort tag removed from the files leaves the catalogue ---------
+    // Writing the value during the per-track upsert could not do this: the
+    // artist row is rewritten once per track, so a file with no tag had to be
+    // stopped from erasing what a sibling supplied — and that preservation
+    // outlived the tag. Deriving at the end of the scan is what makes removal
+    // mean removal, exactly as it already does for the MusicBrainz ids.
+    let rescan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(rescan, 1).await.unwrap();
+    let mut untagged_now = tagged.clone();
+    untagged_now.sort_album = None;
+    untagged_now.sort_album_artist = None;
+    untagged_now.sort_artist = None;
+    // The same file, retagged: re-applied onto its own row rather than added
+    // beside it, which is what a rescan of an edited file does.
+    let existing = state
+        .services
+        .catalog_snapshot(admin, &[])
+        .await
+        .unwrap()
+        .songs
+        .into_iter()
+        .find(|song| song.title == "Opening")
+        .expect("the tagged track is in the catalogue")
+        .id;
+    state
+        .db
+        .apply_catalog_track(library, rescan, &untagged_now, Some(existing), false)
+        .await
+        .unwrap();
+    state.db.consolidate_sort_names(library).await.unwrap();
+    state.db.finish_scan_job(rescan, 0).await.unwrap();
+
+    let after = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=alphabeticalByName",
+    )
+    .await;
+    let after_album = after["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("the album list")
+        .iter()
+        .find(|album| album["name"] == "The Night Sessions")
+        .expect("the album is still listed")
+        .clone();
+    assert_eq!(
+        after_album["sortName"].as_str(),
+        Some(""),
+        "a sort tag removed from the files must leave the catalogue with it"
+    );
+
+    let after_artists = subsonic_json(&router, "getArtists", api_key, "").await;
+    let mut after_seen = std::collections::BTreeMap::new();
+    for index in after_artists["subsonic-response"]["artists"]["index"]
+        .as_array()
+        .expect("the artist index")
+    {
+        for artist in index["artist"].as_array().expect("an index holds artists") {
+            after_seen.insert(
+                artist["name"].as_str().unwrap().to_owned(),
+                artist["sortName"].as_str().unwrap().to_owned(),
+            );
+        }
+    }
+    assert_eq!(
+        after_seen.get("The Nocturnes").map(String::as_str),
+        Some("")
+    );
+}
+
+/// Two artist projections that are deliberately not the same shape, pinned in
+/// both encodings so neither drifts into the other.
+///
+/// `artists[]` and `albumArtists[]` are *references*: an identifier and a
+/// display name, and nothing else. The entries `getMusicDirectory` renders as
+/// `child` are the artist and album nodes themselves, minus `musicBrainzId`,
+/// so they do carry `sortName` and the rest. A field added to the node reaches
+/// the second and must not leak into the first.
+#[tokio::test]
+async fn an_artist_reference_is_not_an_artist_record() {
+    let (_temp, config, state) = test_app().await;
+    let api_key = "wfsk_reference-key";
+    let admin = state
+        .db
+        .create_account(
+            "reference-admin",
+            &security::hash_password("correct horse battery staple").unwrap(),
+            AccountRole::Admin,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let encrypted = state.secret_box.encrypt(b"subsonic-secret-123").unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            admin,
+            admin,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("reference-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(admin, "Refs", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1).await.unwrap();
+    let mut input = catalog_input(0, "The Nocturnes");
+    input.title = "Opening".into();
+    input.album = Some("The Night Sessions".into());
+    input.album_artist = Some("The Nocturnes".into());
+    input.is_compilation = false;
+    input.sort_album = Some("Night Sessions, The".into());
+    input.sort_album_artist = Some("Nocturnes, The".into());
+    input.sort_artist = Some("Nocturnes, The".into());
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state.db.consolidate_sort_names(library).await.unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    // JSON: the album carries its own sortName; its `artists[]` entry carries
+    // an identifier and a name, and no third key.
+    let albums = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=alphabeticalByName",
+    )
+    .await;
+    let album = albums["subsonic-response"]["albumList2"]["album"][0].clone();
+    assert_eq!(album["sortName"], serde_json::json!("Night Sessions, The"));
+    let reference_keys = |value: &serde_json::Value, what: &str| {
+        let entry = value
+            .as_object()
+            .unwrap_or_else(|| panic!("{what} is an object: {value}"))
+            .clone();
+        let mut keys: Vec<String> = entry.keys().cloned().collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["id".to_owned(), "name".to_owned()],
+            "{what} is a reference, not an ArtistID3: {entry:?}"
+        );
+    };
+    reference_keys(&album["artists"][0], "an album's artists[] entry");
+
+    // `albumArtists[]` is a reference too, and it is emitted on media items
+    // rather than on the album — the album's own credit is `artists[]`. So it
+    // is pinned on a song of the album.
+    let album_json = subsonic_json(
+        &router,
+        "getAlbum",
+        api_key,
+        &format!("&id={}", album["id"].as_str().expect("the album id")),
+    )
+    .await;
+    let song = album_json["subsonic-response"]["album"]["song"][0].clone();
+    reference_keys(&song["artists"][0], "a song's artists[] entry");
+    reference_keys(&song["albumArtists"][0], "a song's albumArtists[] entry");
+
+    // XML: the same statement, in the encoding where an absent attribute is
+    // absent rather than a missing key.
+    let directory = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getMusicDirectory.view?apiKey={api_key}&v=1.16.1&c=fixtures&id={library}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(directory.status(), StatusCode::OK);
+    let directory = body_text(directory).await;
+    // The browsing child is the artist node minus musicBrainzId, so the sort
+    // name reaches it, carrying the tagged value.
+    assert!(
+        directory.contains(r#"sortName="Nocturnes, The""#),
+        "a getMusicDirectory child carries the artist's sortName: {directory}"
+    );
+    // ...while the references carry neither that field nor any other one
+    // belonging to the record. They live on the album and on its songs, so
+    // this reads the album document rather than the folder listing — where a
+    // library holding no album-less track has no song child at all.
+    let album_xml = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getAlbum.view?apiKey={api_key}&v=1.16.1&c=fixtures&id={}",
+                album["id"].as_str().expect("the album id")
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(album_xml.status(), StatusCode::OK);
+    let album_xml = body_text(album_xml).await;
+    for name in ["<artists ", "<albumArtists "] {
+        let mut references = 0;
+        for element in album_xml.split(name).skip(1) {
+            let element = element.split("/>").next().unwrap_or_default();
+            references += 1;
+            // The whitelist, rather than a list of fields to reject: a field
+            // added to the artist node has to fail here even if nobody thought
+            // to name it.
+            // Split on the quote rather than on whitespace: an attribute
+            // value holds spaces, and `name="The Nocturnes"` would otherwise
+            // read as two attributes.
+            let mut attributes: Vec<String> = element
+                .split('"')
+                .step_by(2)
+                .map(|key| key.trim().trim_end_matches('=').trim().to_owned())
+                .filter(|key| !key.is_empty())
+                .collect();
+            // Sorted before comparing, like the JSON side: which attributes
+            // are present is the contract, the order they are written in is
+            // not, and pinning it would fail a reordering that changes
+            // nothing observable.
+            attributes.sort_unstable();
+            assert_eq!(
+                attributes,
+                vec!["id".to_owned(), "name".to_owned()],
+                "{name} is a reference, not an ArtistID3: {element}"
+            );
+        }
+        assert!(
+            references > 0,
+            "the fixture must exercise {name}: {album_xml}"
+        );
+    }
 }

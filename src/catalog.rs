@@ -96,6 +96,11 @@ pub struct CatalogTrackInput {
     pub replay_gain_album_peak: Option<f64>,
     pub bpm: Option<i64>,
     pub sort_title: Option<String>,
+    /// Sort forms of the album title and of the two artist credits, as
+    /// tagged. Multi-valued credits carry them joined by the same separator.
+    pub sort_album: Option<String>,
+    pub sort_album_artist: Option<String>,
+    pub sort_artist: Option<String>,
     pub comment: Option<String>,
     /// Multi-valued, split like `artist` and `genre`.
     pub isrc: Option<String>,
@@ -381,6 +386,58 @@ impl Database {
     /// Albums and artists whose tracks carry no identifier are set back to
     /// `NULL` rather than left alone: this runs after every scan, so a tag
     /// removed from the files has to disappear from the catalogue too.
+    /// Re-derives `album.sort_name` and `artist.sort_name` from the tags the
+    /// library's available tracks still carry.
+    ///
+    /// Sibling of [`Self::consolidate_musicbrainz_ids`] and run beside it, for
+    /// the same reason and by the same rule: a value derived from tags has to
+    /// follow the tags, including when they go away. Writing the sort name
+    /// during the per-track upsert could not do that — the row is rewritten
+    /// once per track of every album the artist appears on, so a file carrying
+    /// no tag had to be prevented from erasing what a sibling supplied, and
+    /// that preservation outlived the tag itself.
+    ///
+    /// The majority wins, ties broken deterministically, so two scans of
+    /// unchanged files answer the same thing. An album takes the sort title
+    /// its tracks agree on; an artist takes the sort form its credits agree
+    /// on, from `track_artist` where the joined tag was already paired with
+    /// the joined credit. An album artist credited on none of the tracks
+    /// therefore has no sort form of its own — the catalogue holds no tag
+    /// that is about it alone.
+    pub async fn consolidate_sort_names(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(
+            "UPDATE album SET sort_name = ( \
+               SELECT t.sort_album FROM track t \
+               WHERE t.album_id = album.id AND t.is_available = 1 \
+                 AND t.sort_album IS NOT NULL \
+               GROUP BY t.sort_album \
+               ORDER BY COUNT(*) DESC, t.sort_album \
+               LIMIT 1) \
+             WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE artist SET sort_name = ( \
+               SELECT ta.sort_name FROM track_artist ta \
+               JOIN track t ON t.id = ta.track_id \
+               WHERE ta.artist_id = artist.id AND t.is_available = 1 \
+                 AND ta.sort_name IS NOT NULL \
+               GROUP BY ta.sort_name \
+               ORDER BY COUNT(*) DESC, ta.sort_name \
+               LIMIT 1) \
+             WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn consolidate_musicbrainz_ids(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool().begin().await?;
@@ -700,6 +757,30 @@ impl Database {
             let id = upsert_artist(tx, library_id, name, now).await?;
             album_artist_id.get_or_insert(id);
         }
+        // The sort form of each credit *on this track*, which is where a
+        // joined ARTISTSORT can still be paired with its joined ARTIST. A
+        // credit the track tag says nothing about falls back to the album
+        // artist tag when the two name the same artist — ALBUMARTISTSORT is
+        // the more commonly written of the two, and matching on the name
+        // rather than on position means this cannot file one artist under
+        // another's sort form.
+        let credit_sorts = {
+            let track_sorts = sort_names_for(&artist_names, input.sort_artist.as_deref());
+            let album_sorts =
+                sort_names_for(&album_artist_names, input.sort_album_artist.as_deref());
+            artist_names
+                .iter()
+                .zip(track_sorts)
+                .map(|(name, sort)| {
+                    sort.or_else(|| {
+                        album_artist_names
+                            .iter()
+                            .position(|candidate| candidate == name)
+                            .and_then(|at| album_sorts.get(at).cloned().flatten())
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         let album_id = upsert_album(
             tx,
             library_id,
@@ -722,11 +803,12 @@ impl Database {
                year, track_number, disc_number, duration_ms, bitrate, sample_rate, channels, bit_depth, \
                codec, musical_key, tag_rating, musicbrainz_recording_id, musicbrainz_release_id, \
                musicbrainz_artist_id, replay_gain_track_gain, replay_gain_track_peak, \
-               replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, comment, isrc, \
+               replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, sort_album, \
+               comment, isrc, \
                moods, explicit_status, \
                lyrics_hash, is_available, last_seen_scan_id, created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
                      1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
@@ -744,7 +826,8 @@ impl Database {
                replay_gain_track_peak=excluded.replay_gain_track_peak, \
                replay_gain_album_gain=excluded.replay_gain_album_gain, \
                replay_gain_album_peak=excluded.replay_gain_album_peak, \
-               bpm=excluded.bpm, sort_title=excluded.sort_title, comment=excluded.comment, \
+               bpm=excluded.bpm, sort_title=excluded.sort_title, sort_album=excluded.sort_album, \
+               comment=excluded.comment, \
                isrc=excluded.isrc, moods=excluded.moods, \
                explicit_status=excluded.explicit_status, \
                lyrics_hash=excluded.lyrics_hash, is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
@@ -763,7 +846,8 @@ impl Database {
         .bind(input.musicbrainz_artist_id.as_deref())
         .bind(input.replay_gain_track_gain).bind(input.replay_gain_track_peak)
         .bind(input.replay_gain_album_gain).bind(input.replay_gain_album_peak)
-        .bind(input.bpm).bind(input.sort_title.as_deref()).bind(input.comment.as_deref())
+        .bind(input.bpm).bind(input.sort_title.as_deref()).bind(input.sort_album.as_deref())
+        .bind(input.comment.as_deref())
         .bind(input.isrc.as_deref())
         .bind(input.moods.as_deref()).bind(input.explicit_status.as_deref())
         .bind(&input.lyrics_hash)
@@ -796,9 +880,9 @@ impl Database {
             .execute(&mut **tx)
             .await?;
         for (position, artist_id) in artist_ids.iter().enumerate() {
-            sqlx::query("INSERT INTO track_artist (track_id, artist_id, library_id, position) VALUES (?, ?, ?, ?)")
+            sqlx::query("INSERT INTO track_artist (track_id, artist_id, library_id, position, sort_name) VALUES (?, ?, ?, ?, ?)")
                 .bind(track_id.to_string()).bind(artist_id.to_string()).bind(library_id.to_string())
-                .bind(position as i64).execute(&mut **tx).await?;
+                .bind(position as i64).bind(credit_sorts.get(position).and_then(Option::as_deref)).execute(&mut **tx).await?;
         }
         sqlx::query("DELETE FROM track_genre WHERE track_id = ?")
             .bind(track_id.to_string())
@@ -1019,6 +1103,22 @@ async fn upsert_artist(
     parse_uuid(value)
 }
 
+/// Pairs a split credit with its split sort form.
+///
+/// `ARTISTSORT` carries the same separator as `ARTIST` when a credit is
+/// joined, so the two lists line up position by position — that is the
+/// convention taggers write. When they do not line up, the tag is describing
+/// something this cannot map, and guessing would file an artist under another
+/// artist's name: every credit then gets no sort form rather than a wrong one.
+fn sort_names_for(names: &[String], raw_sort: Option<&str>) -> Vec<Option<String>> {
+    let sorts = split_values(raw_sort);
+    if sorts.len() == names.len() {
+        sorts.into_iter().map(Some).collect()
+    } else {
+        vec![None; names.len()]
+    }
+}
+
 async fn upsert_genre(
     tx: &mut Transaction<'_, Sqlite>,
     library: Uuid,
@@ -1052,7 +1152,8 @@ async fn upsert_album(
     let id = Uuid::new_v4();
     let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
-        is_compilation=excluded.is_compilation, year=COALESCE(excluded.year, album.year), artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), updated_at=excluded.updated_at RETURNING id")
+        is_compilation=excluded.is_compilation, year=COALESCE(excluded.year, album.year), artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
+        updated_at=excluded.updated_at RETURNING id")
         .bind(id.to_string()).bind(library.to_string()).bind(title.trim()).bind(canonical).bind(identity)
         .bind(album_artist_id.map(|id| id.to_string())).bind(album_artist).bind(i64::from(input.is_compilation))
         .bind(input.year).bind(artwork).bind(now).bind(now).fetch_one(&mut **tx).await?;
