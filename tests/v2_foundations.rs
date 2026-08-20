@@ -9144,16 +9144,34 @@ async fn an_artist_reference_is_not_an_artist_record() {
     .await;
     let album = albums["subsonic-response"]["albumList2"]["album"][0].clone();
     assert_eq!(album["sortName"], serde_json::json!("Night Sessions, The"));
-    let reference = album["artists"][0]
-        .as_object()
-        .expect("an album lists its credited artists");
-    let mut keys: Vec<&str> = reference.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    assert_eq!(
-        keys,
-        vec!["id", "name"],
-        "an artists[] entry is a reference, not an ArtistID3: {reference:?}"
-    );
+    let reference_keys = |value: &serde_json::Value, what: &str| {
+        let entry = value
+            .as_object()
+            .unwrap_or_else(|| panic!("{what} is an object: {value}"))
+            .clone();
+        let mut keys: Vec<String> = entry.keys().cloned().collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["id".to_owned(), "name".to_owned()],
+            "{what} is a reference, not an ArtistID3: {entry:?}"
+        );
+    };
+    reference_keys(&album["artists"][0], "an album's artists[] entry");
+
+    // `albumArtists[]` is a reference too, and it is emitted on media items
+    // rather than on the album — the album's own credit is `artists[]`. So it
+    // is pinned on a song of the album.
+    let album_json = subsonic_json(
+        &router,
+        "getAlbum",
+        api_key,
+        &format!("&id={}", album["id"].as_str().expect("the album id")),
+    )
+    .await;
+    let song = album_json["subsonic-response"]["album"]["song"][0].clone();
+    reference_keys(&song["artists"][0], "a song's artists[] entry");
+    reference_keys(&song["albumArtists"][0], "a song's albumArtists[] entry");
 
     // XML: the same statement, in the encoding where an absent attribute is
     // absent rather than a missing key.
@@ -9194,21 +9212,32 @@ async fn an_artist_reference_is_not_an_artist_record() {
         .unwrap();
     assert_eq!(album_xml.status(), StatusCode::OK);
     let album_xml = body_text(album_xml).await;
-    let mut references = 0;
-    for element in album_xml.split("<artists ").skip(1) {
-        let element = element.split("/>").next().unwrap_or_default();
-        references += 1;
+    for name in ["<artists ", "<albumArtists "] {
+        let mut references = 0;
+        for element in album_xml.split(name).skip(1) {
+            let element = element.split("/>").next().unwrap_or_default();
+            references += 1;
+            // The whitelist, rather than a list of fields to reject: a field
+            // added to the artist node has to fail here even if nobody thought
+            // to name it.
+            // Split on the quote rather than on whitespace: an attribute
+            // value holds spaces, and `name="The Nocturnes"` would otherwise
+            // read as two attributes.
+            let attributes: Vec<String> = element
+                .split('"')
+                .step_by(2)
+                .map(|key| key.trim().trim_end_matches('=').trim().to_owned())
+                .filter(|key| !key.is_empty())
+                .collect();
+            assert_eq!(
+                attributes,
+                vec!["id".to_owned(), "name".to_owned()],
+                "{name} is a reference, not an ArtistID3: {element}"
+            );
+        }
         assert!(
-            !element.contains("sortName"),
-            "an artists[] reference must not grow a sortName: {element}"
-        );
-        assert!(
-            !element.contains("albumCount"),
-            "nor any other ArtistID3 field: {element}"
+            references > 0,
+            "the fixture must exercise {name}: {album_xml}"
         );
     }
-    assert!(
-        references > 0,
-        "the fixture must exercise a reference: {album_xml}"
-    );
 }
