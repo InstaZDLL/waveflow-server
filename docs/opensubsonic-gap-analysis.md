@@ -107,6 +107,19 @@ qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
 
 ## 3. Ce qui reste
 
+> **Addendum du 2026-08-20.** Ce rapport décrit `main` à `1eecc10`. La PR #123
+> a depuis fermé les **quatre** lignes de cette section : les portées traversent
+> la concession OAuth (`scopes_json` sur `oauth_authorization` et sur `session`,
+> deux migrations), `sortName` existe sur album et artiste et se redérive en fin
+> de scan, `getMusicDirectory` répond pour les pistes sans album, et le 400 de
+> `/api/v2/search` est annoté. `Access::Unrestricted` a disparu avec elles : le
+> portage des portées remplace la restriction en bloc décrite au §1.1, qui n'y
+> tenait que le temps de la migration. `getLicense` garde sa date en dur,
+> délibérément.
+>
+> La question de cadrage en fin de section — **quatre clients rejoués contre
+> cinq** — reste ouverte : c'est une décision, pas un correctif.
+
 Rien de structurel. La liste tient en quatre lignes, et deux d'entre elles sont
 des dettes nommées plutôt que des défauts.
 
