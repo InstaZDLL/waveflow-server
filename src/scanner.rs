@@ -290,6 +290,7 @@ impl ScanManager {
         // identifiers are a majority vote over the tracks that are still there,
         // so a file that vanished must stop voting first.
         self.db.consolidate_musicbrainz_ids(library.id).await?;
+        self.db.consolidate_sort_names(library.id).await?;
         self.db
             .finish_scan_job(scan_id, progress.unavailable)
             .await?;
@@ -771,6 +772,16 @@ mod tests {
         assert!(tag.insert_text(ItemKey::Isrc, "FRZ039800212".into()));
         assert!(tag.insert_text(ItemKey::Mood, "Melancholic; Warm".into()));
         assert!(tag.insert_text(ItemKey::ParentalAdvisory, "2".into()));
+        // The three sort keys, which the catalogue derives album and artist
+        // sort names from. A joined credit carries a joined sort tag, and the
+        // pairing happens where the names are split — what this pins is that
+        // all three arrive at all, under the tag type that spells them.
+        assert!(tag.insert_text(ItemKey::AlbumTitleSortOrder, "Night Sessions, The".into()));
+        assert!(tag.insert_text(ItemKey::AlbumArtistSortOrder, "Nocturnes, The".into()));
+        assert!(tag.insert_text(
+            ItemKey::TrackArtistSortOrder,
+            "Nocturnes, The; Reed, Ada".into()
+        ));
         let extended = extended_tags(Some(&tag));
         assert_eq!(extended.replay_gain_track_gain, Some(-7.32));
         assert_eq!(extended.replay_gain_album_gain, Some(1.5));
@@ -787,6 +798,15 @@ mod tests {
         // The per-format spelling is normalised to the two words the
         // specification defines; a client compares against nothing else.
         assert_eq!(extended.explicit_status.as_deref(), Some("clean"));
+        assert_eq!(extended.sort_album.as_deref(), Some("Night Sessions, The"));
+        assert_eq!(
+            extended.sort_album_artist.as_deref(),
+            Some("Nocturnes, The")
+        );
+        assert_eq!(
+            extended.sort_artist.as_deref(),
+            Some("Nocturnes, The; Reed, Ada")
+        );
 
         // Unparseable measurements are dropped rather than stored: a NaN gain
         // would reach a player as a volume adjustment.

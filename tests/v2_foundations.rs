@@ -8883,6 +8883,10 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         .apply_catalog_track(library, scan, &orphan, None, false)
         .await
         .unwrap();
+    // Sort names are derived at the end of a scan, like the identifiers: the
+    // scanner runs both passes here, so a test driving the catalogue directly
+    // runs them too.
+    state.db.consolidate_sort_names(library).await.unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
     let router = waveflow_server::app(&config, state.clone());
 
@@ -8987,5 +8991,79 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         missing_q.status(),
         StatusCode::BAD_REQUEST,
         "the OpenAPI document now says 400, so the route must mean it"
+    );
+
+    // --- a sort tag removed from the files leaves the catalogue ---------
+    // Writing the value during the per-track upsert could not do this: the
+    // artist row is rewritten once per track, so a file with no tag had to be
+    // stopped from erasing what a sibling supplied — and that preservation
+    // outlived the tag. Deriving at the end of the scan is what makes removal
+    // mean removal, exactly as it already does for the MusicBrainz ids.
+    let rescan = state
+        .db
+        .create_scan_job(library, Some(admin), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(rescan, 1).await.unwrap();
+    let mut untagged_now = tagged.clone();
+    untagged_now.sort_album = None;
+    untagged_now.sort_album_artist = None;
+    untagged_now.sort_artist = None;
+    // The same file, retagged: re-applied onto its own row rather than added
+    // beside it, which is what a rescan of an edited file does.
+    let existing = state
+        .services
+        .catalog_snapshot(admin, &[])
+        .await
+        .unwrap()
+        .songs
+        .into_iter()
+        .find(|song| song.title == "Opening")
+        .expect("the tagged track is in the catalogue")
+        .id;
+    state
+        .db
+        .apply_catalog_track(library, rescan, &untagged_now, Some(existing), false)
+        .await
+        .unwrap();
+    state.db.consolidate_sort_names(library).await.unwrap();
+    state.db.finish_scan_job(rescan, 0).await.unwrap();
+
+    let after = subsonic_json(
+        &router,
+        "getAlbumList2",
+        api_key,
+        "&type=alphabeticalByName",
+    )
+    .await;
+    let after_album = after["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("the album list")
+        .iter()
+        .find(|album| album["name"] == "The Night Sessions")
+        .expect("the album is still listed")
+        .clone();
+    assert_eq!(
+        after_album["sortName"].as_str(),
+        Some(""),
+        "a sort tag removed from the files must leave the catalogue with it"
+    );
+
+    let after_artists = subsonic_json(&router, "getArtists", api_key, "").await;
+    let mut after_seen = std::collections::BTreeMap::new();
+    for index in after_artists["subsonic-response"]["artists"]["index"]
+        .as_array()
+        .expect("the artist index")
+    {
+        for artist in index["artist"].as_array().expect("an index holds artists") {
+            after_seen.insert(
+                artist["name"].as_str().unwrap().to_owned(),
+                artist["sortName"].as_str().unwrap().to_owned(),
+            );
+        }
+    }
+    assert_eq!(
+        after_seen.get("The Nocturnes").map(String::as_str),
+        Some("")
     );
 }
