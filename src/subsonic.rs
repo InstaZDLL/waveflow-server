@@ -34,6 +34,14 @@ const XMLNS: &str = "http://subsonic.org/restapi";
 const MAX_FORM_BYTES: usize = 64 * 1024;
 const AUTH_ATTEMPTS_PER_MINUTE: usize = 20;
 const MAX_AUTH_RATE_KEYS: usize = 10_000;
+/// How many album-less tracks a folder listing will carry.
+///
+/// `getMusicDirectory` takes no offset, so a folder cannot be paged and the
+/// only bound available is a ceiling. It sits far above `MAX_BROWSE_LIMIT`
+/// because reaching it costs a client the tracks beyond it — the browse limit
+/// governs a listing the client can ask more of, this one governs a listing it
+/// cannot. A folder that reaches it is logged.
+const MAX_DIRECTORY_SONGS: i64 = 2_000;
 
 static AUTH_WINDOWS: OnceLock<StdMutex<HashMap<String, VecDeque<Instant>>>> = OnceLock::new();
 
@@ -858,9 +866,16 @@ async fn music_directory(
         // advertises a parent that does not contain it.
         let orphans = state
             .services
-            .songs_without_album(principal.id, id)
+            .songs_without_album(principal.id, id, MAX_DIRECTORY_SONGS)
             .await
             .map_err(service_protocol)?;
+        if orphans.len() as i64 == MAX_DIRECTORY_SONGS {
+            tracing::warn!(
+                library_id = %id,
+                limit = MAX_DIRECTORY_SONGS,
+                "album-less tracks reached the folder ceiling; the listing may be short"
+            );
+        }
         directory = directory
             .attr("name", folder.name.clone())
             .children(

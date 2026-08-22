@@ -8840,7 +8840,7 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 3).await.unwrap();
+    state.db.start_scan_job(scan, 4).await.unwrap();
 
     // A tagged album, whose sort forms differ from the display forms — the
     // only case where the field carries information.
@@ -8881,6 +8881,17 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
     state
         .db
         .apply_catalog_track(library, scan, &orphan, None, false)
+        .await
+        .unwrap();
+    // A second one, so the folder's ceiling has something to cut.
+    let mut second_orphan = catalog_input(3, "Lone Voice");
+    second_orphan.title = "Also Alone".into();
+    second_orphan.album = None;
+    second_orphan.album_artist = None;
+    second_orphan.is_compilation = false;
+    state
+        .db
+        .apply_catalog_track(library, scan, &second_orphan, None, false)
         .await
         .unwrap();
     // Sort names are derived at the end of a scan, like the identifiers: the
@@ -8974,6 +8985,57 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         !children.iter().any(|child| child["title"] == "Opening"),
         "only album-less tracks belong at the folder level"
     );
+    // Both album-less tracks are there: the ceiling the facade passes is a
+    // bound on the answer, not a page the client has to ask again for.
+    assert!(
+        children.iter().any(|child| child["title"] == "Also Alone"),
+        "every album-less track under the ceiling is listed: {children:?}"
+    );
+
+    // --- the folder listing is bounded ----------------------------------
+    // `getMusicDirectory` takes no offset, so the query has to stop on its
+    // own or a library of loose files answers with all of them at once.
+    let capped = state
+        .services
+        .songs_without_album(admin, library, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        capped
+            .iter()
+            .map(|song| song.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Also Alone"],
+        "the ceiling cuts the listing in its own order, not at random"
+    );
+    let whole = state
+        .services
+        .songs_without_album(admin, library, 2_000)
+        .await
+        .unwrap();
+    assert_eq!(whole.len(), 2, "a ceiling above the library cuts nothing");
+    assert!(
+        matches!(
+            state.services.songs_without_album(admin, library, 0).await,
+            Err(ServiceError::Invalid)
+        ),
+        "a ceiling of nothing is a caller error, not an empty folder"
+    );
+
+    // --- the same artist projection, wherever it is read ----------------
+    // `getArtists`, the folder listing and the search each used to spell the
+    // artist columns out for themselves, and one copy fell behind the day the
+    // list gained `sortName`. They read one projection now, so the value that
+    // reaches the index has to reach the search too.
+    let searched = subsonic_json(&router, "search3", api_key, "&query=Nocturnes").await;
+    let searched_artist = searched["subsonic-response"]["searchResult3"]["artist"]
+        .as_array()
+        .expect("the search answers with artists")
+        .iter()
+        .find(|artist| artist["name"] == "The Nocturnes")
+        .expect("the searched artist is listed")
+        .clone();
+    assert_eq!(searched_artist["sortName"], "Nocturnes, The");
 
     // --- the native search's required parameter -------------------------
     let token = login_token(&router, "sort-admin", "correct horse battery staple").await;
