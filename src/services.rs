@@ -111,16 +111,35 @@ macro_rules! album_scope {
     };
 }
 
+/// The artist projection, in the two shapes the catalogue reads it.
+///
+/// `artist_select!()` stops at the columns `ArtistItem` carries;
+/// `artist_select!(album_count)` adds the count `ArtistSummary` needs, so a
+/// browse that never renders it does not pay a correlated subquery per artist.
+/// Both expand from the same column list on purpose: the browses that wanted
+/// the short shape used to spell it out by hand, and one of those copies fell
+/// a column behind the day this list gained one — the browse reading it then
+/// failed on a column the query never selected, which nothing reading the
+/// macro could have predicted.
 macro_rules! artist_select {
     () => {
-        "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                ar.sort_name, us.starred_at, \
-                ur.rating AS user_rating, \
-                (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count \
-         FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
-         LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
-         LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
-         WHERE m.user_id=?"
+        artist_select!(@columns "")
+    };
+    (album_count) => {
+        artist_select!(
+            @columns ", (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count"
+        )
+    };
+    (@columns $extra:expr) => {
+        concat!(
+            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
+                    ar.sort_name, us.starred_at, ur.rating AS user_rating",
+            $extra,
+            " FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
+              LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
+              LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
+              WHERE m.user_id=?"
+        )
     };
 }
 
@@ -799,15 +818,11 @@ impl DomainServices {
     ) -> Result<CatalogOverview, ServiceError> {
         let folder_filter = folder_filter(folder_ids);
         let folders = self.music_folders(user_id, folder_ids).await?;
-        let artists = sqlx::query(
-            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                    ar.sort_name, us.starred_at, ur.rating AS user_rating FROM artist ar \
-             JOIN library_member m ON m.library_id=ar.library_id \
-             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
-             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
-             WHERE m.user_id=? AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
-             ORDER BY ar.name COLLATE NOCASE",
-        )
+        let artists = sqlx::query(concat!(
+            artist_select!(),
+            " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+              ORDER BY ar.name COLLATE NOCASE"
+        ))
         .bind(user_id.to_string())
         .bind(folder_filter.as_deref())
         .bind(folder_filter.as_deref())
@@ -933,23 +948,19 @@ impl DomainServices {
         .collect::<Result<Vec<_>, _>>()?;
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
 
-        let artists = sqlx::query(
-            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                    ar.sort_name, us.starred_at, ur.rating AS user_rating FROM artist ar \
-             JOIN library_member m ON m.library_id=ar.library_id \
-             LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
-             LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='artist' AND ur.entity_id=ar.id \
-             WHERE m.user_id=? AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
-               AND ar.id IN ( \
-                 SELECT al.album_artist_id FROM album al JOIN track t ON t.album_id=al.id \
-                 WHERE al.album_artist_id IS NOT NULL \
-                   AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
-                 UNION \
-                 SELECT ta.artist_id FROM track_artist ta \
-                 WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
-               ) \
-             ORDER BY ar.name COLLATE NOCASE",
-        )
+        let artists = sqlx::query(concat!(
+            artist_select!(),
+            " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+                AND ar.id IN ( \
+                  SELECT al.album_artist_id FROM album al JOIN track t ON t.album_id=al.id \
+                  WHERE al.album_artist_id IS NOT NULL \
+                    AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+                  UNION \
+                  SELECT ta.artist_id FROM track_artist ta \
+                  WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+                ) \
+              ORDER BY ar.name COLLATE NOCASE"
+        ))
         .bind(user_id.to_string())
         .bind(folder_filter)
         .bind(folder_filter)
@@ -1161,20 +1172,30 @@ impl DomainServices {
     /// by no amount of browsing. Answering here is what makes the `parent`
     /// it already advertised true.
     ///
-    /// Scoped to one library rather than paged: it is the tail of a folder
-    /// listing that already answers with every artist of that library.
+    /// `getMusicDirectory` has no offset to page a folder with, so the caller
+    /// asks for a ceiling instead of a page: everything up to `limit`, in one
+    /// answer. A library that holds more album-less tracks than that would
+    /// build an unbounded response out of a request that cannot say how much
+    /// it wants, so the ceiling is what keeps the answer finite — and the
+    /// caller says so in the log rather than truncating in silence. The artist
+    /// list this tail follows is still bounded only by the library.
     pub async fn songs_without_album(
         &self,
         user_id: Uuid,
         library_id: Uuid,
+        limit: i64,
     ) -> Result<Vec<SongItem>, ServiceError> {
+        if limit <= 0 {
+            return Err(ServiceError::Invalid);
+        }
         let mut songs = sqlx::query(concat!(
             song_select!(),
             " AND t.library_id=? AND t.album_id IS NULL \
-              ORDER BY t.title COLLATE NOCASE, t.id"
+              ORDER BY t.title COLLATE NOCASE, t.id LIMIT ?"
         ))
         .bind(user_id.to_string())
         .bind(library_id.to_string())
+        .bind(limit)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -1259,7 +1280,7 @@ impl DomainServices {
     ) -> Result<StarredCatalog, ServiceError> {
         let folders = folder_filter(library_ids);
         let artists = sqlx::query(concat!(
-            artist_select!(),
+            artist_select!(album_count),
             " AND us.starred_at IS NOT NULL \
               AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
               ORDER BY us.starred_at DESC, ar.id"
@@ -1352,7 +1373,7 @@ impl DomainServices {
     ) -> Result<Vec<ArtistSummary>, ServiceError> {
         let library = library_id.map(|id| id.to_string());
         Ok(sqlx::query(concat!(
-            artist_select!(),
+            artist_select!(album_count),
             " AND (? IS NULL OR ar.library_id=?) \
               ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
@@ -1374,7 +1395,7 @@ impl DomainServices {
         user_id: Uuid,
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
-        let summary = sqlx::query(concat!(artist_select!(), " AND ar.id=?"))
+        let summary = sqlx::query(concat!(artist_select!(album_count), " AND ar.id=?"))
             .bind(user_id.to_string())
             .bind(artist_id.to_string())
             .fetch_optional(self.db.pool())
@@ -1548,11 +1569,8 @@ impl DomainServices {
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
-        .map(artist_summary_from_row)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|summary| summary.artist)
-        .collect();
+        .map(artist_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
         Ok(SearchResult {
             artists,
             albums,
