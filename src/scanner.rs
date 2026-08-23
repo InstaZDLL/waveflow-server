@@ -299,7 +299,7 @@ impl ScanManager {
         // After availability is settled, not before: the album and artist
         // identifiers are a majority vote over the tracks that are still there,
         // so a file that vanished must stop voting first.
-        self.db.consolidate_musicbrainz_ids(library.id).await?;
+        self.db.consolidate_catalog_derivations(library.id).await?;
         self.db.consolidate_sort_names(library.id).await?;
         self.db
             .finish_scan_job(scan_id, progress.unavailable)

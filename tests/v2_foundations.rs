@@ -1793,7 +1793,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .unwrap();
     state
         .db
-        .consolidate_musicbrainz_ids(foreign_library)
+        .consolidate_catalog_derivations(foreign_library)
         .await
         .unwrap();
     state.db.finish_scan_job(foreign_scan, 0).await.unwrap();
@@ -4357,7 +4357,11 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
                     .await
                     .unwrap();
             }
-            state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+            state
+                .db
+                .consolidate_catalog_derivations(library)
+                .await
+                .unwrap();
             state.db.finish_scan_job(scan, 0).await.unwrap();
             library
         }
@@ -4922,7 +4926,11 @@ async fn an_album_hangs_off_every_artist_it_is_credited_to() {
             .await
             .unwrap();
     }
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
 
     // No entity is named after a joined string.
@@ -5162,7 +5170,11 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
         .values()
         .all(|album| album.musicbrainz_id.is_none()));
 
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
 
     // The majority vote no longer has anything to resolve on an album, and
     // that is the point: under the default identity spec a release identifier
@@ -5292,7 +5304,11 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
         .execute(state.db.pool())
         .await
         .unwrap();
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     assert!(albums_by_title()
         .await
         .values()
@@ -5380,7 +5396,11 @@ async fn genre_matching_is_canonical_on_every_surface() {
     // The album's own credits are derived at the end of a scan, like the
     // identifiers and the sort names: a test driving the catalogue directly
     // runs the same pass the scanner runs.
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
 
     let router = waveflow_server::app(&config, state.clone());
@@ -5666,7 +5686,11 @@ async fn browse_methods_read_only_what_they_render() {
                     .await
                     .unwrap();
             }
-            state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+            state
+                .db
+                .consolidate_catalog_derivations(library)
+                .await
+                .unwrap();
             state.db.finish_scan_job(scan, 0).await.unwrap();
             library
         }
@@ -6396,7 +6420,7 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     }
     state
         .db
-        .consolidate_musicbrainz_ids(library_id)
+        .consolidate_catalog_derivations(library_id)
         .await
         .unwrap();
     state.db.finish_scan_job(scan_id, 0).await.unwrap();
@@ -8814,7 +8838,11 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
     // scanner runs both passes here, so a test driving the catalogue directly
     // runs them too.
     state.db.consolidate_sort_names(library).await.unwrap();
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
     let router = waveflow_server::app(&config, state.clone());
 
@@ -9103,12 +9131,21 @@ async fn an_artist_reference_is_not_an_artist_record() {
     input.sort_album = Some("Night Sessions, The".into());
     input.sort_album_artist = Some("Nocturnes, The".into());
     input.sort_artist = Some("Nocturnes, The".into());
+    // A contributor, so the whitelist below actually has one to check.
+    input.roles = vec![(
+        waveflow_server::tags::Role::Producer,
+        vec!["Rita Sound".into()],
+    )];
     state
         .db
         .apply_catalog_track(library, scan, &input, None, false)
         .await
         .unwrap();
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.consolidate_sort_names(library).await.unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
     let router = waveflow_server::app(&config, state.clone());
@@ -9154,7 +9191,10 @@ async fn an_artist_reference_is_not_an_artist_record() {
     reference_keys(&song["albumArtists"][0], "a song's albumArtists[] entry");
     // A contributor's artist is a reference on the same terms, and the
     // contributor itself carries only what names the credit.
-    if let Some(credit) = song["contributors"].as_array().and_then(|all| all.first()) {
+    // Unconditional: the fixture credits a producer, so a contributor that
+    // stopped being emitted would fail here rather than skip the check.
+    {
+        let credit = song["contributors"][0].clone();
         reference_keys(&credit["artist"], "a contributor's artist");
         let mut keys: Vec<String> = credit
             .as_object()
@@ -9668,7 +9708,11 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
         .apply_catalog_track(library, scan, &input, None, false)
         .await
         .unwrap();
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
 
     // Every credit reached the catalogue...
@@ -9836,7 +9880,11 @@ async fn credits_reach_the_wire_in_both_encodings() {
         .apply_catalog_track(library, scan, &bare, None, false)
         .await
         .unwrap();
-    state.db.consolidate_musicbrainz_ids(library).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
     state.db.finish_scan_job(scan, 0).await.unwrap();
     let router = waveflow_server::app(&config, state.clone());
 

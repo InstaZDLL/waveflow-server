@@ -35,6 +35,8 @@ pub struct Config {
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
+    /// `WAVEFLOW_PID_ALBUM`, `WAVEFLOW_PID_TRACK`, `WAVEFLOW_PID_ARTIST`.
+    ///
     /// Changing one of these re-identifies every album, artist or track it
     /// governs, so the active values are persisted and compared at boot: an
     /// instance configured differently from the run that built its catalogue
@@ -140,13 +142,17 @@ impl Config {
             album: parse_pid_spec(
                 "WAVEFLOW_PID_ALBUM",
                 DEFAULT_PID_ALBUM,
-                PidSpecKind::AlbumsOwnSpec,
+                PidSpecKind::MayNotReferenceAlbumId,
             )?,
-            track: parse_pid_spec("WAVEFLOW_PID_TRACK", DEFAULT_PID_TRACK, PidSpecKind::Other)?,
+            track: parse_pid_spec(
+                "WAVEFLOW_PID_TRACK",
+                DEFAULT_PID_TRACK,
+                PidSpecKind::MayReferenceAlbumId,
+            )?,
             artist: parse_pid_spec(
                 "WAVEFLOW_PID_ARTIST",
                 DEFAULT_PID_ARTIST,
-                PidSpecKind::AlbumsOwnSpec,
+                PidSpecKind::MayNotReferenceAlbumId,
             )?,
         };
 
@@ -272,8 +278,14 @@ const DEFAULT_PID_ARTIST: &str = "albumartistid";
 /// The album's own spec is not, and neither is the artist's: both would be
 /// asking the album for an answer that depends on themselves.
 enum PidSpecKind {
-    AlbumsOwnSpec,
-    Other,
+    MayNotReferenceAlbumId,
+    MayReferenceAlbumId,
+}
+
+impl PidSpecKind {
+    fn allows_album_id(&self) -> bool {
+        matches!(self, Self::MayReferenceAlbumId)
+    }
 }
 
 fn parse_pid_spec(
@@ -282,7 +294,7 @@ fn parse_pid_spec(
     kind: PidSpecKind,
 ) -> anyhow::Result<crate::pid::PidSpec> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_owned());
-    crate::pid::PidSpec::parse(&raw, matches!(kind, PidSpecKind::Other))
+    crate::pid::PidSpec::parse(&raw, kind.allows_album_id())
         .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
 }
 

@@ -323,9 +323,14 @@ impl Database {
         &self,
         specs: &crate::pid::PidSpecs,
     ) -> Result<u64, sqlx::Error> {
+        // `pid.track` is recorded by a completed scan but deliberately not
+        // compared. A track's identity is its path, then its content hash with
+        // the relocation candidates eliminated — six tables cascade off it, so
+        // moving track ids would delete playlists and play history rather than
+        // orphan them. Nothing is derived from the track spec today, so a
+        // change to it re-identifies nothing and must not cost a full rescan.
         let active = [
             ("pid.album", specs.album.source()),
-            ("pid.track", specs.track.source()),
             ("pid.artist", specs.artist.source()),
         ];
         let mut changed = Vec::new();
@@ -527,7 +532,7 @@ impl Database {
     /// Re-derives `album.sort_name` and `artist.sort_name` from the tags the
     /// library's available tracks still carry.
     ///
-    /// Sibling of [`Self::consolidate_musicbrainz_ids`] and run beside it, for
+    /// Sibling of [`Self::consolidate_catalog_derivations`] and run beside it, for
     /// the same reason and by the same rule: a value derived from tags has to
     /// follow the tags, including when they go away. Writing the sort name
     /// during the per-track upsert could not do that — the row is rewritten
@@ -576,7 +581,22 @@ impl Database {
         Ok(())
     }
 
-    pub async fn consolidate_musicbrainz_ids(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
+    /// Everything the catalogue derives from its own contents, after a scan.
+    ///
+    /// It was named for the MusicBrainz identifiers alone, which stopped being
+    /// true: it also rebuilds each album's credits from its tracks', recounts
+    /// what every artist has to show for each capacity, and drops the artist
+    /// rows nothing credits any more. All of it is a majority or a union over
+    /// the tracks that are still available, so all of it has to run after
+    /// `mark_unseen_unavailable` — a file that vanished must stop voting first.
+    ///
+    /// A test that builds a catalogue by applying tracks directly runs this
+    /// too, for the same reason the scanner does: without it the album has no
+    /// credits and no artist has a count.
+    pub async fn consolidate_catalog_derivations(
+        &self,
+        library_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool().begin().await?;
         sqlx::query(
@@ -623,7 +643,7 @@ impl Database {
              SELECT t.album_id, tp.artist_id, t.library_id, tp.role, tp.sub_role, \
                     ROW_NUMBER() OVER ( \
                       PARTITION BY t.album_id, tp.role \
-                      ORDER BY MIN(tp.position), MIN(tp.sub_role), tp.artist_id) - 1 \
+                      ORDER BY MIN(tp.position), tp.sub_role, tp.artist_id) - 1 \
                FROM track t \
                JOIN track_participant tp ON tp.track_id = t.id \
               WHERE t.library_id = ? AND t.is_available = 1 AND t.album_id IS NOT NULL \

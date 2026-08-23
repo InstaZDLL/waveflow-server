@@ -886,22 +886,21 @@ async fn music_directory(
                     }),
             )
             .children(orphans.iter().map(|song| song_node(song).renamed("child")));
-    } else if let Some(artist) = overview.artists.iter().find(|item| item.artist.id == id) {
+    } else if let Ok(credited) = state.services.artist(principal.id, id).await {
         // The albums this artist is credited to, by the same rule `getArtist`
-        // uses. Filtering on the album's single artist column here and on the
-        // participants there would answer two different lists for an album
-        // with two album artists, and only real client traffic would find it.
-        let credited = state
-            .services
-            .artist(principal.id, id)
-            .await
-            .map_err(service_protocol)?;
-        directory = directory.attr("name", artist.artist.name.clone()).children(
-            credited
-                .albums
-                .iter()
-                .map(|album| directory_child(album_node(album))),
-        );
+        // uses — and resolved the same way, rather than from the overview.
+        // The overview lists only artists an album is credited to, so looking
+        // the identifier up there would answer 404 for a composer that
+        // `getArtist` answers for. Tenancy is unchanged: the service blurs a
+        // foreign identifier into the same not-found this arm falls through to.
+        directory = directory
+            .attr("name", credited.artist.name.clone())
+            .children(
+                credited
+                    .albums
+                    .iter()
+                    .map(|album| directory_child(album_node(album))),
+            );
     } else if overview.albums.iter().any(|item| item.id == id) {
         // Only this level needs tracks, and only this album's.
         let detail = state
@@ -1693,7 +1692,6 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
         // with its default rather than omitted: absent would go on saying the
         // server cannot answer, which stopped being true.
         .attr("sortName", artist.sort_name.clone().unwrap_or_default())
-        .attr("sortName", artist.sort_name.clone().unwrap_or_default())
         // The capacities this artist is credited in. Ordered by name inside
         // the projection, where the reference emits them in map-iteration
         // order and answers differently on every request. Its two synthetic
@@ -1987,7 +1985,7 @@ fn error_node(code: i64, message: &'static str) -> Node {
 fn render_protocol(node: Node, json: bool) -> Response {
     if json {
         let mut root = Map::new();
-        root.insert(node.name.clone(), node_json(&node));
+        root.insert(node.name.clone(), node_json(&node, ""));
         (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -2004,13 +2002,18 @@ fn render_protocol(node: Node, json: bool) -> Response {
     }
 }
 
-fn node_json(node: &Node) -> Value {
+fn node_json(node: &Node, parent: &str) -> Value {
     // An array-typed element is its children, not an object wrapping them —
     // whether it holds none or several. Applying this only when empty would
     // hand a strictly typed client `[]` on an empty catalogue and an object on
     // a populated one, which is worse than being wrong consistently.
     if json_array_node(&node.name) {
-        return Value::Array(node.children.iter().map(node_json).collect());
+        return Value::Array(
+            node.children
+                .iter()
+                .map(|child| node_json(child, &node.name))
+                .collect(),
+        );
     }
     if node.attrs.is_empty() && node.children.is_empty() {
         if let Some(text) = &node.text {
@@ -2029,13 +2032,18 @@ fn node_json(node: &Node) -> Value {
     }
     for (name, children) in grouped {
         let value = if children.len() == 1 && !json_array_field(&node.name, name) {
-            node_json(children[0])
+            node_json(children[0], &node.name)
         } else {
-            Value::Array(children.into_iter().map(node_json).collect())
+            Value::Array(
+                children
+                    .into_iter()
+                    .map(|child| node_json(child, &node.name))
+                    .collect(),
+            )
         };
         map.insert(name.to_owned(), value);
     }
-    for name in json_required_array_fields(&node.name) {
+    for name in json_required_array_fields(parent, &node.name) {
         map.entry((*name).to_owned())
             .or_insert_with(|| Value::Array(Vec::new()));
     }
@@ -2052,8 +2060,16 @@ fn json_array_node(name: &str) -> bool {
     matches!(name, "openSubsonicExtensions")
 }
 
-fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
-    match parent {
+fn json_required_array_fields(parent: &str, name: &str) -> &'static [&'static str] {
+    // A contributor's artist is a reference — an identifier and a display
+    // name — and shares its element name with the record. Without the parent
+    // to tell them apart, every array the record carries would be injected
+    // into the reference, which is exactly what
+    // `an_artist_reference_is_not_an_artist_record` forbids.
+    if parent == "contributors" && name == "artist" {
+        return &[];
+    }
+    match name {
         "lyricsList" => &["structuredLyrics"],
         "structuredLyrics" => &["line"],
         // Emitted as `[]` rather than omitted when a track has no credited
@@ -2143,7 +2159,10 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
             | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
             | ("song" | "entry" | "child", "contributors")
-            | ("artist", "roles")
+            // An artist rendered as a browsing child keeps the record's shape,
+            // so its roles stay an array there too — otherwise the field
+            // collapses into a bare object the moment a directory carries it.
+            | ("artist" | "child", "roles")
     )
 }
 
