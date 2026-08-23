@@ -33,6 +33,14 @@ pub struct Config {
     pub transcode_global_limit: usize,
     pub transcode_per_user_limit: usize,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
+    /// How the catalogue decides which row a scanned file belongs to.
+    ///
+    /// Changing one of these re-identifies every album, artist or track it
+    /// governs, so the active values are persisted and compared at boot: an
+    /// instance configured differently from the run that built its catalogue
+    /// schedules a full rescan rather than serving a catalogue keyed under a
+    /// rule it no longer follows.
+    pub pid: crate::pid::PidSpecs,
 }
 
 impl std::fmt::Debug for Config {
@@ -59,6 +67,7 @@ impl std::fmt::Debug for Config {
             .field("transcode_global_limit", &self.transcode_global_limit)
             .field("transcode_per_user_limit", &self.transcode_per_user_limit)
             .field("allowed_origins", &self.allowed_origins)
+            .field("pid", &self.pid)
             .finish()
     }
 }
@@ -124,6 +133,23 @@ impl Config {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        // Parsed here rather than at first use: a spec that cannot be parsed —
+        // a recursive `albumid` above all — would otherwise re-identify the
+        // whole catalogue silently at the next scan. Refusing to boot says so.
+        let pid = crate::pid::PidSpecs {
+            album: parse_pid_spec(
+                "WAVEFLOW_PID_ALBUM",
+                DEFAULT_PID_ALBUM,
+                PidSpecKind::AlbumsOwnSpec,
+            )?,
+            track: parse_pid_spec("WAVEFLOW_PID_TRACK", DEFAULT_PID_TRACK, PidSpecKind::Other)?,
+            artist: parse_pid_spec(
+                "WAVEFLOW_PID_ARTIST",
+                DEFAULT_PID_ARTIST,
+                PidSpecKind::AlbumsOwnSpec,
+            )?,
+        };
+
         if refresh_token_ttl_secs <= access_token_ttl_secs {
             anyhow::bail!(
                 "WAVEFLOW_REFRESH_TOKEN_TTL_SECS must be greater than WAVEFLOW_ACCESS_TOKEN_TTL_SECS"
@@ -154,6 +180,7 @@ impl Config {
             transcode_global_limit,
             transcode_per_user_limit,
             allowed_origins,
+            pid,
         })
     }
 
@@ -181,6 +208,9 @@ impl Config {
             transcode_global_limit: 2,
             transcode_per_user_limit: 1,
             allowed_origins: Vec::new(),
+            // The real defaults, so the whole test suite exercises the specs
+            // production runs under rather than a simplified stand-in.
+            pid: default_pid_specs(),
         }
     }
 }
@@ -226,6 +256,42 @@ where
         anyhow::bail!("invalid {name}: must be greater than zero");
     }
     Ok(value)
+}
+
+/// The identity rules an instance runs under unless it says otherwise.
+///
+/// Taken verbatim from Navidrome, which is the reference these follow: a
+/// release identifier when the files carry one, otherwise the album artist,
+/// title, version and date together.
+const DEFAULT_PID_ALBUM: &str = "musicbrainz_albumid|albumartistid,album,albumversion,releasedate";
+const DEFAULT_PID_TRACK: &str = "musicbrainz_trackid|albumid,discnumber,tracknumber,title";
+const DEFAULT_PID_ARTIST: &str = "albumartistid";
+
+/// Whether a spec is allowed to name `albumid`.
+///
+/// The album's own spec is not, and neither is the artist's: both would be
+/// asking the album for an answer that depends on themselves.
+enum PidSpecKind {
+    AlbumsOwnSpec,
+    Other,
+}
+
+fn parse_pid_spec(
+    name: &str,
+    default: &str,
+    kind: PidSpecKind,
+) -> anyhow::Result<crate::pid::PidSpec> {
+    let raw = std::env::var(name).unwrap_or_else(|_| default.to_owned());
+    crate::pid::PidSpec::parse(&raw, matches!(kind, PidSpecKind::Other))
+        .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
+}
+
+fn default_pid_specs() -> crate::pid::PidSpecs {
+    crate::pid::PidSpecs {
+        album: crate::pid::PidSpec::parse(DEFAULT_PID_ALBUM, false).expect("album spec default"),
+        track: crate::pid::PidSpec::parse(DEFAULT_PID_TRACK, true).expect("track spec default"),
+        artist: crate::pid::PidSpec::parse(DEFAULT_PID_ARTIST, false).expect("artist spec default"),
+    }
 }
 
 #[cfg(test)]

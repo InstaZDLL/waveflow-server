@@ -21,6 +21,13 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations-v2");
 pub struct Database {
     pool: SqlitePool,
     writer: Arc<Mutex<()>>,
+    /// The rules this instance derives catalogue identifiers under.
+    ///
+    /// They live on the writer rather than on the scanner because identity is
+    /// the writer's business: the test suite applies catalogue rows directly,
+    /// and putting the specs anywhere else would have those tests exercise a
+    /// different identity path than production.
+    pid: crate::pid::PidSpecs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -278,6 +285,7 @@ impl Database {
         Ok(Self {
             pool,
             writer: Arc::new(Mutex::new(())),
+            pid: config.pid.clone(),
         })
     }
 
@@ -436,6 +444,11 @@ impl Database {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// The identity rules the catalogue is written under.
+    pub fn pid(&self) -> &crate::pid::PidSpecs {
+        &self.pid
     }
 
     pub(crate) async fn writer_guard(&self) -> OwnedMutexGuard<()> {

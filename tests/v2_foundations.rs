@@ -9516,3 +9516,85 @@ async fn server_properties_round_trip_and_overwrite() {
         Some("musicbrainz_albumid")
     );
 }
+
+/// A catalogue keyed under a rule the server no longer follows.
+///
+/// Nothing about the files reveals this: their bytes and timestamps are
+/// unchanged, only the rule reading them moved. Comparing what the last scan
+/// recorded against what this instance is configured with is the only way the
+/// difference is visible at all.
+#[tokio::test]
+async fn a_changed_identity_rule_schedules_a_full_rescan_everywhere() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("identity", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    for name in ["First", "Second"] {
+        let root = config.data_dir.join(name.to_lowercase());
+        std::fs::create_dir_all(&root).unwrap();
+        state
+            .db
+            .create_library(
+                owner,
+                name,
+                &std::fs::canonicalize(&root).unwrap(),
+                LibraryVisibility::Private,
+                now_ms(),
+            )
+            .await
+            .unwrap();
+    }
+
+    // A catalogue built before the property existed is an older server, not a
+    // different rule: nothing is scheduled.
+    assert_eq!(
+        state
+            .db
+            .reconcile_catalog_identity(&config.pid)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // Once a scan has recorded what it used, agreeing costs nothing either.
+    state
+        .db
+        .set_server_property("pid.album", config.pid.album.source())
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .db
+            .reconcile_catalog_identity(&config.pid)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // Disagreeing marks every library, because the rule is instance-wide.
+    state
+        .db
+        .set_server_property("pid.album", "folder")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .db
+            .reconcile_catalog_identity(&config.pid)
+            .await
+            .unwrap(),
+        2
+    );
+    let libraries = state.db.libraries_for_user(owner).await.unwrap();
+    assert_eq!(libraries.len(), 2);
+    for library in libraries {
+        assert!(
+            state.db.full_scan_requested(library.id).await.unwrap(),
+            "{} was asked to rescan in full",
+            library.name
+        );
+    }
+}
