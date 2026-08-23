@@ -281,7 +281,18 @@ pub fn credits(raw: &RawCredits) -> Vec<Credit> {
         &album_sorts,
     );
 
+    // Role groups are merged before positions are handed out. A caller naming
+    // one role twice — two `COMPOSER` frames arriving as two entries — would
+    // otherwise restart at position 0 and collide with the first group on the
+    // relation's `(track, role, position)` key, failing the whole write.
+    let mut by_role: Vec<(Role, Vec<String>)> = Vec::new();
     for (role, values) in &raw.roles {
+        match by_role.iter_mut().find(|(seen, _)| seen == role) {
+            Some((_, merged)) => merged.extend(values.iter().cloned()),
+            None => by_role.push((*role, values.clone())),
+        }
+    }
+    for (role, values) in &by_role {
         let names = resolve_values(&[], values, &ROLE_SEPARATORS);
         let none = vec![None; names.len()];
         push_all(&mut credits, *role, &names, &none);

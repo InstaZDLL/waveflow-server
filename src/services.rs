@@ -4071,13 +4071,17 @@ fn credential_from_row(
 
 fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Error> {
     Ok(ArtistItem {
-        // Ordered inside the subquery rather than left to `group_concat`,
-        // whose order is otherwise undefined: two responses for one artist
-        // have to be byte-identical.
-        roles: row
-            .try_get::<Option<String>, _>("roles")?
-            .map(|roles| roles.split(',').map(str::to_owned).collect())
-            .unwrap_or_default(),
+        // Sorted here rather than trusted from `group_concat`, whose order
+        // SQLite does not guarantee even when the subquery feeding it is
+        // ordered. Two responses for one artist have to be byte-identical.
+        roles: {
+            let mut roles: Vec<String> = row
+                .try_get::<Option<String>, _>("roles")?
+                .map(|roles| roles.split(',').map(str::to_owned).collect())
+                .unwrap_or_default();
+            roles.sort_unstable();
+            roles
+        },
         id: parse_uuid(row.try_get("id")?)?,
         library_id: parse_uuid(row.try_get("library_id")?)?,
         name: row.try_get("name")?,
