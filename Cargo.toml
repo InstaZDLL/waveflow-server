@@ -54,7 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 url = "2"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
 waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "012be48059b00fddf8fa48179afe42a77a3f54b1", default-features = false }
 

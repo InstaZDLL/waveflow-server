@@ -295,24 +295,41 @@ answer a library that does not exist gets.
 
 Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
 `playCount`, `displayArtist`, `artists[]`, `albumArtists[]`,
-`displayAlbumArtist`, `genres[]`, `musicBrainzId`, `bpm`, `sortName`, `comment`,
-`isrc[]`, `moods[]`, `explicitStatus` and `replayGain`; albums add
-`isCompilation`, `playCount`, `displayArtist`, `artists[]` and `genres[]`. Both
-carry `played` when they have been played.
+`displayAlbumArtist`, `contributors[]`, `displayComposer`, `genres[]`,
+`musicBrainzId`, `bpm`, `sortName`, `comment`, `isrc[]`, `moods[]`,
+`explicitStatus` and `replayGain`; albums add `isCompilation`, `playCount`,
+`displayArtist`, `sortName`, `artists[]` and `genres[]`; artists add `sortName`
+and `roles[]`. Both songs
+and albums carry `played` when they have been played.
 
 `albumArtists[]` and `displayAlbumArtist` are the **album's** credit, not the
 track's: a guest appearance names the guest in `artists[]`, while the album still
-belongs under the album artist. An album's `artists[]` and `genres[]` are derived
-from its available tracks rather than stored, and its genres are folded on the
-canonical name, so an album spelling "Hip-Hop" on some tracks and "Hip Hop" on
-others reports one genre.
+belongs under the album artist. An album's `artists[]` is the album's own credit
+— the artists it is credited to — while its `genres[]` are the union of its
+available tracks', folded on the canonical name, so an album spelling "Hip-Hop"
+on some tracks and "Hip Hop" on others reports one genre.
+
+`contributors[]` names everyone else the file credits: composer, lyricist,
+conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer and
+performer. Each entry is the role, the instrument when a performer names one
+(`subRole`), and an artist reference. `displayComposer` is the composers joined
+with `•`. `roles[]` on an artist is the capacities it is credited in anywhere in
+the catalogue. All three are ordered deterministically, so two responses for one
+record are byte-identical.
+
+An artist credited in no album — a composer, say — is reachable by identifier
+and by search, but `getArtists` and `getIndexes` list only the artists an album
+is credited to.
 
 What WaveFlow does not implement is absent rather than empty, which under the
-presence rule is what says so: `contributors[]` and `displayComposer` on a media
-item, `sortName`, `moods[]`, `explicitStatus`, `originalReleaseDate`,
-`releaseDate`, `releaseTypes[]`, `recordLabels[]` and `discTitles[]` on an album,
-and `sortName` and `roles[]` on an artist. All of them need tags the scanner does
-not read or columns the schema does not have.
+presence rule is what says so: `moods[]`, `explicitStatus`,
+`originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` and
+`discTitles[]` on an album. Those need album columns the schema does not have.
+
+`sortName` on an album and an artist is no longer among them, and neither are
+`contributors[]`, `displayComposer` or `roles[]`: every credit a file names is
+stored under the role it names it under, so a composer, a producer or a
+performer is an artist row like any other.
 
 These follow the OpenSubsonic presence rule: a supported field is present even
 when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,

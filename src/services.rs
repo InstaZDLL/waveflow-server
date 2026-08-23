@@ -23,8 +23,9 @@ use crate::{
 macro_rules! song_select {
     () => {
         "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
-                (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
-                 ORDER BY ta.position LIMIT 1) AS artist_id, \
+                (SELECT tp.artist_id FROM track_participant tp \
+                  WHERE tp.track_id=t.id AND tp.role='artist' \
+                  ORDER BY tp.position LIMIT 1) AS artist_id, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
                 us.starred_at, ur.rating AS user_rating, \
@@ -127,13 +128,18 @@ macro_rules! artist_select {
     };
     (album_count) => {
         artist_select!(
-            @columns ", (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count"
+            @columns ", COALESCE((SELECT ars.album_count FROM artist_role_stats ars \
+                                   WHERE ars.artist_id=ar.id AND ars.role='albumartist'), 0) \
+                      AS album_count"
         )
     };
     (@columns $extra:expr) => {
         concat!(
             "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
-                    ar.sort_name, us.starred_at, ur.rating AS user_rating",
+                    ar.sort_name, us.starred_at, ur.rating AS user_rating, \
+                    (SELECT group_concat(role) FROM \
+                       (SELECT ars.role FROM artist_role_stats ars \
+                         WHERE ars.artist_id=ar.id ORDER BY ars.role)) AS roles",
             $extra,
             " FROM artist ar JOIN library_member m ON m.library_id=ar.library_id \
               LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='artist' AND us.entity_id=ar.id \
@@ -167,6 +173,11 @@ pub struct ArtistItem {
     pub sort_name: Option<String>,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
+    /// The capacities this artist is credited in, anywhere in the catalogue.
+    ///
+    /// Derived from the credits rather than stored on the row, so an artist
+    /// who stops being a producer stops saying so at the next scan.
+    pub roles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -249,6 +260,13 @@ pub struct SongItem {
     /// the album artist.
     pub album_artist: Option<String>,
     pub album_artist_id: Option<Uuid>,
+    /// Every artist the album is credited to, which the single `album_artist_id`
+    /// above can only ever name the first of. It stays because the frozen
+    /// `artistId` field needs one.
+    pub album_artists: Vec<ArtistRef>,
+    /// Every credit that is neither the track's artist nor its album artist:
+    /// composer, producer, performer and the rest, in role then tag order.
+    pub contributors: Vec<Contributor>,
     /// The MusicBrainz recording identifier: the performance, which is what
     /// OpenSubsonic means by a song's `musicBrainzId`. RFC-004 keeps a match
     /// on it a candidate the user confirms, never an automatic link.
@@ -276,18 +294,33 @@ pub struct ArtistRef {
     pub name: String,
 }
 
+/// One artist credited on a track in some capacity other than being its
+/// artist or its album artist.
+///
+/// The role is the reference's own name for it, and `sub_role` carries the
+/// instrument a performer is credited on — the only role that has one.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct Contributor {
+    pub role: String,
+    pub sub_role: Option<String>,
+    pub artist: ArtistRef,
+}
+
 /// A browse view that stops short of the tracks.
 #[derive(Debug, Clone)]
 pub struct CatalogOverview {
     pub folders: Vec<MusicFolderItem>,
-    pub artists: Vec<ArtistItem>,
+    /// Carried as summaries because the browse that renders them needs the
+    /// album count, and computing it in the facade was a loop over every album
+    /// for every artist.
+    pub artists: Vec<ArtistSummary>,
     pub albums: Vec<AlbumItem>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CatalogSnapshot {
     pub folders: Vec<MusicFolderItem>,
-    pub artists: Vec<ArtistItem>,
+    pub artists: Vec<ArtistSummary>,
     pub albums: Vec<AlbumItem>,
     pub songs: Vec<SongItem>,
 }
@@ -819,8 +852,14 @@ impl DomainServices {
         let folder_filter = folder_filter(folder_ids);
         let folders = self.music_folders(user_id, folder_ids).await?;
         let artists = sqlx::query(concat!(
-            artist_select!(),
-            " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+            artist_select!(album_count),
+            // Only artists an album is credited to. A composer with no album
+            // of their own is reachable by identifier and by search, but does
+            // not belong in an index of the library's artists — which is what
+            // the reference answers, and what `getArtists` means.
+            " AND EXISTS (SELECT 1 FROM artist_role_stats ars \
+                  WHERE ars.artist_id=ar.id AND ars.role='albumartist') \
+                AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
               ORDER BY ar.name COLLATE NOCASE"
         ))
         .bind(user_id.to_string())
@@ -829,7 +868,7 @@ impl DomainServices {
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
-        .map(artist_from_row)
+        .map(artist_summary_from_row)
         .collect::<Result<Vec<_>, _>>()?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
@@ -956,8 +995,8 @@ impl DomainServices {
                   WHERE al.album_artist_id IS NOT NULL \
                     AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
                   UNION \
-                  SELECT ta.artist_id FROM track_artist ta \
-                  WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+                  SELECT tp.artist_id FROM track_participant tp \
+                  WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
                 ) \
               ORDER BY ar.name COLLATE NOCASE"
         ))
@@ -1405,7 +1444,8 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
-            " AND al.album_artist_id=? \
+            " AND EXISTS (SELECT 1 FROM album_participant ap \
+                 WHERE ap.album_id=al.id AND ap.artist_id=? AND ap.role='albumartist') \
               ORDER BY al.year NULLS LAST, al.title COLLATE NOCASE, al.id"
         ))
         .bind(user_id.to_string())
@@ -1558,8 +1598,8 @@ impl DomainServices {
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
         let artists = sqlx::query(concat!(
             artist_select!(),
-            " AND ar.id IN (SELECT ta.artist_id FROM track_artist ta \
-                WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+            " AND ar.id IN (SELECT tp.artist_id FROM track_participant tp \
+                WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
               ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
@@ -3795,17 +3835,18 @@ async fn attach_album_relations(
         .expect("UUID list serialization cannot fail");
     let mut artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
     for row in sqlx::query(
-        // Every artist credited on any of the album's tracks, once. Ordered by
-        // the earliest position the artist holds, so the album artist leads and
-        // a guest stays behind the credit that introduced them.
-        "SELECT t.album_id, ar.id, ar.name, MIN(ta.position) AS lead \
-         FROM track t JOIN track_artist ta ON ta.track_id=t.id \
-         JOIN artist ar ON ar.id=ta.artist_id \
-         JOIN library_member m ON m.library_id=t.library_id \
-         WHERE m.user_id=? AND t.is_available=1 \
-           AND t.album_id IN (SELECT value FROM json_each(?)) \
-         GROUP BY t.album_id, ar.id \
-         ORDER BY t.album_id, lead, ar.name COLLATE NOCASE, ar.id",
+        // The album's own credits, which are its album artists — not the union
+        // of its tracks' credits, which is what this used to answer. An album
+        // with a guest on one track was reporting the guest as one of its
+        // artists; the reference reports the two the album is credited to, and
+        // leaves the guest to the track that names them.
+        "SELECT ap.album_id, ar.id, ar.name \
+         FROM album_participant ap \
+         JOIN artist ar ON ar.id=ap.artist_id \
+         JOIN library_member m ON m.library_id=ap.library_id \
+         WHERE m.user_id=? AND ap.role='albumartist' \
+           AND ap.album_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY ap.album_id, ap.position, ar.name COLLATE NOCASE, ar.id",
     )
     .bind(user_id.to_string())
     .bind(&ids)
@@ -3863,11 +3904,12 @@ async fn attach_song_relations(
         .expect("UUID list serialization cannot fail");
     let mut artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
     for row in sqlx::query(
-        "SELECT ta.track_id, ar.id, ar.name FROM track_artist ta \
-         JOIN artist ar ON ar.id=ta.artist_id \
-         JOIN library_member m ON m.library_id=ta.library_id \
-         WHERE m.user_id=? AND ta.track_id IN (SELECT value FROM json_each(?)) \
-         ORDER BY ta.track_id, ta.position",
+        "SELECT tp.track_id, ar.id, ar.name FROM track_participant tp \
+         JOIN artist ar ON ar.id=tp.artist_id \
+         JOIN library_member m ON m.library_id=tp.library_id \
+         WHERE m.user_id=? AND tp.role='artist' \
+           AND tp.track_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY tp.track_id, tp.position",
     )
     .bind(user_id.to_string())
     .bind(&ids)
@@ -3903,9 +3945,78 @@ async fn attach_song_relations(
             .or_default()
             .push(row.try_get("name")?);
     }
+    // Everything credited on the track that is neither its artist nor its
+    // album artist. Ordered by role then position so two responses for one
+    // track are byte-identical — the reference emits these in map-iteration
+    // order and answers differently on every request.
+    let mut contributors: HashMap<Uuid, Vec<Contributor>> = HashMap::new();
+    for row in sqlx::query(
+        "SELECT tp.track_id, tp.role, tp.sub_role, ar.id, ar.name \
+         FROM track_participant tp \
+         JOIN artist ar ON ar.id=tp.artist_id \
+         JOIN library_member m ON m.library_id=tp.library_id \
+         WHERE m.user_id=? AND tp.role NOT IN ('artist', 'albumartist') \
+           AND tp.track_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY tp.track_id, tp.role, tp.position, tp.sub_role",
+    )
+    .bind(user_id.to_string())
+    .bind(&ids)
+    .fetch_all(&mut *connection)
+    .await?
+    {
+        let sub_role: String = row.try_get("sub_role")?;
+        contributors
+            .entry(parse_uuid(row.try_get("track_id")?)?)
+            .or_default()
+            .push(Contributor {
+                role: row.try_get("role")?,
+                sub_role: (!sub_role.is_empty()).then_some(sub_role),
+                artist: ArtistRef {
+                    id: parse_uuid(row.try_get("id")?)?,
+                    name: row.try_get("name")?,
+                },
+            });
+    }
+    // The album's credit, which is not the track's: a guest appearance names
+    // the guest while the album still belongs under its album artists. Keyed
+    // on the album, so every track of one album answers the same list.
+    let album_ids = serde_json::to_string(
+        &songs
+            .iter()
+            .filter_map(|song| song.album_id)
+            .collect::<Vec<_>>(),
+    )
+    .expect("UUID list serialization cannot fail");
+    let mut album_artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
+    for row in sqlx::query(
+        "SELECT ap.album_id, ar.id, ar.name FROM album_participant ap \
+         JOIN artist ar ON ar.id=ap.artist_id \
+         JOIN library_member m ON m.library_id=ap.library_id \
+         WHERE m.user_id=? AND ap.role='albumartist' \
+           AND ap.album_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY ap.album_id, ap.position, ar.name COLLATE NOCASE, ar.id",
+    )
+    .bind(user_id.to_string())
+    .bind(&album_ids)
+    .fetch_all(&mut *connection)
+    .await?
+    {
+        album_artists
+            .entry(parse_uuid(row.try_get("album_id")?)?)
+            .or_default()
+            .push(ArtistRef {
+                id: parse_uuid(row.try_get("id")?)?,
+                name: row.try_get("name")?,
+            });
+    }
     for song in songs {
         song.artists = artists.remove(&song.id).unwrap_or_default();
         song.genres = genres.remove(&song.id).unwrap_or_default();
+        song.contributors = contributors.remove(&song.id).unwrap_or_default();
+        song.album_artists = song
+            .album_id
+            .and_then(|album| album_artists.get(&album).cloned())
+            .unwrap_or_default();
     }
     Ok(())
 }
@@ -3961,6 +4072,17 @@ fn credential_from_row(
 
 fn artist_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistItem, sqlx::Error> {
     Ok(ArtistItem {
+        // Sorted here rather than trusted from `group_concat`, whose order
+        // SQLite does not guarantee even when the subquery feeding it is
+        // ordered. Two responses for one artist have to be byte-identical.
+        roles: {
+            let mut roles: Vec<String> = row
+                .try_get::<Option<String>, _>("roles")?
+                .map(|roles| roles.split(',').map(str::to_owned).collect())
+                .unwrap_or_default();
+            roles.sort_unstable();
+            roles
+        },
         id: parse_uuid(row.try_get("id")?)?,
         library_id: parse_uuid(row.try_get("library_id")?)?,
         name: row.try_get("name")?,
@@ -4091,6 +4213,8 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         last_played_at: row.try_get("last_played_at")?,
         // Filled in by `attach_song_relations`: one row cannot carry them.
         artists: Vec::new(),
+        album_artists: Vec::new(),
+        contributors: Vec::new(),
         genres: Vec::new(),
         album_artist: row.try_get("album_artist_name")?,
         album_artist_id: row
