@@ -7,7 +7,7 @@ use sha2::{Digest, Sha384};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Row, SqliteConnection, SqlitePool,
+    Connection, Row, SqliteConnection, SqlitePool,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use utoipa::ToSchema;
@@ -303,10 +303,61 @@ impl Database {
                 "normalized legacy Windows CRLF migration checksums"
             );
         }
-        MIGRATOR
-            .run(&self.pool)
+
+        // Migrations run with enforcement off, which is the procedure SQLite
+        // documents for a table rebuild and the only one open to us here.
+        //
+        // A rebuild drops the old parent, and SQLite runs an implicit
+        // `DELETE FROM` before dropping a table. Two children of `album` and
+        // `artist` carry `ON DELETE RESTRICT`, so that delete is a constraint
+        // violation on any database holding a single track. Deferring does not
+        // save it: `defer_foreign_keys` moves the check to the commit, but the
+        // counter the drop raised is never cleared, so the commit fails while
+        // `PRAGMA foreign_key_check` reports nothing wrong — and an empty
+        // database migrates cleanly, which is why a suite that only ever
+        // migrates fresh databases cannot see this at all.
+        //
+        // A migration file cannot turn enforcement off for itself: `PRAGMA
+        // foreign_keys` is a no-op inside a transaction and every migration
+        // runs in one. So the runner does it, and answers for it below.
+        //
+        // The connection is detached rather than returned to the pool: a
+        // connection left unenforced is one every later query would inherit.
+        let mut connection = self.pool.acquire().await?.detach();
+        let outcome = Self::run_migrations_unenforced(&mut connection).await;
+        connection.close().await.ok();
+        outcome
+    }
+
+    /// Runs every pending migration on a connection with foreign keys off,
+    /// then answers for what enforcement would have caught.
+    ///
+    /// The check is `PRAGMA foreign_key_check` over the whole database rather
+    /// than per migration: a rebuild that dropped a parent row instead of
+    /// carrying it shows up here as an orphan, and refusing to start is the
+    /// only safe answer — the alternative is serving a catalogue whose
+    /// relations silently lost rows.
+    async fn run_migrations_unenforced(connection: &mut SqliteConnection) -> anyhow::Result<()> {
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *connection)
             .await
-            .map_err(|error| anyhow::anyhow!("v2 migration failed: {error}"))
+            .map_err(|error| anyhow::anyhow!("could not suspend foreign keys: {error}"))?;
+        MIGRATOR
+            .run(&mut *connection)
+            .await
+            .map_err(|error| anyhow::anyhow!("v2 migration failed: {error}"))?;
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(|error| anyhow::anyhow!("foreign key check failed: {error}"))?;
+        if !violations.is_empty() {
+            anyhow::bail!(
+                "v2 migration left {} broken foreign key reference(s); \
+                 the database has not been changed further and needs restoring from backup",
+                violations.len()
+            );
+        }
+        Ok(())
     }
 
     /// Early Windows builds embedded migrations after Git had converted their
@@ -1240,6 +1291,113 @@ mod tests {
             .expect("open database");
         database.migrate().await.expect("initial migration");
         (temp, database)
+    }
+
+    /// Every other migration test starts from an empty database, and an empty
+    /// database is the one case a table rebuild cannot fail on: dropping the
+    /// old parent cascades into nothing and restricts nothing. The rebuild in
+    /// `20260823010000_participants` therefore passed the whole suite and then
+    /// refused to open the first database that held a single track.
+    ///
+    /// So this one fills the catalogue in first, at the schema version just
+    /// before the rebuild, and migrates from there.
+    #[tokio::test]
+    async fn a_populated_database_survives_a_table_rebuild() {
+        use sqlx::migrate::Migrate;
+
+        /// The last migration before `artist` and `album` are rebuilt.
+        const BEFORE_THE_REBUILD: i64 = 20260823000000;
+
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let database = Database::open(&Config::for_data_dir(temp.path().join("data")))
+            .await
+            .expect("open database");
+
+        let mut connection = database.pool.acquire().await.expect("connection");
+        connection
+            .ensure_migrations_table(&MIGRATOR.table_name)
+            .await
+            .expect("migrations table");
+        for migration in MIGRATOR
+            .iter()
+            .filter(|migration| migration.version <= BEFORE_THE_REBUILD)
+        {
+            connection
+                .apply(&MIGRATOR.table_name, migration)
+                .await
+                .expect("earlier migration");
+        }
+
+        // A track, its album and its artist, plus the credit relating them:
+        // one row in each table the rebuild touches or cascades from.
+        for statement in [
+            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+               VALUES ('acc', 'owner', 'x', 'admin', 0, 0)",
+            "INSERT INTO library (id, owner_user_id, name, root_path, visibility, created_at, \
+                                  updated_at) \
+               VALUES ('lib', 'acc', 'Library', '/music', 'private', 0, 0)",
+            "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+               VALUES ('art', 'lib', 'Nova Kern', 'nova kern', 0, 0)",
+            "INSERT INTO album (id, library_id, title, canonical_title, identity_key, \
+                                album_artist_id, album_artist_name, created_at, updated_at) \
+               VALUES ('alb', 'lib', 'Convergence', 'convergence', 'key', 'art', 'Nova Kern', 0, 0)",
+            "INSERT INTO track (id, library_id, album_id, relative_path, file_size, \
+                                file_modified_at, quick_hash, full_hash, title, duration_ms, \
+                                created_at, updated_at) \
+               VALUES ('trk', 'lib', 'alb', 'a.flac', 1, 0, ?, ?, 'Zenith', 1000, 0, 0)",
+            "INSERT INTO track_artist (track_id, artist_id, library_id, position) \
+               VALUES ('trk', 'art', 'lib', 0)",
+        ] {
+            sqlx::query(statement)
+                .bind("0".repeat(64))
+                .bind("0".repeat(64))
+                .execute(&mut *connection)
+                .await
+                .expect("seed row");
+        }
+        drop(connection);
+
+        database
+            .migrate()
+            .await
+            .expect("a database with a catalogue migrates");
+
+        // The rebuild has to carry its rows, not merely survive: an implicit
+        // `DELETE FROM` before a drop empties children silently, and a
+        // migration that lost the credits would still report success.
+        let mut connection = database.pool.acquire().await.expect("connection");
+        for (table, query) in [
+            ("artist", "SELECT COUNT(*) FROM artist"),
+            ("album", "SELECT COUNT(*) FROM album"),
+            ("track", "SELECT COUNT(*) FROM track"),
+            (
+                "track_participant",
+                "SELECT COUNT(*) FROM track_participant",
+            ),
+        ] {
+            let count: i64 = sqlx::query_scalar(query)
+                .fetch_one(&mut *connection)
+                .await
+                .expect("count");
+            assert_eq!(count, 1, "{table} lost its rows to the rebuild");
+        }
+        let role: String =
+            sqlx::query_scalar("SELECT role FROM track_participant WHERE track_id = 'trk'")
+                .fetch_one(&mut *connection)
+                .await
+                .expect("carried credit");
+        assert_eq!(role, "artist", "the carried credit kept its meaning");
+
+        // And enforcement, suspended for the rebuild, is answered for.
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut *connection)
+            .await
+            .expect("foreign key check");
+        assert!(
+            violations.is_empty(),
+            "the rebuilt schema left {} broken reference(s)",
+            violations.len()
+        );
     }
 
     fn crlf_checksum(version: i64) -> Vec<u8> {
