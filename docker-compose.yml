@@ -1,7 +1,10 @@
+# Pulls the published image. To run your own build instead, uncomment `build`
+# below — with it present Compose builds from this checkout rather than pulling,
+# which is what a contributor wants and what an operator does not.
 services:
   waveflow:
-    build: .
-    image: waveflow-server:2.0.0-beta.0
+    image: ghcr.io/instazdll/waveflow-server:2.0.0-beta.0
+    # build: .
     restart: unless-stopped
     ports:
       - "4533:4533"

@@ -1,0 +1,233 @@
+name: Release
+
+# Publishes a tag: the container image, then the GitHub release that
+# announces it. No binary is attached — it would need FFmpeg on the host
+# anyway, so the image is the artifact a self-hosted server is installed from.
+#
+# A version carrying a pre-release suffix is marked as one in both places: the
+# image floats as `beta` rather than `latest`, and the release wears the
+# pre-release badge. Same rule as the desktop repository.
+#
+# The tag is the source of truth for the version. `Cargo.toml` is not read
+# here — a tag that disagrees with it would produce an image labelled one way
+# and reporting itself another, so the two are checked against each other
+# before anything is built.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a failed publish be retried against the same tag without moving it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v2.0.0-beta.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # `github.ref_name` rather than `github.ref`: a dispatch passes the bare tag,
+  # so a push that spells it `refs/tags/v1.2.3` would land in a different group
+  # and run alongside the retry it is meant to be serialized against.
+  group: release-${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Cheap, and it runs before any build minute is spent: a tag that does not
+  # match the crate version is a mistake worth catching at second zero rather
+  # than after two architectures have compiled.
+  verify:
+    name: Verify the tag matches the crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - id: version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          tag_version="${tag#v}"
+          crate_version="$(sed -n '/^\[package\]/,/^\[/ s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag=$tag_version crate=$crate_version"
+          if [ "$tag_version" != "$crate_version" ]; then
+            echo "::error::tag $tag declares $tag_version but Cargo.toml says $crate_version"
+            exit 1
+          fi
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+
+  # Built on native runners rather than under QEMU. A Rust release build
+  # emulated for arm64 takes hours; GitHub's arm64 runners are free for public
+  # repositories and take the same time as the amd64 ones. Each runner pushes
+  # by digest only, and the manifest below joins them into one tag.
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # Pushed by digest; the tags are attached by the merge job. Pushing a
+          # tag from each runner would leave whichever finished last as the
+          # whole image rather than one architecture of it.
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      # Named without the `sha256:` prefix, because the manifest job puts it
+      # back: keeping it here would ask the registry for `sha256:sha256:…`.
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish the manifest
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest` is deliberately absent. It is a pre-release: a reader who
+      # pulls `latest` should get a stable build or nothing, never a beta they
+      # did not ask for. The floating tag for this line is `beta`.
+      - name: Create the manifest
+        working-directory: /tmp/digests
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          case "$version" in
+            *-*) extra="beta" ;;
+            *) extra="latest" ;;
+          esac
+          refs=()
+          for digest in *; do
+            [ -e "$digest" ] || continue
+            refs+=("$image@sha256:$digest")
+          done
+          # A manifest built from an empty list would publish the tag against
+          # nothing, and the failure would only surface at someone's `docker pull`.
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "::error::no digests were collected; nothing to publish"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "$image:$version" \
+            --tag "$image:$extra" \
+            "${refs[@]}"
+          docker buildx imagetools inspect "$image:$version"
+
+  # The GitHub release comes last, once the image it announces exists. A
+  # release page whose pull command 404s is worse than no page.
+  github-release:
+    name: Publish the GitHub release
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # A pre-release suffix marks the release as one on GitHub, the same rule
+      # the desktop repository uses. The badge is what keeps
+      # `releases/latest` from resolving to a beta, and what tells a watcher
+      # or a packager not to offer it.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          case "$VERSION" in
+            *-*) release_flag="--prerelease" ; channel="beta"   ;;
+            *)   release_flag="--latest"     ; channel="latest" ;;
+          esac
+
+          # printf with a single-quoted format rather than a heredoc: the body
+          # is mostly backticks, and every one of them would be a command
+          # substitution in an unquoted here-document.
+          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s`, for `linux/amd64` and `linux/arm64`.\n' \
+            "$IMAGE" "$VERSION" "$channel" > notes.md
+
+          # `--generate-notes` appends the merged pull requests below this, so
+          # the install line stays at the top where it is useful.
+          #
+          # A release that already exists keeps its body. It was written once
+          # with the changelog appended, and re-applying our half alone would
+          # replace the whole thing — a retry would silently delete the
+          # changelog it is not meant to touch. Only the flag is re-asserted.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" $release_flag
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file notes.md \
+              --generate-notes \
+              --verify-tag \
+              $release_flag
+          fi
