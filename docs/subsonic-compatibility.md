@@ -4,20 +4,26 @@ Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JS
 
 | Client | Version | Login | Browse/search | Native/transcode | Playlists/user data | Status |
 |---|---:|---:|---:|---:|---:|---|
-| Symfonium | 14.1.0 | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on an Android 17 emulator through an ephemeral `cloudflared` HTTPS tunnel. Every observable change of the six batches was checked against server state rather than against the client's own display: sleeve order in both the album and a synced playlist, two distinct album artists with no composite entity in the artist list, two album genres, a genre spelled four ways answering as one (4 tracks), the extended fields including `explicitStatus`, and a failed login decoded correctly now that it arrives as HTTP 200. User data round-tripped: track and album ratings, track/album/artist favorites, 21 scrobbles, a bookmark resumed at 37 s, three playlists owned by the authenticated user, and 13 Opus cache entries across the 64 and 128 kbit/s ceilings. The earlier 2026-08-09 run on a physical Android 17 device additionally covered API-key authentication, which this one did not re-run. |
-| Feishin | 1.15.1 | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on Windows desktop. **This run found the two server defects fixed in the same change**: a cold transcode refused the `Range: bytes=0-` that a browser sends to open any resource, so playback failed on every track no earlier client had transcoded; and `createPlaylist` appended its `songId` values instead of replacing the list, so every playlist edit looked lost. Both were then replayed against the fixed server through a logging proxy and confirmed from server state: cold transcode, cache hit and seek all answer, a removal drops to one track, a reorder lands. The rest of the run exercised search (23 `search3`), 145 cover-art reads, genre browsing including 8 `getSongsByGenre`, artists, `getStarred`, `getRandomSongs`, 9 scrobbles, favorites on tracks/album/artists and ratings — all read back from the server rather than from the client. `getAlbumInfo`/`getAlbumInfo2` were never called by this version, so they stay unexercised here rather than counted as a pass, as do the bookmark and play-queue methods. `getTopSongs`, `getArtistInfo` and `getInternetRadioStations` answer empty containers, which is what this server has to say about them. |
+| Symfonium | 15.0.1 | pass | pass | limit | limit | Re-run 2026-08-23 against the aligned model, on an Android 17 emulator through the logging proxy. **This is a different major version from the 14.1.0 row it replaces**, so its differences from the previous run are not attributable to the server alone. Passed: a failed login decoded from its HTTP 200, 5 albums and 18 tracks, sleeve order, one canonical `Jazz` answering 4 tracks, both artists of a two-artist album holding it, the separator traps (`AC/DC` one artist, `Bach/Gounod` two composers, a padded slash two artists), and a title query returning no artists. Two limits, both established from the proxy log rather than from the client's display, and neither a server defect. **Seeking a lossless track fails**: the client re-requests the resource with no `Range` header at all and restarts from zero — in the whole session it sent exactly one byte-offset range, on an MP3, answered 206. It sent none in the 2026-08-19 run either, so no seek by this client was ever established. **Playlist creation never reaches the server**: no `createPlaylist` or `updatePlaylist` was sent. Both are contrasted directly: Feishin seeks the same seektable-less FLAC files and creates playlists against the same server. The client renders `artist`, `albumArtist` and `composer` and ignores the other ten roles, which the server emits in full at the `v=1.13.0` this client asks with. Bookmarks were exercised incidentally (5 `createBookmark`, one live). It never calls `getArtists`/`getIndexes`, syncing entirely through the match-all `search3`. |
+| Feishin | 1.15.1 | pass | pass | pass | pass | Re-run 2026-08-23 against the aligned model, on Windows desktop, and the row that settles what Symfonium's does not: **it seeks by byte offset into the same seektable-less FLAC files** — Zenith, Padded and Drift, seven ranges, all answered 206 — and **creates a playlist that lands in the database with its four tracks**. Two artists separated correctly. It sends its catalogue calls as POST with the parameters in the body, which the proxy records by method but not by argument. 398 requests, all 200 or 206, covering `getArtists`, `getIndexes`, `getMusicDirectory`, `getAlbumList2`, `search3`, `getSongsByGenre`, `getTopSongs`, `getArtistInfo`, `getRandomSongs`, lyrics, 15 scrobbles, favourites and ratings — read back from server state. `savePlayQueue`/`getPlayQueue` were not called by this version, as in its previous run. |
 | Substreamer | 8.0.91 | pass | pass | pass | pass* | Validated 2026-08-02 from the official release source: native playback, Opus/128 cache, playlist add, favorite, rating and scrobble. `*` Its playback queue is local-only and the client never calls `getPlayQueue`/`savePlayQueue`; those endpoints remain covered by fixtures, and by Feishin's 2026-08-02 run. |
-| DSub | 5.5.3 (F-Droid 208) | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on an Android 17 emulator, read from `logcat -s RESTMusicService` and DSub's own disk cache rather than from its interface. **This run found the album-artist defect fixed in the same change**: an album credited to two artists hung off a third entity named after the joined string, and browsing to either real artist found no album. The rest passed: sleeve order in both browse modes, two album genres, one canonical `Jazz` answering 4 tracks, artwork, native FLAC and MP3 with seek, a failed login decoded as an error now that it arrives as HTTP 200, playlist create/add/remove/rename/delete — the removal going through `songIndexToRemove`, by index — and a rating. It settles a question Symfonium left open: DSub does submit the scrobble of the last track in a queue. Two of its three unique surfaces needed the brief corrected. The legacy `getAlbumList` is used **only** when "Browse By Tags" is off, `getAlbumList2` otherwise; both were exercised. And `maxBitRate` is never sent above the source — DSub emits `min(setting, track bitrate)` — so "ceiling above the source" is not expressible from this client; the two reachable cases are correct (128 ceiling on a 128 kbit/s MP3 streams natively, 64 transcodes). The generic `star?id` form resolved a track, an album and an artist, all three surviving a resync. Unresolved, and not a server fault: one FLAC (`Drift`) is fetched repeatedly and never completed by the client, though the server answers 200 with the exact `content-length` and the bytes arrive md5-identical to the source file through the same tunnel. Absent from the client, recorded as absent: the explicit marker, and any separate display of two album artists. |
-| Juliet | 1.5 (iOS 26.6) | pass | pass | pass | pass | Re-run 2026-08-19 against the current contract, on a physical iPhone — the previous entry was a narrower check that never reached transcoding or user data. **This run found the second half of the cold-transcode defect**: iOS AVFoundation opens a resource with a `bytes=0-1` probe, which the first fix still classified as a seek and refused, so the first play of each track failed and the second succeeded off the cache the failed request had built. Fixed in the same change and verified by replaying the client's exact sequence: `bytes=0-1` cold answers 200, warm answers 206 with two bytes, a real seek answers 206, and a seek into a cold transcode is still refused. The rest of the run: 306 cover-art reads, 115 streams, 64 scrobbles, `getAlbumList2`, `search3`, `getRandomSongs`, `getSongsByGenre`, `getSimilarSongs2`, `getLyrics`, favorites, and playlist create/update/delete. It is also the first client in the replayed set to call `savePlayQueue`/`getPlayQueue` - 48 times - where the matrix otherwise rests on fixtures and on Feishin's historical 2026-08-02 run, its 2026-08-19 re-run having never called them. Absent from the client, recorded as absent: Juliet has no rating feature, so `setRating` was never sent; and it saves its queue with `position=0` every time, so playback restarts at zero — the server stores and returns what it is given, queue, current track and `changedBy` included. |
+| DSub | 5.5.3 (F-Droid 208) | pass | limit | pass | pass | Re-run 2026-08-23 against the aligned model, on an Android 17 emulator. Every request it made was answered correctly, and it is the only client exercising `getLicense`, `getIndexes` and the legacy `getAlbumList` — `newest`, `random` and `frequent` pass, and the client offers no alphabetical mode, recorded as absent rather than as a pass. `maxBitRate` is sent as `min(ceiling, source)`, so a ceiling above the source cannot be requested from this client at all: verified at the source instead, a ceiling at or above the source streams the FLAC byte for byte and a ceiling of 64 transcodes to MP3. The generic `star?id` form works for a track and an album. The full playlist cycle — create, add, remove, rename, delete — was verified from server state, which is what proves Symfonium's failure to be that client's own. **It also adds a third real client to the play queue**: 17 `savePlayQueue` calls, the queue held complete with its current track and position. `getAvatar` answers code 70, as documented. **The limit is a flattening parser**: it lifts the `artist` nested inside a `contributor` to the top level, so an album's header shows the last contributor's name and `search2` invents artists the server did not return — the XML nests them correctly, and `search2` itself returns none. Not exercised: seek, Opus, rating. |
+| Juliet | 1.5 (iOS 26.6) | pass | pass | pass | pass | Re-run 2026-08-23 against the aligned model, on a physical iPhone over 5G through the HTTPS tunnel — the only row of this campaign not taken on a local network. 408 requests, every one answered 200 or 206. **It settles the seek question Symfonium's row leaves open**: thirteen distinct byte offsets, on FLAC as well as MP3, including the very track Symfonium restarted from zero — so two of the three replayed clients seek these files and the third does not ask. The `bytes=0-1` probe AVFoundation opens a resource with still answers 206, which is the 2026-08-19 fix holding. It navigated an album credited to two artists and found both of that artist's albums, the deliberate split included, created a playlist that is in the database with its three tracks, and saved a play queue. Also exercised: `search3`, `getSongsByGenre`, `getSimilarSongs2`, both lyrics methods, favourites, 26 scrobbles, 190 cover-art reads. Two client-side observations, neither a server behaviour: an artist page is headed with the joined display string `Nova Kern; Lior Sand` while listing the right albums — no such entity exists, the index holds five artists and none with a semicolon; and one refresh of the playlist screen showed a transport error whose request never reached the server, in a window where the log holds no `getPlaylists` at all and no upstream failure. |
+
+Every row is read from server state rather than from the client's own display.
+`pass` means the server answered the client correctly; **`limit` means it did
+too, and the client did not make use of the answer** — a limit is never a
+defect on this server's side, and never a pass either. A feature the client
+does not have is recorded as absent, never inferred.
 
 **Symfonium, Feishin, DSub and Juliet were all re-run on 2026-08-19 against the
-current contract**, each on a real device or desktop and each read from server
-state rather than from the client's own display. Substreamer is out of the
-replayed set for the reason given below, and its row remains a historical
-result against the previous status behaviour.
+contract of the time**; the first three were replayed again on 2026-08-23
+against the aligned artist model, and carry that later date. Substreamer is out
+of the replayed set for the reason given below, and its row remains a
+historical result against the previous status behaviour.
 
-The replay found **four server defects**, all fixed in the same change and none
-of which the automated suite could have produced: it took a browser, a client
+The 2026-08-19 replay found **four server defects**, all fixed in the same change
+and none of which the automated suite could have produced: it took a browser, a client
 that edits a playlist by sending back what remains, a client that browses by
 artist index, and an iOS player that probes a resource before reading it.
 Missing client features stay covered by automated fixtures and another real
@@ -26,8 +32,10 @@ client rather than inferred as passes.
 Feishin and Juliet found their defect rather than passing it, so each one
 re-played the fixed path itself rather than being credited on a replayed
 request sequence: Feishin's MP3 transcode now starts, caches and seeks, and
-Juliet's two-byte probe answers 200 cold with no refusal left in the log. The
-five rows therefore record the behaviour of the server as it stands. Creating
+Juliet's two-byte probe answers 200 cold with no refusal left in the log. Those
+rows recorded the behaviour of the server as it stood on that date, which the
+alignment has since changed — see the replay section below for what the three
+rows dated 2026-08-23 re-establish and what Juliet's still does not. Creating
 any tag or release remains a separate action requiring an explicit operator
 request.
 
@@ -105,15 +113,37 @@ in JSON and in XML.
 
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.
 
-## The replay this alignment requires
+## The replay this alignment required
 
-The four rows above were re-run on 2026-08-19 against a catalogue whose
-artist model has since been replaced. That model was a variant: Navidrome has
-served OpenSubsonic to hundreds of clients for years, and where the two
-disagreed it was our disagreement to withdraw, not theirs.
+These rows had all been re-run on 2026-08-19, against a catalogue whose artist
+model was replaced the same week. That model was a variant: Navidrome has served
+OpenSubsonic to hundreds of clients for years, and where the two disagreed it
+was our disagreement to withdraw, not theirs. A matrix green against the variant
+said nothing about the model that replaced it, so the whole set was run again.
 
-**The four replayed rows have to be run again before the next tag.** Substreamer stays out of the replayed set for the reason given above, and is still not counted toward it. What changed on the
-wire, and why a green matrix from before it says nothing about after it:
+**All four were replayed on 2026-08-23 against the aligned model**, and every row
+above now carries that date. Substreamer stays out of the replayed set for the
+reason given above, and is still not counted toward it.
+
+That campaign found no defect in what it exercised, but it found two before it
+reached a client at all, both invisible to a suite that only ever migrates an
+empty database or searches a catalogue with no credits: the participants
+migration failed to commit on any database holding a single track, and the
+artist half of a search returned everyone credited on the matching tracks
+rather than the artists whose name matched. Both are fixed.
+
+It also settled a question the matrix could not have asked before. **The server
+emits its OpenSubsonic fields whatever protocol version a client declares**, and
+that is deliberate: `v=` is not a capability negotiation — Symfonium announces
+1.13.0 while supporting far more — so trimming the wire to a declared number
+would mean maintaining two shapes of every response and diverging from the
+reference. DSub 5.5.3 pays for it: its parser lifts a nested `artist` out of a
+`contributor`, so two of its screens show names the server never offered at
+that level. Recorded as a client limitation, not repaired by narrowing the
+wire.
+
+What changed on the wire, and why a green matrix from before it says nothing
+about after it:
 
 Additive — a client that ignores them sees the catalogue it saw:
 
