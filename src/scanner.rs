@@ -163,7 +163,16 @@ impl ScanManager {
             .iter()
             .filter_map(|path| relative_path(&root, path).ok())
             .collect();
-        self.db.start_scan_job(scan_id, paths.len() as i64).await?;
+        // Read here rather than taken as an argument: a scan that died halfway
+        // left the request standing, and the run picking up after it has to
+        // honour a request it never saw made.
+        let full = self.db.full_scan_requested(library.id).await?;
+        if full {
+            tracing::info!(library_id = %library.id, "scanning every file, skipping nothing");
+        }
+        self.db
+            .start_scan_job(scan_id, paths.len() as i64, full)
+            .await?;
 
         let root_for_tasks = root.clone();
         let artwork_dir = self.artwork_dir.clone();
@@ -212,7 +221,8 @@ impl ScanManager {
                         input.relative_path = relative.clone();
                         let existing = self.db.existing_track_by_path(library.id, relative).await?;
                         if let Some(existing) = existing.as_ref() {
-                            if existing.file_size == input.file_size
+                            if !full
+                                && existing.file_size == input.file_size
                                 && existing.modified_at == input.modified_at
                                 && existing.quick_hash == input.quick_hash
                                 && existing.full_hash == input.full_hash

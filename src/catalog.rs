@@ -227,6 +227,81 @@ impl Database {
         ))
     }
 
+    /// Reads one instance-wide setting, or `None` when it was never written.
+    ///
+    /// The store exists so the server can notice that it is configured
+    /// differently from the run that built the catalogue. Anything a scan
+    /// derives from configuration belongs here: on a mismatch the catalogue is
+    /// stale in a way no file timestamp can reveal.
+    pub async fn server_property(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT value FROM server_property WHERE key = ?")
+            .bind(key)
+            .fetch_optional(self.pool())
+            .await
+    }
+
+    pub async fn set_server_property(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        sqlx::query(
+            "INSERT INTO server_property (key, value, updated_at) VALUES (?, ?, ?) \
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now_ms())
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Asks every library to rescan every file, skipping nothing.
+    ///
+    /// Returns how many libraries were marked. One already carrying the request
+    /// keeps its original timestamp: the request is a state, not a counter, and
+    /// re-stamping it would say a later run asked for something the earlier one
+    /// has not yet delivered.
+    pub async fn request_full_scan_everywhere(&self) -> Result<u64, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let result = sqlx::query(
+            "UPDATE library SET full_scan_requested_at = ?, updated_at = ? \
+             WHERE full_scan_requested_at IS NULL",
+        )
+        .bind(now_ms())
+        .bind(now_ms())
+        .execute(self.pool())
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn request_full_scan(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        sqlx::query(
+            "UPDATE library SET full_scan_requested_at = ?, updated_at = ? \
+             WHERE id = ? AND full_scan_requested_at IS NULL",
+        )
+        .bind(now_ms())
+        .bind(now_ms())
+        .bind(library_id.to_string())
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Whether the next scan of this library has to read every file.
+    ///
+    /// Read at the start of every run rather than passed in by the caller: a
+    /// scan that was interrupted left the request standing, and the run that
+    /// picks up after it has to honour the request it never saw made.
+    pub async fn full_scan_requested(&self, library_id: Uuid) -> Result<bool, sqlx::Error> {
+        let requested: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT full_scan_requested_at FROM library WHERE id = ?")
+                .bind(library_id.to_string())
+                .fetch_optional(self.pool())
+                .await?;
+        Ok(matches!(requested, Some(Some(_))))
+    }
+
     pub async fn library_for_user(
         &self,
         user_id: Uuid,
@@ -310,13 +385,20 @@ impl Database {
         Ok((inserted.rows_affected() > 0).then_some(id))
     }
 
-    pub async fn start_scan_job(&self, scan_id: Uuid, total: i64) -> Result<(), sqlx::Error> {
+    pub async fn start_scan_job(
+        &self,
+        scan_id: Uuid,
+        total: i64,
+        full: bool,
+    ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let now = now_ms();
         sqlx::query(
-            "UPDATE scan_job SET status = 'running', total_files = ?, started_at = ? WHERE id = ?",
+            "UPDATE scan_job SET status = 'running', total_files = ?, full_scan = ?, \
+             started_at = ? WHERE id = ?",
         )
         .bind(total)
+        .bind(i64::from(full))
         .bind(now)
         .bind(scan_id.to_string())
         .execute(self.pool())
@@ -575,6 +657,20 @@ impl Database {
              WHERE id = (SELECT library_id FROM scan_job WHERE id = ?)",
         )
         .bind(now)
+        .bind(now)
+        .bind(scan_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        // The full-scan request is lifted here and nowhere else. A run that
+        // dies halfway leaves it standing, so the next run reads every file
+        // again instead of skipping the half it had already rewritten — which
+        // is what keeps an interrupted identity migration from freezing a
+        // catalogue split between two schemes.
+        sqlx::query(
+            "UPDATE library SET full_scan_requested_at = NULL, updated_at = ? \
+             WHERE id = (SELECT library_id FROM scan_job WHERE id = ?) \
+               AND full_scan_requested_at IS NOT NULL",
+        )
         .bind(now)
         .bind(scan_id.to_string())
         .execute(&mut *tx)

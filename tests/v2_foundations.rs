@@ -1001,7 +1001,7 @@ async fn compilation_and_multi_artist_materialization_is_deterministic() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    state.db.start_scan_job(scan_id, 2, false).await.unwrap();
 
     for (index, artist) in ["Alpha; Beta", "Gamma"].into_iter().enumerate() {
         let outcome = state
@@ -1283,7 +1283,7 @@ async fn track_pages_are_stable_when_titles_and_fts_ranks_match() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    state.db.start_scan_job(scan_id, 2, false).await.unwrap();
     for index in 0..2 {
         state
             .db
@@ -1765,7 +1765,11 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .create_scan_job(foreign_library, Some(foreign_owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(foreign_scan, 1).await.unwrap();
+    state
+        .db
+        .start_scan_job(foreign_scan, 1, false)
+        .await
+        .unwrap();
     let mut foreign_input = browse_input(
         7_000,
         "Foreign track",
@@ -3587,7 +3591,7 @@ async fn album_discovery_orders_and_filters_in_sql_for_both_surfaces() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 5).await.unwrap();
+    state.db.start_scan_job(scan, 5, false).await.unwrap();
     // "delta moon" is lowercase on purpose: a byte-wise sort would file it after
     // "Gamma Sun", and album order is documented as case-insensitive.
     for (index, (title, album, artist, genre, year)) in [
@@ -4020,7 +4024,7 @@ async fn media_items_carry_the_modern_opensubsonic_fields_in_both_encodings() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 2).await.unwrap();
+    state.db.start_scan_job(scan, 2, false).await.unwrap();
 
     // Two credited artists and two genres, so tag order and the split are both
     // observable. The album is a compilation, which is stored and was never
@@ -4321,7 +4325,7 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
                 .unwrap();
             state
                 .db
-                .start_scan_job(scan, titles.len() as i64)
+                .start_scan_job(scan, titles.len() as i64, false)
                 .await
                 .unwrap();
             for (index, title) in titles.into_iter().enumerate() {
@@ -4642,7 +4646,7 @@ async fn bookmarks_round_trip_sync_and_isolate_tenants() {
                 .create_scan_job(library, Some(account), "manual")
                 .await
                 .unwrap();
-            state.db.start_scan_job(scan, 1).await.unwrap();
+            state.db.start_scan_job(scan, 1, false).await.unwrap();
             let mut input = browse_input(
                 offset,
                 "Long Form",
@@ -4887,7 +4891,7 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     let mut input = browse_input(
         800,
         "Paired",
@@ -5001,7 +5005,7 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(rescan, 1).await.unwrap();
+    state.db.start_scan_job(rescan, 1, false).await.unwrap();
     // The sweep above removed the stale entity, so put it back to rebuild the
     // starting state.
     sqlx::query(
@@ -5073,7 +5077,7 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(split, 2).await.unwrap();
+    state.db.start_scan_job(split, 2, false).await.unwrap();
     for (index, credit) in [("Nova Kern; Ivy Trench"), ("Nova Kern; Rue Delacour")]
         .into_iter()
         .enumerate()
@@ -5111,7 +5115,7 @@ async fn an_album_hangs_off_its_first_credited_artist_not_the_joined_string() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(boundary, 2).await.unwrap();
+    state.db.start_scan_job(boundary, 2, false).await.unwrap();
     for (index, credit) in ["Vale; Ivy Trench", "Vale; Ivy; Trench"]
         .into_iter()
         .enumerate()
@@ -5203,7 +5207,7 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 6).await.unwrap();
+    state.db.start_scan_job(scan, 6, false).await.unwrap();
 
     struct TaggedFile {
         album: &'static str,
@@ -5465,7 +5469,7 @@ async fn genre_matching_is_canonical_on_every_surface() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 3).await.unwrap();
+    state.db.start_scan_job(scan, 3, false).await.unwrap();
 
     // The same genre, spelled three ways across three files. Canonicalisation
     // folds case, punctuation and spacing, so all three are one genre.
@@ -5757,7 +5761,7 @@ async fn browse_methods_read_only_what_they_render() {
                 .create_scan_job(library, Some(account), "manual")
                 .await
                 .unwrap();
-            state.db.start_scan_job(scan, 3).await.unwrap();
+            state.db.start_scan_job(scan, 3, false).await.unwrap();
             // Deliberately out of sleeve order, and titled so that ordering by
             // title would give a different answer from ordering by track.
             for (index, (title, track)) in [("Zephyr", 1), ("Anvil", 2), ("Marrow", 3)]
@@ -5959,7 +5963,7 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     let mut input = browse_input(600, "Long Read", "Chapters", "Narrator", Some(1), Some(1));
     input.relative_path = "token-0.flac".into();
     input.quick_hash = format!("{:064x}", 61_000);
@@ -6444,7 +6448,7 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan_id, 5).await.unwrap();
+    state.db.start_scan_job(scan_id, 5, false).await.unwrap();
     // Tracks are applied out of sleeve order on purpose: the album drill-down
     // must sort them, not echo insertion order.
     for (index, (title, album, artist, track, disc)) in [
@@ -6725,7 +6729,7 @@ async fn native_user_data_endpoints_round_trip_and_isolate_tenants() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan_id, 2).await.unwrap();
+    state.db.start_scan_job(scan_id, 2, false).await.unwrap();
     for (index, (title, artist)) in [
         ("First Light", "Lumen Drift"),
         ("Slow Tide", "Écho Solaire"),
@@ -7139,7 +7143,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     state
         .db
         .apply_catalog_track(
@@ -7794,7 +7798,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     state
         .db
         .apply_catalog_track(
@@ -8025,7 +8029,7 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .create_scan_job(library, Some(owner), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(empty_scan, 1).await.unwrap();
+    state.db.start_scan_job(empty_scan, 1, false).await.unwrap();
     assert_eq!(
         state
             .db
@@ -8369,7 +8373,7 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         .create_scan_job(library, Some(user), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     let mut input = browse_input(700, "Paired", "Handshake", "Loopback", Some(1), Some(1));
     input.relative_path = "pkce-0.flac".into();
     input.quick_hash = format!("{:064x}", 71_000);
@@ -8719,7 +8723,7 @@ async fn subsonic_search_matches_through_the_fts_index() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 3).await.unwrap();
+    state.db.start_scan_job(scan, 3, false).await.unwrap();
     // One album of three tracks, one of them accented.
     for (index, title) in ["Echo Chamber", "Écho lointain", "Silent Partner"]
         .into_iter()
@@ -8861,7 +8865,7 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 4).await.unwrap();
+    state.db.start_scan_job(scan, 4, false).await.unwrap();
 
     // A tagged album, whose sort forms differ from the display forms — the
     // only case where the field carries information.
@@ -9087,7 +9091,7 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(rescan, 1).await.unwrap();
+    state.db.start_scan_job(rescan, 1, false).await.unwrap();
     let mut untagged_now = tagged.clone();
     untagged_now.sort_album = None;
     untagged_now.sort_album_artist = None;
@@ -9198,7 +9202,7 @@ async fn an_artist_reference_is_not_an_artist_record() {
         .create_scan_job(library, Some(admin), "manual")
         .await
         .unwrap();
-    state.db.start_scan_job(scan, 1).await.unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
     let mut input = catalog_input(0, "The Nocturnes");
     input.title = "Opening".into();
     input.album = Some("The Night Sessions".into());
@@ -9328,4 +9332,187 @@ async fn an_artist_reference_is_not_an_artist_record() {
             "the fixture must exercise {name}: {album_xml}"
         );
     }
+}
+
+/// A scan can be told to ignore what it already knows.
+///
+/// The skip is unconditional today, and it is right: it is why rescanning a
+/// large library costs seconds. But nothing could ask for the work to be done
+/// again, and a change to how the catalogue derives its identifiers needs
+/// exactly that — the files have not moved, only the meaning of the rows has.
+#[tokio::test]
+async fn a_full_scan_reads_what_an_ordinary_one_would_skip() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("full-scan", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("full-scan-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Only Track.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "Full", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Full".into(),
+        root_path: root.clone(),
+    };
+
+    let job_of = |scan_id: uuid::Uuid| {
+        let state = state.clone();
+        async move {
+            state
+                .db
+                .scan_job_for_user(owner, scan_id)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+    let scan_once = |library: LibraryRecord| {
+        let state = state.clone();
+        async move {
+            let id = state
+                .scanner
+                .trigger(library, Some(owner), "manual")
+                .await
+                .unwrap();
+            for _ in 0..200 {
+                let job = state
+                    .db
+                    .scan_job_for_user(owner, id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                if job.status == "completed" {
+                    return id;
+                }
+                if job.status == "failed" {
+                    panic!("scan failed: {:?}", job.message);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("scan timed out");
+        }
+    };
+
+    let first = scan_once(library.clone()).await;
+    assert_eq!(job_of(first).await.added, 1);
+
+    // The second run recognises the file and does nothing, which is the
+    // behaviour worth keeping.
+    let second = scan_once(library.clone()).await;
+    let second = job_of(second).await;
+    assert_eq!(second.skipped, 1);
+    assert_eq!(second.updated, 0);
+
+    // Asking changes that, on a file that has not moved by a single byte.
+    assert!(!state.db.full_scan_requested(library_id).await.unwrap());
+    state.db.request_full_scan_everywhere().await.unwrap();
+    assert!(state.db.full_scan_requested(library_id).await.unwrap());
+    let third = scan_once(library.clone()).await;
+    let third = job_of(third).await;
+    assert_eq!(third.skipped, 0, "a full scan skips nothing");
+    assert_eq!(third.updated, 1);
+
+    // And the request is spent, so the next run is ordinary again.
+    assert!(!state.db.full_scan_requested(library_id).await.unwrap());
+    let fourth = scan_once(library).await;
+    assert_eq!(job_of(fourth).await.skipped, 1);
+}
+
+/// The request outlives a run that does not finish.
+///
+/// This is the whole reason it is a stored state rather than an argument. A
+/// migration scan interrupted halfway has rewritten some rows under the new
+/// scheme and left the rest under the old one; if the request died with the
+/// run, the next scan would skip every remaining file — on the grounds that
+/// their bytes had not changed — and freeze the catalogue in two halves.
+#[tokio::test]
+async fn a_full_scan_request_survives_a_scan_that_never_completes() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("interrupted", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("interrupted-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Interrupted",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    state.db.request_full_scan_everywhere().await.unwrap();
+    let failed = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(failed, 1, true).await.unwrap();
+    state.db.fail_scan_job(failed, "interrupted").await.unwrap();
+    assert!(
+        state.db.full_scan_requested(library_id).await.unwrap(),
+        "a failed run leaves the request standing"
+    );
+
+    // Only a completed run spends it.
+    let completed = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(completed, 1, true).await.unwrap();
+    state.db.finish_scan_job(completed, 0).await.unwrap();
+    assert!(!state.db.full_scan_requested(library_id).await.unwrap());
+}
+
+/// The instance remembers its own settings between boots.
+#[tokio::test]
+async fn server_properties_round_trip_and_overwrite() {
+    let (_temp, _config, state) = test_app().await;
+    assert_eq!(state.db.server_property("pid.album").await.unwrap(), None);
+    state
+        .db
+        .set_server_property("pid.album", "albumartistid,album")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .db
+            .server_property("pid.album")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("albumartistid,album")
+    );
+    state
+        .db
+        .set_server_property("pid.album", "musicbrainz_albumid")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .db
+            .server_property("pid.album")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("musicbrainz_albumid")
+    );
 }
