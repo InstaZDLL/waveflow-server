@@ -678,10 +678,7 @@ fn raw_credits(tag: Option<&lofty::tag::Tag>) -> crate::tags::RawCredits {
 
     let performer_pairs = values(ItemKey::Performer)
         .into_iter()
-        .map(|value| {
-            let (sub_role, name) = crate::tags::split_performer(&value);
-            (sub_role, name)
-        })
+        .map(|value| crate::tags::split_performer(&value))
         .collect();
 
     crate::tags::RawCredits {

@@ -2050,10 +2050,6 @@ fn node_json(node: &Node, parent: &str) -> Value {
         };
         map.insert(name.to_owned(), value);
     }
-    // A browsing child is an artist or an album under the same element name a
-    // song uses, and `isDir` is what tells them apart. Injecting a song's
-    // relations into a folder entry would answer `isrc: []` on an artist.
-    // `artists` and `genres` stay, because an album child carries both.
     // A browsing child is a song, an album or an artist under one element
     // name, and its own fields are what tell them apart: an artist carries
     // `albumCount`, an album `songCount`, a song neither. Injecting a song's

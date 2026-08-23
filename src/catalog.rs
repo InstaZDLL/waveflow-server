@@ -1151,9 +1151,22 @@ impl Database {
             .bind(track_id.to_string())
             .execute(&mut **tx)
             .await?;
+        // Every participant's name, not just the track artist's. The artist
+        // index lists only artists an album is credited to, and the argument
+        // for that is that a composer stays reachable by search — which is
+        // only true if the search can see the composer's name.
+        let searchable = {
+            let mut names: Vec<&str> = credits.iter().map(|credit| credit.name.as_str()).collect();
+            names.sort_unstable();
+            names.dedup();
+            if let Some(display) = input.artist.as_deref() {
+                names.push(display);
+            }
+            names.join(" ")
+        };
         sqlx::query("INSERT INTO track_fts (track_id, library_id, title, album, artists, genres) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(track_id.to_string()).bind(library_id.to_string()).bind(&input.title)
-            .bind(input.album.as_deref()).bind(input.artist.as_deref()).bind(input.genre.as_deref())
+            .bind(input.album.as_deref()).bind(&searchable).bind(input.genre.as_deref())
             .execute(&mut **tx).await?;
         Ok(if existing_id.is_none() {
             ApplyOutcome::Added
