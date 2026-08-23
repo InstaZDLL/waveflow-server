@@ -128,7 +128,10 @@ impl PidSpec {
         if !allow_album_id && groups.iter().flatten().any(|a| *a == Attribute::AlbumId) {
             return Err(PidSpecError {
                 spec: source.to_owned(),
-                reason: "`albumid` cannot appear in the album's own spec",
+                // Neither the album's own spec nor the artist's may name it:
+                // both would be asking the album for an answer that depends on
+                // themselves. The caller names which one it was parsing.
+                reason: "`albumid` cannot appear in this spec",
             });
         }
         Ok(Self {

@@ -5165,9 +5165,12 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
 
     // Nothing is derived until the pass that derives it: the tracks carry the
     // identifiers from the moment they are indexed, the albums do not.
-    assert!(albums_by_title()
+    assert!(state
+        .services
+        .list_albums(owner, &Default::default())
         .await
-        .values()
+        .unwrap()
+        .iter()
         .all(|album| album.musicbrainz_id.is_none()));
 
     state
@@ -5309,9 +5312,14 @@ async fn entity_musicbrainz_ids_are_a_majority_vote_over_the_tracks() {
         .consolidate_catalog_derivations(library)
         .await
         .unwrap();
-    assert!(albums_by_title()
+    // Read from the full list, not from a map keyed on the title: two records
+    // share the title "Split Sky", so a map would collapse them and check one.
+    assert!(state
+        .services
+        .list_albums(owner, &Default::default())
         .await
-        .values()
+        .unwrap()
+        .iter()
         .all(|album| album.musicbrainz_id.is_none()));
 }
 
@@ -9421,7 +9429,22 @@ async fn a_full_scan_request_survives_a_scan_that_never_completes() {
         "a failed run leaves the request standing"
     );
 
-    // Only a completed run spends it.
+    // Nor can a run that started before the request arrived: it read the
+    // catalogue under the old rules, so completing it says nothing about the
+    // new ones.
+    let ordinary = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(ordinary, 1, false).await.unwrap();
+    state.db.finish_scan_job(ordinary, 0).await.unwrap();
+    assert!(
+        state.db.full_scan_requested(library_id).await.unwrap(),
+        "an ordinary run cannot spend a request it never honoured"
+    );
+
+    // Only a completed full run spends it.
     let completed = state
         .db
         .create_scan_job(library_id, Some(owner), "manual")
@@ -9522,6 +9545,23 @@ async fn a_changed_identity_rule_schedules_a_full_rescan_everywhere() {
             .await
             .unwrap(),
         0
+    );
+
+    // The track spec is recorded but not compared: nothing derives from it,
+    // so changing it re-identifies nothing and must not cost a rescan.
+    state
+        .db
+        .set_server_property("pid.track", "folder,title")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .db
+            .reconcile_catalog_identity(&config.pid)
+            .await
+            .unwrap(),
+        0,
+        "a track spec that governs nothing schedules nothing"
     );
 
     // Disagreeing marks every library, because the rule is instance-wide.
@@ -10016,7 +10056,14 @@ async fn credits_reach_the_wire_in_both_encodings() {
         .and_then(|children| children.iter().find(|child| child["isDir"] == true))
         .expect("the folder lists its artists")
         .clone();
-    for absent in ["isrc", "moods", "albumArtists", "contributors"] {
+    for absent in [
+        "isrc",
+        "moods",
+        "albumArtists",
+        "contributors",
+        "artists",
+        "genres",
+    ] {
         assert!(
             entry.get(absent).is_none(),
             "a directory entry carries no {absent}: {entry:?}"
