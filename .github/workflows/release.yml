@@ -59,7 +59,10 @@ jobs:
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
           tag_version="${tag#v}"
-          crate_version="$(sed -n '/^\[package\]/,/^\[/ s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          # Same bounded form as the MSRV job: whitespace-tolerant, and
+          # stopped at the closing quote, so a trailing comment cannot join
+          # the version and make a correct tag look like a mismatch.
+          crate_version="$(sed -n '/^\[package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
           echo "tag=$tag_version crate=$crate_version"
           if [ "$tag_version" != "$crate_version" ]; then
             echo "::error::tag $tag declares $tag_version but Cargo.toml says $crate_version"
