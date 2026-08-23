@@ -3300,6 +3300,10 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         full_hash: format!("{:064x}", index + 101),
         title: format!("Compilation track {index}"),
         artist: Some(artist.into()),
+        artists: Vec::new(),
+        album_artists: Vec::new(),
+        roles: Vec::new(),
+        performer_pairs: Vec::new(),
         album: Some("Shared compilation".into()),
         album_artist: None,
         is_compilation: true,
@@ -6378,6 +6382,10 @@ fn browse_input(
         full_hash: format!("{:064x}", index + 900),
         title: title.into(),
         artist: Some(artist.into()),
+        artists: Vec::new(),
+        album_artists: Vec::new(),
+        roles: Vec::new(),
+        performer_pairs: Vec::new(),
         album: Some(album.into()),
         album_artist: Some(artist.into()),
         is_compilation: false,
@@ -9597,4 +9605,80 @@ async fn a_changed_identity_rule_schedules_a_full_rescan_everywhere() {
             library.name
         );
     }
+}
+
+/// The separators the reference cuts on, reaching the catalogue.
+///
+/// The old rule cut on `;` and nothing else, so a file crediting
+/// "Nova Kern / Lior Sand" held one artist named after the whole string. The
+/// new one cuts on a padded slash — padded so that `AC/DC`, which is one band,
+/// survives it.
+#[tokio::test]
+async fn the_catalogue_cuts_a_credit_where_the_reference_cuts_it() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("separators", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("separator-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Separators",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3, false).await.unwrap();
+
+    for (index, credit, album) in [
+        (0usize, "Nova Kern / Lior Sand", "Split By Slash"),
+        (1, "AC/DC", "Kept Whole"),
+        (2, "Ada Vale feat. Nova Kern", "Split By Feat"),
+    ] {
+        let mut input = catalog_input(index, credit);
+        input.title = format!("Track {index}");
+        input.album = Some(album.into());
+        input.album_artist = Some(credit.into());
+        input.is_compilation = false;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let artists = state
+        .services
+        .list_artists(owner, None, Default::default())
+        .await
+        .unwrap();
+    let mut names: Vec<String> = artists
+        .into_iter()
+        .map(|summary| summary.artist.name)
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "AC/DC".to_owned(),
+            "Ada Vale".to_owned(),
+            "Lior Sand".to_owned(),
+            "Nova Kern".to_owned(),
+        ],
+        "a padded slash cuts, a bare one inside a name does not, and `feat.` cuts"
+    );
 }

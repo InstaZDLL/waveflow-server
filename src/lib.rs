@@ -16,6 +16,7 @@ pub mod services;
 pub mod stream_ticket;
 pub mod subsonic;
 pub mod sync;
+pub mod tags;
 pub mod webui;
 
 use std::{sync::Arc, time::Duration};
