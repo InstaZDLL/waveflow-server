@@ -143,8 +143,13 @@ under it:
   track was reporting the guest as one of its own artists.
 - **`getArtists` and `getIndexes` list only artists an album is credited to.**
   A composer with no album of their own is reachable by identifier and by
-  search — the full-text index carries every participant's name — but is no
-  longer one of the library's artists.
+  search — every artist has a full-text row of their own, matched on their
+  name — but is no longer one of the library’s artists.
+- **`search3` and `search2` match an artist on their own name.** The artist
+  half of a search was derived rather than matched: it returned everyone
+  credited on the tracks the full-text index had found, so searching a track
+  title answered with that track’s whole session crew. Artists now carry a
+  full-text row of their own, as they do in the reference.
 - **`artist.albumCount` counts credits**, so both artists of a two-artist album
   now count it. The old count could only ever see the first.
 - **A track's `artists[]` follows the reference's separators**: a padded slash,
