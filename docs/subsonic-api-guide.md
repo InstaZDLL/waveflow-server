@@ -308,11 +308,14 @@ canonical name, so an album spelling "Hip-Hop" on some tracks and "Hip Hop" on
 others reports one genre.
 
 What WaveFlow does not implement is absent rather than empty, which under the
-presence rule is what says so: `contributors[]` and `displayComposer` on a media
-item, `sortName`, `moods[]`, `explicitStatus`, `originalReleaseDate`,
-`releaseDate`, `releaseTypes[]`, `recordLabels[]` and `discTitles[]` on an album,
-and `sortName` and `roles[]` on an artist. All of them need tags the scanner does
-not read or columns the schema does not have.
+presence rule is what says so: `moods[]`, `explicitStatus`,
+`originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` and
+`discTitles[]` on an album. Those need album columns the schema does not have.
+
+`sortName` on an album and an artist is no longer among them, and neither are
+`contributors[]`, `displayComposer` or `roles[]`: every credit a file names is
+stored under the role it names it under, so a composer, a producer or a
+performer is an artist row like any other.
 
 These follow the OpenSubsonic presence rule: a supported field is present even
 when WaveFlow has no value for it, so an untagged track answers `samplingRate=0`,
