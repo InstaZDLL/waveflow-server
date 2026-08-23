@@ -1,8 +1,12 @@
 name: Release
 
-# Publishes the container image for a tag. Nothing else releases: the binary
-# alone needs FFmpeg on the host anyway, so the image is the artifact a
-# self-hosted server is actually installed from.
+# Publishes a tag: the container image, then the GitHub release that
+# announces it. No binary is attached — it would need FFmpeg on the host
+# anyway, so the image is the artifact a self-hosted server is installed from.
+#
+# A version carrying a pre-release suffix is marked as one in both places: the
+# image floats as `beta` rather than `latest`, and the release wears the
+# pre-release badge. Same rule as the desktop repository.
 #
 # The tag is the source of truth for the version. `Cargo.toml` is not read
 # here — a tag that disagrees with it would produce an image labelled one way
@@ -176,3 +180,49 @@ jobs:
             --tag "$image:$extra" \
             "${refs[@]}"
           docker buildx imagetools inspect "$image:$version"
+
+  # The GitHub release comes last, once the image it announces exists. A
+  # release page whose pull command 404s is worse than no page.
+  github-release:
+    name: Publish the GitHub release
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # A pre-release suffix marks the release as one on GitHub, the same rule
+      # the desktop repository uses. The badge is what keeps
+      # `releases/latest` from resolving to a beta, and what tells a watcher
+      # or a packager not to offer it.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          case "$VERSION" in
+            *-*) release_flag="--prerelease" ; channel="beta"   ;;
+            *)   release_flag="--latest"     ; channel="latest" ;;
+          esac
+
+          # printf with a single-quoted format rather than a heredoc: the body
+          # is mostly backticks, and every one of them would be a command
+          # substitution in an unquoted here-document.
+          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s`, for `linux/amd64` and `linux/arm64`.\n' \
+            "$IMAGE" "$VERSION" "$channel" > notes.md
+
+          # `--generate-notes` appends the merged pull requests below this, so
+          # the install line stays at the top where it is useful.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md $release_flag
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file notes.md \
+              --generate-notes \
+              --verify-tag \
+              $release_flag
+          fi
