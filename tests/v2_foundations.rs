@@ -10040,16 +10040,26 @@ async fn credits_reach_the_wire_in_both_encodings() {
     // supported. The presence rule turns on emitting the default, and a record
     // that omits its own array is a server saying it does not read roles at
     // all — which is what the classification above must not do.
-    let starred = subsonic_json(&router, "getStarred2", api_key, "").await;
-    assert!(
-        starred["subsonic-response"]["starred2"]["artist"].is_array()
-            || starred["subsonic-response"]["starred2"]["artist"].is_null(),
-        "the starred container answers"
-    );
     let indexed_artist = named("Nova Kern");
     assert!(
         indexed_artist["roles"].is_array(),
         "a full artist record carries its roles array: {indexed_artist:?}"
+    );
+    // The same record through a second surface, because `getStarred2` builds
+    // its artists from the same projection and the same node.
+    let artist_id = indexed_artist["id"].as_str().expect("the artist id");
+    subsonic_json(&router, "star", api_key, &format!("&artistId={artist_id}")).await;
+    let starred = subsonic_json(&router, "getStarred2", api_key, "").await;
+    let starred_artist = starred["subsonic-response"]["starred2"]["artist"]
+        .as_array()
+        .expect("the starred artists are an array")
+        .iter()
+        .find(|artist| artist["id"] == artist_id)
+        .expect("the artist that was just starred")
+        .clone();
+    assert!(
+        starred_artist["roles"].is_array(),
+        "and carries it there too: {starred_artist:?}"
     );
     // A browsing child is an artist or an album under the element name a song
     // uses, and only `isDir` tells them apart. A folder entry must not answer
@@ -10109,5 +10119,25 @@ async fn credits_reach_the_wire_in_both_encodings() {
     assert!(
         xml.contains("displayComposer=\"Otto Pen \u{2022} Ada Vale\""),
         "the composer display string reaches XML too: {xml}"
+    );
+    // And the case that needs the field injected rather than rendered: an
+    // artist whose files have all gone missing keeps its row and its credits,
+    // but nothing counts them any more, so it holds no role at all. It still
+    // has to say the field is supported.
+    sqlx::query("UPDATE track SET is_available = 0 WHERE library_id = ?")
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
+    let bereft = subsonic_json(&router, "getArtist", api_key, &format!("&id={artist_id}")).await;
+    assert_eq!(
+        bereft["subsonic-response"]["artist"]["roles"],
+        serde_json::json!([]),
+        "empty, not absent: absent would say the server does not read roles"
     );
 }
