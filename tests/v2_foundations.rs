@@ -1082,6 +1082,9 @@ async fn ffmpeg_generated_catalog_format_matrix_is_indexed() {
         ("m4a", "aac"),
         ("ogg", "libvorbis"),
         ("wav", "pcm_s16le"),
+        // AIFF arrives with the core bump: the desktop reads it through
+        // symphonia's RIFF crate now, and this server reads the same list.
+        ("aiff", "pcm_s16be"),
     ] {
         generate_audio_fixture(&music.join(format!("matrix.{extension}")), codec, extension);
     }
@@ -1107,7 +1110,25 @@ async fn ffmpeg_generated_catalog_format_matrix_is_indexed() {
         .list_tracks_for_user(owner, library_id)
         .await
         .unwrap();
-    assert_eq!(tracks.len(), 5);
+    assert_eq!(tracks.len(), 6);
+
+    // AIFF is asserted apart, and on less. FFmpeg's AIFF muxer writes the
+    // title and stops — `ffprobe` reports no album and no artist on the file
+    // it just produced — so demanding them here would test the fixture
+    // generator rather than the scanner. What the bump actually changed is
+    // that the extension is admitted at all, and that is what this checks.
+    let aiff = tracks
+        .iter()
+        .find(|track| track.relative_path == "matrix.aiff")
+        .expect("aiff is admitted by the extension list");
+    assert_eq!(aiff.title, "Matrix aiff");
+    assert!(aiff.duration_ms > 0);
+    let aiff_bytes = std::fs::read(music.join("matrix.aiff")).unwrap();
+    assert_eq!(
+        aiff.full_hash,
+        blake3::hash(&aiff_bytes).to_hex().to_string()
+    );
+
     for extension in ["mp3", "flac", "m4a", "ogg", "wav"] {
         let track = tracks
             .iter()
