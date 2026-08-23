@@ -2070,7 +2070,11 @@ fn node_json(node: &Node, parent: &str) -> Value {
     };
     for name in json_required_array_fields(parent, &node.name) {
         let injected = match entry_kind {
-            EntryKind::Artist => false,
+            // An artist keeps its own array and takes nobody else's: a folder
+            // entry answering `isrc: []` would say the server read a recording
+            // identifier off a directory, and `artists: []` would be the list
+            // of the artists of an artist.
+            EntryKind::Artist => *name == "roles",
             EntryKind::Album => matches!(*name, "artists" | "genres"),
             EntryKind::Song => true,
         };

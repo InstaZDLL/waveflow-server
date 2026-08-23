@@ -10035,6 +10035,22 @@ async fn credits_reach_the_wire_in_both_encodings() {
         .find(|summary| summary.artist.name == "Otto Pen")
         .expect("the composer is in the catalogue");
     assert_eq!(composer.artist.roles, vec!["composer".to_owned()]);
+
+    // An artist whose credits nothing has counted yet still says the field is
+    // supported. The presence rule turns on emitting the default, and a record
+    // that omits its own array is a server saying it does not read roles at
+    // all — which is what the classification above must not do.
+    let starred = subsonic_json(&router, "getStarred2", api_key, "").await;
+    assert!(
+        starred["subsonic-response"]["starred2"]["artist"].is_array()
+            || starred["subsonic-response"]["starred2"]["artist"].is_null(),
+        "the starred container answers"
+    );
+    let indexed_artist = named("Nova Kern");
+    assert!(
+        indexed_artist["roles"].is_array(),
+        "a full artist record carries its roles array: {indexed_artist:?}"
+    );
     // A browsing child is an artist or an album under the element name a song
     // uses, and only `isDir` tells them apart. A folder entry must not answer
     // with a track's relations: an artist reporting `isrc: []` would be the
