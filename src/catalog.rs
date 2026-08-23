@@ -302,6 +302,53 @@ impl Database {
         Ok(matches!(requested, Some(Some(_))))
     }
 
+    /// Notices that this instance derives identifiers differently from the run
+    /// that built the catalogue, and asks for a full rescan when it does.
+    ///
+    /// No file timestamp can reveal this: the files have not changed, the rule
+    /// reading them has. Comparing the persisted spec against the configured
+    /// one is the only way the difference is visible at all.
+    ///
+    /// Returns how many libraries were marked, so a caller can say so.
+    pub async fn reconcile_catalog_identity(
+        &self,
+        specs: &crate::pid::PidSpecs,
+    ) -> Result<u64, sqlx::Error> {
+        let active = [
+            ("pid.album", specs.album.source()),
+            ("pid.track", specs.track.source()),
+            ("pid.artist", specs.artist.source()),
+        ];
+        let mut changed = Vec::new();
+        for (key, value) in active {
+            match self.server_property(key).await? {
+                // A catalogue built before the property existed is not
+                // evidence of a different rule, only of an older server. The
+                // first scan writes what it used, and later boots compare.
+                None => {}
+                Some(stored) if stored == value => {}
+                Some(stored) => changed.push((key, stored, value)),
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        for (key, stored, active) in &changed {
+            tracing::warn!(
+                setting = key,
+                %stored,
+                %active,
+                "catalogue identity setting changed since the last scan"
+            );
+        }
+        let libraries = self.request_full_scan_everywhere().await?;
+        tracing::warn!(
+            libraries,
+            "every library will be rescanned in full so its identifiers follow the new rule"
+        );
+        Ok(libraries)
+    }
+
     pub async fn library_for_user(
         &self,
         user_id: Uuid,
@@ -675,6 +722,26 @@ impl Database {
         .bind(scan_id.to_string())
         .execute(&mut *tx)
         .await?;
+        // The rules this run wrote the catalogue under, recorded at the end
+        // and never at the start: a scan that dies halfway would otherwise
+        // look complete to the next boot, which would find no mismatch and
+        // leave half the catalogue keyed under the old rule for good.
+        for (key, value) in [
+            ("pid.album", self.pid().album.source()),
+            ("pid.track", self.pid().track.source()),
+            ("pid.artist", self.pid().artist.source()),
+        ] {
+            sqlx::query(
+                "INSERT INTO server_property (key, value, updated_at) VALUES (?, ?, ?) \
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value, \
+                 updated_at = excluded.updated_at",
+            )
+            .bind(key)
+            .bind(value)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         Ok(())
     }

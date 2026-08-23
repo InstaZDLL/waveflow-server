@@ -9,6 +9,7 @@ pub mod http;
 pub mod lyrics;
 pub mod media;
 pub mod oauth;
+pub mod pid;
 pub mod scanner;
 pub mod security;
 pub mod services;
@@ -360,6 +361,7 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
     db.migrate().await?;
+    db.reconcile_catalog_identity(&config.pid).await?;
     let secret_box = Arc::new(security::SecretBox::load_or_create(
         &config.instance_key_path,
     )?);
