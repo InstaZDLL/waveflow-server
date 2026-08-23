@@ -1329,31 +1329,57 @@ mod tests {
         }
 
         // A track, its album and its artist, plus the credit relating them:
-        // one row in each table the rebuild touches or cascades from.
-        for statement in [
-            "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
-               VALUES ('acc', 'owner', 'x', 'admin', 0, 0)",
-            "INSERT INTO library (id, owner_user_id, name, root_path, visibility, created_at, \
-                                  updated_at) \
-               VALUES ('lib', 'acc', 'Library', '/music', 'private', 0, 0)",
-            "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
-               VALUES ('art', 'lib', 'Nova Kern', 'nova kern', 0, 0)",
-            "INSERT INTO album (id, library_id, title, canonical_title, identity_key, \
-                                album_artist_id, album_artist_name, created_at, updated_at) \
-               VALUES ('alb', 'lib', 'Convergence', 'convergence', 'key', 'art', 'Nova Kern', 0, 0)",
-            "INSERT INTO track (id, library_id, album_id, relative_path, file_size, \
-                                file_modified_at, quick_hash, full_hash, title, duration_ms, \
-                                created_at, updated_at) \
-               VALUES ('trk', 'lib', 'alb', 'a.flac', 1, 0, ?, ?, 'Zenith', 1000, 0, 0)",
-            "INSERT INTO track_artist (track_id, artist_id, library_id, position) \
-               VALUES ('trk', 'art', 'lib', 0)",
+        // one row in each table the rebuild touches or cascades from. The
+        // identifiers are UUIDs because every real row's is: a fixture shaped
+        // unlike production is one a production-shaped bug can pass through.
+        const ACCOUNT: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000001";
+        const LIBRARY: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000002";
+        const ARTIST: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000003";
+        const ALBUM: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000004";
+        const TRACK: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000005";
+        let digest = "0".repeat(64);
+        for (statement, binds) in [
+            (
+                "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+                   VALUES (?, 'owner', 'x', 'admin', 0, 0)",
+                vec![ACCOUNT],
+            ),
+            (
+                "INSERT INTO library (id, owner_user_id, name, root_path, visibility, \
+                                      created_at, updated_at) \
+                   VALUES (?, ?, 'Library', '/music', 'private', 0, 0)",
+                vec![LIBRARY, ACCOUNT],
+            ),
+            (
+                "INSERT INTO artist (id, library_id, name, canonical_name, created_at, \
+                                     updated_at) \
+                   VALUES (?, ?, 'Nova Kern', 'nova kern', 0, 0)",
+                vec![ARTIST, LIBRARY],
+            ),
+            (
+                "INSERT INTO album (id, library_id, title, canonical_title, identity_key, \
+                                    album_artist_id, album_artist_name, created_at, updated_at) \
+                   VALUES (?, ?, 'Convergence', 'convergence', 'key', ?, 'Nova Kern', 0, 0)",
+                vec![ALBUM, LIBRARY, ARTIST],
+            ),
+            (
+                "INSERT INTO track (id, library_id, album_id, relative_path, file_size, \
+                                    file_modified_at, quick_hash, full_hash, title, \
+                                    duration_ms, created_at, updated_at) \
+                   VALUES (?, ?, ?, 'a.flac', 1, 0, ?, ?, 'Zenith', 1000, 0, 0)",
+                vec![TRACK, LIBRARY, ALBUM, digest.as_str(), digest.as_str()],
+            ),
+            (
+                "INSERT INTO track_artist (track_id, artist_id, library_id, position) \
+                   VALUES (?, ?, ?, 0)",
+                vec![TRACK, ARTIST, LIBRARY],
+            ),
         ] {
-            sqlx::query(statement)
-                .bind("0".repeat(64))
-                .bind("0".repeat(64))
-                .execute(&mut *connection)
-                .await
-                .expect("seed row");
+            let mut query = sqlx::query(statement);
+            for bind in binds {
+                query = query.bind(bind.to_owned());
+            }
+            query.execute(&mut *connection).await.expect("seed row");
         }
         drop(connection);
 
@@ -1382,7 +1408,7 @@ mod tests {
             assert_eq!(count, 1, "{table} lost its rows to the rebuild");
         }
         let role: String =
-            sqlx::query_scalar("SELECT role FROM track_participant WHERE track_id = 'trk'")
+            sqlx::query_scalar("SELECT role FROM track_participant WHERE track_id = '6f1d1b6e-0f1a-4a3d-9c21-000000000005'")
                 .fetch_one(&mut *connection)
                 .await
                 .expect("carried credit");
