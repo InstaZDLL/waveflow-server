@@ -9995,6 +9995,37 @@ async fn credits_reach_the_wire_in_both_encodings() {
         .find(|summary| summary.artist.name == "Otto Pen")
         .expect("the composer is in the catalogue");
     assert_eq!(composer.artist.roles, vec!["composer".to_owned()]);
+    // A browsing child is an artist or an album under the element name a song
+    // uses, and only `isDir` tells them apart. A folder entry must not answer
+    // with a track's relations: an artist reporting `isrc: []` would be the
+    // server claiming it read a recording identifier off a directory.
+    let folders = subsonic_json(&router, "getMusicFolders", api_key, "").await;
+    let folder_id = folders["subsonic-response"]["musicFolders"]["musicFolder"][0]["id"]
+        .as_str()
+        .expect("the library is listed")
+        .to_owned();
+    let directory = subsonic_json(
+        &router,
+        "getMusicDirectory",
+        api_key,
+        &format!("&id={folder_id}"),
+    )
+    .await;
+    let entry = directory["subsonic-response"]["directory"]["child"]
+        .as_array()
+        .and_then(|children| children.iter().find(|child| child["isDir"] == true))
+        .expect("the folder lists its artists")
+        .clone();
+    for absent in ["isrc", "moods", "albumArtists", "contributors"] {
+        assert!(
+            entry.get(absent).is_none(),
+            "a directory entry carries no {absent}: {entry:?}"
+        );
+    }
+    assert!(
+        entry["roles"].is_array(),
+        "but it keeps the artist record shape it is rendered from: {entry:?}"
+    );
 
     let xml = router
         .clone()

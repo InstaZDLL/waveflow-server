@@ -306,13 +306,21 @@ pub fn credits(raw: &RawCredits) -> Vec<Credit> {
             performers.push((title_case(sub_role), name));
         }
     }
-    for (position, (sub_role, name)) in performers.into_iter().enumerate() {
+    // The performer group may already hold credits that arrived through the
+    // role list rather than as pairs, so the numbering continues instead of
+    // restarting: two credits sharing a role and a position fail the whole
+    // write on the relation's key.
+    let already = credits
+        .iter()
+        .filter(|credit| credit.role == Role::Performer)
+        .count();
+    for (offset, (sub_role, name)) in performers.into_iter().enumerate() {
         credits.push(Credit {
             role: Role::Performer,
             sub_role,
             name,
             sort_name: None,
-            position,
+            position: already + offset,
         });
     }
 

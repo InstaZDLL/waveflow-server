@@ -298,7 +298,8 @@ Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
 `displayAlbumArtist`, `contributors[]`, `displayComposer`, `genres[]`,
 `musicBrainzId`, `bpm`, `sortName`, `comment`, `isrc[]`, `moods[]`,
 `explicitStatus` and `replayGain`; albums add `isCompilation`, `playCount`,
-`displayArtist`, `artists[]` and `genres[]`; artists add `roles[]`. Both songs
+`displayArtist`, `sortName`, `artists[]` and `genres[]`; artists add `sortName`
+and `roles[]`. Both songs
 and albums carry `played` when they have been played.
 
 `albumArtists[]` and `displayAlbumArtist` are the **album's** credit, not the

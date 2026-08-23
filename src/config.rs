@@ -298,11 +298,15 @@ fn parse_pid_spec(
         .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
 }
 
+fn default_pid_spec(default: &str, kind: PidSpecKind) -> crate::pid::PidSpec {
+    crate::pid::PidSpec::parse(default, kind.allows_album_id()).expect("built-in pid spec default")
+}
+
 fn default_pid_specs() -> crate::pid::PidSpecs {
     crate::pid::PidSpecs {
-        album: crate::pid::PidSpec::parse(DEFAULT_PID_ALBUM, false).expect("album spec default"),
-        track: crate::pid::PidSpec::parse(DEFAULT_PID_TRACK, true).expect("track spec default"),
-        artist: crate::pid::PidSpec::parse(DEFAULT_PID_ARTIST, false).expect("artist spec default"),
+        album: default_pid_spec(DEFAULT_PID_ALBUM, PidSpecKind::MayNotReferenceAlbumId),
+        track: default_pid_spec(DEFAULT_PID_TRACK, PidSpecKind::MayReferenceAlbumId),
+        artist: default_pid_spec(DEFAULT_PID_ARTIST, PidSpecKind::MayNotReferenceAlbumId),
     }
 }
 
