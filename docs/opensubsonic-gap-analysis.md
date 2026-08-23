@@ -180,6 +180,11 @@ nommée, et deux détails cosmétiques.
 
 ## 5. Priorités proposées
 
+> **Périmé au 2026-08-23, conservé tel quel.** Les points 1 et 2 sont faits :
+> les quatre clients ont été rejoués, et `sortName` est livré. Voir
+> l'addendum du §3. Cette liste décrit ce qui restait au moment de l'audit,
+> pas ce qui reste aujourd'hui.
+
 1. Trancher explicitement la question des quatre clients contre cinq, puisque
    c'est la seule chose entre l'état actuel et un tag.
 2. `sortName` sur `album` et `artist`.

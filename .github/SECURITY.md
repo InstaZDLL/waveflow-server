@@ -19,8 +19,12 @@ Only `main` and the latest published release receive security fixes.
 - local Argon2id login and rotating opaque sessions;
 - the SQLite database, migration runner and global writer coordinator;
 - `instance.key` and encrypted per-user Subsonic credentials;
-- library membership, and the catalogue and media authorization enforced
-  inside the queries rather than in the handlers;
+- library membership: the catalogue and media queries carry it themselves, so
+  an unentitled read answers 404 rather than being filtered after the fact;
+- the public share path, which is the exception to that and worth reading
+  twice — the caller is anonymous, the track's membership of the share is
+  checked in the handler rather than in a query, and the ownership check
+  behind it runs as the share's owner and not as the caller;
 - URL/query redaction in request traces;
 - canonical filesystem and symlink guards on the scanner and on streaming;
 - AEAD-sealed stream tickets and public share tokens, both redacted from traces.
