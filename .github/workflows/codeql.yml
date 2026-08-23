@@ -7,7 +7,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - "migrations/**"
+      - "migrations-v2/**"
       - "tests/**"
       - ".github/workflows/**"
   pull_request:
@@ -16,7 +16,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - "migrations/**"
+      - "migrations-v2/**"
       - "tests/**"
       - ".github/workflows/**"
   schedule:
