@@ -990,20 +990,12 @@ impl DomainServices {
         let artists = sqlx::query(concat!(
             artist_select!(),
             " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
-                AND ar.id IN ( \
-                  SELECT al.album_artist_id FROM album al JOIN track t ON t.album_id=al.id \
-                  WHERE al.album_artist_id IS NOT NULL \
-                    AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
-                  UNION \
-                  SELECT tp.artist_id FROM track_participant tp \
-                  WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
-                ) \
+                AND ar.id IN (SELECT artist_id FROM artist_fts WHERE artist_fts MATCH ?) \
               ORDER BY ar.name COLLATE NOCASE"
         ))
         .bind(user_id.to_string())
         .bind(folder_filter)
         .bind(folder_filter)
-        .bind(&fts)
         .bind(&fts)
         .fetch_all(self.db.pool())
         .await?
@@ -1598,8 +1590,7 @@ impl DomainServices {
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
         let artists = sqlx::query(concat!(
             artist_select!(),
-            " AND ar.id IN (SELECT tp.artist_id FROM track_participant tp \
-                WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+            " AND ar.id IN (SELECT artist_id FROM artist_fts WHERE artist_fts MATCH ?) \
               ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
