@@ -142,7 +142,10 @@ jobs:
 
       - id: msrv
         run: |
-          version="$(sed -n '/^\[package\]/,/^\[/ s/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          # Tolerant of the whitespace TOML allows around `=`, and bounded
+          # by the closing quote: the greedy form swallowed a trailing
+          # comment and handed the toolchain action a version with a `#`.
+          version="$(sed -n '/^\[package\]/,/^\[/ s/^rust-version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
           if [ -z "$version" ]; then
             echo "::error::Cargo.toml declares no rust-version"
             exit 1
