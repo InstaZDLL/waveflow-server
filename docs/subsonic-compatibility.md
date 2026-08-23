@@ -104,3 +104,59 @@ excepted; the two projections are pinned against each other in the test suite,
 in JSON and in XML.
 
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.
+
+## The replay this alignment requires
+
+The four rows above were re-run on 2026-08-19 against a catalogue whose
+artist model has since been replaced. That model was a variant: Navidrome has
+served OpenSubsonic to hundreds of clients for years, and where the two
+disagreed it was our disagreement to withdraw, not theirs.
+
+**The four replayed rows have to be run again before the next tag.** Substreamer stays out of the replayed set for the reason given above, and is still not counted toward it. What changed on the
+wire, and why a green matrix from before it says nothing about after it:
+
+Additive — a client that ignores them sees the catalogue it saw:
+
+- `contributors[]` and `displayComposer` on a media item, and `roles[]` on an
+  artist. Absent before, which under the presence rule said the server did not
+  read them; emitted with their default now, on a track that credits nobody.
+- `albumArtists[]` may hold more than one entry. It was built from a single
+  identifier, so an album credited to two artists named one and dropped the
+  other on every one of its tracks.
+
+Breaking — a client validated against the previous run can see these change
+under it:
+
+- **Every album and artist identifier changed.** They are derived from the tags
+  now rather than drawn at random, which makes this the last time they move:
+  the same files answer the same ids on a fresh install, where a rebuilt
+  database used to re-mint every one of them. Track identifiers did not change.
+  Favourites and ratings that name an album or an artist do not survive the
+  transition: `user_star` and `user_rating` hold an untyped identifier with no
+  foreign key, so their rows are left pointing at identifiers nothing answers
+  for any more. Nothing reads them — every projection resolves through an
+  `EXISTS` — so they are invisible rather than wrong, and a rescan does not
+  recreate them. Track favourites, ratings, playlists, play history, bookmarks
+  and queues are untouched, because track identifiers are.
+- **An album's `artists[]` is its own credit**, the artists it is credited to,
+  rather than the union of its tracks' credits. An album with a guest on one
+  track was reporting the guest as one of its own artists.
+- **`getArtists` and `getIndexes` list only artists an album is credited to.**
+  A composer with no album of their own is reachable by identifier and by
+  search — the full-text index carries every participant's name — but is no
+  longer one of the library's artists.
+- **`artist.albumCount` counts credits**, so both artists of a two-artist album
+  now count it. The old count could only ever see the first.
+- **A track's `artists[]` follows the reference's separators**: a padded slash,
+  `feat.`, `ft.` and `"; "`, with the plural `ARTISTS` tag winning outright and
+  never being cut. `AC/DC` survives, which an unpadded slash would not have.
+- **`getArtist` and `getMusicDirectory` list an artist's albums by credit**, and
+  through the same query — they used to filter a single column, which for an
+  album with two album artists would have answered two different lists on one
+  identifier.
+
+Upgrading requires a full rescan. The server schedules it itself: the identity
+rules a scan ran under are recorded when it completes, and a boot that finds
+them different from its configuration asks every library to read every file
+again. An interrupted migration resumes as a migration rather than skipping the
+files it had already rewritten.

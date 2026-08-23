@@ -23,8 +23,8 @@ use crate::{
     media::{MediaError, OutputFormat, StreamQuery},
     security,
     services::{
-        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, BrowsePage, PlaylistItem, ServiceError,
-        SongItem,
+        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, ArtistSummary, BrowsePage, PlaylistItem,
+        ServiceError, SongItem,
     },
     AppState,
 };
@@ -636,9 +636,10 @@ async fn indexes(
     id3: bool,
 ) -> Result<Node, ProtocolError> {
     let overview = overview(state, principal, params).await?;
-    let mut groups: BTreeMap<char, Vec<ArtistItem>> = BTreeMap::new();
+    let mut groups: BTreeMap<char, Vec<ArtistSummary>> = BTreeMap::new();
     for artist in overview.artists {
         let initial = artist
+            .artist
             .name
             .chars()
             .next()
@@ -655,14 +656,11 @@ async fn indexes(
             Node::new("index")
                 .attr("name", letter.to_string())
                 .children(artists.into_iter().map(|artist| {
-                    artist_node(
-                        &artist,
-                        overview
-                            .albums
-                            .iter()
-                            .filter(|album| album.artist_id == Some(artist.id))
-                            .count(),
-                    )
+                    // The count comes from the projection now. Filtering every
+                    // album for every artist was a loop the facade had no
+                    // business running, and it could only ever see the album's
+                    // first credit.
+                    artist_node(&artist.artist, artist.album_count as usize)
                 }))
         })))
 }
@@ -882,18 +880,34 @@ async fn music_directory(
                 overview
                     .artists
                     .iter()
-                    .filter(|artist| artist.library_id == id)
-                    .map(|artist| directory_child(artist_node(artist, 0))),
+                    .filter(|artist| artist.artist.library_id == id)
+                    .map(|artist| {
+                        directory_child(artist_node(&artist.artist, artist.album_count as usize))
+                    }),
             )
             .children(orphans.iter().map(|song| song_node(song).renamed("child")));
-    } else if let Some(artist) = overview.artists.iter().find(|item| item.id == id) {
-        directory = directory.attr("name", artist.name.clone()).children(
-            overview
-                .albums
-                .iter()
-                .filter(|album| album.artist_id == Some(id))
-                .map(|album| directory_child(album_node(album))),
-        );
+    } else if let Some(credited) = match state.services.artist(principal.id, id).await {
+        Ok(credited) => Some(credited),
+        // Only an absence justifies trying the next branch. A database
+        // failure has to say so rather than turn into a not-found, which is
+        // the answer this method gives an identifier that does not exist.
+        Err(ServiceError::NotFound) => None,
+        Err(error) => return Err(service_protocol(error)),
+    } {
+        // The albums this artist is credited to, by the same rule `getArtist`
+        // uses — and resolved the same way, rather than from the overview.
+        // The overview lists only artists an album is credited to, so looking
+        // the identifier up there would answer 404 for a composer that
+        // `getArtist` answers for. Tenancy is unchanged: the service blurs a
+        // foreign identifier into the same not-found this arm falls through to.
+        directory = directory
+            .attr("name", credited.artist.name.clone())
+            .children(
+                credited
+                    .albums
+                    .iter()
+                    .map(|album| directory_child(album_node(album))),
+            );
     } else if overview.albums.iter().any(|item| item.id == id) {
         // Only this level needs tracks, and only this album's.
         let detail = state
@@ -1685,6 +1699,17 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
         // with its default rather than omitted: absent would go on saying the
         // server cannot answer, which stopped being true.
         .attr("sortName", artist.sort_name.clone().unwrap_or_default())
+        // The capacities this artist is credited in. Ordered by name inside
+        // the projection, where the reference emits them in map-iteration
+        // order and answers differently on every request. Its two synthetic
+        // roles — `total` and `maincredit` — are not OpenSubsonic role names
+        // and are not stored, so they cannot leak here.
+        .children(
+            artist
+                .roles
+                .iter()
+                .map(|role| Node::new("roles").text(role.clone())),
+        )
 }
 
 /// `songCount` and `duration` come from the album projection rather than from
@@ -1784,11 +1809,35 @@ fn song_node(song: &SongItem) -> Node {
                 .iter()
                 .map(|genre| Node::new("genres").attr("name", genre.clone())),
         )
-        .children(song.album_artist_id.iter().map(|id| {
+        // Every artist the album is credited to, not just the one the frozen
+        // `artistId` field can name.
+        .children(song.album_artists.iter().map(|artist| {
             Node::new("albumArtists")
-                .attr("id", id.to_string())
-                .attr("name", song.album_artist.clone().unwrap_or_default())
+                .attr("id", artist.id.to_string())
+                .attr("name", artist.name.clone())
         }))
+        // Everyone else the file credits: composer, producer, performer and
+        // the rest, each naming what it did. `subRole` is the instrument a
+        // performer is credited on, and only a performer has one.
+        .children(song.contributors.iter().map(|credit| {
+            Node::new("contributors")
+                .attr("role", credit.role.clone())
+                .maybe_attr("subRole", credit.sub_role.clone())
+                .child(
+                    Node::new("artist")
+                        .attr("id", credit.artist.id.to_string())
+                        .attr("name", credit.artist.name.clone()),
+                )
+        }))
+        .attr(
+            "displayComposer",
+            song.contributors
+                .iter()
+                .filter(|credit| credit.role == "composer")
+                .map(|credit| credit.artist.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" \u{2022} "),
+        )
         .attr(
             "displayAlbumArtist",
             song.album_artist.clone().unwrap_or_default(),
@@ -1943,7 +1992,7 @@ fn error_node(code: i64, message: &'static str) -> Node {
 fn render_protocol(node: Node, json: bool) -> Response {
     if json {
         let mut root = Map::new();
-        root.insert(node.name.clone(), node_json(&node));
+        root.insert(node.name.clone(), node_json(&node, ""));
         (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -1960,13 +2009,18 @@ fn render_protocol(node: Node, json: bool) -> Response {
     }
 }
 
-fn node_json(node: &Node) -> Value {
+fn node_json(node: &Node, parent: &str) -> Value {
     // An array-typed element is its children, not an object wrapping them —
     // whether it holds none or several. Applying this only when empty would
     // hand a strictly typed client `[]` on an empty catalogue and an object on
     // a populated one, which is worse than being wrong consistently.
     if json_array_node(&node.name) {
-        return Value::Array(node.children.iter().map(node_json).collect());
+        return Value::Array(
+            node.children
+                .iter()
+                .map(|child| node_json(child, &node.name))
+                .collect(),
+        );
     }
     if node.attrs.is_empty() && node.children.is_empty() {
         if let Some(text) = &node.text {
@@ -1985,13 +2039,44 @@ fn node_json(node: &Node) -> Value {
     }
     for (name, children) in grouped {
         let value = if children.len() == 1 && !json_array_field(&node.name, name) {
-            node_json(children[0])
+            node_json(children[0], &node.name)
         } else {
-            Value::Array(children.into_iter().map(node_json).collect())
+            Value::Array(
+                children
+                    .into_iter()
+                    .map(|child| node_json(child, &node.name))
+                    .collect(),
+            )
         };
         map.insert(name.to_owned(), value);
     }
-    for name in json_required_array_fields(&node.name) {
+    // A browsing child is a song, an album or an artist under one element
+    // name, and its own fields are what tell them apart: an artist carries
+    // `albumCount`, an album `songCount`, a song neither. Injecting a song's
+    // relations into a folder entry would have an artist answer `isrc: []`,
+    // and injecting an album's would have it answer `artists: []` — a list of
+    // the artists of an artist.
+    let entry_kind = match (
+        node.attrs.contains_key("albumCount"),
+        node.attrs.contains_key("songCount"),
+    ) {
+        (true, _) => EntryKind::Artist,
+        (_, true) => EntryKind::Album,
+        _ => EntryKind::Song,
+    };
+    for name in json_required_array_fields(parent, &node.name) {
+        let injected = match entry_kind {
+            // An artist keeps its own array and takes nobody else's: a folder
+            // entry answering `isrc: []` would say the server read a recording
+            // identifier off a directory, and `artists: []` would be the list
+            // of the artists of an artist.
+            EntryKind::Artist => *name == "roles",
+            EntryKind::Album => matches!(*name, "artists" | "genres"),
+            EntryKind::Song => true,
+        };
+        if !injected {
+            continue;
+        }
         map.entry((*name).to_owned())
             .or_insert_with(|| Value::Array(Vec::new()));
     }
@@ -2008,15 +2093,33 @@ fn json_array_node(name: &str) -> bool {
     matches!(name, "openSubsonicExtensions")
 }
 
-fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
-    match parent {
+fn json_required_array_fields(parent: &str, name: &str) -> &'static [&'static str] {
+    // A contributor's artist is a reference — an identifier and a display
+    // name — and shares its element name with the record. Without the parent
+    // to tell them apart, every array the record carries would be injected
+    // into the reference, which is exactly what
+    // `an_artist_reference_is_not_an_artist_record` forbids.
+    if parent == "contributors" && name == "artist" {
+        return &[];
+    }
+    match name {
         "lyricsList" => &["structuredLyrics"],
         "structuredLyrics" => &["line"],
         // Emitted as `[]` rather than omitted when a track has no credited
         // artist or no genre: under the OpenSubsonic presence rule an absent
         // key means the server does not support the field at all.
-        "song" | "entry" | "child" => &["artists", "genres", "isrc", "moods", "albumArtists"],
+        "song" | "entry" | "child" => &[
+            "artists",
+            "genres",
+            "isrc",
+            "moods",
+            "albumArtists",
+            "contributors",
+        ],
         "album" => &["artists", "genres"],
+        // The roles an artist is credited in, empty rather than absent for
+        // the same reason: absent would say the server does not read them.
+        "artist" => &["roles"],
         _ => &[],
     }
 }
@@ -2088,6 +2191,11 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
             | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
+            | ("song" | "entry" | "child", "contributors")
+            // An artist rendered as a browsing child keeps the record's shape,
+            // so its roles stay an array there too — otherwise the field
+            // collapses into a bare object the moment a directory carries it.
+            | ("artist" | "child", "roles")
     )
 }
 
@@ -2314,4 +2422,13 @@ fn service_protocol(error: ServiceError) -> ProtocolError {
         },
         other => internal(other),
     }
+}
+
+/// What a rendered node is, told from the fields it carries rather than from
+/// its element name — which `getMusicDirectory` collapses to `child` for all
+/// three.
+enum EntryKind {
+    Artist,
+    Album,
+    Song,
 }

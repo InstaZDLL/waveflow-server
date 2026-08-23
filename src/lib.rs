@@ -9,12 +9,14 @@ pub mod http;
 pub mod lyrics;
 pub mod media;
 pub mod oauth;
+pub mod pid;
 pub mod scanner;
 pub mod security;
 pub mod services;
 pub mod stream_ticket;
 pub mod subsonic;
 pub mod sync;
+pub mod tags;
 pub mod webui;
 
 use std::{sync::Arc, time::Duration};
@@ -373,6 +375,10 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
             "instance.key does not match waveflow.db; restore the database and key from the same backup bundle"
         );
     }
+    // After the key check, not before: a mismatched pair aborts the boot, and
+    // scheduling a rescan on a database this instance is about to refuse would
+    // be writing to a catalogue that is not ours.
+    db.reconcile_catalog_identity(&config.pid).await?;
     let auth = authentication::AuthService::new(db.clone(), config);
     let scanner = scanner::ScanManager::new(
         db.clone(),
