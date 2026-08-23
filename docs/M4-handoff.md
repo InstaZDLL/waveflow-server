@@ -267,9 +267,14 @@ compte, chaque faux réveil coûtant un `/changes` vide.
 Il ne reste plus de jalon fonctionnel dans le plan accepté. La prochaine tâche
 est une **préparation de release**, pas un M7 implicite :
 
-1. **Demander au user la version cible.** `Cargo.toml` porte encore
-   `2.0.0-beta.0`, alors que le plan associe M6 à v2.1. Ne choisir ni version ni
-   tag sans arbitrage explicite.
+1. ~~**Demander au user la version cible.**~~ **Tranché le 23 août 2026 :**
+   la première release publique est `v2.0.0-beta.0`, la version que
+   `Cargo.toml` portait déjà. Le « M6 → v2.1 » du plan décrivait une
+   numérotation par jalon qui n'a pas été retenue : le `2` est dans le fil
+   (`/api/v2`, `migrations-v2/`, RFC-002) et le v1 PostgreSQL a réellement
+   existé, donc partir de 2.0 raconte l'histoire vraie. Le suffixe `-beta.0`
+   marque une pré-version au sens semver, ce qui la publie comme telle sur
+   GitHub et fait flotter l'image sur `beta` plutôt que sur `latest`.
 2. **Préparer les changements de release dans une PR.** Mettre à jour la version
    et son lockfile, rédiger les notes de release et ajuster uniquement les
    métadonnées d'image/documentation réellement dépendantes de la version.

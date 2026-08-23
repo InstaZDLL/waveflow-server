@@ -48,6 +48,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # This workflow compiles code from the pull request, build scripts
+          # included. Leave no token behind in `.git/config` for one to read.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
@@ -81,6 +85,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # This workflow compiles code from the pull request, build scripts
+          # included. Leave no token behind in `.git/config` for one to read.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
@@ -116,3 +124,42 @@ jobs:
 
       - name: cargo test
         run: cargo test --all-features
+
+  # `Cargo.toml` declares a minimum Rust version and the release image builds
+  # on exactly that compiler. Both jobs above run on `stable`, so nothing was
+  # checking the claim — a dependency bump or a newer language feature would
+  # have broken the container build and nothing else, discovered on a tag.
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # This workflow compiles code from the pull request, build scripts
+          # included. Leave no token behind in `.git/config` for one to read.
+          persist-credentials: false
+
+      - id: msrv
+        run: |
+          # Tolerant of the whitespace TOML allows around `=`, and bounded
+          # by the closing quote: the greedy form swallowed a trailing
+          # comment and handed the toolchain action a version with a `#`.
+          version="$(sed -n '/^\[package\]/,/^\[/ s/^rust-version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error::Cargo.toml declares no rust-version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # `check`, not `test`: this job answers whether the declared compiler can
+      # build the crate, which is what the container needs. Behaviour is the
+      # business of the two jobs above.
+      - name: cargo check
+        run: cargo check --all-targets --all-features

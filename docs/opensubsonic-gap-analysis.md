@@ -120,6 +120,19 @@ qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
 > La question de cadrage en fin de section — **quatre clients rejoués contre
 > cinq** — reste ouverte : c'est une décision, pas un correctif.
 
+> **Addendum du 2026-08-23.** Le point 2 ci-dessous est caduc pour sa moitié
+> la plus lourde. La PR #126 a livré `roles[]`, `contributors[]` et
+> `displayComposer` avec les colonnes qu'ils réclamaient — treize rôles, un
+> sous-rôle d'instrument, et un album qui pend de chacun de ses artistes
+> crédités. `sortName` était déjà arrivé avec la PR #123. Restent de ce point
+> les champs de sortie d'album (`originalReleaseDate`, `releaseDate`,
+> `releaseTypes[]`, `recordLabels[]`, `discTitles[]`), toujours absents et
+> toujours honnêtement déclarés tels.
+>
+> La question de cadrage du §5.1 est close : les quatre clients ont été
+> rejoués le 23 août 2026 contre le modèle aligné, et
+> [`subsonic-compatibility.md`](subsonic-compatibility.md) porte le résultat.
+
 Rien de structurel. La liste tient en quatre lignes, et deux d'entre elles sont
 des dettes nommées plutôt que des défauts.
 
@@ -166,6 +179,11 @@ nommée, et deux détails cosmétiques.
 ---
 
 ## 5. Priorités proposées
+
+> **Périmé au 2026-08-23, conservé tel quel.** Les points 1 et 2 sont faits :
+> les quatre clients ont été rejoués, et `sortName` est livré. Voir
+> l'addendum du §3. Cette liste décrit ce qui restait au moment de l'audit,
+> pas ce qui reste aujourd'hui.
 
 1. Trancher explicitement la question des quatre clients contre cinq, puisque
    c'est la seule chose entre l'état actuel et un tag.
