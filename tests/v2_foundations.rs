@@ -6517,7 +6517,19 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     let found = get("/api/v2/search?q=echo".into(), owner_token.clone()).await;
     assert_eq!(found.status(), StatusCode::OK);
     let found = json_body(found).await;
-    assert_eq!(found["artists"].as_array().unwrap().len(), 2);
+    // An artist answers for their own name and nobody else's. "Lumen Drift"
+    // shares a track with "Écho Solaire" and is credited on the songs this
+    // query returns, which is exactly what used to put it here: the artist
+    // half of a search was derived from the matching tracks rather than
+    // matched, so searching one name returned everyone who had played with
+    // its owner.
+    let names = found["artists"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|artist| artist["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["Écho Solaire"]);
     assert_eq!(found["albums"].as_array().unwrap().len(), 1);
     assert_eq!(found["albums"][0]["title"], "Nocturne Bleue");
     assert_eq!(found["songs"].as_array().unwrap().len(), 2);
@@ -6571,7 +6583,7 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     let partial = json_body(partial).await;
     assert_eq!(partial["songs"].as_array().unwrap().len(), 2);
     assert_eq!(partial["albums"].as_array().unwrap().len(), 1);
-    assert_eq!(partial["artists"].as_array().unwrap().len(), 2);
+    assert_eq!(partial["artists"].as_array().unwrap().len(), 1);
 
     // Extra terms still narrow rather than widen.
     let narrowed = get(
@@ -9832,6 +9844,49 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
         "a producer holds no album of their own"
     );
     assert!(credited.albums.is_empty());
+
+    // ...and none of them answers to a query that names none of them.
+    //
+    // The artist half of a search used to be derived rather than matched:
+    // it took the tracks the full-text index had found and returned
+    // everybody credited on them. Searching a title therefore returned the
+    // whole session crew, and the participants model made that worse — a
+    // track carries thirteen roles now where it carried one list of names.
+    let by_title = state
+        .services
+        .catalog_search(owner, &[], "Only Track")
+        .await
+        .unwrap();
+    assert_eq!(
+        by_title.songs.len(),
+        1,
+        "the title still finds the track it names"
+    );
+    assert!(
+        by_title.artists.is_empty(),
+        "a track title names no artist, so it returns none: {:?}",
+        by_title
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    // The producer is still reachable — by their own name, which is the
+    // whole point of indexing artists rather than deriving them.
+    let by_name = state
+        .services
+        .catalog_search(owner, &[], "Rita")
+        .await
+        .unwrap();
+    assert_eq!(
+        by_name
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Rita Sound"]
+    );
 }
 
 /// The credits OpenSubsonic asks for, and the presence rule they follow.

@@ -701,6 +701,25 @@ impl Database {
         .bind(library_id.to_string())
         .execute(&mut *tx)
         .await?;
+        // The artist search index, rewritten whole rather than kept in step
+        // row by row. An artist row is touched once per track of every album
+        // it appears on, and a rename would leave the old name searchable
+        // forever unless something swept it — the same reasoning that made
+        // the sort names a pass instead of a write. Last in this
+        // transaction because it indexes the artists the sweep above left
+        // standing, under the sort names settled before this pass ran.
+        sqlx::query("DELETE FROM artist_fts WHERE library_id = ?")
+            .bind(library_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO artist_fts (artist_id, library_id, name, sort_name) \
+             SELECT id, library_id, name, COALESCE(sort_name, '') \
+               FROM artist WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
