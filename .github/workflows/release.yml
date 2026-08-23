@@ -37,7 +37,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Cheap, and it runs before any build minute is spent: a tag that does not
@@ -49,6 +48,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -69,6 +69,15 @@ jobs:
             exit 1
           fi
           echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+
+      # `github.repository` keeps the owner's casing and GHCR refuses an
+      # uppercase path outright — the whole publish failed on it. Folded
+      # once, here, rather than in each of the three jobs that need it.
+      - id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "image=${REGISTRY}/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
   # Built on native runners rather than under QEMU. A Rust release build
   # emulated for arm64 takes hours; GitHub's arm64 runners are free for public
@@ -112,7 +121,7 @@ jobs:
           # Pushed by digest; the tags are attached by the merge job. Pushing a
           # tag from each runner would leave whichever finished last as the
           # whole image rather than one architecture of it.
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ needs.verify.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
@@ -162,7 +171,7 @@ jobs:
         working-directory: /tmp/digests
         run: |
           version="${{ needs.verify.outputs.version }}"
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          image="${{ needs.verify.outputs.image }}"
           case "$version" in
             *-*) extra="beta" ;;
             *) extra="latest" ;;
@@ -204,7 +213,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag || github.ref_name }}
           VERSION: ${{ needs.verify.outputs.version }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE: ${{ needs.verify.outputs.image }}
         run: |
           case "$VERSION" in
             *-*) release_flag="--prerelease" ; channel="beta"   ;;
