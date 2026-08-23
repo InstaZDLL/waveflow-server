@@ -673,6 +673,20 @@ impl Database {
         .bind(library_id.to_string())
         .execute(&mut *tx)
         .await?;
+        // An album no track depends on is no longer in the catalogue. This
+        // matters most on the scan that follows the identity migration: the
+        // rows kept by the migration hold their old identifiers, the rescan
+        // mints derived ones and moves every track across, and without this
+        // the library would answer with each album twice — once full, once
+        // empty. It runs before the artist sweep because `album_artist_id`
+        // restricts on delete, so a ghost album would hold its artist hostage.
+        sqlx::query(
+            "DELETE FROM album WHERE library_id = ? \
+               AND NOT EXISTS (SELECT 1 FROM track t WHERE t.album_id = album.id)",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
         // An artist row outlives the tag that created it: rename a credit and
         // the old name stays in the index forever. An artist credited on
         // nothing is no longer part of the catalogue, so it goes with the same
@@ -717,17 +731,20 @@ impl Database {
         .bind(scan_id.to_string())
         .execute(&mut *tx)
         .await?;
-        // The full-scan request is lifted here and nowhere else. A run that
-        // dies halfway leaves it standing, so the next run reads every file
-        // again instead of skipping the half it had already rewritten — which
-        // is what keeps an interrupted identity migration from freezing a
-        // catalogue split between two schemes.
+        // The full-scan request is lifted here and nowhere else, and only by a
+        // run that actually read every file. A run that dies halfway leaves it
+        // standing, so the next one reads every file again instead of skipping
+        // the half it had already rewritten. And a scan that had already begun
+        // when the request arrived cannot spend it: it started under the old
+        // rules, so `scan_job.full_scan` says what it really did.
         sqlx::query(
             "UPDATE library SET full_scan_requested_at = NULL, updated_at = ? \
              WHERE id = (SELECT library_id FROM scan_job WHERE id = ?) \
-               AND full_scan_requested_at IS NOT NULL",
+               AND full_scan_requested_at IS NOT NULL \
+               AND (SELECT full_scan FROM scan_job WHERE id = ?) = 1",
         )
         .bind(now)
+        .bind(scan_id.to_string())
         .bind(scan_id.to_string())
         .execute(&mut *tx)
         .await?;
@@ -1288,7 +1305,8 @@ async fn fetch_tracks(
     // typed into a library rather than the whole catalogue.
     let rows = if let Some(fts_query) = query.and_then(fts_prefix_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            (SELECT tp.artist_id FROM track_participant tp WHERE tp.track_id=t.id AND tp.role='artist' AND tp.position=0 \
+            (SELECT tp.artist_id FROM track_participant tp \
+              WHERE tp.track_id=t.id AND tp.role='artist' \
              ORDER BY tp.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
@@ -1296,7 +1314,8 @@ async fn fetch_tracks(
             .bind(user.to_string()).bind(library.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            (SELECT tp.artist_id FROM track_participant tp WHERE tp.track_id=t.id AND tp.role='artist' AND tp.position=0 \
+            (SELECT tp.artist_id FROM track_participant tp \
+              WHERE tp.track_id=t.id AND tp.role='artist' \
              ORDER BY tp.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id WHERE m.user_id=? AND t.library_id=? \

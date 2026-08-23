@@ -112,7 +112,7 @@ artist model has since been replaced. That model was a variant: Navidrome has
 served OpenSubsonic to hundreds of clients for years, and where the two
 disagreed it was our disagreement to withdraw, not theirs.
 
-**Every row has to be run again before the next tag.** What changed on the
+**The four replayed rows have to be run again before the next tag.** Substreamer stays out of the replayed set for the reason given above, and is still not counted toward it. What changed on the
 wire, and why a green matrix from before it says nothing about after it:
 
 Additive — a client that ignores them sees the catalogue it saw:
@@ -131,8 +131,13 @@ under it:
   now rather than drawn at random, which makes this the last time they move:
   the same files answer the same ids on a fresh install, where a rebuilt
   database used to re-mint every one of them. Track identifiers did not change.
-  Album and artist favourites and ratings do not survive the transition;
-  artist ones are remapped, album ones cannot be and are dropped.
+  Favourites and ratings that name an album or an artist do not survive the
+  transition: `user_star` and `user_rating` hold an untyped identifier with no
+  foreign key, so their rows are left pointing at identifiers nothing answers
+  for any more. Nothing reads them — every projection resolves through an
+  `EXISTS` — so they are invisible rather than wrong, and a rescan does not
+  recreate them. Track favourites, ratings, playlists, play history, bookmarks
+  and queues are untouched, because track identifiers are.
 - **An album's `artists[]` is its own credit**, the artists it is credited to,
   rather than the union of its tracks' credits. An album with a guest on one
   track was reporting the guest as one of its own artists.

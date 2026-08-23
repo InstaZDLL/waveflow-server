@@ -2054,9 +2054,27 @@ fn node_json(node: &Node, parent: &str) -> Value {
     // song uses, and `isDir` is what tells them apart. Injecting a song's
     // relations into a folder entry would answer `isrc: []` on an artist.
     // `artists` and `genres` stay, because an album child carries both.
-    let directory = matches!(node.attrs.get("isDir"), Some(Value::Bool(true)));
+    // A browsing child is a song, an album or an artist under one element
+    // name, and its own fields are what tell them apart: an artist carries
+    // `albumCount`, an album `songCount`, a song neither. Injecting a song's
+    // relations into a folder entry would have an artist answer `isrc: []`,
+    // and injecting an album's would have it answer `artists: []` — a list of
+    // the artists of an artist.
+    let entry_kind = match (
+        node.attrs.contains_key("albumCount"),
+        node.attrs.contains_key("songCount"),
+    ) {
+        (true, _) => EntryKind::Artist,
+        (_, true) => EntryKind::Album,
+        _ => EntryKind::Song,
+    };
     for name in json_required_array_fields(parent, &node.name) {
-        if directory && matches!(*name, "isrc" | "moods" | "albumArtists" | "contributors") {
+        let injected = match entry_kind {
+            EntryKind::Artist => false,
+            EntryKind::Album => matches!(*name, "artists" | "genres"),
+            EntryKind::Song => true,
+        };
+        if !injected {
             continue;
         }
         map.entry((*name).to_owned())
@@ -2404,4 +2422,13 @@ fn service_protocol(error: ServiceError) -> ProtocolError {
         },
         other => internal(other),
     }
+}
+
+/// What a rendered node is, told from the fields it carries rather than from
+/// its element name — which `getMusicDirectory` collapses to `child` for all
+/// three.
+enum EntryKind {
+    Artist,
+    Album,
+    Song,
 }
