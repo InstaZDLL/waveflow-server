@@ -216,8 +216,13 @@ jobs:
 
           # `--generate-notes` appends the merged pull requests below this, so
           # the install line stays at the top where it is useful.
+          #
+          # A release that already exists keeps its body. It was written once
+          # with the changelog appended, and re-applying our half alone would
+          # replace the whole thing — a retry would silently delete the
+          # changelog it is not meant to touch. Only the flag is re-asserted.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes-file notes.md $release_flag
+            gh release edit "$TAG" $release_flag
           else
             gh release create "$TAG" \
               --title "$TAG" \
