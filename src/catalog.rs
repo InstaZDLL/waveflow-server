@@ -560,12 +560,12 @@ impl Database {
         .await?;
         sqlx::query(
             "UPDATE artist SET sort_name = ( \
-               SELECT ta.sort_name FROM track_artist ta \
-               JOIN track t ON t.id = ta.track_id \
-               WHERE ta.artist_id = artist.id AND t.is_available = 1 \
-                 AND ta.sort_name IS NOT NULL \
-               GROUP BY ta.sort_name \
-               ORDER BY COUNT(*) DESC, ta.sort_name \
+               SELECT tp.sort_name FROM track_participant tp \
+               JOIN track t ON t.id = tp.track_id \
+               WHERE tp.artist_id = artist.id AND t.is_available = 1 \
+                 AND tp.sort_name IS NOT NULL \
+               GROUP BY tp.sort_name \
+               ORDER BY COUNT(*) DESC, tp.sort_name \
                LIMIT 1) \
              WHERE library_id = ?",
         )
@@ -598,8 +598,8 @@ impl Database {
         sqlx::query(
             "UPDATE artist SET musicbrainz_id = ( \
                SELECT t.musicbrainz_artist_id FROM track t \
-               JOIN track_artist ta ON ta.track_id = t.id AND ta.position = 0 \
-               WHERE ta.artist_id = artist.id AND t.is_available = 1 \
+               JOIN track_participant tp ON tp.track_id = t.id AND tp.role = 'artist' AND tp.position = 0 \
+               WHERE tp.artist_id = artist.id AND t.is_available = 1 \
                  AND t.musicbrainz_artist_id IS NOT NULL \
                GROUP BY t.musicbrainz_artist_id \
                ORDER BY COUNT(*) DESC, t.musicbrainz_artist_id \
@@ -609,80 +609,60 @@ impl Database {
         .bind(library_id.to_string())
         .execute(&mut *tx)
         .await?;
-        // Re-derive which artist an album hangs off, for the same reason the
-        // identifiers above are re-derived: a library indexed by an earlier
-        // version has its albums pointing at an entity named after the joined
-        // credit, and its files have not changed, so nothing would ever be
-        // reindexed. Deriving it here repairs those albums on the next scan
-        // instead of requiring a rebuilt library.
-        let joined: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT id, canonical_title, album_artist_name FROM album \
-             WHERE library_id = ? AND album_artist_name LIKE '%;%'",
+        // The album's own credits, derived here rather than written per track.
+        // A track-by-track write would be a last-writer-wins race between
+        // files of one album that disagree; deriving after availability is
+        // settled makes the answer the same whatever order the scan ran in.
+        sqlx::query("DELETE FROM album_participant WHERE library_id = ?")
+            .bind(library_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO album_participant \
+               (album_id, artist_id, library_id, role, sub_role, position) \
+             SELECT t.album_id, tp.artist_id, t.library_id, tp.role, tp.sub_role, \
+                    ROW_NUMBER() OVER ( \
+                      PARTITION BY t.album_id, tp.role \
+                      ORDER BY MIN(tp.position), MIN(tp.sub_role), tp.artist_id) - 1 \
+               FROM track t \
+               JOIN track_participant tp ON tp.track_id = t.id \
+              WHERE t.library_id = ? AND t.is_available = 1 AND t.album_id IS NOT NULL \
+              GROUP BY t.album_id, tp.artist_id, tp.role, tp.sub_role",
         )
         .bind(library_id.to_string())
-        .fetch_all(&mut *tx)
+        .execute(&mut *tx)
         .await?;
-        let now = now_ms();
-        for (album_id, canonical_title, credit) in joined {
-            let names = split_values(Some(credit.as_str()));
-            let mut first = None;
-            for name in &names {
-                let id = upsert_artist(&mut tx, library_id, name, now).await?;
-                first.get_or_insert(id);
-            }
-            let Some(first) = first else { continue };
-            // The identity key embeds the album artist id, so moving the album
-            // without recomputing it would leave a row that indexing can no
-            // longer find: the next reindexed track would compute the new key,
-            // miss, and insert a duplicate album.
-            let identity = album_identity(&canonical_title, Some(first), Some(credit.as_str()));
-            let collision: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM album WHERE library_id = ? AND identity_key = ? AND id <> ?",
-            )
+        // What each artist has to show for each capacity. `albumCount` used to
+        // be a count over the album's single artist column, which could only
+        // ever see the first credit; the roles an artist appears in are now
+        // simply the keys of this table.
+        sqlx::query("DELETE FROM artist_role_stats WHERE library_id = ?")
             .bind(library_id.to_string())
-            .bind(&identity)
-            .bind(&album_id)
-            .fetch_optional(&mut *tx)
+            .execute(&mut *tx)
             .await?;
-            match collision {
-                // Indexing already created the album this one is becoming, so
-                // the two are one record: the tracks move over and the stale
-                // row goes. Updating in place would violate the identity
-                // uniqueness and fail the whole scan.
-                Some(target) => {
-                    sqlx::query("UPDATE track SET album_id = ? WHERE album_id = ?")
-                        .bind(&target)
-                        .bind(&album_id)
-                        .execute(&mut *tx)
-                        .await?;
-                    sqlx::query("DELETE FROM album WHERE id = ?")
-                        .bind(&album_id)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-                None => {
-                    sqlx::query(
-                        "UPDATE album SET album_artist_id = ?, identity_key = ?, updated_at = ? \
-                         WHERE id = ?",
-                    )
-                    .bind(first.to_string())
-                    .bind(&identity)
-                    .bind(now)
-                    .bind(&album_id)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-            }
-        }
-        // An artist row outlives the tag that created it: rename a credit, or
-        // fix a server that used to mint one entity per joined album-artist
-        // string, and the old name stays in the index forever. An artist that
-        // holds neither a track nor an album is no longer part of the
-        // catalogue, so it goes with the same scan that made it unreferenced.
+        sqlx::query(
+            "INSERT INTO artist_role_stats \
+               (artist_id, library_id, role, album_count, song_count) \
+             SELECT tp.artist_id, t.library_id, tp.role, \
+                    COUNT(DISTINCT t.album_id), COUNT(DISTINCT t.id) \
+               FROM track_participant tp \
+               JOIN track t ON t.id = tp.track_id \
+              WHERE t.library_id = ? AND t.is_available = 1 \
+              GROUP BY tp.artist_id, t.library_id, tp.role",
+        )
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        // An artist row outlives the tag that created it: rename a credit and
+        // the old name stays in the index forever. An artist credited on
+        // nothing is no longer part of the catalogue, so it goes with the same
+        // scan that made it unreferenced. Both relations are checked, because
+        // an album artist need not be credited on any of the album's tracks.
         sqlx::query(
             "DELETE FROM artist WHERE library_id = ? \
-               AND NOT EXISTS (SELECT 1 FROM album al WHERE al.album_artist_id = artist.id) \
-               AND NOT EXISTS (SELECT 1 FROM track_artist ta WHERE ta.artist_id = artist.id)",
+               AND NOT EXISTS (SELECT 1 FROM track_participant tp WHERE tp.artist_id = artist.id) \
+               AND NOT EXISTS (SELECT 1 FROM album_participant ap WHERE ap.artist_id = artist.id) \
+               AND NOT EXISTS (SELECT 1 FROM album al WHERE al.album_artist_id = artist.id)",
         )
         .bind(library_id.to_string())
         .execute(&mut *tx)
@@ -883,16 +863,25 @@ impl Database {
         let mut outcomes = Vec::with_capacity(applies.len());
         for apply in applies {
             outcomes.push(
-                Self::apply_catalog_track_in_transaction(&mut tx, library_id, scan_id, apply, now)
-                    .await?,
+                Self::apply_catalog_track_in_transaction(
+                    &mut tx,
+                    self.pid(),
+                    library_id,
+                    scan_id,
+                    apply,
+                    now,
+                )
+                .await?,
             );
         }
         tx.commit().await?;
         Ok(outcomes)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_catalog_track_in_transaction(
         tx: &mut Transaction<'_, Sqlite>,
+        pid: &crate::pid::PidSpecs,
         library_id: Uuid,
         scan_id: Uuid,
         apply: &CatalogApply,
@@ -926,7 +915,7 @@ impl Database {
         let artist_names: Vec<String> = credit_names(&credits, crate::tags::Role::Artist);
         let mut artist_ids = Vec::with_capacity(artist_names.len());
         for artist in &artist_names {
-            artist_ids.push(upsert_artist(tx, library_id, artist, now).await?);
+            artist_ids.push(upsert_artist(tx, pid, library_id, artist, now).await?);
         }
         let album_artist_names: Vec<String> =
             credit_names(&credits, crate::tags::Role::AlbumArtist);
@@ -939,11 +928,14 @@ impl Database {
             .map(str::to_owned)
             .or_else(|| (album_artist_names.len() == 1).then(|| album_artist_names[0].clone()))
             .or_else(|| (!album_artist_names.is_empty()).then(|| album_artist_names.join("; ")));
-        let mut album_artist_id = None;
+        let mut album_artist_ids = Vec::with_capacity(album_artist_names.len());
         for name in &album_artist_names {
-            let id = upsert_artist(tx, library_id, name, now).await?;
-            album_artist_id.get_or_insert(id);
+            album_artist_ids.push(upsert_artist(tx, pid, library_id, name, now).await?);
         }
+        // The album still names one artist in the frozen `artistId` field, and
+        // that is the first credit. The rest reach clients through the album's
+        // participants rather than through this column.
+        let album_artist_id = album_artist_ids.first().copied();
         // The sort form of each credit *on this track*. A credit the track tag
         // says nothing about falls back to the album artist tag when the two
         // name the same artist — ALBUMARTISTSORT is the more commonly written
@@ -967,6 +959,7 @@ impl Database {
         };
         let album_id = upsert_album(
             tx,
+            pid,
             library_id,
             input,
             album_artist.as_deref(),
@@ -1059,14 +1052,49 @@ impl Database {
             .await?;
         }
 
-        sqlx::query("DELETE FROM track_artist WHERE track_id = ?")
+        // Every credit the file names, not just its artists. The delete comes
+        // first for the reason the reference gives: an artist who was both an
+        // album artist and a composer, and is now only a composer, has to lose
+        // the row that said otherwise.
+        sqlx::query("DELETE FROM track_participant WHERE track_id = ?")
             .bind(track_id.to_string())
             .execute(&mut **tx)
             .await?;
-        for (position, artist_id) in artist_ids.iter().enumerate() {
-            sqlx::query("INSERT INTO track_artist (track_id, artist_id, library_id, position, sort_name) VALUES (?, ?, ?, ?, ?)")
-                .bind(track_id.to_string()).bind(artist_id.to_string()).bind(library_id.to_string())
-                .bind(position as i64).bind(credit_sorts.get(position).and_then(Option::as_deref)).execute(&mut **tx).await?;
+        for credit in &credits {
+            let artist_id = match credit.role {
+                crate::tags::Role::Artist => artist_ids
+                    .get(credit.position)
+                    .copied()
+                    .expect("every artist credit was upserted above"),
+                crate::tags::Role::AlbumArtist => album_artist_ids
+                    .get(credit.position)
+                    .copied()
+                    .expect("every album-artist credit was upserted above"),
+                _ => upsert_artist(tx, pid, library_id, &credit.name, now).await?,
+            };
+            let sort_name = match credit.role {
+                crate::tags::Role::Artist => credit_sorts.get(credit.position).cloned().flatten(),
+                _ => credit.sort_name.clone(),
+            };
+            // A file can credit the same artist twice under one role — two
+            // spellings folding onto one row — and the second insert would
+            // then collide on the key. The first credit wins, as it does in
+            // tag order.
+            sqlx::query(
+                "INSERT INTO track_participant \
+                   (track_id, artist_id, library_id, role, sub_role, position, sort_name) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT (track_id, artist_id, role, sub_role) DO NOTHING",
+            )
+            .bind(track_id.to_string())
+            .bind(artist_id.to_string())
+            .bind(library_id.to_string())
+            .bind(credit.role.as_str())
+            .bind(&credit.sub_role)
+            .bind(credit.position as i64)
+            .bind(sort_name)
+            .execute(&mut **tx)
+            .await?;
         }
         sqlx::query("DELETE FROM track_genre WHERE track_id = ?")
             .bind(track_id.to_string())
@@ -1240,16 +1268,16 @@ async fn fetch_tracks(
     // typed into a library rather than the whole catalogue.
     let rows = if let Some(fts_query) = query.and_then(fts_prefix_query) {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
-             ORDER BY ta.position LIMIT 1) AS artist_id, \
+            (SELECT tp.artist_id FROM track_participant tp WHERE tp.track_id=t.id AND tp.role='artist' AND tp.position=0 \
+             ORDER BY tp.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id JOIN track_fts f ON f.track_id=t.id \
             WHERE m.user_id=? AND t.library_id=? AND track_fts MATCH ? ORDER BY rank, t.id LIMIT ? OFFSET ?")
             .bind(user.to_string()).bind(library.to_string()).bind(fts_query).bind(limit).bind(offset).fetch_all(db.pool()).await?
     } else {
         sqlx::query("SELECT t.id, t.library_id, t.relative_path, t.title, t.album_title, t.artist_display, \
-            (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
-             ORDER BY ta.position LIMIT 1) AS artist_id, \
+            (SELECT tp.artist_id FROM track_participant tp WHERE tp.track_id=t.id AND tp.role='artist' AND tp.position=0 \
+             ORDER BY tp.position LIMIT 1) AS artist_id, \
             t.genre_display, t.duration_ms, t.codec, t.artwork_hash, t.full_hash, t.is_available FROM track t \
             JOIN library_member m ON m.library_id=t.library_id WHERE m.user_id=? AND t.library_id=? \
             ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?")
@@ -1272,19 +1300,113 @@ async fn upsert_artwork(
     Ok(Some(artwork.hash.clone()))
 }
 
+/// A scanned file, seen through the identity engine.
+///
+/// The album artist is the resolved display string rather than the raw tag,
+/// because that is what the reference hashes: the fallback to `Various
+/// Artists` or to the track's own artists is part of what makes two files the
+/// same album.
+///
+/// The disc and track numbers are rendered once here rather than looked up as
+/// tags, and they matter: without them the default track spec would identify
+/// two tracks of one album by title alone, and an album holding two takes of
+/// the same song would lose one.
+///
+/// A spec naming a tag the scanner does not read resolves empty, and an empty
+/// attribute simply lets the next group answer. That is the fall-through the
+/// grammar is built around, not a gap.
+struct TrackIdentity<'a> {
+    input: &'a CatalogTrackInput,
+    album_artist: &'a str,
+    folder: &'a str,
+    disc_number: String,
+    track_number: String,
+}
+
+impl<'a> TrackIdentity<'a> {
+    fn new(input: &'a CatalogTrackInput, album_artist: &'a str) -> Self {
+        Self {
+            input,
+            album_artist,
+            folder: input
+                .relative_path
+                .rsplit_once(['/', '\\'])
+                .map(|(folder, _)| folder)
+                .unwrap_or(""),
+            disc_number: input.disc_number.map(|v| v.to_string()).unwrap_or_default(),
+            track_number: input
+                .track_number
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl crate::pid::PidSource for TrackIdentity<'_> {
+    fn tag(&self, name: &str) -> Option<&str> {
+        let value = match name {
+            "musicbrainz_albumid" => self.input.musicbrainz_release_id.as_deref(),
+            "musicbrainz_trackid" => self.input.musicbrainz_recording_id.as_deref(),
+            "musicbrainz_artistid" => self.input.musicbrainz_artist_id.as_deref(),
+            "albumartist" => self.input.album_artist.as_deref(),
+            "artist" => self.input.artist.as_deref(),
+            "genre" => self.input.genre.as_deref(),
+            "discnumber" => Some(self.disc_number.as_str()),
+            "tracknumber" => Some(self.track_number.as_str()),
+            "isrc" => self.input.isrc.as_deref(),
+            _ => None,
+        };
+        value.filter(|value| !value.is_empty())
+    }
+
+    fn folder(&self) -> &str {
+        self.folder
+    }
+
+    fn album_artist_display(&self) -> &str {
+        self.album_artist
+    }
+
+    fn title(&self) -> &str {
+        &self.input.title
+    }
+
+    fn album(&self) -> &str {
+        self.input.album.as_deref().unwrap_or_default()
+    }
+}
+
+/// Upserts one artist row, whose id is the identity of its name.
+///
+/// The name reaches the row twice: as written, which is what a client renders,
+/// and folded through `canonical_name`, which is what search matches on. The
+/// id is neither — it is the identity hash, so two spellings that differ by a
+/// real character are two artists, as they are in the reference.
 async fn upsert_artist(
     tx: &mut Transaction<'_, Sqlite>,
+    pid: &crate::pid::PidSpecs,
     library: Uuid,
     name: &str,
     now: i64,
 ) -> Result<Uuid, sqlx::Error> {
-    let id = Uuid::new_v4();
+    let name = name.trim();
+    let id = pid.artist_id(library, name);
     let canonical = waveflow_core::scanner::canonical_name(name);
-    let value: String = sqlx::query_scalar("INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, canonical_name) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at RETURNING id")
-        .bind(id.to_string()).bind(library.to_string()).bind(name.trim()).bind(canonical).bind(now).bind(now)
-        .fetch_one(&mut **tx).await?;
-    parse_uuid(value)
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?) \
+         ON CONFLICT (id) DO UPDATE SET name=excluded.name, \
+         canonical_name=excluded.canonical_name, updated_at=excluded.updated_at",
+    )
+    .bind(id.to_string())
+    .bind(library.to_string())
+    .bind(name)
+    .bind(canonical)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(id)
 }
 
 async fn upsert_genre(
@@ -1303,8 +1425,16 @@ async fn upsert_genre(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Upserts one album row, whose id is the identity of the tags that name it.
+///
+/// The identity key this replaces embedded the row id of the album's first
+/// credited artist, which is what made "Live" by `A; B` and "Live" by `A; C`
+/// answer the same key — and what needed a special case to tell them apart.
+/// The engine hashes the credit as written, so the two are simply different
+/// and nothing has to notice.
 async fn upsert_album(
     tx: &mut Transaction<'_, Sqlite>,
+    pid: &crate::pid::PidSpecs,
     library: Uuid,
     input: &CatalogTrackInput,
     album_artist: Option<&str>,
@@ -1316,50 +1446,37 @@ async fn upsert_album(
         return Ok(None);
     };
     let canonical = waveflow_core::scanner::canonical_name(title);
-    let identity = album_identity(&canonical, album_artist_id, album_artist);
-    let id = Uuid::new_v4();
-    let value: String = sqlx::query_scalar("INSERT INTO album (id, library_id, title, canonical_title, identity_key, album_artist_id, album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (library_id, identity_key) DO UPDATE SET title=excluded.title, album_artist_name=excluded.album_artist_name, \
-        is_compilation=excluded.is_compilation, year=COALESCE(excluded.year, album.year), artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
-        updated_at=excluded.updated_at RETURNING id")
-        .bind(id.to_string()).bind(library.to_string()).bind(title.trim()).bind(canonical).bind(identity)
-        .bind(album_artist_id.map(|id| id.to_string())).bind(album_artist).bind(i64::from(input.is_compilation))
-        .bind(input.year).bind(artwork).bind(now).bind(now).fetch_one(&mut **tx).await?;
-    parse_uuid(value).map(Some)
-}
-
-/// How an album is recognised across scans. It embeds the album artist, so any
-/// code that moves an album to another artist has to recompute it.
-///
-/// A joined credit adds its whole canonical form. Hanging every album off its
-/// first credited artist would otherwise merge two different records that share
-/// a title and a lead: "Live" by `A; B` and "Live" by `A; C` are one key
-/// without it. A single credit keeps the historical two-part shape, so the keys
-/// already stored for the overwhelming majority of albums still match what
-/// indexing computes.
-fn album_identity(
-    canonical_title: &str,
-    album_artist_id: Option<Uuid>,
-    album_artist: Option<&str>,
-) -> String {
-    let artist = album_artist_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "none".into());
-    let credits = split_values(album_artist);
-    if credits.len() > 1 {
-        // Canonicalised one credit at a time and rejoined on a separator the
-        // canonical form cannot contain. Canonicalising the joined string
-        // instead would erase where one credit ends and the next begins, so
-        // `A; B C` and `A; B; C` would answer the same key and merge.
-        let joined = credits
-            .iter()
-            .map(|credit| waveflow_core::scanner::canonical_name(credit))
-            .collect::<Vec<_>>()
-            .join(";");
-        format!("{canonical_title}:{artist}:{joined}")
-    } else {
-        format!("{canonical_title}:{artist}")
-    }
+    let id = pid.album_id(
+        library,
+        &TrackIdentity::new(input, album_artist.unwrap_or_default()),
+    );
+    sqlx::query(
+        "INSERT INTO album (id, library_id, title, canonical_title, album_artist_id, \
+           album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT (id) DO UPDATE SET title=excluded.title, \
+           canonical_title=excluded.canonical_title, \
+           album_artist_id=excluded.album_artist_id, \
+           album_artist_name=excluded.album_artist_name, \
+           is_compilation=excluded.is_compilation, \
+           year=COALESCE(excluded.year, album.year), \
+           artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
+           updated_at=excluded.updated_at",
+    )
+    .bind(id.to_string())
+    .bind(library.to_string())
+    .bind(title.trim())
+    .bind(canonical)
+    .bind(album_artist_id.map(|id| id.to_string()))
+    .bind(album_artist)
+    .bind(i64::from(input.is_compilation))
+    .bind(input.year)
+    .bind(artwork)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(Some(id))
 }
 
 fn split_values(raw: Option<&str>) -> Vec<String> {

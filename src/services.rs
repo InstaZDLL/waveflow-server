@@ -23,8 +23,8 @@ use crate::{
 macro_rules! song_select {
     () => {
         "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
-                (SELECT ta.artist_id FROM track_artist ta WHERE ta.track_id=t.id AND ta.position=0 \
-                 ORDER BY ta.position LIMIT 1) AS artist_id, \
+                (SELECT tp.artist_id FROM track_participant tp WHERE tp.track_id=t.id AND tp.role='artist' AND tp.position=0 \
+                 ORDER BY tp.position LIMIT 1) AS artist_id, \
                 t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
                 us.starred_at, ur.rating AS user_rating, \
@@ -127,7 +127,9 @@ macro_rules! artist_select {
     };
     (album_count) => {
         artist_select!(
-            @columns ", (SELECT COUNT(*) FROM album al WHERE al.album_artist_id=ar.id) AS album_count"
+            @columns ", COALESCE((SELECT ars.album_count FROM artist_role_stats ars \
+                                   WHERE ars.artist_id=ar.id AND ars.role='albumartist'), 0) \
+                      AS album_count"
         )
     };
     (@columns $extra:expr) => {
@@ -956,8 +958,8 @@ impl DomainServices {
                   WHERE al.album_artist_id IS NOT NULL \
                     AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
                   UNION \
-                  SELECT ta.artist_id FROM track_artist ta \
-                  WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
+                  SELECT tp.artist_id FROM track_participant tp \
+                  WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
                 ) \
               ORDER BY ar.name COLLATE NOCASE"
         ))
@@ -1405,7 +1407,8 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
-            " AND al.album_artist_id=? \
+            " AND EXISTS (SELECT 1 FROM album_participant ap \
+                 WHERE ap.album_id=al.id AND ap.artist_id=? AND ap.role='albumartist') \
               ORDER BY al.year NULLS LAST, al.title COLLATE NOCASE, al.id"
         ))
         .bind(user_id.to_string())
@@ -1558,8 +1561,8 @@ impl DomainServices {
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
         let artists = sqlx::query(concat!(
             artist_select!(),
-            " AND ar.id IN (SELECT ta.artist_id FROM track_artist ta \
-                WHERE ta.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
+            " AND ar.id IN (SELECT tp.artist_id FROM track_participant tp \
+                WHERE tp.track_id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
               ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
@@ -3795,17 +3798,18 @@ async fn attach_album_relations(
         .expect("UUID list serialization cannot fail");
     let mut artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
     for row in sqlx::query(
-        // Every artist credited on any of the album's tracks, once. Ordered by
-        // the earliest position the artist holds, so the album artist leads and
-        // a guest stays behind the credit that introduced them.
-        "SELECT t.album_id, ar.id, ar.name, MIN(ta.position) AS lead \
-         FROM track t JOIN track_artist ta ON ta.track_id=t.id \
-         JOIN artist ar ON ar.id=ta.artist_id \
-         JOIN library_member m ON m.library_id=t.library_id \
-         WHERE m.user_id=? AND t.is_available=1 \
-           AND t.album_id IN (SELECT value FROM json_each(?)) \
-         GROUP BY t.album_id, ar.id \
-         ORDER BY t.album_id, lead, ar.name COLLATE NOCASE, ar.id",
+        // The album's own credits, which are its album artists — not the union
+        // of its tracks' credits, which is what this used to answer. An album
+        // with a guest on one track was reporting the guest as one of its
+        // artists; the reference reports the two the album is credited to, and
+        // leaves the guest to the track that names them.
+        "SELECT ap.album_id, ar.id, ar.name \
+         FROM album_participant ap \
+         JOIN artist ar ON ar.id=ap.artist_id \
+         JOIN library_member m ON m.library_id=ap.library_id \
+         WHERE m.user_id=? AND ap.role='albumartist' \
+           AND ap.album_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY ap.album_id, ap.position, ar.name COLLATE NOCASE, ar.id",
     )
     .bind(user_id.to_string())
     .bind(&ids)
@@ -3863,11 +3867,12 @@ async fn attach_song_relations(
         .expect("UUID list serialization cannot fail");
     let mut artists: HashMap<Uuid, Vec<ArtistRef>> = HashMap::new();
     for row in sqlx::query(
-        "SELECT ta.track_id, ar.id, ar.name FROM track_artist ta \
-         JOIN artist ar ON ar.id=ta.artist_id \
-         JOIN library_member m ON m.library_id=ta.library_id \
-         WHERE m.user_id=? AND ta.track_id IN (SELECT value FROM json_each(?)) \
-         ORDER BY ta.track_id, ta.position",
+        "SELECT tp.track_id, ar.id, ar.name FROM track_participant tp \
+         JOIN artist ar ON ar.id=tp.artist_id \
+         JOIN library_member m ON m.library_id=tp.library_id \
+         WHERE m.user_id=? AND tp.role='artist' \
+           AND tp.track_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY tp.track_id, tp.position",
     )
     .bind(user_id.to_string())
     .bind(&ids)
