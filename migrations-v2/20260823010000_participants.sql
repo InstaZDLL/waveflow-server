@@ -18,6 +18,17 @@
 -- parent is back under its own name with its rows intact.
 PRAGMA defer_foreign_keys = ON;
 
+-- The credits are carried out of the way first.
+--
+-- SQLite performs an implicit `DELETE FROM` before dropping a table when
+-- foreign keys are on, and that delete fires `ON DELETE CASCADE` on every
+-- child. `track_artist` cascades off `artist`, so the rebuild below would
+-- empty the very relation the new one is copied from — and `defer_foreign_keys`
+-- does not help: it defers constraint *checking*, not referential *actions*.
+-- A table made by CREATE ... AS SELECT carries no constraints, so it survives
+-- the drop and the credits with it.
+CREATE TABLE track_artist_carry AS SELECT * FROM track_artist;
+
 -- `artist`: the canonical name stops being an identity.
 --
 -- Identity moves to a hash of the name as written, folded only for
@@ -108,8 +119,9 @@ CREATE TABLE track_participant (
 INSERT INTO track_participant (track_id, artist_id, library_id, role, sub_role,
                                position, sort_name)
 SELECT track_id, artist_id, library_id, 'artist', '', position, sort_name
-  FROM track_artist;
+  FROM track_artist_carry;
 DROP TABLE track_artist;
+DROP TABLE track_artist_carry;
 -- Leads with the artist so the queries that ask "what has this artist done"
 -- get a seek. The track lookups keep the primary key.
 CREATE INDEX track_participant_artist_idx

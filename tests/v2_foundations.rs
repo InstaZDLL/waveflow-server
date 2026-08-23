@@ -10020,7 +10020,22 @@ async fn credits_reach_the_wire_in_both_encodings() {
         "an album artist who also performs says both, in a stable order"
     );
     // A composer holds no album, so the index does not list them — but the
-    // artist is still in the catalogue, and still says what it is.
+    // artist is still in the catalogue, findable by name, and still says what
+    // it is. The second half is what makes the first acceptable: filtering the
+    // index would otherwise put a credited artist out of reach entirely.
+    let found = subsonic_json(&router, "search3", api_key, "&query=Otto").await;
+    let found_artists: Vec<&str> = found["subsonic-response"]["searchResult3"]["artist"]
+        .as_array()
+        .map(|all| {
+            all.iter()
+                .filter_map(|artist| artist["name"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        found_artists.contains(&"Otto Pen"),
+        "a composer is reachable by searching their own name: {found_artists:?}"
+    );
     assert!(
         !indexed.iter().any(|artist| artist["name"] == "Otto Pen"),
         "an artist credited on no album is not one of the library's artists"
@@ -10140,4 +10155,67 @@ async fn credits_reach_the_wire_in_both_encodings() {
         serde_json::json!([]),
         "empty, not absent: absent would say the server does not read roles"
     );
+}
+
+/// What `DROP TABLE` does to the children of the table being dropped.
+///
+/// SQLite performs an implicit `DELETE FROM` before dropping a table when
+/// foreign keys are on, and that delete fires `ON DELETE CASCADE` on every
+/// child. `defer_foreign_keys` does not help: it defers constraint *checking*,
+/// not referential *actions*. A rebuild of `artist` therefore empties
+/// `track_artist` before anything can copy it — which is what the participants
+/// migration would have done to every credit in every existing library,
+/// leaving them to the rescan and to nothing else.
+///
+/// What survives it is a table made by `CREATE ... AS SELECT`: it carries no
+/// constraints, so it is nobody's child.
+#[tokio::test]
+async fn a_table_rebuild_carries_its_children_out_of_the_cascade() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("probe.db");
+    let url = format!(
+        "sqlite://{}?mode=rwc",
+        path.to_string_lossy().replace('\\', "/")
+    );
+    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for statement in [
+        "CREATE TABLE artist (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, \
+           UNIQUE (id, name)) STRICT",
+        "CREATE TABLE credit (artist_id TEXT NOT NULL, name TEXT NOT NULL, \
+           FOREIGN KEY (artist_id, name) REFERENCES artist(id, name) ON DELETE CASCADE) STRICT",
+        "INSERT INTO artist (id, name) VALUES ('a', 'Nova Kern')",
+        "INSERT INTO credit (artist_id, name) VALUES ('a', 'Nova Kern')",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    let mut tx = pool.begin().await.unwrap();
+    for statement in [
+        "PRAGMA defer_foreign_keys = ON",
+        "CREATE TABLE credit_carry AS SELECT * FROM credit",
+        "CREATE TABLE artist_rebuilt (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, \
+           UNIQUE (id, name)) STRICT",
+        "INSERT INTO artist_rebuilt SELECT id, name FROM artist",
+        "DROP TABLE artist",
+        "ALTER TABLE artist_rebuilt RENAME TO artist",
+    ] {
+        sqlx::query(statement).execute(&mut *tx).await.unwrap();
+    }
+    // The cascade fires. Stated rather than assumed, because assuming it did
+    // not is what put a migration in this branch that copied an empty table.
+    let cascaded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM credit")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(cascaded, 0, "dropping the parent emptied the child");
+    let carried: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM credit_carry")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(carried, 1, "and the carry kept what the cascade took");
+    tx.commit().await.unwrap();
 }
