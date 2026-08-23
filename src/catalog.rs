@@ -68,6 +68,15 @@ pub struct CatalogTrackInput {
     pub full_hash: String,
     pub title: String,
     pub artist: Option<String>,
+    /// The multi-valued spellings of the two artist tags, when a file used
+    /// them. They win over the singular ones and are never cut: a tagger
+    /// writing `ARTISTS` has already said where the boundaries are.
+    pub artists: Vec<String>,
+    pub album_artists: Vec<String>,
+    /// Every other role the file names, as it spelled them.
+    pub roles: Vec<(crate::tags::Role, Vec<String>)>,
+    /// Performer credits, already split into instrument and name.
+    pub performer_pairs: Vec<(String, String)>,
     pub album: Option<String>,
     pub album_artist: Option<String>,
     pub is_compilation: bool,
@@ -891,46 +900,58 @@ impl Database {
     ) -> Result<ApplyOutcome, sqlx::Error> {
         let input = &apply.input;
         let existing_id = apply.existing_id;
+        // Credits are derived here rather than by the scanner because this is
+        // where identity is written: the test suite applies catalogue rows
+        // directly, and reading the tag values one way there and another way
+        // in production is how the two drift apart.
+        let credits = crate::tags::credits(&crate::tags::RawCredits {
+            artist: input.artist.iter().cloned().collect(),
+            artists: input.artists.clone(),
+            album_artist: input.album_artist.iter().cloned().collect(),
+            album_artists: input.album_artists.clone(),
+            sort_artist: input.sort_artist.clone(),
+            sort_album_artist: input.sort_album_artist.clone(),
+            is_compilation: input.is_compilation,
+            roles: input.roles.clone(),
+            performer_pairs: input.performer_pairs.clone(),
+        });
         let moved = apply.moved;
         let track_id = existing_id.unwrap_or_else(Uuid::new_v4);
         let artwork_hash = upsert_artwork(tx, input.artwork.as_ref(), now).await?;
-        let artist_names = split_values(input.artist.as_deref());
+        // The credits arrive already split, already paired with their sort
+        // forms and already carrying the album-artist fallback — that is the
+        // tag mapper's whole job, and it applies the reference's rules rather
+        // than this file's old `;`-only cut. What is left here is turning
+        // names into rows.
+        let artist_names: Vec<String> = credit_names(&credits, crate::tags::Role::Artist);
         let mut artist_ids = Vec::with_capacity(artist_names.len());
         for artist in &artist_names {
             artist_ids.push(upsert_artist(tx, library_id, artist, now).await?);
         }
+        let album_artist_names: Vec<String> =
+            credit_names(&credits, crate::tags::Role::AlbumArtist);
+        // The album keeps the joined string the file wrote as its display
+        // name, and hangs off the first credited artist.
         let album_artist = input
             .album_artist
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .map(str::to_owned)
-            .or_else(|| input.is_compilation.then(|| "Various Artists".to_owned()))
-            .or_else(|| artist_names.first().cloned());
-        // The album artist tag carries the same multi-value separator as the
-        // track artist tag, so it is split the same way. Feeding the whole
-        // string to upsert_artist created one entity named after the joined
-        // credit, gave it the album, and left the real artists holding
-        // nothing: browsing to either of them found no album at all.
-        //
-        // The album keeps the joined string as its display name, and hangs
-        // off the first credited artist.
-        let album_artist_names = split_values(album_artist.as_deref());
+            .or_else(|| (album_artist_names.len() == 1).then(|| album_artist_names[0].clone()))
+            .or_else(|| (!album_artist_names.is_empty()).then(|| album_artist_names.join("; ")));
         let mut album_artist_id = None;
         for name in &album_artist_names {
             let id = upsert_artist(tx, library_id, name, now).await?;
             album_artist_id.get_or_insert(id);
         }
-        // The sort form of each credit *on this track*, which is where a
-        // joined ARTISTSORT can still be paired with its joined ARTIST. A
-        // credit the track tag says nothing about falls back to the album
-        // artist tag when the two name the same artist — ALBUMARTISTSORT is
-        // the more commonly written of the two, and matching on the name
-        // rather than on position means this cannot file one artist under
-        // another's sort form.
+        // The sort form of each credit *on this track*. A credit the track tag
+        // says nothing about falls back to the album artist tag when the two
+        // name the same artist — ALBUMARTISTSORT is the more commonly written
+        // of the two, and matching on the name rather than on position means
+        // this cannot file one artist under another's sort form.
         let credit_sorts = {
-            let track_sorts = sort_names_for(&artist_names, input.sort_artist.as_deref());
-            let album_sorts =
-                sort_names_for(&album_artist_names, input.sort_album_artist.as_deref());
+            let track_sorts = credit_sort_names(&credits, crate::tags::Role::Artist);
+            let album_sorts = credit_sort_names(&credits, crate::tags::Role::AlbumArtist);
             artist_names
                 .iter()
                 .zip(track_sorts)
@@ -1266,22 +1287,6 @@ async fn upsert_artist(
     parse_uuid(value)
 }
 
-/// Pairs a split credit with its split sort form.
-///
-/// `ARTISTSORT` carries the same separator as `ARTIST` when a credit is
-/// joined, so the two lists line up position by position — that is the
-/// convention taggers write. When they do not line up, the tag is describing
-/// something this cannot map, and guessing would file an artist under another
-/// artist's name: every credit then gets no sort form rather than a wrong one.
-fn sort_names_for(names: &[String], raw_sort: Option<&str>) -> Vec<Option<String>> {
-    let sorts = split_values(raw_sort);
-    if sorts.len() == names.len() {
-        sorts.into_iter().map(Some).collect()
-    } else {
-        vec![None; names.len()]
-    }
-}
-
 async fn upsert_genre(
     tx: &mut Transaction<'_, Sqlite>,
     library: Uuid,
@@ -1442,4 +1447,30 @@ fn track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<TrackRecord, sqlx::Err
 
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::from_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}
+
+/// The names credited in one role, in tag order.
+fn credit_names(credits: &[crate::tags::Credit], role: crate::tags::Role) -> Vec<String> {
+    let mut named: Vec<&crate::tags::Credit> = credits
+        .iter()
+        .filter(|credit| credit.role == role)
+        .collect();
+    named.sort_by_key(|credit| credit.position);
+    named.iter().map(|credit| credit.name.clone()).collect()
+}
+
+/// The sort forms of those same credits, in the same order.
+fn credit_sort_names(
+    credits: &[crate::tags::Credit],
+    role: crate::tags::Role,
+) -> Vec<Option<String>> {
+    let mut named: Vec<&crate::tags::Credit> = credits
+        .iter()
+        .filter(|credit| credit.role == role)
+        .collect();
+    named.sort_by_key(|credit| credit.position);
+    named
+        .iter()
+        .map(|credit| credit.sort_name.clone())
+        .collect()
 }

@@ -434,6 +434,7 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
     let artwork = cover.map(|cover| artwork_input(artwork_dir, cover));
     let lyrics = extract_lyrics(path, tag);
     let lyrics_hash = lyrics_hash(&lyrics);
+    let raw = raw_credits(tag);
     let extended = extended_tags(tag);
     Ok(CatalogTrackInput {
         relative_path,
@@ -443,6 +444,10 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
         full_hash,
         title,
         artist: tag.and_then(|t| t.artist().map(|v| v.into_owned())),
+        artists: raw.artists,
+        album_artists: raw.album_artists,
+        roles: raw.roles,
+        performer_pairs: raw.performer_pairs,
         album: tag.and_then(|t| t.album().map(|v| v.into_owned())),
         album_artist: tag.and_then(waveflow_core::scanner::extract_album_artist),
         is_compilation: tag.is_some_and(waveflow_core::scanner::extract_compilation_flag),
@@ -548,7 +553,14 @@ fn extract_dsd(
                 .unwrap_or("Unknown")
                 .into()
         }),
-        artist: meta.artist,
+        artist: meta.artist.clone(),
+        // DSD has no tag reader beyond its own metadata block, so the only
+        // credit it can name is the artist tag. Every other role list stays
+        // empty rather than being invented.
+        artists: Vec::new(),
+        album_artists: Vec::new(),
+        roles: Vec::new(),
+        performer_pairs: Vec::new(),
         album: meta.album,
         album_artist: None,
         is_compilation: false,
@@ -611,6 +623,79 @@ struct ExtendedTags {
     explicit_status: Option<String>,
 }
 
+/// Reads every credit a file names, in tag order.
+///
+/// The role vocabulary and the tag each role is read from follow the
+/// reference. `WRITER` folds onto `COMPOSER` as it does there: the two are one
+/// credit on the overwhelming majority of files that carry either, and telling
+/// them apart would invent a distinction the taggers do not make.
+///
+/// `PERFORMER` is the one role whose credit carries a second value. ID3 stores
+/// it as a musician-credits frame lofty exposes only through its own tag type,
+/// so what reaches here is the generic spelling — `Name (instrument)` — which
+/// [`crate::tags::split_performer`] takes apart.
+fn raw_credits(tag: Option<&lofty::tag::Tag>) -> crate::tags::RawCredits {
+    use crate::tags::Role;
+    let Some(tag) = tag else {
+        return crate::tags::RawCredits::default();
+    };
+    let values = |key: ItemKey| -> Vec<String> {
+        tag.get_strings(key)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let single = |key: ItemKey| -> Option<String> {
+        tag.get_string(key)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+
+    let mut roles: Vec<(Role, Vec<String>)> = Vec::new();
+    let mut composers = values(ItemKey::Composer);
+    composers.extend(values(ItemKey::Writer));
+    if !composers.is_empty() {
+        roles.push((Role::Composer, composers));
+    }
+    for (role, key) in [
+        (Role::Lyricist, ItemKey::Lyricist),
+        (Role::Conductor, ItemKey::Conductor),
+        (Role::Arranger, ItemKey::Arranger),
+        (Role::Producer, ItemKey::Producer),
+        (Role::Director, ItemKey::Director),
+        (Role::Engineer, ItemKey::Engineer),
+        (Role::Mixer, ItemKey::MixEngineer),
+        (Role::Remixer, ItemKey::Remixer),
+        (Role::DjMixer, ItemKey::MixDj),
+    ] {
+        let found = values(key);
+        if !found.is_empty() {
+            roles.push((role, found));
+        }
+    }
+
+    let performer_pairs = values(ItemKey::Performer)
+        .into_iter()
+        .map(|value| {
+            let (sub_role, name) = crate::tags::split_performer(&value);
+            (sub_role, name)
+        })
+        .collect();
+
+    crate::tags::RawCredits {
+        artist: values(ItemKey::TrackArtist),
+        artists: values(ItemKey::TrackArtists),
+        album_artist: values(ItemKey::AlbumArtist),
+        album_artists: values(ItemKey::AlbumArtists),
+        sort_artist: single(ItemKey::TrackArtistSortOrder),
+        sort_album_artist: single(ItemKey::AlbumArtistSortOrder),
+        is_compilation: waveflow_core::scanner::extract_compilation_flag(tag),
+        roles,
+        performer_pairs,
+    }
+}
 fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
     let Some(tag) = tag else {
         return ExtendedTags::default();
