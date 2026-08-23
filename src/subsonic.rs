@@ -23,8 +23,8 @@ use crate::{
     media::{MediaError, OutputFormat, StreamQuery},
     security,
     services::{
-        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, BrowsePage, PlaylistItem, ServiceError,
-        SongItem,
+        AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, ArtistSummary, BrowsePage, PlaylistItem,
+        ServiceError, SongItem,
     },
     AppState,
 };
@@ -636,9 +636,10 @@ async fn indexes(
     id3: bool,
 ) -> Result<Node, ProtocolError> {
     let overview = overview(state, principal, params).await?;
-    let mut groups: BTreeMap<char, Vec<ArtistItem>> = BTreeMap::new();
+    let mut groups: BTreeMap<char, Vec<ArtistSummary>> = BTreeMap::new();
     for artist in overview.artists {
         let initial = artist
+            .artist
             .name
             .chars()
             .next()
@@ -655,14 +656,11 @@ async fn indexes(
             Node::new("index")
                 .attr("name", letter.to_string())
                 .children(artists.into_iter().map(|artist| {
-                    artist_node(
-                        &artist,
-                        overview
-                            .albums
-                            .iter()
-                            .filter(|album| album.artist_id == Some(artist.id))
-                            .count(),
-                    )
+                    // The count comes from the projection now. Filtering every
+                    // album for every artist was a loop the facade had no
+                    // business running, and it could only ever see the album's
+                    // first credit.
+                    artist_node(&artist.artist, artist.album_count as usize)
                 }))
         })))
 }
@@ -882,16 +880,26 @@ async fn music_directory(
                 overview
                     .artists
                     .iter()
-                    .filter(|artist| artist.library_id == id)
-                    .map(|artist| directory_child(artist_node(artist, 0))),
+                    .filter(|artist| artist.artist.library_id == id)
+                    .map(|artist| {
+                        directory_child(artist_node(&artist.artist, artist.album_count as usize))
+                    }),
             )
             .children(orphans.iter().map(|song| song_node(song).renamed("child")));
-    } else if let Some(artist) = overview.artists.iter().find(|item| item.id == id) {
-        directory = directory.attr("name", artist.name.clone()).children(
-            overview
+    } else if let Some(artist) = overview.artists.iter().find(|item| item.artist.id == id) {
+        // The albums this artist is credited to, by the same rule `getArtist`
+        // uses. Filtering on the album's single artist column here and on the
+        // participants there would answer two different lists for an album
+        // with two album artists, and only real client traffic would find it.
+        let credited = state
+            .services
+            .artist(principal.id, id)
+            .await
+            .map_err(service_protocol)?;
+        directory = directory.attr("name", artist.artist.name.clone()).children(
+            credited
                 .albums
                 .iter()
-                .filter(|album| album.artist_id == Some(id))
                 .map(|album| directory_child(album_node(album))),
         );
     } else if overview.albums.iter().any(|item| item.id == id) {
@@ -1685,6 +1693,18 @@ fn artist_node(artist: &ArtistItem, album_count: usize) -> Node {
         // with its default rather than omitted: absent would go on saying the
         // server cannot answer, which stopped being true.
         .attr("sortName", artist.sort_name.clone().unwrap_or_default())
+        .attr("sortName", artist.sort_name.clone().unwrap_or_default())
+        // The capacities this artist is credited in. Ordered by name inside
+        // the projection, where the reference emits them in map-iteration
+        // order and answers differently on every request. Its two synthetic
+        // roles — `total` and `maincredit` — are not OpenSubsonic role names
+        // and are not stored, so they cannot leak here.
+        .children(
+            artist
+                .roles
+                .iter()
+                .map(|role| Node::new("roles").text(role.clone())),
+        )
 }
 
 /// `songCount` and `duration` come from the album projection rather than from
@@ -1784,11 +1804,35 @@ fn song_node(song: &SongItem) -> Node {
                 .iter()
                 .map(|genre| Node::new("genres").attr("name", genre.clone())),
         )
-        .children(song.album_artist_id.iter().map(|id| {
+        // Every artist the album is credited to, not just the one the frozen
+        // `artistId` field can name.
+        .children(song.album_artists.iter().map(|artist| {
             Node::new("albumArtists")
-                .attr("id", id.to_string())
-                .attr("name", song.album_artist.clone().unwrap_or_default())
+                .attr("id", artist.id.to_string())
+                .attr("name", artist.name.clone())
         }))
+        // Everyone else the file credits: composer, producer, performer and
+        // the rest, each naming what it did. `subRole` is the instrument a
+        // performer is credited on, and only a performer has one.
+        .children(song.contributors.iter().map(|credit| {
+            Node::new("contributors")
+                .attr("role", credit.role.clone())
+                .maybe_attr("subRole", credit.sub_role.clone())
+                .child(
+                    Node::new("artist")
+                        .attr("id", credit.artist.id.to_string())
+                        .attr("name", credit.artist.name.clone()),
+                )
+        }))
+        .attr(
+            "displayComposer",
+            song.contributors
+                .iter()
+                .filter(|credit| credit.role == "composer")
+                .map(|credit| credit.artist.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" \u{2022} "),
+        )
         .attr(
             "displayAlbumArtist",
             song.album_artist.clone().unwrap_or_default(),
@@ -2015,8 +2059,18 @@ fn json_required_array_fields(parent: &str) -> &'static [&'static str] {
         // Emitted as `[]` rather than omitted when a track has no credited
         // artist or no genre: under the OpenSubsonic presence rule an absent
         // key means the server does not support the field at all.
-        "song" | "entry" | "child" => &["artists", "genres", "isrc", "moods", "albumArtists"],
+        "song" | "entry" | "child" => &[
+            "artists",
+            "genres",
+            "isrc",
+            "moods",
+            "albumArtists",
+            "contributors",
+        ],
         "album" => &["artists", "genres"],
+        // The roles an artist is credited in, empty rather than absent for
+        // the same reason: absent would say the server does not read them.
+        "artist" => &["roles"],
         _ => &[],
     }
 }
@@ -2088,6 +2142,8 @@ fn json_array_field(parent: &str, name: &str) -> bool {
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
             | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
+            | ("song" | "entry" | "child", "contributors")
+            | ("artist", "roles")
     )
 }
 
