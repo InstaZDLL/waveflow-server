@@ -25,7 +25,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  # `github.ref_name` rather than `github.ref`: a dispatch passes the bare tag,
+  # so a push that spells it `refs/tags/v1.2.3` would land in a different group
+  # and run alongside the retry it is meant to be serialized against.
+  group: release-${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -106,10 +109,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
+      # Named without the `sha256:` prefix, because the manifest job puts it
+      # back: keeping it here would ask the registry for `sha256:sha256:…`.
       - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${DIGEST#sha256:}"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -153,8 +160,19 @@ jobs:
             *-*) extra="beta" ;;
             *) extra="latest" ;;
           esac
+          refs=()
+          for digest in *; do
+            [ -e "$digest" ] || continue
+            refs+=("$image@sha256:$digest")
+          done
+          # A manifest built from an empty list would publish the tag against
+          # nothing, and the failure would only surface at someone's `docker pull`.
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "::error::no digests were collected; nothing to publish"
+            exit 1
+          fi
           docker buildx imagetools create \
             --tag "$image:$version" \
             --tag "$image:$extra" \
-            $(printf "$image@sha256:%s " *)
+            "${refs[@]}"
           docker buildx imagetools inspect "$image:$version"
