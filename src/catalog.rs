@@ -1586,27 +1586,34 @@ fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::from_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }
 
-/// The names credited in one role, in tag order.
-fn credit_names(credits: &[crate::tags::Credit], role: crate::tags::Role) -> Vec<String> {
-    let mut named: Vec<&crate::tags::Credit> = credits
-        .iter()
-        .filter(|credit| credit.role == role)
-        .collect();
-    named.sort_by_key(|credit| credit.position);
-    named.iter().map(|credit| credit.name.clone()).collect()
-}
-
-/// The sort forms of those same credits, in the same order.
-fn credit_sort_names(
+/// The credits of one role, in tag order.
+///
+/// The two lists derived from it are read in lockstep — a name and the sort
+/// form paired with it — so they have to come from one ordering.
+fn credits_in_role(
     credits: &[crate::tags::Credit],
     role: crate::tags::Role,
-) -> Vec<Option<String>> {
+) -> Vec<&crate::tags::Credit> {
     let mut named: Vec<&crate::tags::Credit> = credits
         .iter()
         .filter(|credit| credit.role == role)
         .collect();
     named.sort_by_key(|credit| credit.position);
     named
+}
+
+fn credit_names(credits: &[crate::tags::Credit], role: crate::tags::Role) -> Vec<String> {
+    credits_in_role(credits, role)
+        .iter()
+        .map(|credit| credit.name.clone())
+        .collect()
+}
+
+fn credit_sort_names(
+    credits: &[crate::tags::Credit],
+    role: crate::tags::Role,
+) -> Vec<Option<String>> {
+    credits_in_role(credits, role)
         .iter()
         .map(|credit| credit.sort_name.clone())
         .collect()

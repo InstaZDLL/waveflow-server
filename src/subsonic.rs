@@ -886,7 +886,14 @@ async fn music_directory(
                     }),
             )
             .children(orphans.iter().map(|song| song_node(song).renamed("child")));
-    } else if let Ok(credited) = state.services.artist(principal.id, id).await {
+    } else if let Some(credited) = match state.services.artist(principal.id, id).await {
+        Ok(credited) => Some(credited),
+        // Only an absence justifies trying the next branch. A database
+        // failure has to say so rather than turn into a not-found, which is
+        // the answer this method gives an identifier that does not exist.
+        Err(ServiceError::NotFound) => None,
+        Err(error) => return Err(service_protocol(error)),
+    } {
         // The albums this artist is credited to, by the same rule `getArtist`
         // uses — and resolved the same way, rather than from the overview.
         // The overview lists only artists an album is credited to, so looking
@@ -2043,7 +2050,15 @@ fn node_json(node: &Node, parent: &str) -> Value {
         };
         map.insert(name.to_owned(), value);
     }
+    // A browsing child is an artist or an album under the same element name a
+    // song uses, and `isDir` is what tells them apart. Injecting a song's
+    // relations into a folder entry would answer `isrc: []` on an artist.
+    // `artists` and `genres` stay, because an album child carries both.
+    let directory = matches!(node.attrs.get("isDir"), Some(Value::Bool(true)));
     for name in json_required_array_fields(parent, &node.name) {
+        if directory && matches!(*name, "isrc" | "moods" | "albumArtists" | "contributors") {
+            continue;
+        }
         map.entry((*name).to_owned())
             .or_insert_with(|| Value::Array(Vec::new()));
     }

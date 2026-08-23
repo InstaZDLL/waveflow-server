@@ -362,7 +362,6 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
     db.migrate().await?;
-    db.reconcile_catalog_identity(&config.pid).await?;
     let secret_box = Arc::new(security::SecretBox::load_or_create(
         &config.instance_key_path,
     )?);
@@ -376,6 +375,10 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
             "instance.key does not match waveflow.db; restore the database and key from the same backup bundle"
         );
     }
+    // After the key check, not before: a mismatched pair aborts the boot, and
+    // scheduling a rescan on a database this instance is about to refuse would
+    // be writing to a catalogue that is not ours.
+    db.reconcile_catalog_identity(&config.pid).await?;
     let auth = authentication::AuthService::new(db.clone(), config);
     let scanner = scanner::ScanManager::new(
         db.clone(),
