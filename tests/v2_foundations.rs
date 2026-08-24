@@ -10477,3 +10477,90 @@ async fn a_changed_track_spec_drops_every_relocation_hint_without_a_rescan() {
         "clearing a hint must not disturb what it points at"
     );
 }
+
+#[tokio::test]
+async fn a_changed_artist_spec_carries_the_favourite_onto_the_new_identifier() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("remap", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("remap-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Remap library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 1, false).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library_id,
+            scan_id,
+            &catalog_input(0, "Nova Kern"),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    // The rules the catalogue was written under are recorded when the scan
+    // completes, which is what a later boot compares against.
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let artist_id: String =
+        sqlx::query_scalar("SELECT id FROM artist WHERE library_id = ? AND name = 'Nova Kern'")
+            .bind(library_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    let artist_id = uuid::Uuid::parse_str(&artist_id).unwrap();
+    state
+        .services
+        .set_star(owner, "artist", artist_id, true)
+        .await
+        .unwrap();
+
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+    };
+    let expected = altered.artist_id(library_id, "Nova Kern");
+    assert_ne!(
+        expected, artist_id,
+        "the altered spec has to actually move the identifier for this to test anything"
+    );
+
+    let libraries = state.db.reconcile_catalog_identity(&altered).await.unwrap();
+    assert_eq!(
+        libraries, 1,
+        "an artist spec change still re-identifies, and still costs a full rescan"
+    );
+
+    let starred: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM user_star WHERE user_id = ? AND entity_type = 'artist'",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        starred,
+        vec![expected.to_string()],
+        "the favourite must name the identifier the new rule derives, not the one it replaced"
+    );
+}
