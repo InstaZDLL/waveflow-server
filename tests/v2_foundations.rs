@@ -10664,14 +10664,16 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
             .await
             .unwrap();
     }
-    state.db.finish_scan_job(scan_id, 0).await.unwrap();
-    // What a real scan does after applying its rows, and what makes an artist
-    // reachable as a folder.
+    // What a real scan does after applying its rows, before closing the job:
+    // it builds the artist index and the role statistics a folder listing
+    // reads. Driving the pipeline in another order would prove something about
+    // an order nothing runs.
     state
         .db
         .consolidate_catalog_derivations(library_id)
         .await
         .unwrap();
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
 
     let album_id = state
         .services
@@ -10740,6 +10742,15 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
         .apply_catalog_track(library_id, bare_scan, &bare, None, false)
         .await
         .unwrap();
+    // What a real scan does after applying its rows, before closing the job:
+    // it builds the artist index and the role statistics a folder listing
+    // reads. Driving the pipeline in another order would prove something about
+    // an order nothing runs.
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
     state.db.finish_scan_job(bare_scan, 0).await.unwrap();
     let bare_id = state
         .services
@@ -10790,12 +10801,16 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
         .apply_catalog_track(library_id, solo_scan, &solo_input, None, false)
         .await
         .unwrap();
-    state.db.finish_scan_job(solo_scan, 0).await.unwrap();
+    // What a real scan does after applying its rows, before closing the job:
+    // it builds the artist index and the role statistics a folder listing
+    // reads. Driving the pipeline in another order would prove something about
+    // an order nothing runs.
     state
         .db
         .consolidate_catalog_derivations(library_id)
         .await
         .unwrap();
+    state.db.finish_scan_job(solo_scan, 0).await.unwrap();
     let solo_id = state
         .services
         .catalog_snapshot(owner, &[])
