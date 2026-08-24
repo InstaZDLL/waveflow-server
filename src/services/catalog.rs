@@ -146,10 +146,8 @@ impl DomainServices {
                 songs: Vec::new(),
             });
         };
-        let folder_filter = (!folder_ids.is_empty()).then(|| {
-            serde_json::to_string(folder_ids).expect("UUID list serialization cannot fail")
-        });
-        let folder_filter = folder_filter.as_deref();
+        let folders = folder_filter(folder_ids);
+        let folder_filter = folders.as_deref();
 
         let mut songs = sqlx::query(concat!(
             song_select!(),

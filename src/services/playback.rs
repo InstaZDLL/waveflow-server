@@ -288,17 +288,22 @@ impl DomainServices {
         .into_iter()
         .map(parse_uuid)
         .collect::<Result<Vec<_>, _>>()?;
+        let current = row
+            .try_get::<Option<String>, _>("current_track_id")?
+            .map(parse_uuid)
+            .transpose()?;
+        let songs = self
+            .songs_by_ids_lenient_on(connection, user_id, &ids)
+            .await?;
         Ok(Some(QueueItem {
-            current: row
-                .try_get::<Option<String>, _>("current_track_id")?
-                .map(parse_uuid)
-                .transpose()?,
+            // The lenient resolution above drops a track that went unavailable
+            // since the queue was saved. Keeping `current` on it would name a
+            // song the client was never handed.
+            current: current.filter(|id| songs.iter().any(|song| song.id == *id)),
             position_ms: row.try_get("position_ms")?,
             changed_by: row.try_get("changed_by")?,
             updated_at: row.try_get("updated_at")?,
-            songs: self
-                .songs_by_ids_lenient_on(connection, user_id, &ids)
-                .await?,
+            songs,
         }))
     }
 }
