@@ -247,3 +247,26 @@ pub(super) async fn send_sync_notice(
         serde_json::to_string(&crate::sync::SyncNotice { cursor }).expect("sync notice serializes");
     sender.send(Message::Text(body.into())).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{sync_notice_action, SyncNoticeAction};
+
+    #[tokio::test]
+    async fn lagged_sync_socket_recovers_from_the_durable_cursor() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::Config::for_data_dir(temp.path().join("data"));
+        let db = crate::database::Database::open(&config).await.unwrap();
+        db.migrate().await.unwrap();
+        let sync = crate::sync::SyncService::new(db);
+        let action = sync_notice_action(
+            &sync,
+            uuid::Uuid::new_v4(),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(action, SyncNoticeAction::Send(0));
+    }
+}

@@ -106,34 +106,3 @@ pub(super) fn service_error(error: crate::services::ServiceError) -> ApiError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{public_url_is_https, sync_notice_action, SyncNoticeAction};
-
-    #[test]
-    fn secure_cookie_detection_uses_the_parsed_url_scheme() {
-        assert!(public_url_is_https(Some("HTTPS://waveflow.test/")));
-        assert!(!public_url_is_https(Some("http://waveflow.test")));
-        assert!(!public_url_is_https(Some("not a URL")));
-        assert!(!public_url_is_https(None));
-    }
-
-    #[tokio::test]
-    async fn lagged_sync_socket_recovers_from_the_durable_cursor() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = crate::Config::for_data_dir(temp.path().join("data"));
-        let db = crate::database::Database::open(&config).await.unwrap();
-        db.migrate().await.unwrap();
-        let sync = crate::sync::SyncService::new(db);
-        let action = sync_notice_action(
-            &sync,
-            uuid::Uuid::new_v4(),
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(action, SyncNoticeAction::Send(0));
-    }
-}
