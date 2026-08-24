@@ -2,8 +2,10 @@
 --
 -- `originalReleaseDate`, `releaseDate`, `releaseTypes[]` and `recordLabels[]`
 -- describe the release rather than the recording, so they sit on the album and
--- are filled the way `year` and `musicbrainz_id` already are: the first track
--- to carry a value writes it, and later tracks do not overwrite it.
+-- are filled exactly the way `year` is: a track that names a value writes it,
+-- and a track that names none leaves what is there. The last writer wins, which
+-- is what lets a corrected tag reach the album on a rescan instead of being
+-- held off by the first spelling the catalogue ever saw.
 --
 -- `discTitles[]` cannot be stored that way — it holds one title per disc — so
 -- the tag lands on the track and the album derives the list from its available

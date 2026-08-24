@@ -452,10 +452,18 @@ impl Database {
     /// and `releasedate`, which live on the files rather than on the album row,
     /// so there is nothing here to derive the new identifier from.
     ///
-    /// `UPDATE OR IGNORE` then `DELETE` rather than a plain update: a coarser
-    /// spec can fold two artists onto one identifier, and the second row would
-    /// collide on `(user_id, entity_type, entity_id)`. Losing the duplicate is
-    /// right — the user already stars what it would have become.
+    /// **Moved in two phases, through a namespace no identifier can occupy.**
+    /// One artist's new identifier can be another's old one, and moving them one
+    /// at a time would then carry the first artist's favourite onto the second's
+    /// row — a result that depends on the order the rows came back in, which is
+    /// no result at all. Staging every row first and landing them afterwards
+    /// makes the outcome the same whatever that order was. Both phases run in
+    /// one transaction, so a staged value is never visible to anything.
+    ///
+    /// `UPDATE OR IGNORE` then `DELETE` at each phase: a coarser spec can fold
+    /// two artists onto one identifier, and the second row would collide on
+    /// `(user_id, entity_type, entity_id)`. Losing the duplicate is right — the
+    /// user already stars what it would have become.
     async fn remap_artist_user_data(
         &self,
         specs: &crate::pid::PidSpecs,
@@ -463,46 +471,35 @@ impl Database {
         let rows = sqlx::query("SELECT id, library_id, name FROM artist")
             .fetch_all(self.pool())
             .await?;
-        let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
-        let mut moved = 0;
+        let mut moves = Vec::new();
         for row in rows {
             let old: String = row.try_get("id")?;
             let library_id = parse_uuid(row.try_get("library_id")?)?;
             let name: String = row.try_get("name")?;
             let new = specs.artist_id(library_id, &name).to_string();
-            if new == old {
-                continue;
+            if new != old {
+                // A UUID holds no colon, so nothing that reaches these columns
+                // by any other route can be mistaken for a staged value.
+                moves.push((old, format!("{REMAP_STAGE}{new}"), new));
             }
-            // Spelled out per table rather than looped: sqlx takes static SQL
-            // only, which is what keeps every query in this crate
-            // injection-proof by construction.
-            moved += sqlx::query(
-                "UPDATE OR IGNORE user_star SET entity_id = ? \
-                 WHERE entity_type = 'artist' AND entity_id = ?",
-            )
-            .bind(&new)
-            .bind(&old)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            sqlx::query("DELETE FROM user_star WHERE entity_type = 'artist' AND entity_id = ?")
-                .bind(&old)
-                .execute(&mut *tx)
-                .await?;
-            moved += sqlx::query(
-                "UPDATE OR IGNORE user_rating SET entity_id = ? \
-                 WHERE entity_type = 'artist' AND entity_id = ?",
-            )
-            .bind(&new)
-            .bind(&old)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            sqlx::query("DELETE FROM user_rating WHERE entity_type = 'artist' AND entity_id = ?")
-                .bind(&old)
-                .execute(&mut *tx)
-                .await?;
+        }
+        if moves.is_empty() {
+            return Ok(0);
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        let mut moved = 0;
+        for (from, to) in moves
+            .iter()
+            .map(|(old, staged, _)| (old, staged))
+            .chain(moves.iter().map(|(_, staged, new)| (staged, new)))
+        {
+            let landed = move_artist_user_data(&mut tx, from, to).await?;
+            // Counted on the second pass only, where a row reaches the
+            // identifier it will actually be read under.
+            if from.starts_with(REMAP_STAGE) {
+                moved += landed;
+            }
         }
         tx.commit().await?;
         Ok(moved)
@@ -1761,10 +1758,10 @@ async fn upsert_album(
            is_compilation=excluded.is_compilation, \
            year=COALESCE(excluded.year, album.year), \
            artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
-           original_release_date=COALESCE(album.original_release_date, excluded.original_release_date), \
-           release_date=COALESCE(album.release_date, excluded.release_date), \
-           release_types=COALESCE(album.release_types, excluded.release_types), \
-           record_labels=COALESCE(album.record_labels, excluded.record_labels), \
+           original_release_date=COALESCE(excluded.original_release_date, album.original_release_date), \
+           release_date=COALESCE(excluded.release_date, album.release_date), \
+           release_types=COALESCE(excluded.release_types, album.release_types), \
+           record_labels=COALESCE(excluded.record_labels, album.record_labels), \
            updated_at=excluded.updated_at",
     )
     .bind(id.to_string())
@@ -1794,6 +1791,48 @@ fn split_values(raw: Option<&str>) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// The namespace a remap stages through. A UUID holds no colon, so a staged
+/// value cannot be mistaken for an identifier and no identifier for it.
+const REMAP_STAGE: &str = "pid-remap:";
+
+/// Moves one artist identifier onto another, in both tables that hold one.
+///
+/// Spelled out per table rather than looped: sqlx takes static SQL only, which
+/// is what keeps every query in this crate injection-proof by construction.
+async fn move_artist_user_data(
+    tx: &mut Transaction<'_, Sqlite>,
+    from: &str,
+    to: &str,
+) -> Result<u64, sqlx::Error> {
+    let mut moved = sqlx::query(
+        "UPDATE OR IGNORE user_star SET entity_id = ? \
+         WHERE entity_type = 'artist' AND entity_id = ?",
+    )
+    .bind(to)
+    .bind(from)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM user_star WHERE entity_type = 'artist' AND entity_id = ?")
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    moved += sqlx::query(
+        "UPDATE OR IGNORE user_rating SET entity_id = ? \
+         WHERE entity_type = 'artist' AND entity_id = ?",
+    )
+    .bind(to)
+    .bind(from)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM user_rating WHERE entity_type = 'artist' AND entity_id = ?")
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    Ok(moved)
 }
 
 fn library_from_row(row: sqlx::sqlite::SqliteRow) -> Result<LibraryRecord, sqlx::Error> {

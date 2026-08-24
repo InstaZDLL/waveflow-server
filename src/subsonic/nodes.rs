@@ -114,11 +114,16 @@ pub(super) fn album_node(album: &AlbumItem) -> Node {
 /// Only the parts the tag actually names are emitted: `2019` is a year and
 /// nothing more, and reporting it as 1 January 2019 would invent a precision
 /// the file never claimed. Anything that does not start with a four-digit year
-/// is no date at all.
+/// is no date at all — `19980405` written without separators is not the year
+/// 19,980,405, and a bare `5` is not the year 5.
 fn item_date(name: &'static str, raw: Option<&str>) -> Option<Node> {
     let raw = raw?.trim();
     let mut parts = raw.split(['-', '/', '.']);
-    let year: i64 = parts.next()?.trim().parse().ok().filter(|y| *y > 0)?;
+    let head = parts.next()?.trim();
+    if head.len() != 4 || !head.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let year: i64 = head.parse().ok().filter(|y| *y > 0)?;
     let month = parts
         .next()
         .and_then(|value| value.trim().parse::<i64>().ok())

@@ -124,19 +124,27 @@ qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
 > la plus lourde. La PR #126 a livré `roles[]`, `contributors[]` et
 > `displayComposer` avec les colonnes qu'ils réclamaient — treize rôles, un
 > sous-rôle d'instrument, et un album qui pend de chacun de ses artistes
-> crédités. `sortName` était déjà arrivé avec la PR #123. Les champs de sortie
-> d'album
-> (`originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]`,
-> `discTitles[]`) ont suivi le 24 août 2026 : les quatre premiers pendent de
-> l'album, `discTitles[]` se dérive des pistes disponibles comme les genres, et
-> les trois tableaux sont émis vides plutôt qu'absents. Les deux dates sont
-> omises quand aucun tag ne les nomme, comme le fait la référence — un
-> `ItemDate` sans année n'est pas une date, et les tableaux portent déjà le
-> signal de présence du groupe. **Ce point est clos.**
+> crédités. `sortName` était déjà arrivé avec la PR #123. Restent de ce point
+> les champs de sortie d'album (`originalReleaseDate`, `releaseDate`,
+> `releaseTypes[]`, `recordLabels[]`, `discTitles[]`), toujours absents et
+> toujours honnêtement déclarés tels.
 >
 > La question de cadrage du §5.1 est close : les quatre clients ont été
 > rejoués le 23 août 2026 contre le modèle aligné, et
 > [`subsonic-compatibility.md`](subsonic-compatibility.md) porte le résultat.
+
+> **Addendum du 2026-08-24.** Le point 2 ci-dessous est clos. Les cinq champs
+> de sortie d'album que l'addendum de la veille laissait ouverts sont livrés :
+> `originalReleaseDate`, `releaseDate`, `releaseTypes[]` et `recordLabels[]`
+> pendent de l'album et se remplissent comme `year`, `discTitles[]` se dérive
+> des pistes disponibles comme les genres. Les trois tableaux sont émis vides
+> plutôt qu'absents, sous les deux noms d'élément qu'un album porte — `album`
+> et, dans un dossier, `child`. Les deux dates sont omises quand aucun tag ne
+> les nomme, comme le fait la référence : un `ItemDate` sans année n'est pas
+> une date, et les tableaux portent déjà le signal de présence du groupe.
+>
+> **Le fil a bougé.** Les quatre clients demandent d'être rejoués avant un tag
+> stable, ce que le §4 du handover du 23 août exige déjà.
 
 Rien de structurel. La liste tient en quatre lignes, et deux d'entre elles sont
 des dettes nommées plutôt que des défauts.
