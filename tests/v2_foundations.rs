@@ -10654,6 +10654,13 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
             .unwrap();
     }
     state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    // What a real scan does after applying its rows, and what makes an artist
+    // reachable as a folder.
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
 
     let album_id = state
         .services
@@ -10733,6 +10740,16 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
         .find(|album| album.title == "Bare release")
         .unwrap()
         .id;
+    // A song is not a release. The three arrays share their element name with
+    // an album inside a directory, and a recording answering `recordLabels: []`
+    // would claim the server reads a label off a track.
+    let song = &album["song"][0];
+    assert!(song["recordLabels"].is_null());
+    assert!(song["releaseTypes"].is_null());
+    assert!(song["discTitles"].is_null());
+    // Its own arrays are still there, empty rather than absent.
+    assert_eq!(song["moods"], serde_json::json!([]));
+
     let bare = subsonic_json(&router, "getAlbum", api_key, &format!("&id={bare_id}")).await;
     let bare = &bare["subsonic-response"]["album"];
     assert_eq!(bare["recordLabels"], serde_json::json!([]));
@@ -10740,6 +10757,95 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
     assert_eq!(bare["discTitles"], serde_json::json!([]));
     assert!(bare["originalReleaseDate"].is_null());
     assert!(bare["releaseDate"].is_null());
+
+    // A third album carrying exactly one of each. This is the shape the array
+    // rule is for: with one child and no rule, a record label renders as a bare
+    // object instead of a list of one.
+    let solo_scan = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(solo_scan, 1, false).await.unwrap();
+    let mut solo_input = catalog_input(9, "Solo Hand");
+    solo_input.album = Some("Single imprint".into());
+    solo_input.is_compilation = false;
+    solo_input.disc_number = Some(1);
+    solo_input.disc_subtitle = Some("Only disc".into());
+    solo_input.release_types = Some("EP".into());
+    solo_input.record_labels = Some("Solo Records".into());
+    state
+        .db
+        .apply_catalog_track(library_id, solo_scan, &solo_input, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(solo_scan, 0).await.unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
+    let solo_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .into_iter()
+        .find(|album| album.title == "Single imprint")
+        .unwrap()
+        .id;
+    let solo = subsonic_json(&router, "getAlbum", api_key, &format!("&id={solo_id}")).await;
+    let solo = &solo["subsonic-response"]["album"];
+    assert_eq!(
+        solo["recordLabels"],
+        serde_json::json!([{"name": "Solo Records"}]),
+        "one record label is a list of one, not a bare object"
+    );
+    assert_eq!(solo["releaseTypes"], serde_json::json!(["EP"]));
+    assert_eq!(
+        solo["discTitles"],
+        serde_json::json!([{"disc": 1, "title": "Only disc"}])
+    );
+
+    // `getMusicDirectory` renames an album to `child`, and both the array rule
+    // and the injection guard are keyed on that name. Under it an album has to
+    // answer exactly what it answers as `album` — for several values, for one,
+    // and for none — or a client browsing folders reads a single record label
+    // as a bare object and an empty list as "not supported".
+    for (id, rendered) in [(album_id, album), (solo_id, solo), (bare_id, bare)] {
+        let artist_id: String =
+            sqlx::query_scalar("SELECT album_artist_id FROM album WHERE id = ?")
+                .bind(id.to_string())
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap();
+        let directory = subsonic_json(
+            &router,
+            "getMusicDirectory",
+            api_key,
+            &format!("&id={artist_id}"),
+        )
+        .await;
+        let children = directory["subsonic-response"]["directory"]["child"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let child = children
+            .iter()
+            .find(|child| child["id"] == id.to_string())
+            .unwrap_or_else(|| panic!("the folder of {artist_id} has to list {id}"));
+        for key in ["recordLabels", "releaseTypes", "discTitles"] {
+            assert_eq!(
+                child[key], rendered[key],
+                "{key} must read the same under `child` as under `album`"
+            );
+        }
+        // And a song under the same element name still carries none of them.
+        for song in children.iter().filter(|child| child["isDir"] == false) {
+            assert!(song["recordLabels"].is_null());
+        }
+    }
 }
 
 #[tokio::test]
