@@ -7997,14 +7997,11 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
             .await
             .unwrap();
     assert_eq!(persisted_playlist_tracks, 1);
-    assert!(state
-        .services
-        .queue(owner)
-        .await
-        .unwrap()
-        .unwrap()
-        .songs
-        .is_empty());
+    let unavailable_queue = state.services.queue(owner).await.unwrap().unwrap();
+    assert!(unavailable_queue.songs.is_empty());
+    // The saved row still names a current track. The projection must not, once
+    // that track is no longer among the songs it hands back.
+    assert!(unavailable_queue.current.is_none());
     assert!(state
         .services
         .shares(owner)
@@ -8015,6 +8012,20 @@ async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
         .unwrap()
         .songs
         .is_empty());
+    // A visitor sees the same thing as the owner: the share survives its last
+    // track going unavailable, rather than answering not-found after the visit
+    // has already been counted.
+    let visited = state
+        .services
+        .public_share(
+            aggregate_share
+                .url_token
+                .as_deref()
+                .expect("a freshly created share carries its token"),
+        )
+        .await
+        .expect("a share outlives a track that went unavailable");
+    assert!(visited.songs.is_empty());
     state.services.sync_snapshot(owner, 100).await.unwrap();
 }
 
