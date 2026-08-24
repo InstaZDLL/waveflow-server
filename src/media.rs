@@ -497,7 +497,7 @@ async fn bearer_principal(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<crate::authentication::AuthUser, MediaError> {
-    crate::http::authenticated(state, headers, crate::http::Access::Read)
+    crate::api::authenticated(state, headers, crate::api::Access::Read)
         .await
         .map_err(|_| MediaError::Unauthorized)
 }
