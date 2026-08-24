@@ -10841,9 +10841,25 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
                 "{key} must read the same under `child` as under `album`"
             );
         }
-        // And a song under the same element name still carries none of them.
-        for song in children.iter().filter(|child| child["isDir"] == false) {
-            assert!(song["recordLabels"].is_null());
+        // And a song wearing that same element name carries none of the three.
+        // Browsed from the album's own folder rather than the artist's: an
+        // artist folder lists albums, so filtering it for songs would assert
+        // nothing at all.
+        let songs =
+            subsonic_json(&router, "getMusicDirectory", api_key, &format!("&id={id}")).await;
+        let songs = songs["subsonic-response"]["directory"]["child"]
+            .as_array()
+            .unwrap();
+        assert!(!songs.is_empty(), "every album here has at least one track");
+        for song in songs {
+            assert_eq!(song["isDir"], false);
+            for key in ["recordLabels", "releaseTypes", "discTitles"] {
+                assert!(
+                    song[key].is_null(),
+                    "a song must not answer {key}: {}",
+                    song["title"]
+                );
+            }
         }
     }
 }
