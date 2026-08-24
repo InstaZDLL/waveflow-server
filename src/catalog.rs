@@ -366,6 +366,17 @@ impl Database {
                 "catalogue identity setting changed since the last scan"
             );
         }
+        // Before the rescan, while the artist rows still hold the identifiers
+        // their favourites name.
+        if changed.iter().any(|(key, _, _)| *key == "pid.artist") {
+            let moved = self.remap_artist_user_data(specs).await?;
+            if moved > 0 {
+                tracing::warn!(
+                    rows = moved,
+                    "favourites and ratings moved onto the artist identifiers the new rule derives"
+                );
+            }
+        }
         let libraries = self.request_full_scan_everywhere().await?;
         tracing::warn!(
             libraries,
@@ -414,6 +425,75 @@ impl Database {
             );
         }
         Ok(())
+    }
+
+    /// Carries artist favourites and ratings across a change of artist spec.
+    ///
+    /// `user_star` and `user_rating` hold an untyped identifier with no foreign
+    /// key, so a rescan that re-derives artist ids leaves their rows pointing at
+    /// identifiers nothing answers for — invisible rather than wrong, since every
+    /// projection resolves through an `EXISTS`, but lost all the same. The old
+    /// identifier and the name that produced it are both still on the `artist`
+    /// row at this point, which is the only moment the two can be paired.
+    ///
+    /// Albums are not remapped and cannot be: their spec reads `albumversion`
+    /// and `releasedate`, which live on the files rather than on the album row,
+    /// so there is nothing here to derive the new identifier from.
+    ///
+    /// `UPDATE OR IGNORE` then `DELETE` rather than a plain update: a coarser
+    /// spec can fold two artists onto one identifier, and the second row would
+    /// collide on `(user_id, entity_type, entity_id)`. Losing the duplicate is
+    /// right — the user already stars what it would have become.
+    async fn remap_artist_user_data(
+        &self,
+        specs: &crate::pid::PidSpecs,
+    ) -> Result<u64, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, library_id, name FROM artist")
+            .fetch_all(self.pool())
+            .await?;
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        let mut moved = 0;
+        for row in rows {
+            let old: String = row.try_get("id")?;
+            let library_id = parse_uuid(row.try_get("library_id")?)?;
+            let name: String = row.try_get("name")?;
+            let new = specs.artist_id(library_id, &name).to_string();
+            if new == old {
+                continue;
+            }
+            // Spelled out per table rather than looped: sqlx takes static SQL
+            // only, which is what keeps every query in this crate
+            // injection-proof by construction.
+            moved += sqlx::query(
+                "UPDATE OR IGNORE user_star SET entity_id = ? \
+                 WHERE entity_type = 'artist' AND entity_id = ?",
+            )
+            .bind(&new)
+            .bind(&old)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            sqlx::query("DELETE FROM user_star WHERE entity_type = 'artist' AND entity_id = ?")
+                .bind(&old)
+                .execute(&mut *tx)
+                .await?;
+            moved += sqlx::query(
+                "UPDATE OR IGNORE user_rating SET entity_id = ? \
+                 WHERE entity_type = 'artist' AND entity_id = ?",
+            )
+            .bind(&new)
+            .bind(&old)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            sqlx::query("DELETE FROM user_rating WHERE entity_type = 'artist' AND entity_id = ?")
+                .bind(&old)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(moved)
     }
 
     pub async fn library_for_user(
