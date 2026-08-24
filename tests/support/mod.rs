@@ -20,31 +20,21 @@ pub async fn test_app() -> (TempDir, Config, waveflow_server::AppState) {
     (temp, config, state)
 }
 
-pub fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
+/// A [`CatalogTrackInput`] the fixtures below build on.
+///
+/// They differ from each other on purpose — a browse test must not
+/// accidentally match a catalogue test's rows — so this holds only what they
+/// had in common and nothing that depends on their arguments; the rest sits at
+/// rest here and is overridden by both, so no fixture ever reads these values.
+/// What each one still sets is the whole of what makes it that fixture, and a
+/// new field on the struct is filled in one place instead of two.
+fn blank_input() -> CatalogTrackInput {
     CatalogTrackInput {
-        relative_path: format!("track-{index}.flac"),
-        file_size: 1024 + index as i64,
-        modified_at: 1_700_000_000_000 + index as i64,
-        quick_hash: format!("{:064x}", index + 1),
-        full_hash: format!("{:064x}", index + 101),
-        title: format!("Compilation track {index}"),
-        artist: Some(artist.into()),
         artists: Vec::new(),
         album_artists: Vec::new(),
         roles: Vec::new(),
         performer_pairs: Vec::new(),
-        album: Some("Shared compilation".into()),
-        album_artist: None,
-        is_compilation: true,
-        genre: Some("Rock; Pop".into()),
-        year: Some(2026),
-        track_number: Some(index as i64 + 1),
-        disc_number: Some(1),
-        duration_ms: 180_000,
-        bitrate: Some(1_000),
-        sample_rate: Some(48_000),
         channels: Some(2),
-        bit_depth: Some(24),
         codec: Some("FLAC".into()),
         musical_key: None,
         tag_rating: None,
@@ -72,6 +62,48 @@ pub fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
+        relative_path: String::new(),
+        file_size: 0,
+        modified_at: 0,
+        quick_hash: String::new(),
+        full_hash: String::new(),
+        title: String::new(),
+        artist: None,
+        album: None,
+        album_artist: None,
+        is_compilation: false,
+        genre: None,
+        year: None,
+        track_number: None,
+        disc_number: None,
+        duration_ms: 0,
+        bitrate: None,
+        sample_rate: None,
+        bit_depth: None,
+    }
+}
+
+pub fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
+    CatalogTrackInput {
+        relative_path: format!("track-{index}.flac"),
+        file_size: 1024 + index as i64,
+        modified_at: 1_700_000_000_000 + index as i64,
+        quick_hash: format!("{:064x}", index + 1),
+        full_hash: format!("{:064x}", index + 101),
+        title: format!("Compilation track {index}"),
+        artist: Some(artist.into()),
+        album: Some("Shared compilation".into()),
+        album_artist: None,
+        is_compilation: true,
+        genre: Some("Rock; Pop".into()),
+        year: Some(2026),
+        track_number: Some(index as i64 + 1),
+        disc_number: Some(1),
+        duration_ms: 180_000,
+        bitrate: Some(1_000),
+        sample_rate: Some(48_000),
+        bit_depth: Some(24),
+        ..blank_input()
     }
 }
 
@@ -80,6 +112,20 @@ pub async fn run_scan(
     owner: uuid::Uuid,
     library: LibraryRecord,
 ) {
+    scan_once(state, owner, library).await;
+}
+
+/// Queues a scan and waits for it, answering the job it queued.
+///
+/// [`run_scan`] is this without the identifier, which is all most callers want.
+/// A test that has to read the job back — to assert what a scan skipped, or
+/// that a second one ran at all — needs the id, and had been carrying its own
+/// copy of this loop to get it.
+pub async fn scan_once(
+    state: &waveflow_server::AppState,
+    owner: uuid::Uuid,
+    library: LibraryRecord,
+) -> uuid::Uuid {
     let id = state
         .scanner
         .trigger(library, Some(owner), "manual")
@@ -93,7 +139,7 @@ pub async fn run_scan(
             .unwrap()
             .unwrap();
         if job.status == "completed" {
-            return;
+            return id;
         }
         if job.status == "failed" {
             panic!("scan failed: {:?}", job.message);
@@ -295,6 +341,9 @@ pub async fn login_token(router: &axum::Router, username: &str, password: &str) 
         .to_owned()
 }
 
+/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
+/// it is not a compilation, so `album_artist_id` is populated and the artist
+/// drill-down has something to resolve.
 #[allow(clippy::too_many_arguments)]
 pub fn browse_input(
     index: usize,
@@ -312,10 +361,6 @@ pub fn browse_input(
         full_hash: format!("{:064x}", index + 900),
         title: title.into(),
         artist: Some(artist.into()),
-        artists: Vec::new(),
-        album_artists: Vec::new(),
-        roles: Vec::new(),
-        performer_pairs: Vec::new(),
         album: Some(album.into()),
         album_artist: Some(artist.into()),
         is_compilation: false,
@@ -326,34 +371,7 @@ pub fn browse_input(
         duration_ms: 120_000,
         bitrate: Some(900),
         sample_rate: Some(44_100),
-        channels: Some(2),
         bit_depth: Some(16),
-        codec: Some("FLAC".into()),
-        musical_key: None,
-        tag_rating: None,
-        musicbrainz_recording_id: None,
-        musicbrainz_release_id: None,
-        musicbrainz_artist_id: None,
-        replay_gain_track_gain: None,
-        replay_gain_track_peak: None,
-        replay_gain_album_gain: None,
-        replay_gain_album_peak: None,
-        bpm: None,
-        sort_title: None,
-        sort_album: None,
-        sort_album_artist: None,
-        sort_artist: None,
-        comment: None,
-        isrc: None,
-        moods: None,
-        explicit_status: None,
-        original_release_date: None,
-        release_date: None,
-        release_types: None,
-        record_labels: None,
-        disc_subtitle: None,
-        artwork: None,
-        lyrics_hash: blake3::hash(b"").to_hex().to_string(),
-        lyrics: Vec::new(),
+        ..blank_input()
     }
 }

@@ -118,14 +118,14 @@ async fn track_pages_are_stable_when_titles_and_fts_ranks_match() {
 /// are what answer now, and both credits reach it.
 #[tokio::test]
 async fn an_album_hangs_off_every_artist_it_is_credited_to() {
-    let (_temp, _config, state) = test_app().await;
+    let (_temp, config, state) = test_app().await;
     let hash = security::hash_password("correct horse battery staple").unwrap();
     let owner = state
         .db
         .create_account("credits", &hash, AccountRole::Admin, now_ms())
         .await
         .unwrap();
-    let music = _config.data_dir.join("credit-music");
+    let music = config.data_dir.join("credit-music");
     std::fs::create_dir_all(&music).unwrap();
     let root = std::fs::canonicalize(&music).unwrap();
     let library = state

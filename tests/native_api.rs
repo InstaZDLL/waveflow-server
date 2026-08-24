@@ -21,9 +21,6 @@ use waveflow_server::services::MAX_HISTORY_LIMIT;
 mod support;
 use support::*;
 
-/// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]
-/// it is not a compilation, so `album_artist_id` is populated and the artist
-/// drill-down has something to resolve.
 /// Bookmarks and API tokens were reachable from one surface each: bookmarks
 /// only from Subsonic, tokens only from a shell on the host.
 #[tokio::test]

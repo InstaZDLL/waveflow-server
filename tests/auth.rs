@@ -844,14 +844,7 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         .to_owned();
     assert!(redirect_to.starts_with(redirect_uri));
     assert!(redirect_to.contains("state=opaque-state"));
-    let code = redirect_to
-        .split("code=")
-        .nth(1)
-        .unwrap()
-        .split('&')
-        .next()
-        .unwrap()
-        .to_owned();
+    let code = code_from(&redirect_to);
 
     // Without the verifier the code is useless, which is the whole point. The
     // attempt also burns the code: presenting one at all spends it, so a
@@ -884,14 +877,7 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         .as_str()
         .unwrap()
         .to_owned();
-    let code = redirect_to
-        .split("code=")
-        .nth(1)
-        .unwrap()
-        .split('&')
-        .next()
-        .unwrap()
-        .to_owned();
+    let code = code_from(&redirect_to);
 
     let exchanged = exchange(serde_json::json!({
         "code": code,

@@ -497,10 +497,9 @@ async fn two_artists_folding_onto_one_identifier_keep_a_single_favourite() {
         1,
         "the two rows collide on the primary key and one is dropped: {stars:?}"
     );
+    // Which also says no row was left staged: a staged value is the folded
+    // identifier behind a prefix, and this is the identifier itself.
     assert_eq!(stars[0].0, folded.to_string());
-    // The seed artist folds onto the same identifier, so nothing is left
-    // pointing at an identifier no projection answers for.
-    assert!(!stars[0].0.contains("pid-remap:"));
 }
 
 /// What `DROP TABLE` does to the children of the table being dropped.

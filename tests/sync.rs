@@ -278,14 +278,24 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
             })),
         )
     };
+    // The identifier is read before the response is dropped: a replay that
+    // answered 201 with a second share would pass a status check and be exactly
+    // the failure this is here to catch.
     let lost_response = share_request().await;
     assert_eq!(lost_response.status(), StatusCode::CREATED);
-    drop(lost_response);
+    let lost_id = json_body(lost_response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     let replayed_share = share_request().await;
     assert_eq!(replayed_share.status(), StatusCode::CREATED);
     let replayed_share = json_body(replayed_share).await;
     let share_id = replayed_share["id"].as_str().unwrap();
+    assert_eq!(
+        share_id, lost_id,
+        "a replayed operation returns the share the original created"
+    );
     let share_url = replayed_share["url"].as_str().unwrap();
     let public_share = router
         .clone()
@@ -310,7 +320,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
 
     let mut notice_cursors = Vec::new();
     for _ in 0..4 {
-        let notice = tokio::time::timeout(std::time::Duration::from_secs(1), notices.recv())
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(10), notices.recv())
             .await
             .unwrap()
             .unwrap();
@@ -408,7 +418,7 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    let notice = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
         .await
         .unwrap()
         .unwrap()

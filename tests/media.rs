@@ -173,6 +173,17 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
     let first_token = owner_token.clone();
     let second_token = owner_token.clone();
     let first_uri = concurrent_uri.clone();
+    // Read before the pair runs, so what follows can name the file this pair
+    // created rather than count every one the test has ever produced.
+    let cached_mp3 = |dir: &std::path::Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some("mp3"))
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let before = cached_mp3(&config.transcode_cache_dir);
     let first = async move {
         let response = first_router
             .oneshot(
@@ -183,6 +194,9 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
             )
             .await
             .unwrap();
+        // Checked before the body is read: two failures with empty bodies
+        // would compare equal below and say nothing at all.
+        assert_eq!(response.status(), StatusCode::OK);
         response.into_body().collect().await.unwrap().to_bytes()
     };
     let second = async move {
@@ -195,20 +209,22 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
             )
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         response.into_body().collect().await.unwrap().to_bytes()
     };
     let (first_bytes, second_bytes) = tokio::join!(first, second);
+    assert!(
+        first_bytes.len() > 1_000,
+        "a transcode of a real track is not a handful of bytes: {}",
+        first_bytes.len()
+    );
     assert_eq!(first_bytes, second_bytes);
+    let created = cached_mp3(&config.transcode_cache_dir)
+        .difference(&before)
+        .count();
     assert_eq!(
-        std::fs::read_dir(&config.transcode_cache_dir)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(
-                |entry| entry.path().extension().and_then(std::ffi::OsStr::to_str) == Some("mp3")
-            )
-            .count(),
-        2,
-        "duplicate consumers must create only one file per cache key"
+        created, 1,
+        "duplicate consumers must create only one file for the cache key they share"
     );
 
     // A browser audio element opens every resource with `Range: bytes=0-`, so
@@ -395,16 +411,14 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
         let router = router.clone();
         let track_id = track_id.clone();
         async move {
-            let request = Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
-                .body(Body::empty());
-            let request = match token {
-                Some(token) => Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"))
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-                None => request.unwrap(),
-            };
-            router.oneshot(request).await.unwrap()
+            let mut request = Request::post(format!("/api/v2/tracks/{track_id}/stream-ticket"));
+            if let Some(token) = token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
         }
     };
 

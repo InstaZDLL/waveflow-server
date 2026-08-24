@@ -470,39 +470,13 @@ async fn a_full_scan_reads_what_an_ordinary_one_would_skip() {
                 .unwrap()
         }
     };
-    let scan_once = |library: LibraryRecord| {
-        let state = state.clone();
-        async move {
-            let id = state
-                .scanner
-                .trigger(library, Some(owner), "manual")
-                .await
-                .unwrap();
-            for _ in 0..200 {
-                let job = state
-                    .db
-                    .scan_job_for_user(owner, id)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                if job.status == "completed" {
-                    return id;
-                }
-                if job.status == "failed" {
-                    panic!("scan failed: {:?}", job.message);
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-            panic!("scan timed out");
-        }
-    };
 
-    let first = scan_once(library.clone()).await;
+    let first = scan_once(&state, owner, library.clone()).await;
     assert_eq!(job_of(first).await.added, 1);
 
     // The second run recognises the file and does nothing, which is the
     // behaviour worth keeping.
-    let second = scan_once(library.clone()).await;
+    let second = scan_once(&state, owner, library.clone()).await;
     let second = job_of(second).await;
     assert_eq!(second.skipped, 1);
     assert_eq!(second.updated, 0);
@@ -511,14 +485,14 @@ async fn a_full_scan_reads_what_an_ordinary_one_would_skip() {
     assert!(!state.db.full_scan_requested(library_id).await.unwrap());
     state.db.request_full_scan_everywhere().await.unwrap();
     assert!(state.db.full_scan_requested(library_id).await.unwrap());
-    let third = scan_once(library.clone()).await;
+    let third = scan_once(&state, owner, library.clone()).await;
     let third = job_of(third).await;
     assert_eq!(third.skipped, 0, "a full scan skips nothing");
     assert_eq!(third.updated, 1);
 
     // And the request is spent, so the next run is ordinary again.
     assert!(!state.db.full_scan_requested(library_id).await.unwrap());
-    let fourth = scan_once(library).await;
+    let fourth = scan_once(&state, owner, library).await;
     assert_eq!(job_of(fourth).await.skipped, 1);
 }
 
