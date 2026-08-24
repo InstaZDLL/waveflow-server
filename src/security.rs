@@ -11,7 +11,7 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
 };
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::SysRng, TryRng};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -26,6 +26,8 @@ pub enum SecurityError {
     PasswordVerify,
     #[error("instance key must contain exactly 32 bytes")]
     InvalidInstanceKey,
+    #[error("system randomness is unavailable")]
+    Random,
     #[error("secret encryption failed")]
     Encrypt,
     #[error("secret decryption failed")]
@@ -51,7 +53,7 @@ impl SecretBox {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let mut bytes = vec![0u8; INSTANCE_KEY_BYTES];
-                OsRng.fill_bytes(&mut bytes);
+                fill_random(&mut bytes)?;
                 write_new_secret_file(path, &bytes)?;
                 // Re-read so a concurrent process that won create_new supplies
                 // the key both processes actually use.
@@ -89,7 +91,7 @@ impl SecretBox {
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedSecret, SecurityError> {
         let mut nonce = [0u8; NONCE_BYTES];
-        OsRng.fill_bytes(&mut nonce);
+        fill_random(&mut nonce)?;
         let cipher_nonce = Nonce::from(nonce);
         let ciphertext = self
             .cipher
@@ -107,12 +109,26 @@ impl SecretBox {
     }
 }
 
+/// Random bytes straight from the operating system.
+///
+/// `rand` 0.10 renamed `OsRng` to `SysRng` and made it fallible where the
+/// previous version panicked on its own. Callers whose signature can carry the
+/// failure now report it; [`generate_token`] cannot change shape, and it keeps
+/// the panic it already had — a system CSPRNG that refuses to answer leaves
+/// nothing to fall back on, and a token drawn from anything else would be
+/// worse than no token.
+fn fill_random(dst: &mut [u8]) -> Result<(), SecurityError> {
+    SysRng
+        .try_fill_bytes(dst)
+        .map_err(|_| SecurityError::Random)
+}
+
 pub fn hash_password(password: &str) -> Result<String, SecurityError> {
     if password.len() < 12 {
         return Err(SecurityError::PasswordHash);
     }
     let mut salt_bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut salt_bytes);
+    fill_random(&mut salt_bytes)?;
     let salt = SaltString::encode_b64(&salt_bytes).map_err(|_| SecurityError::PasswordHash)?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -129,7 +145,7 @@ pub fn verify_password(password: &str, encoded_hash: &str) -> Result<bool, Secur
 
 pub fn generate_token(prefix: &str) -> String {
     let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
+    fill_random(&mut bytes).expect("the system CSPRNG must answer");
     format!("{prefix}{}", URL_SAFE_NO_PAD.encode(bytes))
 }
 
