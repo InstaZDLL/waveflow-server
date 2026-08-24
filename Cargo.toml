@@ -61,7 +61,7 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "012be480
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 [[test]]
 name = "v2_foundations"
