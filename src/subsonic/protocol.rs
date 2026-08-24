@@ -133,6 +133,9 @@ pub(super) fn json_required_array_fields(parent: &str, name: &str) -> &'static [
             "moods",
             "albumArtists",
             "contributors",
+            "recordLabels",
+            "releaseTypes",
+            "discTitles",
         ],
         "album" => &[
             "artists",
@@ -214,7 +217,11 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // a playlist or share and to `child` inside a directory. Its
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
-            | ("album", "recordLabels" | "releaseTypes" | "discTitles")
+            // `getMusicDirectory` renders an album as `child`, so its arrays
+            // have to keep their shape under that name too — otherwise one
+            // record label collapses into a bare object the moment a directory
+            // carries the album.
+            | ("album" | "child", "recordLabels" | "releaseTypes" | "discTitles")
             | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
             | ("song" | "entry" | "child", "contributors")
             // An artist rendered as a browsing child keeps the record's shape,

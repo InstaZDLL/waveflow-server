@@ -165,12 +165,6 @@ impl DomainServices {
         track_ids: &[Uuid],
         context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
-        // Refused before the writer gate rather than after the claim: an
-        // oversized request is refused on its own terms, without queuing behind
-        // a scan for the right to be told so.
-        if track_ids.len() > MAX_PLAYLIST_TRACKS {
-            return Err(ServiceError::Invalid);
-        }
         let intent = MutationIntent::new(
             "create",
             "playlist",
@@ -188,6 +182,14 @@ impl DomainServices {
             let id = receipt.result_entity_id.ok_or(ServiceError::Conflict)?;
             drop(_writer);
             return self.playlist(user_id, id).await;
+        }
+        // Checked after the replay branch and not before it. A replay owes the
+        // caller the outcome the original call had, and this ceiling is a
+        // policy number rather than a fact of the domain: lower it in a later
+        // release and an operation that was valid when it ran would start
+        // answering an error to its own retry. Still ahead of every write.
+        if track_ids.len() > MAX_PLAYLIST_TRACKS {
+            return Err(ServiceError::Invalid);
         }
         validate_name(name)?;
         self.songs_by_ids_on(&mut tx, user_id, track_ids).await?;
@@ -289,6 +291,13 @@ impl DomainServices {
             validate_replay_type(&receipt, "playlist")?;
             drop(_writer);
             return self.playlist(user_id, id).await;
+        }
+        // A request naming more tracks than a playlist may hold can never be
+        // valid, whatever this playlist currently holds, so it is refused
+        // before anything is read. After the replay branch for the same reason
+        // the create path is: a retry is owed its original outcome.
+        if add.len() > MAX_PLAYLIST_TRACKS {
+            return Err(ServiceError::Invalid);
         }
         let current = self.playlist_on(&mut tx, user_id, id).await?;
         if let Some(name) = name {

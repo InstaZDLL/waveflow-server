@@ -10872,3 +10872,175 @@ async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
         Err(ServiceError::Invalid)
     ));
 }
+
+/// Fixture for the two remap shapes: a library whose recorded artist spec a
+/// later boot can be shown to disagree with.
+async fn remap_fixture(
+    state: &waveflow_server::AppState,
+    config: &Config,
+    label: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account(label, &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join(format!("{label}-music"));
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Remap library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 1, false).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library_id,
+            scan_id,
+            &catalog_input(0, "Seed Artist"),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    (owner, library_id)
+}
+
+async fn seed_artist(
+    state: &waveflow_server::AppState,
+    library_id: uuid::Uuid,
+    id: uuid::Uuid,
+    name: &str,
+) {
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(library_id.to_string())
+    .bind(name)
+    .bind(name.to_lowercase().replace(' ', ""))
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+}
+
+async fn seed_star(
+    state: &waveflow_server::AppState,
+    owner: uuid::Uuid,
+    entity_id: uuid::Uuid,
+    starred_at: i64,
+) {
+    sqlx::query(
+        "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+         VALUES (?, 'artist', ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind(entity_id.to_string())
+    .bind(starred_at)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+}
+
+async fn artist_stars(state: &waveflow_server::AppState, owner: uuid::Uuid) -> Vec<(String, i64)> {
+    let mut rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT entity_id, starred_at FROM user_star WHERE user_id = ? AND entity_type = 'artist'",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    rows.sort();
+    rows
+}
+
+#[tokio::test]
+async fn a_remap_whose_targets_chain_does_not_change_who_owns_what() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, library_id) = remap_fixture(&state, &config, "chained").await;
+
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+    };
+    // Built by hand: no spec this engine can parse makes one artist's new
+    // identifier another's old one, because only `albumartistid` carries a
+    // value for an artist. The property still has to hold, because the code
+    // cannot see that and a wider `PidSource` would make it reachable.
+    let first_row = uuid::Uuid::new_v4();
+    let first_new = altered.artist_id(library_id, "Chain One");
+    let second_new = altered.artist_id(library_id, "Chain Two");
+    assert_ne!(first_row, first_new);
+    assert_ne!(first_new, second_new);
+    seed_artist(&state, library_id, first_row, "Chain One").await;
+    // Its row id is the identifier the first artist is about to move onto.
+    seed_artist(&state, library_id, first_new, "Chain Two").await;
+    seed_star(&state, owner, first_row, 111).await;
+    seed_star(&state, owner, first_new, 222).await;
+
+    state.db.reconcile_catalog_identity(&altered).await.unwrap();
+
+    let mut expected = vec![(first_new.to_string(), 111), (second_new.to_string(), 222)];
+    expected.sort();
+    assert_eq!(
+        artist_stars(&state, owner).await,
+        expected,
+        "each favourite has to land on its own artist's new identifier, whatever \
+         order the rows came back in"
+    );
+}
+
+#[tokio::test]
+async fn two_artists_folding_onto_one_identifier_keep_a_single_favourite() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, library_id) = remap_fixture(&state, &config, "folded").await;
+
+    // `title` names nothing for an artist, so every artist evaluates to the
+    // same empty string and the whole library folds onto one identifier. A
+    // degenerate spec, and exactly the shape the collision handling is for.
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("title", false).unwrap(),
+    };
+    let folded = altered.artist_id(library_id, "Fold One");
+    assert_eq!(folded, altered.artist_id(library_id, "Fold Two"));
+
+    let first = uuid::Uuid::new_v4();
+    let second = uuid::Uuid::new_v4();
+    seed_artist(&state, library_id, first, "Fold One").await;
+    seed_artist(&state, library_id, second, "Fold Two").await;
+    seed_star(&state, owner, first, 111).await;
+    seed_star(&state, owner, second, 222).await;
+
+    state.db.reconcile_catalog_identity(&altered).await.unwrap();
+
+    let stars = artist_stars(&state, owner).await;
+    assert_eq!(
+        stars.len(),
+        1,
+        "the two rows collide on the primary key and one is dropped: {stars:?}"
+    );
+    assert_eq!(stars[0].0, folded.to_string());
+    // The seed artist folds onto the same identifier, so nothing is left
+    // pointing at an identifier no projection answers for.
+    assert!(!stars[0].0.contains("pid-remap:"));
+}
