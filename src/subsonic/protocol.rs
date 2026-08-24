@@ -90,7 +90,13 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
                 *name,
                 "artists" | "genres" | "recordLabels" | "releaseTypes" | "discTitles"
             ),
-            EntryKind::Song => true,
+            // A song is not a release. `recordLabels`, `releaseTypes` and
+            // `discTitles` are in the list above because an album rendered
+            // inside a directory shares the `child` element name with a song,
+            // and this is where the two are told apart: injecting them here
+            // would have a recording answer `recordLabels: []`, which under the
+            // presence rule claims the server reads a label off a track.
+            EntryKind::Song => !matches!(*name, "recordLabels" | "releaseTypes" | "discTitles"),
         };
         if !injected {
             continue;
