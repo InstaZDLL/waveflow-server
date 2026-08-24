@@ -3527,6 +3527,17 @@ async fn body_text(response: axum::response::Response) -> String {
     .unwrap()
 }
 
+/// Whether a JSON object omits a key outright.
+///
+/// `value[key].is_null()` cannot tell an absent key from one explicitly set to
+/// `null`, and under the OpenSubsonic presence rule the two say different
+/// things: absent means the server does not support the field at all, where a
+/// null would be a value it chose to send. The server emits no explicit nulls
+/// today, which is exactly why the assertion has to name which one it means.
+fn omits(value: &serde_json::Value, key: &str) -> bool {
+    value.as_object().expect("a JSON object").get(key).is_none()
+}
+
 async fn subsonic_json(
     router: &axum::Router,
     method: &str,
@@ -10744,9 +10755,9 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
     // an album inside a directory, and a recording answering `recordLabels: []`
     // would claim the server reads a label off a track.
     let song = &album["song"][0];
-    assert!(song["recordLabels"].is_null());
-    assert!(song["releaseTypes"].is_null());
-    assert!(song["discTitles"].is_null());
+    assert!(omits(song, "recordLabels"));
+    assert!(omits(song, "releaseTypes"));
+    assert!(omits(song, "discTitles"));
     // Its own arrays are still there, empty rather than absent.
     assert_eq!(song["moods"], serde_json::json!([]));
 
@@ -10755,8 +10766,8 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
     assert_eq!(bare["recordLabels"], serde_json::json!([]));
     assert_eq!(bare["releaseTypes"], serde_json::json!([]));
     assert_eq!(bare["discTitles"], serde_json::json!([]));
-    assert!(bare["originalReleaseDate"].is_null());
-    assert!(bare["releaseDate"].is_null());
+    assert!(omits(bare, "originalReleaseDate"));
+    assert!(omits(bare, "releaseDate"));
 
     // A third album carrying exactly one of each. This is the shape the array
     // rule is for: with one child and no rule, a record label renders as a bare
@@ -10855,7 +10866,7 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
             assert_eq!(song["isDir"], false);
             for key in ["recordLabels", "releaseTypes", "discTitles"] {
                 assert!(
-                    song[key].is_null(),
+                    omits(song, key),
                     "a song must not answer {key}: {}",
                     song["title"]
                 );
