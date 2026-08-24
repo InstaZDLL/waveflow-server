@@ -64,8 +64,52 @@ tempfile = "3"
 tokio-tungstenite = "0.30"
 
 [[test]]
-name = "v2_foundations"
-path = "tests/v2_foundations.rs"
+name = "auth"
+path = "tests/auth.rs"
+
+[[test]]
+name = "scanner"
+path = "tests/scanner.rs"
+
+[[test]]
+name = "identity"
+path = "tests/identity.rs"
+
+[[test]]
+name = "catalog"
+path = "tests/catalog.rs"
+
+[[test]]
+name = "subsonic_contract"
+path = "tests/subsonic_contract.rs"
+
+[[test]]
+name = "subsonic_fields"
+path = "tests/subsonic_fields.rs"
+
+[[test]]
+name = "subsonic_browse"
+path = "tests/subsonic_browse.rs"
+
+[[test]]
+name = "subsonic_methods"
+path = "tests/subsonic_methods.rs"
+
+[[test]]
+name = "native_api"
+path = "tests/native_api.rs"
+
+[[test]]
+name = "sync"
+path = "tests/sync.rs"
+
+[[test]]
+name = "media"
+path = "tests/media.rs"
+
+[[test]]
+name = "service"
+path = "tests/service.rs"
 
 [profile.release]
 codegen-units = 1

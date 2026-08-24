@@ -1,6 +1,6 @@
 # Subsonic compatibility matrix — WaveFlow Server v2
 
-Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JSON, `.view`, GET, form POST, `u/p`, `u/t/s`, `apiKey`, catalogue isolation, all documented mutations, media and artwork.
+Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_browse`, `subsonic_fields` and `subsonic_methods` targets under `tests/` for XML, JSON, `.view`, GET, form POST, `u/p`, `u/t/s`, `apiKey`, catalogue isolation, all documented mutations, media and artwork.
 
 > **The rows below are dated 2026-08-23 and the wire has moved since.** On
 > 2026-08-24 an album gained five output fields — `originalReleaseDate`,
