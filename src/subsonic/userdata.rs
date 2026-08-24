@@ -51,13 +51,31 @@ pub(super) async fn delete_bookmark(
     Ok(Node::new("deleteBookmark"))
 }
 
+/// How many identifiers one request may name, across every parameter that
+/// carries them.
+///
+/// Each one costs a mutation that takes the process-wide writer gate, and the
+/// form body admits some fifteen hundred UUIDs — enough for one well-formed
+/// request to hold the gate against every other writer for as long as it takes
+/// to serialise them. The bound is the one the queue and shares already use,
+/// and for the same reason.
+const MAX_IDENTIFIERS: usize = crate::services::MAX_QUEUE_TRACKS;
+
 pub(super) async fn set_star(
     state: &AppState,
     principal: &Principal,
     params: &Params,
     starred: bool,
 ) -> Result<Node, ProtocolError> {
-    for id in params.uuids("id")? {
+    // Read before any of them is applied: a request refused halfway would leave
+    // the first few identifiers starred and report an error for the whole.
+    let tracks = params.uuids("id")?;
+    let albums = params.uuids("albumId")?;
+    let artists = params.uuids("artistId")?;
+    if tracks.len() + albums.len() + artists.len() > MAX_IDENTIFIERS {
+        return Err(invalid("Too many identifiers in one request"));
+    }
+    for id in tracks {
         let kind = state
             .services
             .entity_kind(principal.id, id)
@@ -70,8 +88,8 @@ pub(super) async fn set_star(
             .await
             .map_err(service_protocol)?;
     }
-    for (key, kind) in [("albumId", "album"), ("artistId", "artist")] {
-        for id in params.uuids(key)? {
+    for (ids, kind) in [(albums, "album"), (artists, "artist")] {
+        for id in ids {
             state
                 .services
                 .set_star(principal.id, kind, id, starred)
@@ -136,6 +154,9 @@ pub(super) async fn scrobble(
     let ids = params.uuids("id")?;
     if ids.is_empty() {
         return Err(missing());
+    }
+    if ids.len() > MAX_IDENTIFIERS {
+        return Err(invalid("Too many identifiers in one request"));
     }
     let times = params
         .all("time")

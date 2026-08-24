@@ -398,18 +398,30 @@ pub(super) async fn search(
         ));
     }
 
+    let page = |offset: usize, count: usize| {
+        BrowsePage::new(Some(offset as i64), Some(count as i64)).map_err(service_protocol)
+    };
     let found = state
         .services
-        .catalog_search(principal.id, &folders, raw_query)
+        .catalog_search(
+            principal.id,
+            &folders,
+            raw_query,
+            page(artist_offset, artist_count.max(1))?,
+            page(album_offset, album_count.max(1))?,
+            page(song_offset, song_count.max(1))?,
+        )
         .await
-        .map_err(internal)?;
+        .map_err(service_protocol)?;
+    // The service applied the offsets, so the renderer must not — the same
+    // division the match-all branch above already makes.
     Ok(search_result(
         found.artists.iter(),
         found.albums.iter(),
         found.songs.iter(),
-        (artist_offset, artist_count),
-        (album_offset, album_count),
-        (song_offset, song_count),
+        (0, artist_count),
+        (0, album_count),
+        (0, song_count),
     ))
 }
 
