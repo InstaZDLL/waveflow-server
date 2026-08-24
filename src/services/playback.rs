@@ -108,18 +108,32 @@ impl DomainServices {
         )
         .fetch_all(self.db.pool())
         .await?;
+        // One lookup for every listener at once. Resolving them one by one cost
+        // a query per row, and every row of this table is a different person
+        // playing something right now — the list is short but the shape was
+        // wrong.
+        let mut track_ids = rows
+            .iter()
+            .map(|row| parse_uuid(row.try_get("track_id")?))
+            .collect::<Result<Vec<_>, _>>()?;
+        track_ids.sort_unstable();
+        track_ids.dedup();
+        let mut connection = self.db.pool().acquire().await?;
+        let visible = self
+            .songs_by_ids_lenient_on(&mut connection, user_id, &track_ids)
+            .await?
+            .into_iter()
+            .map(|song| (song.id, song))
+            .collect::<HashMap<_, _>>();
         let mut result = Vec::new();
         for row in rows {
             let id = parse_uuid(row.try_get("track_id")?)?;
-            match self.songs_by_ids(user_id, &[id]).await {
-                Ok(mut songs) => {
-                    if let Some(song) = songs.pop() {
-                        result.push((row.try_get("username")?, song, row.try_get("started_at")?));
-                    }
-                }
-                Err(ServiceError::NotFound) => continue,
-                Err(error) => return Err(error),
-            }
+            // A track this account cannot see is skipped, as it was when the
+            // strict lookup answered `NotFound` for it.
+            let Some(song) = visible.get(&id).cloned() else {
+                continue;
+            };
+            result.push((row.try_get("username")?, song, row.try_get("started_at")?));
         }
         Ok(result)
     }
