@@ -13,7 +13,7 @@ use axum::{
 };
 use rust_embed::Embed;
 
-use crate::http::ErrorResponse;
+use crate::api::ErrorResponse;
 
 #[derive(Embed)]
 // Staged by build.rs: the real client build when present, a placeholder
