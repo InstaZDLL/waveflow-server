@@ -86,7 +86,10 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
             // identifier off a directory, and `artists: []` would be the list
             // of the artists of an artist.
             EntryKind::Artist => *name == "roles",
-            EntryKind::Album => matches!(*name, "artists" | "genres"),
+            EntryKind::Album => matches!(
+                *name,
+                "artists" | "genres" | "recordLabels" | "releaseTypes" | "discTitles"
+            ),
             EntryKind::Song => true,
         };
         if !injected {
@@ -130,8 +133,17 @@ pub(super) fn json_required_array_fields(parent: &str, name: &str) -> &'static [
             "moods",
             "albumArtists",
             "contributors",
+            "recordLabels",
+            "releaseTypes",
+            "discTitles",
         ],
-        "album" => &["artists", "genres"],
+        "album" => &[
+            "artists",
+            "genres",
+            "recordLabels",
+            "releaseTypes",
+            "discTitles",
+        ],
         // The roles an artist is credited in, empty rather than absent for
         // the same reason: absent would say the server does not read them.
         "artist" => &["roles"],
@@ -205,6 +217,11 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // a playlist or share and to `child` inside a directory. Its
             // OpenSubsonic relations are arrays under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
+            // `getMusicDirectory` renders an album as `child`, so its arrays
+            // have to keep their shape under that name too — otherwise one
+            // record label collapses into a bare object the moment a directory
+            // carries the album.
+            | ("album" | "child", "recordLabels" | "releaseTypes" | "discTitles")
             | ("song" | "entry" | "child", "isrc" | "moods" | "albumArtists")
             | ("song" | "entry" | "child", "contributors")
             // An artist rendered as a browsing child keeps the record's shape,

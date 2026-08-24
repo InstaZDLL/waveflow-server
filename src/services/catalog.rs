@@ -133,11 +133,20 @@ impl DomainServices {
     /// which the previous lowercase substring test did not. What it gives up is
     /// matching inside a word: "cho" no longer finds "Echo". The trailing term
     /// is treated as a prefix so search-as-you-type still works.
+    /// Paged in SQL, one page per kind.
+    ///
+    /// The three pages are independent because `search3` has always let a
+    /// client page songs past the end of the artists. Slicing a full result in
+    /// the renderer, which is what this used to leave it to do, read the whole
+    /// matching catalogue to answer for twenty rows of it.
     pub async fn catalog_search(
         &self,
         user_id: Uuid,
         folder_ids: &[Uuid],
         query: &str,
+        artist_page: BrowsePage,
+        album_page: BrowsePage,
+        song_page: BrowsePage,
     ) -> Result<CatalogSearch, ServiceError> {
         let Some(fts) = crate::catalog::fts_prefix_query(query) else {
             return Ok(CatalogSearch {
@@ -153,12 +162,14 @@ impl DomainServices {
             song_select!(),
             " AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
                AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
-             ORDER BY t.title COLLATE NOCASE, t.id"
+             ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
         .bind(folder_filter)
         .bind(folder_filter)
         .bind(&fts)
+        .bind(song_page.limit)
+        .bind(song_page.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -171,12 +182,14 @@ impl DomainServices {
             " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
                AND al.id IN (SELECT t.album_id FROM track t WHERE t.album_id IS NOT NULL \
                  AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
-             ORDER BY al.title COLLATE NOCASE, al.id"
+             ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
         .bind(folder_filter)
         .bind(folder_filter)
         .bind(&fts)
+        .bind(album_page.limit)
+        .bind(album_page.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()
@@ -188,12 +201,14 @@ impl DomainServices {
             artist_select!(),
             " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
                 AND ar.id IN (SELECT artist_id FROM artist_fts WHERE artist_fts MATCH ?) \
-              ORDER BY ar.name COLLATE NOCASE"
+              ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
         .bind(folder_filter)
         .bind(folder_filter)
         .bind(&fts)
+        .bind(artist_page.limit)
+        .bind(artist_page.offset)
         .fetch_all(self.db.pool())
         .await?
         .into_iter()

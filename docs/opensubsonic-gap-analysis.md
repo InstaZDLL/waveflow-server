@@ -133,18 +133,30 @@ qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
 > rejoués le 23 août 2026 contre le modèle aligné, et
 > [`subsonic-compatibility.md`](subsonic-compatibility.md) porte le résultat.
 
+> **Addendum du 2026-08-24.** Le point 2 ci-dessous est clos. Les cinq champs
+> de sortie d'album que l'addendum de la veille laissait ouverts sont livrés :
+> `originalReleaseDate`, `releaseDate`, `releaseTypes[]` et `recordLabels[]`
+> pendent de l'album et se remplissent comme `year`, `discTitles[]` se dérive
+> des pistes disponibles comme les genres. Les trois tableaux sont émis vides
+> plutôt qu'absents, sous les deux noms d'élément qu'un album porte — `album`
+> et, dans un dossier, `child`. Les deux dates sont omises quand aucun tag ne
+> les nomme, comme le fait la référence : un `ItemDate` sans année n'est pas
+> une date, et les tableaux portent déjà le signal de présence du groupe.
+>
+> **Le fil a bougé.** Les quatre clients demandent d'être rejoués avant un tag
+> stable, ce que le §4 du handover du 23 août exige déjà.
+
 Rien de structurel. La liste tient en quatre lignes, et deux d'entre elles sont
 des dettes nommées plutôt que des défauts.
 
 1. **Le correctif OAuth durable** — porter les portées à travers la concession.
    Deux colonnes, deux migrations. Le chemin est fermé aujourd'hui ; ce qui
    reste, c'est que la propriété soit structurelle et non locale à une route.
-2. **Champs `AlbumID3` et `ArtistID3`** demandant des colonnes : `sortName` sur
-   les deux — le moins cher, le scanner lit déjà `sort_title` sur la piste —
-   puis `moods[]`, `explicitStatus`, `originalReleaseDate`, `releaseDate`,
-   `releaseTypes[]`, `recordLabels[]`, `discTitles[]`, `roles[]`, et
-   `contributors[]`/`displayComposer` côté piste. Absents plutôt que vides,
-   ce qui sous la règle de présence dit exactement « non supporté ».
+2. ~~**Champs `AlbumID3` et `ArtistID3`** demandant des colonnes.~~ Livrés :
+   `sortName` par la PR #123, `moods[]`, `explicitStatus`, `roles[]`,
+   `contributors[]` et `displayComposer` par la PR #126, puis
+   `originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` et
+   `discTitles[]` le 24 août 2026.
 3. **`song.parent` retombe sur `library_id`** sans album (`src/subsonic.rs:1706`) :
    un `getMusicDirectory` sur cet identifiant ne renverra pas la piste.
 4. **Deux inexactitudes de surface** : `getLicense` expire en dur au

@@ -536,6 +536,11 @@ fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, St
         isrc: extended.isrc,
         moods: extended.moods,
         explicit_status: extended.explicit_status,
+        original_release_date: extended.original_release_date,
+        release_date: extended.release_date,
+        release_types: extended.release_types,
+        record_labels: extended.record_labels,
+        disc_subtitle: extended.disc_subtitle,
         tag_rating: tag
             .and_then(waveflow_core::scanner::extract_rating)
             .map(i64::from),
@@ -650,6 +655,11 @@ fn extract_dsd(
         isrc: extended.isrc,
         moods: extended.moods,
         explicit_status: extended.explicit_status,
+        original_release_date: extended.original_release_date,
+        release_date: extended.release_date,
+        release_types: extended.release_types,
+        record_labels: extended.record_labels,
+        disc_subtitle: extended.disc_subtitle,
         artwork,
         lyrics_hash,
         lyrics,
@@ -679,6 +689,11 @@ struct ExtendedTags {
     isrc: Option<String>,
     moods: Option<String>,
     explicit_status: Option<String>,
+    original_release_date: Option<String>,
+    release_date: Option<String>,
+    release_types: Option<String>,
+    record_labels: Option<String>,
+    disc_subtitle: Option<String>,
 }
 
 /// Reads every credit a file names, in tag order.
@@ -761,6 +776,17 @@ fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
+    // A tag written as several items rather than one `;`-joined string. Joined
+    // here so the column holds one spelling, and split again on the way out by
+    // the same helper that splits `moods`.
+    let joined = |key: ItemKey| {
+        let values = tag
+            .get_strings(key)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        (!values.is_empty()).then(|| values.join("; "))
+    };
     // ReplayGain tags carry their unit: `-7.32 dB`. Reading only the first
     // token keeps the suffix from turning a valid measurement into none. A
     // non-finite value is discarded rather than stored: it would travel all
@@ -810,6 +836,14 @@ fn extended_tags(tag: Option<&lofty::tag::Tag>) -> ExtendedTags {
                 _ => None,
             }
         }),
+        original_release_date: text(ItemKey::OriginalReleaseDate),
+        release_date: text(ItemKey::ReleaseDate).or_else(|| text(ItemKey::RecordingDate)),
+        release_types: joined(ItemKey::MusicBrainzReleaseType),
+        // `LABEL` is the tag Picard writes and the one the reference reads;
+        // `PUBLISHER` is the older spelling the same value arrives under on
+        // files tagged by anything else.
+        record_labels: joined(ItemKey::Label).or_else(|| joined(ItemKey::Publisher)),
+        disc_subtitle: text(ItemKey::SetSubtitle),
     }
 }
 

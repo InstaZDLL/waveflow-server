@@ -79,6 +79,7 @@ macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
                 al.artwork_hash, al.year, al.is_compilation, al.musicbrainz_id, al.sort_name, \
+                al.original_release_date, al.release_date, al.release_types, al.record_labels, \
                 al.created_at, us.starred_at, \
                 ur.rating AS user_rating, \
                 (SELECT COUNT(*) FROM play_event pe JOIN track pt ON pt.id=pe.track_id \
@@ -180,6 +181,13 @@ pub struct ArtistItem {
     pub roles: Vec<String>,
 }
 
+/// A disc of an album, and the title its tracks give it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DiscTitle {
+    pub disc: i64,
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AlbumItem {
     pub id: Uuid,
@@ -198,6 +206,16 @@ pub struct AlbumItem {
     /// or genre of its own in the schema, only the union of its files'.
     pub artists: Vec<ArtistRef>,
     pub genres: Vec<String>,
+    /// The release description OpenSubsonic asks an album for. The dates are
+    /// kept as the file spelled them and taken apart only at the wire — a tag
+    /// naming a year alone must not be reported as the first of January.
+    pub original_release_date: Option<String>,
+    pub release_date: Option<String>,
+    pub release_types: Vec<String>,
+    pub record_labels: Vec<String>,
+    /// One entry per disc the album's available tracks name a title for.
+    /// Derived like the genres, because an album has as many as it has discs.
+    pub disc_titles: Vec<DiscTitle>,
     pub created_at: i64,
     pub starred_at: Option<i64>,
     pub user_rating: Option<i64>,
@@ -351,6 +369,15 @@ pub const MAX_HISTORY_LIMIT: i64 = 500;
 pub const MAX_QUEUE_TRACKS: usize = 400;
 /// Applies the same request-size and writer-gate bound to public shares.
 pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
+/// Upper bound on the tracks one playlist may hold.
+///
+/// Deliberately not [`MAX_QUEUE_TRACKS`]: that one bounds a request, and a
+/// queue is written whole by every call. A playlist grows across many calls, so
+/// the same number would refuse ordinary libraries. What this bounds is the
+/// rewrite — `replace_playlist_tracks` deletes and reinserts the whole list on
+/// every edit, under the process-wide writer gate — and ten thousand keeps that
+/// bounded while sitting far above any playlist a person curates by hand.
+pub const MAX_PLAYLIST_TRACKS: usize = 10_000;
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
 /// bind it without re-checking bounds.
@@ -832,9 +859,37 @@ async fn attach_album_relations(
             .or_default()
             .push(row.try_get("name")?);
     }
+    let mut disc_titles: HashMap<Uuid, Vec<DiscTitle>> = HashMap::new();
+    for row in sqlx::query(
+        // One title per disc, and the first spelling in disc order when the
+        // tracks of one disc disagree — the same `MIN` the genres use, for the
+        // same reason: an album must not report a disc twice because two of
+        // its files were tagged by different hands.
+        "SELECT t.album_id, t.disc_number, MIN(t.disc_subtitle) AS title FROM track t \
+         JOIN library_member m ON m.library_id=t.library_id \
+         WHERE m.user_id=? AND t.is_available=1 AND t.disc_subtitle IS NOT NULL \
+           AND t.disc_number IS NOT NULL \
+           AND t.album_id IN (SELECT value FROM json_each(?)) \
+         GROUP BY t.album_id, t.disc_number \
+         ORDER BY t.album_id, t.disc_number",
+    )
+    .bind(user_id.to_string())
+    .bind(&ids)
+    .fetch_all(&mut *connection)
+    .await?
+    {
+        disc_titles
+            .entry(parse_uuid(row.try_get("album_id")?)?)
+            .or_default()
+            .push(DiscTitle {
+                disc: row.try_get("disc_number")?,
+                title: row.try_get("title")?,
+            });
+    }
     for album in albums {
         album.artists = artists.remove(&album.id).unwrap_or_default();
         album.genres = genres.remove(&album.id).unwrap_or_default();
+        album.disc_titles = disc_titles.remove(&album.id).unwrap_or_default();
     }
     Ok(())
 }
@@ -1075,9 +1130,20 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
         is_compilation: row.try_get::<i64, _>("is_compilation")? != 0,
         sort_name: row.try_get("sort_name")?,
         musicbrainz_id: row.try_get("musicbrainz_id")?,
+        original_release_date: row.try_get("original_release_date")?,
+        release_date: row.try_get("release_date")?,
+        release_types: split_tag_values(
+            row.try_get::<Option<String>, _>("release_types")?
+                .as_deref(),
+        ),
+        record_labels: split_tag_values(
+            row.try_get::<Option<String>, _>("record_labels")?
+                .as_deref(),
+        ),
         // Loaded in a batch by `attach_album_relations`, never row by row.
         artists: Vec::new(),
         genres: Vec::new(),
+        disc_titles: Vec::new(),
         created_at: row.try_get("created_at")?,
         starred_at: row.try_get("starred_at")?,
         user_rating: row.try_get("user_rating")?,

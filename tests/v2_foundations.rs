@@ -3342,6 +3342,11 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         isrc: None,
         moods: None,
         explicit_status: None,
+        original_release_date: None,
+        release_date: None,
+        release_types: None,
+        record_labels: None,
+        disc_subtitle: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -6333,6 +6338,11 @@ fn browse_input(
         isrc: None,
         moods: None,
         explicit_status: None,
+        original_release_date: None,
+        release_date: None,
+        release_types: None,
+        record_labels: None,
+        disc_subtitle: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -9871,7 +9881,14 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     // track carries thirteen roles now where it carried one list of names.
     let by_title = state
         .services
-        .catalog_search(owner, &[], "Only Track")
+        .catalog_search(
+            owner,
+            &[],
+            "Only Track",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -9893,7 +9910,14 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     // whole point of indexing artists rather than deriving them.
     let by_name = state
         .services
-        .catalog_search(owner, &[], "Rita")
+        .catalog_search(
+            owner,
+            &[],
+            "Rita",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -10476,4 +10500,547 @@ async fn a_changed_track_spec_drops_every_relocation_hint_without_a_rescan() {
         vec![track_id],
         "clearing a hint must not disturb what it points at"
     );
+}
+
+#[tokio::test]
+async fn a_changed_artist_spec_carries_the_favourite_onto_the_new_identifier() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("remap", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("remap-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Remap library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 1, false).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library_id,
+            scan_id,
+            &catalog_input(0, "Nova Kern"),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    // The rules the catalogue was written under are recorded when the scan
+    // completes, which is what a later boot compares against.
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let artist_id: String =
+        sqlx::query_scalar("SELECT id FROM artist WHERE library_id = ? AND name = 'Nova Kern'")
+            .bind(library_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    let artist_id = uuid::Uuid::parse_str(&artist_id).unwrap();
+    state
+        .services
+        .set_star(owner, "artist", artist_id, true)
+        .await
+        .unwrap();
+
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+    };
+    let expected = altered.artist_id(library_id, "Nova Kern");
+    assert_ne!(
+        expected, artist_id,
+        "the altered spec has to actually move the identifier for this to test anything"
+    );
+
+    let libraries = state.db.reconcile_catalog_identity(&altered).await.unwrap();
+    assert_eq!(
+        libraries, 1,
+        "an artist spec change still re-identifies, and still costs a full rescan"
+    );
+
+    let starred: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM user_star WHERE user_id = ? AND entity_type = 'artist'",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        starred,
+        vec![expected.to_string()],
+        "the favourite must name the identifier the new rule derives, not the one it replaced"
+    );
+}
+
+#[tokio::test]
+async fn an_album_reports_its_release_details_and_its_disc_titles() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("release", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(b"dedicated-subsonic-secret")
+        .unwrap();
+    let api_key = "wfsk_release-key";
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("release-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Release library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2, false).await.unwrap();
+
+    for (index, disc, subtitle) in [(0usize, 1i64, "The Session"), (1, 2, "The Rehearsal")] {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.disc_number = Some(disc);
+        input.disc_subtitle = Some(subtitle.into());
+        if index == 0 {
+            // Only the first track carries them: the album takes the first
+            // value it is given and later tracks do not overwrite it.
+            input.original_release_date = Some("1998-11".into());
+            input.release_date = Some("2019-04-05".into());
+            input.release_types = Some("Album; Compilation".into());
+            input.record_labels = Some("Nightfall Records; Second Imprint".into());
+        }
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let album_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums[0]
+        .id;
+    let detail = state.services.album(owner, album_id).await.unwrap();
+    assert_eq!(
+        detail.album.record_labels,
+        vec!["Nightfall Records", "Second Imprint"]
+    );
+    assert_eq!(detail.album.release_types, vec!["Album", "Compilation"]);
+    assert_eq!(
+        detail
+            .album
+            .disc_titles
+            .iter()
+            .map(|disc| (disc.disc, disc.title.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "The Session"), (2, "The Rehearsal")]
+    );
+
+    let album = subsonic_json(&router, "getAlbum", api_key, &format!("&id={album_id}")).await;
+    let album = &album["subsonic-response"]["album"];
+    assert_eq!(
+        album["recordLabels"],
+        serde_json::json!([{"name": "Nightfall Records"}, {"name": "Second Imprint"}])
+    );
+    assert_eq!(
+        album["releaseTypes"],
+        serde_json::json!(["Album", "Compilation"])
+    );
+    assert_eq!(
+        album["discTitles"],
+        serde_json::json!([
+            {"disc": 1, "title": "The Session"},
+            {"disc": 2, "title": "The Rehearsal"}
+        ])
+    );
+    // A tag naming a year and a month is a year and a month. Reporting a day
+    // it never claimed would be inventing precision.
+    assert_eq!(
+        album["originalReleaseDate"],
+        serde_json::json!({"year": 1998, "month": 11})
+    );
+    assert_eq!(
+        album["releaseDate"],
+        serde_json::json!({"year": 2019, "month": 4, "day": 5})
+    );
+
+    // An album with none of these tags declares the fields supported and
+    // unset — empty arrays rather than absent keys — and names no date at all.
+    let bare_scan = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(bare_scan, 1, false).await.unwrap();
+    let mut bare = catalog_input(7, "Quiet Hand");
+    bare.album = Some("Bare release".into());
+    bare.is_compilation = false;
+    state
+        .db
+        .apply_catalog_track(library_id, bare_scan, &bare, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(bare_scan, 0).await.unwrap();
+    let bare_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .into_iter()
+        .find(|album| album.title == "Bare release")
+        .unwrap()
+        .id;
+    let bare = subsonic_json(&router, "getAlbum", api_key, &format!("&id={bare_id}")).await;
+    let bare = &bare["subsonic-response"]["album"];
+    assert_eq!(bare["recordLabels"], serde_json::json!([]));
+    assert_eq!(bare["releaseTypes"], serde_json::json!([]));
+    assert_eq!(bare["discTitles"], serde_json::json!([]));
+    assert!(bare["originalReleaseDate"].is_null());
+    assert!(bare["releaseDate"].is_null());
+}
+
+#[tokio::test]
+async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("pager", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(b"dedicated-subsonic-secret")
+        .unwrap();
+    let api_key = "wfsk_pager-key";
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("pager-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Pager library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 5, false).await.unwrap();
+    // One token every kind matches on, so the three pages are exercised by one
+    // query rather than by three that happen not to overlap.
+    for (index, name) in ["Aria", "Bela", "Cyd", "Dara", "Eno"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut input = catalog_input(index, &format!("Nocturne {name}"));
+        input.title = format!("Nocturne {index}");
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    // What a real scan does after applying its rows, and what builds the
+    // artist search index this query has to reach.
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
+
+    let paged = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Nocturne&songCount=2&songOffset=1&artistCount=1&artistOffset=2&albumCount=5&albumOffset=1",
+    )
+    .await;
+    let result = &paged["subsonic-response"]["searchResult3"];
+    assert_eq!(
+        result["song"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|song| song["title"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["Nocturne 1", "Nocturne 2"],
+        "the song offset has to skip in SQL and still land on the same rows"
+    );
+    assert_eq!(
+        result["artist"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artist| artist["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["Nocturne Cyd"],
+        "each kind pages independently, which is what search3 has always allowed"
+    );
+    // Five tracks, one album between them: an offset of one leaves nothing, and
+    // `searchResult3` omits a kind it has no rows for rather than sending `[]`.
+    assert!(result["album"].is_null());
+
+    // A request may not name more identifiers than the queue may hold: each one
+    // costs a mutation under the process-wide writer gate.
+    let track_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    let oversized = (0..=waveflow_server::services::MAX_QUEUE_TRACKS)
+        .map(|_| format!("&id={track_id}"))
+        .collect::<String>();
+    let refused = subsonic_json(&router, "star", api_key, &oversized).await;
+    assert_eq!(refused["subsonic-response"]["status"], "failed");
+    assert_eq!(refused["subsonic-response"]["error"]["code"], 10);
+    // And one below the ceiling still works.
+    let accepted = subsonic_json(&router, "star", api_key, &format!("&id={track_id}")).await;
+    assert_eq!(accepted["subsonic-response"]["status"], "ok");
+
+    // A playlist is bounded on what it holds rather than on what one request
+    // carries, because it grows across many of them.
+    let too_many = vec![track_id; waveflow_server::services::MAX_PLAYLIST_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .create_playlist(owner, "Oversized", &too_many)
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+}
+
+/// Fixture for the two remap shapes: a library whose recorded artist spec a
+/// later boot can be shown to disagree with.
+async fn remap_fixture(
+    state: &waveflow_server::AppState,
+    config: &Config,
+    label: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account(label, &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join(format!("{label}-music"));
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Remap library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 1, false).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library_id,
+            scan_id,
+            &catalog_input(0, "Seed Artist"),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    (owner, library_id)
+}
+
+async fn seed_artist(
+    state: &waveflow_server::AppState,
+    library_id: uuid::Uuid,
+    id: uuid::Uuid,
+    name: &str,
+) {
+    sqlx::query(
+        "INSERT INTO artist (id, library_id, name, canonical_name, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(library_id.to_string())
+    .bind(name)
+    .bind(name.to_lowercase().replace(' ', ""))
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+}
+
+async fn seed_star(
+    state: &waveflow_server::AppState,
+    owner: uuid::Uuid,
+    entity_id: uuid::Uuid,
+    starred_at: i64,
+) {
+    sqlx::query(
+        "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+         VALUES (?, 'artist', ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind(entity_id.to_string())
+    .bind(starred_at)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+}
+
+async fn artist_stars(state: &waveflow_server::AppState, owner: uuid::Uuid) -> Vec<(String, i64)> {
+    let mut rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT entity_id, starred_at FROM user_star WHERE user_id = ? AND entity_type = 'artist'",
+    )
+    .bind(owner.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    rows.sort();
+    rows
+}
+
+#[tokio::test]
+async fn a_remap_whose_targets_chain_does_not_change_who_owns_what() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, library_id) = remap_fixture(&state, &config, "chained").await;
+
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+    };
+    // Built by hand: no spec this engine can parse makes one artist's new
+    // identifier another's old one, because only `albumartistid` carries a
+    // value for an artist. The property still has to hold, because the code
+    // cannot see that and a wider `PidSource` would make it reachable.
+    let first_row = uuid::Uuid::new_v4();
+    let first_new = altered.artist_id(library_id, "Chain One");
+    let second_new = altered.artist_id(library_id, "Chain Two");
+    assert_ne!(first_row, first_new);
+    assert_ne!(first_new, second_new);
+    seed_artist(&state, library_id, first_row, "Chain One").await;
+    // Its row id is the identifier the first artist is about to move onto.
+    seed_artist(&state, library_id, first_new, "Chain Two").await;
+    seed_star(&state, owner, first_row, 111).await;
+    seed_star(&state, owner, first_new, 222).await;
+
+    state.db.reconcile_catalog_identity(&altered).await.unwrap();
+
+    let mut expected = vec![(first_new.to_string(), 111), (second_new.to_string(), 222)];
+    expected.sort();
+    assert_eq!(
+        artist_stars(&state, owner).await,
+        expected,
+        "each favourite has to land on its own artist's new identifier, whatever \
+         order the rows came back in"
+    );
+}
+
+#[tokio::test]
+async fn two_artists_folding_onto_one_identifier_keep_a_single_favourite() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, library_id) = remap_fixture(&state, &config, "folded").await;
+
+    // `title` names nothing for an artist, so every artist evaluates to the
+    // same empty string and the whole library folds onto one identifier. A
+    // degenerate spec, and exactly the shape the collision handling is for.
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        track: config.pid.track.clone(),
+        artist: waveflow_server::pid::PidSpec::parse("title", false).unwrap(),
+    };
+    let folded = altered.artist_id(library_id, "Fold One");
+    assert_eq!(folded, altered.artist_id(library_id, "Fold Two"));
+
+    let first = uuid::Uuid::new_v4();
+    let second = uuid::Uuid::new_v4();
+    seed_artist(&state, library_id, first, "Fold One").await;
+    seed_artist(&state, library_id, second, "Fold Two").await;
+    seed_star(&state, owner, first, 111).await;
+    seed_star(&state, owner, second, 222).await;
+
+    state.db.reconcile_catalog_identity(&altered).await.unwrap();
+
+    let stars = artist_stars(&state, owner).await;
+    assert_eq!(
+        stars.len(),
+        1,
+        "the two rows collide on the primary key and one is dropped: {stars:?}"
+    );
+    assert_eq!(stars[0].0, folded.to_string());
+    // The seed artist folds onto the same identifier, so nothing is left
+    // pointing at an identifier no projection answers for.
+    assert!(!stars[0].0.contains("pid-remap:"));
 }

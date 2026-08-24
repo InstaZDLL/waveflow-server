@@ -119,6 +119,18 @@ pub struct CatalogTrackInput {
     pub moods: Option<String>,
     /// Normalised to `explicit` or `clean`; any other tag value is no value.
     pub explicit_status: Option<String>,
+    /// The two release dates, as the file spelled them. Kept as written and
+    /// taken apart only at the wire, where OpenSubsonic wants year, month and
+    /// day as separate numbers: a tag that names only a year must not be
+    /// reported as the first of January.
+    pub original_release_date: Option<String>,
+    pub release_date: Option<String>,
+    /// Multi-valued, split like `moods`.
+    pub release_types: Option<String>,
+    pub record_labels: Option<String>,
+    /// The title of the disc this track sits on. Track-level because an album
+    /// has one per disc, which is the whole point of the field.
+    pub disc_subtitle: Option<String>,
     pub artwork: Option<ArtworkInput>,
     pub lyrics_hash: String,
     pub lyrics: Vec<crate::lyrics::LyricsInput>,
@@ -366,6 +378,17 @@ impl Database {
                 "catalogue identity setting changed since the last scan"
             );
         }
+        // Before the rescan, while the artist rows still hold the identifiers
+        // their favourites name.
+        if changed.iter().any(|(key, _, _)| *key == "pid.artist") {
+            let moved = self.remap_artist_user_data(specs).await?;
+            if moved > 0 {
+                tracing::warn!(
+                    rows = moved,
+                    "favourites and ratings moved onto the artist identifiers the new rule derives"
+                );
+            }
+        }
         let libraries = self.request_full_scan_everywhere().await?;
         tracing::warn!(
             libraries,
@@ -414,6 +437,72 @@ impl Database {
             );
         }
         Ok(())
+    }
+
+    /// Carries artist favourites and ratings across a change of artist spec.
+    ///
+    /// `user_star` and `user_rating` hold an untyped identifier with no foreign
+    /// key, so a rescan that re-derives artist ids leaves their rows pointing at
+    /// identifiers nothing answers for — invisible rather than wrong, since every
+    /// projection resolves through an `EXISTS`, but lost all the same. The old
+    /// identifier and the name that produced it are both still on the `artist`
+    /// row at this point, which is the only moment the two can be paired.
+    ///
+    /// Albums are not remapped and cannot be: their spec reads `albumversion`
+    /// and `releasedate`, which live on the files rather than on the album row,
+    /// so there is nothing here to derive the new identifier from.
+    ///
+    /// **Moved in two phases, through a namespace no identifier can occupy.**
+    /// One artist's new identifier can be another's old one, and moving them one
+    /// at a time would then carry the first artist's favourite onto the second's
+    /// row — a result that depends on the order the rows came back in, which is
+    /// no result at all. Staging every row first and landing them afterwards
+    /// makes the outcome the same whatever that order was. Both phases run in
+    /// one transaction, so a staged value is never visible to anything.
+    ///
+    /// `UPDATE OR IGNORE` then `DELETE` at each phase: a coarser spec can fold
+    /// two artists onto one identifier, and the second row would collide on
+    /// `(user_id, entity_type, entity_id)`. Losing the duplicate is right — the
+    /// user already stars what it would have become.
+    async fn remap_artist_user_data(
+        &self,
+        specs: &crate::pid::PidSpecs,
+    ) -> Result<u64, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, library_id, name FROM artist")
+            .fetch_all(self.pool())
+            .await?;
+        let mut moves = Vec::new();
+        for row in rows {
+            let old: String = row.try_get("id")?;
+            let library_id = parse_uuid(row.try_get("library_id")?)?;
+            let name: String = row.try_get("name")?;
+            let new = specs.artist_id(library_id, &name).to_string();
+            if new != old {
+                // A UUID holds no colon, so nothing that reaches these columns
+                // by any other route can be mistaken for a staged value.
+                moves.push((old, format!("{REMAP_STAGE}{new}"), new));
+            }
+        }
+        if moves.is_empty() {
+            return Ok(0);
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        let mut moved = 0;
+        for (from, to) in moves
+            .iter()
+            .map(|(old, staged, _)| (old, staged))
+            .chain(moves.iter().map(|(_, staged, new)| (staged, new)))
+        {
+            let landed = move_artist_user_data(&mut tx, from, to).await?;
+            // Counted on the second pass only, where a row reaches the
+            // identifier it will actually be read under.
+            if from.starts_with(REMAP_STAGE) {
+                moved += landed;
+            }
+        }
+        tx.commit().await?;
+        Ok(moved)
     }
 
     pub async fn library_for_user(
@@ -1118,10 +1207,11 @@ impl Database {
                replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, sort_album, \
                comment, isrc, \
                moods, explicit_status, \
-               lyrics_hash, pid, is_available, last_seen_scan_id, created_at, updated_at) \
+               lyrics_hash, disc_subtitle, pid, is_available, last_seen_scan_id, \
+               created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                     ?, 1, ?, ?, ?) \
+                     ?, ?, 1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
                file_modified_at=excluded.file_modified_at, quick_hash=excluded.quick_hash, \
@@ -1142,7 +1232,8 @@ impl Database {
                comment=excluded.comment, \
                isrc=excluded.isrc, moods=excluded.moods, \
                explicit_status=excluded.explicit_status, \
-               lyrics_hash=excluded.lyrics_hash, pid=excluded.pid, \
+               lyrics_hash=excluded.lyrics_hash, disc_subtitle=excluded.disc_subtitle, \
+               pid=excluded.pid, \
                is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
@@ -1164,6 +1255,7 @@ impl Database {
         .bind(input.isrc.as_deref())
         .bind(input.moods.as_deref()).bind(input.explicit_status.as_deref())
         .bind(&input.lyrics_hash)
+        .bind(input.disc_subtitle.as_deref())
         .bind(track_pid(pid, library_id, input).to_string())
         .bind(scan_id.to_string()).bind(now).bind(now)
         .execute(&mut **tx).await?;
@@ -1655,8 +1747,10 @@ async fn upsert_album(
     );
     sqlx::query(
         "INSERT INTO album (id, library_id, title, canonical_title, album_artist_id, \
-           album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+           album_artist_name, is_compilation, year, artwork_hash, \
+           original_release_date, release_date, release_types, record_labels, \
+           created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT (id) DO UPDATE SET title=excluded.title, \
            canonical_title=excluded.canonical_title, \
            album_artist_id=excluded.album_artist_id, \
@@ -1664,6 +1758,10 @@ async fn upsert_album(
            is_compilation=excluded.is_compilation, \
            year=COALESCE(excluded.year, album.year), \
            artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
+           original_release_date=COALESCE(excluded.original_release_date, album.original_release_date), \
+           release_date=COALESCE(excluded.release_date, album.release_date), \
+           release_types=COALESCE(excluded.release_types, album.release_types), \
+           record_labels=COALESCE(excluded.record_labels, album.record_labels), \
            updated_at=excluded.updated_at",
     )
     .bind(id.to_string())
@@ -1675,6 +1773,10 @@ async fn upsert_album(
     .bind(i64::from(input.is_compilation))
     .bind(input.year)
     .bind(artwork)
+    .bind(input.original_release_date.as_deref())
+    .bind(input.release_date.as_deref())
+    .bind(input.release_types.as_deref())
+    .bind(input.record_labels.as_deref())
     .bind(now)
     .bind(now)
     .execute(&mut **tx)
@@ -1689,6 +1791,48 @@ fn split_values(raw: Option<&str>) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// The namespace a remap stages through. A UUID holds no colon, so a staged
+/// value cannot be mistaken for an identifier and no identifier for it.
+const REMAP_STAGE: &str = "pid-remap:";
+
+/// Moves one artist identifier onto another, in both tables that hold one.
+///
+/// Spelled out per table rather than looped: sqlx takes static SQL only, which
+/// is what keeps every query in this crate injection-proof by construction.
+async fn move_artist_user_data(
+    tx: &mut Transaction<'_, Sqlite>,
+    from: &str,
+    to: &str,
+) -> Result<u64, sqlx::Error> {
+    let mut moved = sqlx::query(
+        "UPDATE OR IGNORE user_star SET entity_id = ? \
+         WHERE entity_type = 'artist' AND entity_id = ?",
+    )
+    .bind(to)
+    .bind(from)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM user_star WHERE entity_type = 'artist' AND entity_id = ?")
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    moved += sqlx::query(
+        "UPDATE OR IGNORE user_rating SET entity_id = ? \
+         WHERE entity_type = 'artist' AND entity_id = ?",
+    )
+    .bind(to)
+    .bind(from)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM user_rating WHERE entity_type = 'artist' AND entity_id = ?")
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    Ok(moved)
 }
 
 fn library_from_row(row: sqlx::sqlite::SqliteRow) -> Result<LibraryRecord, sqlx::Error> {
