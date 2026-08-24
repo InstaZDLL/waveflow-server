@@ -10383,3 +10383,97 @@ async fn a_re_encoded_file_that_moved_keeps_its_track_and_its_favourite() {
         "a favourite must survive the move it was never told about"
     );
 }
+
+#[tokio::test]
+async fn a_changed_track_spec_drops_every_relocation_hint_without_a_rescan() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("respec", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("respec-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Kept Take.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Respec library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Respec library".into(),
+        root_path: root,
+    };
+
+    run_scan(&state, owner, library.clone()).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    let track_id = tracks[0].id;
+    state
+        .services
+        .set_star(owner, "track", track_id, true)
+        .await
+        .unwrap();
+    let hint: Option<String> = sqlx::query_scalar("SELECT pid FROM track WHERE id = ?")
+        .bind(track_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(hint.is_some(), "the first scan writes a hint");
+
+    // A hint written under one spec must never be compared against a lookup
+    // computed under another: two specs can evaluate to the same string, and
+    // the hint would then hand a new file this track's identity — and this
+    // track's favourite. So the stale values go.
+    let altered = waveflow_server::pid::PidSpecs {
+        album: config.pid.album.clone(),
+        artist: config.pid.artist.clone(),
+        track: waveflow_server::pid::PidSpec::parse("folder,title", true).unwrap(),
+    };
+    let rescans = state.db.reconcile_catalog_identity(&altered).await.unwrap();
+    assert_eq!(
+        rescans, 0,
+        "a track spec change re-identifies nothing and must not charge a full rescan"
+    );
+    assert!(!state.db.full_scan_requested(library_id).await.unwrap());
+    let hint: Option<String> = sqlx::query_scalar("SELECT pid FROM track WHERE id = ?")
+        .bind(track_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        hint.is_none(),
+        "no hint from the previous spec may survive to be matched against"
+    );
+
+    // And one ordinary scan puts it back, which is why clearing costs nothing.
+    run_scan(&state, owner, library).await;
+    let hint: Option<String> = sqlx::query_scalar("SELECT pid FROM track WHERE id = ?")
+        .bind(track_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        hint.is_some(),
+        "the backfill restores the hint without a full scan"
+    );
+
+    let starred = state.services.starred(owner, &[]).await.unwrap();
+    assert_eq!(
+        starred.songs.iter().map(|song| song.id).collect::<Vec<_>>(),
+        vec![track_id],
+        "clearing a hint must not disturb what it points at"
+    );
+}

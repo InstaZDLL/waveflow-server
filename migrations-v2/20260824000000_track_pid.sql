@@ -8,9 +8,9 @@
 -- `pid` is the track spec evaluated over the file's tags. It is a hint, never
 -- an identity: track ids stay drawn at random because six tables cascade off
 -- them, and a hint that turns out ambiguous simply declines to match. That is
--- why the column is nullable and unconstrained — a stale value after a spec
--- change costs a missed relocation, which is exactly the behaviour that
--- existed before it.
+-- why the column is nullable and unconstrained — a boot that finds the track
+-- spec changed clears every value in it, because a hint written under one spec
+-- must never be matched against a lookup computed under another.
 --
 -- Added empty and filled by the next scan, like every other derived column.
 ALTER TABLE track ADD COLUMN pid TEXT;
