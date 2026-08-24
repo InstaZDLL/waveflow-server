@@ -22,9 +22,45 @@ impl DomainServices {
         .bind(user_id.to_string())
         .fetch_all(&mut *connection)
         .await?;
+        // One query for every playlist's track list and one for the songs they
+        // name, rather than two per playlist: an account with fifty playlists
+        // was costing a hundred round trips to answer `getPlaylists`.
+        let playlist_ids = rows
+            .iter()
+            .map(|row| parse_uuid(row.try_get("id")?))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut ordered: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        if !playlist_ids.is_empty() {
+            let ids_json =
+                serde_json::to_string(&playlist_ids).map_err(|_| ServiceError::Invalid)?;
+            for row in sqlx::query(
+                "SELECT pt.playlist_id, pt.track_id FROM playlist_track pt                  JOIN playlist p ON p.id=pt.playlist_id                  WHERE p.owner_user_id=? AND p.id IN (SELECT value FROM json_each(?))                  ORDER BY pt.playlist_id, pt.position",
+            )
+            .bind(user_id.to_string())
+            .bind(ids_json)
+            .fetch_all(&mut *connection)
+            .await?
+            {
+                ordered
+                    .entry(parse_uuid(row.try_get("playlist_id")?)?)
+                    .or_default()
+                    .push(parse_uuid(row.try_get("track_id")?)?);
+            }
+        }
+        let mut union: Vec<Uuid> = ordered.values().flatten().copied().collect();
+        union.sort_unstable();
+        union.dedup();
+        // Resolved once for every playlist at once. The per-playlist order and
+        // the dropping of a track this account cannot see are reapplied below,
+        // exactly as `songs_by_ids_lenient_on` would have applied them.
+        let visible = self
+            .songs_by_ids_lenient_on(connection, user_id, &union)
+            .await?
+            .into_iter()
+            .map(|song| (song.id, song))
+            .collect::<HashMap<_, _>>();
         let mut result = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id = parse_uuid(row.try_get("id")?)?;
+        for (row, id) in rows.into_iter().zip(playlist_ids) {
             result.push(PlaylistItem {
                 id,
                 name: row.try_get("name")?,
@@ -32,7 +68,12 @@ impl DomainServices {
                 public: row.try_get::<i64, _>("public")? != 0,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
-                songs: self.playlist_songs_on(connection, user_id, id).await?,
+                songs: ordered
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|track| visible.get(track).cloned())
+                    .collect(),
             });
         }
         Ok(result)
@@ -124,6 +165,12 @@ impl DomainServices {
         track_ids: &[Uuid],
         context: MutationContext,
     ) -> Result<PlaylistItem, ServiceError> {
+        // Refused before the writer gate rather than after the claim: an
+        // oversized request is refused on its own terms, without queuing behind
+        // a scan for the right to be told so.
+        if track_ids.len() > MAX_PLAYLIST_TRACKS {
+            return Err(ServiceError::Invalid);
+        }
         let intent = MutationIntent::new(
             "create",
             "playlist",
@@ -260,6 +307,12 @@ impl DomainServices {
             ids.remove(index);
         }
         ids.extend_from_slice(add);
+        // Checked on the result rather than on `add`: an update that adds one
+        // track to a playlist already at the ceiling is what has to be refused,
+        // and the request that gets there is small.
+        if ids.len() > MAX_PLAYLIST_TRACKS {
+            return Err(ServiceError::Invalid);
+        }
         let changed_at = now_ms();
         sqlx::query(
             "UPDATE playlist SET name=COALESCE(?, name), \

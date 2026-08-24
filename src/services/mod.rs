@@ -369,6 +369,15 @@ pub const MAX_HISTORY_LIMIT: i64 = 500;
 pub const MAX_QUEUE_TRACKS: usize = 400;
 /// Applies the same request-size and writer-gate bound to public shares.
 pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
+/// Upper bound on the tracks one playlist may hold.
+///
+/// Deliberately not [`MAX_QUEUE_TRACKS`]: that one bounds a request, and a
+/// queue is written whole by every call. A playlist grows across many calls, so
+/// the same number would refuse ordinary libraries. What this bounds is the
+/// rewrite — `replace_playlist_tracks` deletes and reinserts the whole list on
+/// every edit, under the process-wide writer gate — and ten thousand keeps that
+/// bounded while sitting far above any playlist a person curates by hand.
+pub const MAX_PLAYLIST_TRACKS: usize = 10_000;
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
 /// bind it without re-checking bounds.

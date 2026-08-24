@@ -9881,7 +9881,14 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     // track carries thirteen roles now where it carried one list of names.
     let by_title = state
         .services
-        .catalog_search(owner, &[], "Only Track")
+        .catalog_search(
+            owner,
+            &[],
+            "Only Track",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -9903,7 +9910,14 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     // whole point of indexing artists rather than deriving them.
     let by_name = state
         .services
-        .catalog_search(owner, &[], "Rita")
+        .catalog_search(
+            owner,
+            &[],
+            "Rita",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -10726,4 +10740,135 @@ async fn an_album_reports_its_release_details_and_its_disc_titles() {
     assert_eq!(bare["discTitles"], serde_json::json!([]));
     assert!(bare["originalReleaseDate"].is_null());
     assert!(bare["releaseDate"].is_null());
+}
+
+#[tokio::test]
+async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("pager", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(b"dedicated-subsonic-secret")
+        .unwrap();
+    let api_key = "wfsk_pager-key";
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("pager-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Pager library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 5, false).await.unwrap();
+    // One token every kind matches on, so the three pages are exercised by one
+    // query rather than by three that happen not to overlap.
+    for (index, name) in ["Aria", "Bela", "Cyd", "Dara", "Eno"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut input = catalog_input(index, &format!("Nocturne {name}"));
+        input.title = format!("Nocturne {index}");
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    // What a real scan does after applying its rows, and what builds the
+    // artist search index this query has to reach.
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
+
+    let paged = subsonic_json(
+        &router,
+        "search3",
+        api_key,
+        "&query=Nocturne&songCount=2&songOffset=1&artistCount=1&artistOffset=2&albumCount=5&albumOffset=1",
+    )
+    .await;
+    let result = &paged["subsonic-response"]["searchResult3"];
+    assert_eq!(
+        result["song"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|song| song["title"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["Nocturne 1", "Nocturne 2"],
+        "the song offset has to skip in SQL and still land on the same rows"
+    );
+    assert_eq!(
+        result["artist"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artist| artist["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["Nocturne Cyd"],
+        "each kind pages independently, which is what search3 has always allowed"
+    );
+    // Five tracks, one album between them: an offset of one leaves nothing, and
+    // `searchResult3` omits a kind it has no rows for rather than sending `[]`.
+    assert!(result["album"].is_null());
+
+    // A request may not name more identifiers than the queue may hold: each one
+    // costs a mutation under the process-wide writer gate.
+    let track_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    let oversized = (0..=waveflow_server::services::MAX_QUEUE_TRACKS)
+        .map(|_| format!("&id={track_id}"))
+        .collect::<String>();
+    let refused = subsonic_json(&router, "star", api_key, &oversized).await;
+    assert_eq!(refused["subsonic-response"]["status"], "failed");
+    assert_eq!(refused["subsonic-response"]["error"]["code"], 10);
+    // And one below the ceiling still works.
+    let accepted = subsonic_json(&router, "star", api_key, &format!("&id={track_id}")).await;
+    assert_eq!(accepted["subsonic-response"]["status"], "ok");
+
+    // A playlist is bounded on what it holds rather than on what one request
+    // carries, because it grows across many of them.
+    let too_many = vec![track_id; waveflow_server::services::MAX_PLAYLIST_TRACKS + 1];
+    assert!(matches!(
+        state
+            .services
+            .create_playlist(owner, "Oversized", &too_many)
+            .await,
+        Err(ServiceError::Invalid)
+    ));
 }
