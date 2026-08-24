@@ -2,6 +2,18 @@
 
 Automated protocol coverage is enforced by `tests/v2_foundations.rs` for XML, JSON, `.view`, GET, form POST, `u/p`, `u/t/s`, `apiKey`, catalogue isolation, all documented mutations, media and artwork.
 
+> **The rows below are dated 2026-08-23 and the wire has moved since.** On
+> 2026-08-24 an album gained five output fields — `originalReleaseDate`,
+> `releaseDate`, `releaseTypes[]`, `recordLabels[]` and `discTitles[]` — under
+> both names an album is rendered by, `album` and, in a directory, `child`. No
+> field was removed and none changed shape, so nothing a client read on the 23rd
+> reads differently today; but a row that says `pass` says it about a response
+> that no longer carries exactly the same keys. **The campaign wants replaying
+> before a stable tag**, which is what §4 of
+> [`handoff-2026-08-23.md`](handoff-2026-08-23.md) asks for. Until it is, read
+> every date in this table as naming the model the run exercised rather than the
+> one `main` serves.
+
 | Client | Version | Login | Browse/search | Native/transcode | Playlists/user data | Status |
 |---|---:|---:|---:|---:|---:|---|
 | Symfonium | 15.0.1 | pass | pass | limit | limit | Re-run 2026-08-23 against the aligned model, on an Android 17 emulator through the logging proxy. **This is a different major version from the 14.1.0 row it replaces**, so its differences from the previous run are not attributable to the server alone. Passed: a failed login decoded from its HTTP 200, 5 albums and 18 tracks, sleeve order, one canonical `Jazz` answering 4 tracks, both artists of a two-artist album holding it, the separator traps (`AC/DC` one artist, `Bach/Gounod` two composers, a padded slash two artists), and a title query returning no artists. Two limits, both established from the proxy log rather than from the client's display, and neither a server defect. **Seeking a lossless track fails**: the client re-requests the resource with no `Range` header at all and restarts from zero — in the whole session it sent exactly one byte-offset range, on an MP3, answered 206. It sent none in the 2026-08-19 run either, so no seek by this client was ever established. **Playlist creation never reaches the server**: no `createPlaylist` or `updatePlaylist` was sent. Both are contrasted directly: Feishin seeks the same seektable-less FLAC files and creates playlists against the same server. The client renders `artist`, `albumArtist` and `composer` and ignores the other ten roles, which the server emits in full at the `v=1.13.0` this client asks with. Bookmarks were exercised incidentally (5 `createBookmark`, one live). It never calls `getArtists`/`getIndexes`, syncing entirely through the match-all `search3`. |
