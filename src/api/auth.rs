@@ -97,7 +97,9 @@ pub async fn logout(
     responses(
         (status = 200, body = WebAuthResponse),
         (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
+        (status = 403, body = ErrorResponse),
+        (status = 422, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
     )
 )]
 pub async fn web_login(
@@ -121,7 +123,8 @@ pub async fn web_login(
     responses(
         (status = 200, body = WebAuthResponse),
         (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
+        (status = 403, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
     )
 )]
 pub async fn web_refresh(
@@ -145,7 +148,8 @@ pub async fn web_refresh(
     responses(
         (status = 204),
         (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse)
+        (status = 403, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
     )
 )]
 pub async fn web_logout(

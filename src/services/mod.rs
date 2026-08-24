@@ -750,17 +750,6 @@ impl DomainServices {
     }
 }
 
-/// Fills in the relations a single projected row cannot carry.
-///
-/// `song_select!` collapses credited artists and genres into the display strings
-/// the tags happened to contain; the structured form lives in `track_artist` and
-/// `track_genre`, ordered and deduplicated by the scanner. Reading them per song
-/// would be two queries per row on every listing, so both are fetched once for
-/// the whole batch and distributed by track id.
-///
-/// Tenancy is re-checked here rather than inherited from the caller: the batch
-/// is keyed by track id alone, and a join that trusted those ids would be the
-/// one place in the read path where membership is not proven.
 /// The JSON library list a scoped projection binds, or `None` for "every
 /// library the account can reach". Built once here because every scoped
 /// query binds the same value twice and a second spelling of it would be a
@@ -850,6 +839,17 @@ async fn attach_album_relations(
     Ok(())
 }
 
+/// Fills in the relations a single projected row cannot carry.
+///
+/// `song_select!` collapses credited artists and genres into the display strings
+/// the tags happened to contain; the structured form lives in `track_artist` and
+/// `track_genre`, ordered and deduplicated by the scanner. Reading them per song
+/// would be two queries per row on every listing, so both are fetched once for
+/// the whole batch and distributed by track id.
+///
+/// Tenancy is re-checked here rather than inherited from the caller: the batch
+/// is keyed by track id alone, and a join that trusted those ids would be the
+/// one place in the read path where membership is not proven.
 async fn attach_song_relations(
     connection: &mut SqliteConnection,
     user_id: Uuid,

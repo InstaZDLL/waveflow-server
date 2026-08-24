@@ -153,7 +153,7 @@ pub async fn get_artist(
         .map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 400, description = "q is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("artist_offset" = Option<i64>, Query), ("album_offset" = Option<i64>, Query), ("song_offset" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 400, description = "q is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn search_catalog(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
