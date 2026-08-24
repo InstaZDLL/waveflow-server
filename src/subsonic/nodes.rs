@@ -78,6 +78,63 @@ pub(super) fn album_node(album: &AlbumItem) -> Node {
             "musicBrainzId",
             album.musicbrainz_id.clone().unwrap_or_default(),
         )
+        .children(
+            album
+                .record_labels
+                .iter()
+                .map(|label| Node::new("recordLabels").attr("name", label.clone())),
+        )
+        .children(
+            album
+                .release_types
+                .iter()
+                .map(|kind| Node::new("releaseTypes").text(kind.clone())),
+        )
+        .children(album.disc_titles.iter().map(|disc| {
+            Node::new("discTitles")
+                .attr("disc", disc.disc)
+                .attr("title", disc.title.clone())
+        }))
+        // Omitted rather than emitted empty when the tag says nothing, which is
+        // what the reference does: an `ItemDate` with no year is not a date.
+        // The three arrays above already carry the presence signal for the
+        // group, so a client can still tell "unknown" from "not supported".
+        .children(
+            item_date(
+                "originalReleaseDate",
+                album.original_release_date.as_deref(),
+            )
+            .into_iter()
+            .chain(item_date("releaseDate", album.release_date.as_deref())),
+        )
+}
+
+/// An `ItemDate` from the tag as the file spelled it.
+///
+/// Only the parts the tag actually names are emitted: `2019` is a year and
+/// nothing more, and reporting it as 1 January 2019 would invent a precision
+/// the file never claimed. Anything that does not start with a four-digit year
+/// is no date at all.
+fn item_date(name: &'static str, raw: Option<&str>) -> Option<Node> {
+    let raw = raw?.trim();
+    let mut parts = raw.split(['-', '/', '.']);
+    let year: i64 = parts.next()?.trim().parse().ok().filter(|y| *y > 0)?;
+    let month = parts
+        .next()
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|value| (1..=12).contains(value));
+    let day = month.and(
+        parts
+            .next()
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .filter(|value| (1..=31).contains(value)),
+    );
+    Some(
+        Node::new(name)
+            .attr("year", year)
+            .maybe_attr("month", month)
+            .maybe_attr("day", day),
+    )
 }
 
 pub(super) fn song_node(song: &SongItem) -> Node {

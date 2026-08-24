@@ -3342,6 +3342,11 @@ fn catalog_input(index: usize, artist: &str) -> CatalogTrackInput {
         isrc: None,
         moods: None,
         explicit_status: None,
+        original_release_date: None,
+        release_date: None,
+        release_types: None,
+        record_labels: None,
+        disc_subtitle: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -6333,6 +6338,11 @@ fn browse_input(
         isrc: None,
         moods: None,
         explicit_status: None,
+        original_release_date: None,
+        release_date: None,
+        release_types: None,
+        record_labels: None,
+        disc_subtitle: None,
         artwork: None,
         lyrics_hash: blake3::hash(b"").to_hex().to_string(),
         lyrics: Vec::new(),
@@ -10563,4 +10573,157 @@ async fn a_changed_artist_spec_carries_the_favourite_onto_the_new_identifier() {
         vec![expected.to_string()],
         "the favourite must name the identifier the new rule derives, not the one it replaced"
     );
+}
+
+#[tokio::test]
+async fn an_album_reports_its_release_details_and_its_disc_titles() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("release", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let encrypted = state
+        .secret_box
+        .encrypt(b"dedicated-subsonic-secret")
+        .unwrap();
+    let api_key = "wfsk_release-key";
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &encrypted,
+            &security::token_hash(api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("release-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Release library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 2, false).await.unwrap();
+
+    for (index, disc, subtitle) in [(0usize, 1i64, "The Session"), (1, 2, "The Rehearsal")] {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.disc_number = Some(disc);
+        input.disc_subtitle = Some(subtitle.into());
+        if index == 0 {
+            // Only the first track carries them: the album takes the first
+            // value it is given and later tracks do not overwrite it.
+            input.original_release_date = Some("1998-11".into());
+            input.release_date = Some("2019-04-05".into());
+            input.release_types = Some("Album; Compilation".into());
+            input.record_labels = Some("Nightfall Records; Second Imprint".into());
+        }
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let album_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums[0]
+        .id;
+    let detail = state.services.album(owner, album_id).await.unwrap();
+    assert_eq!(
+        detail.album.record_labels,
+        vec!["Nightfall Records", "Second Imprint"]
+    );
+    assert_eq!(detail.album.release_types, vec!["Album", "Compilation"]);
+    assert_eq!(
+        detail
+            .album
+            .disc_titles
+            .iter()
+            .map(|disc| (disc.disc, disc.title.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "The Session"), (2, "The Rehearsal")]
+    );
+
+    let album = subsonic_json(&router, "getAlbum", api_key, &format!("&id={album_id}")).await;
+    let album = &album["subsonic-response"]["album"];
+    assert_eq!(
+        album["recordLabels"],
+        serde_json::json!([{"name": "Nightfall Records"}, {"name": "Second Imprint"}])
+    );
+    assert_eq!(
+        album["releaseTypes"],
+        serde_json::json!(["Album", "Compilation"])
+    );
+    assert_eq!(
+        album["discTitles"],
+        serde_json::json!([
+            {"disc": 1, "title": "The Session"},
+            {"disc": 2, "title": "The Rehearsal"}
+        ])
+    );
+    // A tag naming a year and a month is a year and a month. Reporting a day
+    // it never claimed would be inventing precision.
+    assert_eq!(
+        album["originalReleaseDate"],
+        serde_json::json!({"year": 1998, "month": 11})
+    );
+    assert_eq!(
+        album["releaseDate"],
+        serde_json::json!({"year": 2019, "month": 4, "day": 5})
+    );
+
+    // An album with none of these tags declares the fields supported and
+    // unset — empty arrays rather than absent keys — and names no date at all.
+    let bare_scan = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(bare_scan, 1, false).await.unwrap();
+    let mut bare = catalog_input(7, "Quiet Hand");
+    bare.album = Some("Bare release".into());
+    bare.is_compilation = false;
+    state
+        .db
+        .apply_catalog_track(library_id, bare_scan, &bare, None, false)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(bare_scan, 0).await.unwrap();
+    let bare_id = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .albums
+        .into_iter()
+        .find(|album| album.title == "Bare release")
+        .unwrap()
+        .id;
+    let bare = subsonic_json(&router, "getAlbum", api_key, &format!("&id={bare_id}")).await;
+    let bare = &bare["subsonic-response"]["album"];
+    assert_eq!(bare["recordLabels"], serde_json::json!([]));
+    assert_eq!(bare["releaseTypes"], serde_json::json!([]));
+    assert_eq!(bare["discTitles"], serde_json::json!([]));
+    assert!(bare["originalReleaseDate"].is_null());
+    assert!(bare["releaseDate"].is_null());
 }
