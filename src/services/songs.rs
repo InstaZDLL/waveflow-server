@@ -198,6 +198,10 @@ impl DomainServices {
         library_ids: &[Uuid],
     ) -> Result<StarredCatalog, ServiceError> {
         let folders = folder_filter(library_ids);
+        // One connection for the three projections and both relation
+        // batches: five acquisitions from the pool answered the same
+        // question, and spreading them risked five different snapshots.
+        let mut connection = self.db.pool().acquire().await?;
         let artists = sqlx::query(concat!(
             artist_select!(album_count),
             " AND us.starred_at IS NOT NULL \
@@ -207,7 +211,7 @@ impl DomainServices {
         .bind(user_id.to_string())
         .bind(folders.as_deref())
         .bind(folders.as_deref())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(artist_summary_from_row)
@@ -221,12 +225,12 @@ impl DomainServices {
         .bind(user_id.to_string())
         .bind(folders.as_deref())
         .bind(folders.as_deref())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(album_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-        attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
+        attach_album_relations(&mut connection, user_id, &mut albums).await?;
         let mut songs = sqlx::query(concat!(
             song_select!(),
             " AND us.starred_at IS NOT NULL",
@@ -236,12 +240,12 @@ impl DomainServices {
         .bind(user_id.to_string())
         .bind(folders.as_deref())
         .bind(folders.as_deref())
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(song_from_row)
         .collect::<Result<Vec<_>, _>>()?;
-        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        attach_song_relations(&mut connection, user_id, &mut songs).await?;
         Ok(StarredCatalog {
             artists,
             albums,

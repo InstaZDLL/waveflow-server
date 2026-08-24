@@ -212,7 +212,13 @@ impl DomainServices {
             expires_at: row.try_get("expires_at")?,
             created_at: row.try_get("created_at")?,
             visit_count: row.try_get::<i64, _>("visit_count")? + 1,
-            songs: self.songs_by_ids(owner, &ids).await?,
+            // Lenient like `shares_on`, and for a stronger reason: the visit is
+            // already counted above. A track gone unavailable since the share
+            // was created would otherwise answer 404 to the visitor while the
+            // owner still sees the share, and the counter would climb anyway.
+            songs: self
+                .songs_by_ids_lenient_on(&mut *self.db.pool().acquire().await?, owner, &ids)
+                .await?,
         })
     }
 

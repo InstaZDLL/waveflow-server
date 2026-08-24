@@ -309,8 +309,18 @@ pub(super) fn value_string(value: &Value) -> String {
     }
 }
 
+/// Escapes a value for an XML attribute or text node.
+///
+/// The control characters dropped first are forbidden outright by XML 1.0
+/// §2.2 — no entity spells them — so a tag carrying one would have produced a
+/// document no client can parse. Tab, newline and carriage return are legal
+/// and stay.
 pub(super) fn xml_escape(value: &str) -> String {
     value
+        .replace(
+            |c| matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}'),
+            "",
+        )
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

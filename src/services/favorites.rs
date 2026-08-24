@@ -206,6 +206,12 @@ impl DomainServices {
         rating: i64,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        // Checked before the writer gate rather than after the claim: an
+        // out-of-range rating is refused on its own terms, without queuing
+        // behind a scan for the right to be told so.
+        if !(0..=5).contains(&rating) {
+            return Err(ServiceError::Invalid);
+        }
         let intent = MutationIntent::new(
             "set-rating",
             &format!("{entity_type}:{entity_id}"),
@@ -221,9 +227,6 @@ impl DomainServices {
             tx.rollback().await?;
             validate_replay_type(&receipt, "rating")?;
             return Ok(());
-        }
-        if !(0..=5).contains(&rating) {
-            return Err(ServiceError::Invalid);
         }
         self.authorize_entity_on(&mut tx, user_id, entity_type, entity_id)
             .await?;

@@ -85,12 +85,20 @@ pub(crate) async fn authenticated(
     }
 }
 
+/// The bearer token, whatever case the client spelled the scheme in.
+///
+/// RFC 7235 §2.1 makes the scheme name case-insensitive, so `bearer` is as
+/// valid as `Bearer`. Matching the spelling exactly turned a conforming client
+/// away as unauthenticated.
 pub(super) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
+    let (scheme, token) = headers
         .get(header::AUTHORIZATION)?
         .to_str()
         .ok()?
-        .strip_prefix("Bearer ")
+        .split_once(' ')?;
+    scheme
+        .eq_ignore_ascii_case("Bearer")
+        .then_some(token)
         .filter(|token| !token.is_empty())
 }
 

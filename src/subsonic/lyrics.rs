@@ -11,6 +11,12 @@ pub(super) async fn get_lyrics(
 ) -> Result<Node, ProtocolError> {
     let artist = params.first("artist");
     let title = params.first("title");
+    // Both criteria absent leaves the lookup unfiltered, and it answers with
+    // whichever track sorts first among those that happen to carry lyrics.
+    // Nothing was asked for, so nothing is returned.
+    if artist.is_none() && title.is_none() {
+        return Ok(Node::new("lyrics"));
+    }
     let Some(lyrics) = state
         .services
         .lyrics_by_metadata(principal.id, artist, title)
