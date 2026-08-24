@@ -326,15 +326,20 @@ impl Database {
         &self,
         specs: &crate::pid::PidSpecs,
     ) -> Result<u64, sqlx::Error> {
-        // `pid.track` is recorded by a completed scan but deliberately not
-        // compared. A track's identity is its path, then its content hash, then
-        // the relocation hint in `track.pid` — six tables cascade off it, so
-        // moving track ids would delete playlists and play history rather than
-        // orphan them. The spec does feed that hint now, but a hint is all it
-        // is: changing the spec leaves stale values behind, and a stale hint
-        // costs at worst a relocation that is missed the way every relocation
-        // of a re-encoded file was missed before the column existed. Nothing to
-        // re-identify, and still no reason to charge a full rescan for it.
+        // `pid.track` is handled apart, and never by re-identifying anything:
+        // a track's id is its path, then its content hash, then the relocation
+        // hint — six tables cascade off it, so moving track ids would delete
+        // playlists and play history rather than orphan them.
+        //
+        // What a changed track spec does invalidate is every stored hint. A
+        // lookup compares a hint computed under the new spec against values
+        // written under the old one, and those two are not separate namespaces:
+        // two different specs can evaluate to the same string — `title` reading
+        // "intro" and `album` reading "intro" — and the hint would then hand a
+        // new file the identity, and the favourites, of an unrelated track. So
+        // the stale values go, and the scanner's backfill puts fresh ones back
+        // on the next ordinary scan. No full rescan is charged for it.
+        self.clear_track_hints_if_spec_changed(specs).await?;
         let active = [
             ("pid.album", specs.album.source()),
             ("pid.artist", specs.artist.source()),
@@ -367,6 +372,48 @@ impl Database {
             "every library will be rescanned in full so its identifiers follow the new rule"
         );
         Ok(libraries)
+    }
+
+    /// Drops every relocation hint when the track spec no longer matches the
+    /// one the catalogue's hints were written under.
+    ///
+    /// Deliberately not paired with a full rescan: nothing is re-identified,
+    /// and the scanner refills a missing hint from its skip path, so one
+    /// ordinary scan restores what this clears. `pid IS NOT NULL` keeps a boot
+    /// that changes nothing from writing anything, and keeps the repeat boots
+    /// before that first scan free.
+    async fn clear_track_hints_if_spec_changed(
+        &self,
+        specs: &crate::pid::PidSpecs,
+    ) -> Result<(), sqlx::Error> {
+        let active = specs.track.source();
+        // A catalogue built before the property existed is not evidence of a
+        // different rule, only of an older server — the same reading the album
+        // and artist specs get below.
+        match self.server_property("pid.track").await? {
+            None => return Ok(()),
+            Some(stored) if stored == active => return Ok(()),
+            Some(stored) => {
+                tracing::warn!(
+                    setting = "pid.track",
+                    %stored,
+                    %active,
+                    "track spec changed; dropping the relocation hints written under the old one"
+                );
+            }
+        }
+        let _writer = self.writer_guard().await;
+        let cleared = sqlx::query("UPDATE track SET pid = NULL WHERE pid IS NOT NULL")
+            .execute(self.pool())
+            .await?
+            .rows_affected();
+        if cleared > 0 {
+            tracing::warn!(
+                cleared,
+                "relocation hints dropped; the next scan writes them again under the new spec"
+            );
+        }
+        Ok(())
     }
 
     pub async fn library_for_user(
