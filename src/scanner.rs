@@ -212,6 +212,7 @@ impl ScanManager {
             let mut seen = Vec::new();
             let mut errors = Vec::new();
             let mut claimed_relocations = HashSet::new();
+            let mut hints = Vec::new();
             for (relative, task_result) in batch {
                 progress.processed += 1;
                 match (relative, task_result) {
@@ -229,6 +230,19 @@ impl ScanManager {
                                 && existing.lyrics_hash.as_deref() == Some(&input.lyrics_hash)
                                 && existing.available
                             {
+                                // Skipped, but its hint may predate the
+                                // column. Computed only while it is missing,
+                                // so the scan after this one pays nothing.
+                                if existing.pid.is_none() {
+                                    hints.push((
+                                        existing.id,
+                                        crate::catalog::track_pid(
+                                            self.db.pid(),
+                                            library.id,
+                                            &input,
+                                        ),
+                                    ));
+                                }
                                 seen.push(existing.id);
                                 progress.skipped += 1;
                                 continue;
@@ -238,17 +252,37 @@ impl ScanManager {
                         let existing_id = if let Some(existing) = existing {
                             Some(existing.id)
                         } else {
-                            let candidates = self
-                                .db
-                                .relocation_candidates(library.id, &input.full_hash)
-                                .await?;
-                            let missing = candidates
-                                .into_iter()
-                                .filter(|candidate| {
-                                    !discovered.contains(&candidate.relative_path)
-                                        && !claimed_relocations.contains(&candidate.id)
-                                })
-                                .collect::<Vec<_>>();
+                            // Content first: a byte-identical file under a new
+                            // path is the same file, and nothing else needs to
+                            // be consulted.
+                            let mut missing = unclaimed(
+                                self.db
+                                    .relocation_candidates(library.id, &input.full_hash)
+                                    .await?,
+                                &discovered,
+                                &claimed_relocations,
+                            );
+                            if missing.is_empty() {
+                                // The bytes changed as well as the path — a
+                                // re-encode, typically. The tags are the only
+                                // thing left that can say the two files are
+                                // one, so the hint is asked, and only here:
+                                // where the hash spoke, it was believed.
+                                missing = unclaimed(
+                                    self.db
+                                        .relocation_candidates_by_pid(
+                                            library.id,
+                                            crate::catalog::track_pid(
+                                                self.db.pid(),
+                                                library.id,
+                                                &input,
+                                            ),
+                                        )
+                                        .await?,
+                                    &discovered,
+                                    &claimed_relocations,
+                                );
+                            }
                             if missing.len() == 1 {
                                 moved = true;
                                 claimed_relocations.insert(missing[0].id);
@@ -280,6 +314,7 @@ impl ScanManager {
                 }
             }
             self.db.mark_tracks_seen(&seen, scan_id).await?;
+            self.db.backfill_track_pids(&hints).await?;
             for outcome in self
                 .db
                 .apply_catalog_tracks(library.id, scan_id, &applies)
@@ -374,6 +409,26 @@ fn discover_audio(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     }
     paths.sort();
     Ok(paths)
+}
+
+/// The candidates a scan may still claim.
+///
+/// A track whose file this walk found is not missing, whatever a hash or a hint
+/// says about it, and one already claimed by an earlier file in this batch is
+/// spoken for. What survives is what genuinely disappeared — and a relocation
+/// is only recorded when exactly one thing did, because moving a favourite onto
+/// the wrong row is worse than not moving it at all.
+fn unclaimed(
+    candidates: Vec<crate::catalog::ExistingTrack>,
+    discovered: &HashSet<String>,
+    claimed: &HashSet<Uuid>,
+) -> Vec<crate::catalog::ExistingTrack> {
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            !discovered.contains(&candidate.relative_path) && !claimed.contains(&candidate.id)
+        })
+        .collect()
 }
 
 fn relative_path(root: &Path, path: &Path) -> anyhow::Result<String> {

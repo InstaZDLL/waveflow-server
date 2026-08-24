@@ -3373,8 +3373,14 @@ async fn run_scan(state: &waveflow_server::AppState, owner: uuid::Uuid, library:
 }
 
 fn write_test_wav(path: &std::path::Path) {
+    write_test_wav_of_len(path, 800);
+}
+
+/// The same file at another length, which is what a re-encode looks like from
+/// the outside: different bytes, same tags.
+fn write_test_wav_of_len(path: &std::path::Path, sample_count: usize) {
     let sample_rate = 8_000u32;
-    let samples = vec![0i16; 800];
+    let samples = vec![0i16; sample_count];
     let data_len = (samples.len() * 2) as u32;
     let mut bytes = Vec::with_capacity(44 + data_len as usize);
     bytes.extend_from_slice(b"RIFF");
@@ -10284,4 +10290,96 @@ async fn a_table_rebuild_carries_its_children_out_of_the_cascade() {
         .unwrap();
     assert_eq!(carried, 1, "and the carry kept what the cascade took");
     tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_re_encoded_file_that_moved_keeps_its_track_and_its_favourite() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("relocator", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("relocation-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Session Take.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Relocation library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Relocation library".into(),
+        root_path: root.clone(),
+    };
+
+    run_scan(&state, owner, library.clone()).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    let original_id = tracks[0].id;
+    state
+        .services
+        .set_star(owner, "track", original_id, true)
+        .await
+        .unwrap();
+
+    // A row as an upgraded instance carries it: scanned before the column
+    // existed, so it has no hint. An ordinary scan changes nothing about the
+    // file, takes the skip path, and must fill it anyway — otherwise the hint
+    // would only ever help catalogues built after the upgrade.
+    sqlx::query("UPDATE track SET pid = NULL WHERE id = ?")
+        .bind(original_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    run_scan(&state, owner, library.clone()).await;
+    let backfilled: Option<String> = sqlx::query_scalar("SELECT pid FROM track WHERE id = ?")
+        .bind(original_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        backfilled.is_some(),
+        "a scan that skipped the file still owes it a hint"
+    );
+
+    // Moved and re-encoded at once: neither the path nor the content hash can
+    // recognise it, and only the tags are left to say the two files are one.
+    std::fs::remove_file(music.join("Session Take.wav")).unwrap();
+    std::fs::create_dir_all(music.join("remastered")).unwrap();
+    write_test_wav_of_len(&music.join("remastered/Session Take.wav"), 1_600);
+
+    run_scan(&state, owner, library).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1, "the file must not land as a second track");
+    assert_eq!(
+        tracks[0].id, original_id,
+        "the relocation hint must carry the identity across the re-encode"
+    );
+    assert!(tracks[0].available);
+    assert_eq!(tracks[0].relative_path, "remastered/Session Take.wav");
+
+    let starred = state.services.starred(owner, &[]).await.unwrap();
+    assert_eq!(
+        starred.songs.iter().map(|song| song.id).collect::<Vec<_>>(),
+        vec![original_id],
+        "a favourite must survive the move it was never told about"
+    );
 }
