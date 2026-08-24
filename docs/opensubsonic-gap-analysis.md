@@ -124,10 +124,15 @@ qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
 > la plus lourde. La PR #126 a livré `roles[]`, `contributors[]` et
 > `displayComposer` avec les colonnes qu'ils réclamaient — treize rôles, un
 > sous-rôle d'instrument, et un album qui pend de chacun de ses artistes
-> crédités. `sortName` était déjà arrivé avec la PR #123. Restent de ce point
-> les champs de sortie d'album (`originalReleaseDate`, `releaseDate`,
-> `releaseTypes[]`, `recordLabels[]`, `discTitles[]`), toujours absents et
-> toujours honnêtement déclarés tels.
+> crédités. `sortName` était déjà arrivé avec la PR #123. Les champs de sortie
+> d'album
+> (`originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]`,
+> `discTitles[]`) ont suivi le 24 août 2026 : les quatre premiers pendent de
+> l'album, `discTitles[]` se dérive des pistes disponibles comme les genres, et
+> les trois tableaux sont émis vides plutôt qu'absents. Les deux dates sont
+> omises quand aucun tag ne les nomme, comme le fait la référence — un
+> `ItemDate` sans année n'est pas une date, et les tableaux portent déjà le
+> signal de présence du groupe. **Ce point est clos.**
 >
 > La question de cadrage du §5.1 est close : les quatre clients ont été
 > rejoués le 23 août 2026 contre le modèle aligné, et
@@ -139,12 +144,11 @@ des dettes nommées plutôt que des défauts.
 1. **Le correctif OAuth durable** — porter les portées à travers la concession.
    Deux colonnes, deux migrations. Le chemin est fermé aujourd'hui ; ce qui
    reste, c'est que la propriété soit structurelle et non locale à une route.
-2. **Champs `AlbumID3` et `ArtistID3`** demandant des colonnes : `sortName` sur
-   les deux — le moins cher, le scanner lit déjà `sort_title` sur la piste —
-   puis `moods[]`, `explicitStatus`, `originalReleaseDate`, `releaseDate`,
-   `releaseTypes[]`, `recordLabels[]`, `discTitles[]`, `roles[]`, et
-   `contributors[]`/`displayComposer` côté piste. Absents plutôt que vides,
-   ce qui sous la règle de présence dit exactement « non supporté ».
+2. ~~**Champs `AlbumID3` et `ArtistID3`** demandant des colonnes.~~ Livrés :
+   `sortName` par la PR #123, `moods[]`, `explicitStatus`, `roles[]`,
+   `contributors[]` et `displayComposer` par la PR #126, puis
+   `originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` et
+   `discTitles[]` le 24 août 2026.
 3. **`song.parent` retombe sur `library_id`** sans album (`src/subsonic.rs:1706`) :
    un `getMusicDirectory` sur cet identifiant ne renverra pas la piste.
 4. **Deux inexactitudes de surface** : `getLicense` expire en dur au

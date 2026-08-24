@@ -119,6 +119,18 @@ pub struct CatalogTrackInput {
     pub moods: Option<String>,
     /// Normalised to `explicit` or `clean`; any other tag value is no value.
     pub explicit_status: Option<String>,
+    /// The two release dates, as the file spelled them. Kept as written and
+    /// taken apart only at the wire, where OpenSubsonic wants year, month and
+    /// day as separate numbers: a tag that names only a year must not be
+    /// reported as the first of January.
+    pub original_release_date: Option<String>,
+    pub release_date: Option<String>,
+    /// Multi-valued, split like `moods`.
+    pub release_types: Option<String>,
+    pub record_labels: Option<String>,
+    /// The title of the disc this track sits on. Track-level because an album
+    /// has one per disc, which is the whole point of the field.
+    pub disc_subtitle: Option<String>,
     pub artwork: Option<ArtworkInput>,
     pub lyrics_hash: String,
     pub lyrics: Vec<crate::lyrics::LyricsInput>,
@@ -1198,10 +1210,11 @@ impl Database {
                replay_gain_album_gain, replay_gain_album_peak, bpm, sort_title, sort_album, \
                comment, isrc, \
                moods, explicit_status, \
-               lyrics_hash, pid, is_available, last_seen_scan_id, created_at, updated_at) \
+               lyrics_hash, disc_subtitle, pid, is_available, last_seen_scan_id, \
+               created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                     ?, 1, ?, ?, ?) \
+                     ?, ?, 1, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET album_id=excluded.album_id, artwork_hash=excluded.artwork_hash, \
                relative_path=excluded.relative_path, file_size=excluded.file_size, \
                file_modified_at=excluded.file_modified_at, quick_hash=excluded.quick_hash, \
@@ -1222,7 +1235,8 @@ impl Database {
                comment=excluded.comment, \
                isrc=excluded.isrc, moods=excluded.moods, \
                explicit_status=excluded.explicit_status, \
-               lyrics_hash=excluded.lyrics_hash, pid=excluded.pid, \
+               lyrics_hash=excluded.lyrics_hash, disc_subtitle=excluded.disc_subtitle, \
+               pid=excluded.pid, \
                is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
@@ -1244,6 +1258,7 @@ impl Database {
         .bind(input.isrc.as_deref())
         .bind(input.moods.as_deref()).bind(input.explicit_status.as_deref())
         .bind(&input.lyrics_hash)
+        .bind(input.disc_subtitle.as_deref())
         .bind(track_pid(pid, library_id, input).to_string())
         .bind(scan_id.to_string()).bind(now).bind(now)
         .execute(&mut **tx).await?;
@@ -1735,8 +1750,10 @@ async fn upsert_album(
     );
     sqlx::query(
         "INSERT INTO album (id, library_id, title, canonical_title, album_artist_id, \
-           album_artist_name, is_compilation, year, artwork_hash, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+           album_artist_name, is_compilation, year, artwork_hash, \
+           original_release_date, release_date, release_types, record_labels, \
+           created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT (id) DO UPDATE SET title=excluded.title, \
            canonical_title=excluded.canonical_title, \
            album_artist_id=excluded.album_artist_id, \
@@ -1744,6 +1761,10 @@ async fn upsert_album(
            is_compilation=excluded.is_compilation, \
            year=COALESCE(excluded.year, album.year), \
            artwork_hash=COALESCE(excluded.artwork_hash, album.artwork_hash), \
+           original_release_date=COALESCE(album.original_release_date, excluded.original_release_date), \
+           release_date=COALESCE(album.release_date, excluded.release_date), \
+           release_types=COALESCE(album.release_types, excluded.release_types), \
+           record_labels=COALESCE(album.record_labels, excluded.record_labels), \
            updated_at=excluded.updated_at",
     )
     .bind(id.to_string())
@@ -1755,6 +1776,10 @@ async fn upsert_album(
     .bind(i64::from(input.is_compilation))
     .bind(input.year)
     .bind(artwork)
+    .bind(input.original_release_date.as_deref())
+    .bind(input.release_date.as_deref())
+    .bind(input.release_types.as_deref())
+    .bind(input.record_labels.as_deref())
     .bind(now)
     .bind(now)
     .execute(&mut **tx)
