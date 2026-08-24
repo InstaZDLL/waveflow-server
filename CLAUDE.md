@@ -24,13 +24,15 @@ cargo run                              # migrate, then serve on WAVEFLOW_BIND
 cargo fmt --all --check                # CI gate
 cargo clippy --all-targets --all-features -- -D warnings   # CI gate; warnings are errors
 cargo test --all-features              # hermetic; temporary SQLite databases
-cargo test --all-features --test v2_foundations <name>     # one test
+cargo test --all-features --test subsonic_contract <name>   # one test, in one target
 
 bun --cwd=webapp install
 bun run build                          # webapp first, then cargo — the order matters
 ```
 
 Tests need no service container: `test_app()` builds a `Config` over a `TempDir` and the suite drives the same router `main` serves. FFmpeg and ffprobe must be on `PATH`.
+
+The integration suite is twelve targets under `tests/`, one per subject — `auth`, `scanner`, `identity`, `catalog`, `subsonic_contract`, `subsonic_browse`, `subsonic_fields`, `subsonic_methods`, `native_api`, `sync`, `media`, `service` — sharing `tests/support/mod.rs`. That is a module and not a target: anything directly under `tests/` is compiled as its own test binary. File a new test by the surface it exercises, and check that by what it calls rather than by what its name says.
 
 `cargo build` works without a client build — `build.rs` embeds a placeholder page when `webapp/dist` is absent. A real `vite build` overwrites it.
 
