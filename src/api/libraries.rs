@@ -216,3 +216,46 @@ pub async fn scan_events(
     };
     Ok(Sse::new(output).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
+
+/// One page of a library's change feed.
+///
+/// The counterpart of `/api/v2/sync/changes` for catalogue state. Its cursor is
+/// a different sequence and advances for different reasons, so it is a separate
+/// route with a separate cursor rather than a widening of the other — a rescan
+/// must not move a client's position in its own user journal.
+#[utoipa::path(
+    get,
+    path = "/api/v2/libraries/{library_id}/events",
+    tag = "catalog",
+    params(
+        ("library_id" = Uuid, Path),
+        ("after" = Option<i64>, Query),
+        ("limit" = Option<i64>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::services::LibraryEventPage),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 409, body = ErrorResponse),
+        (status = 422, body = ErrorResponse)
+    )
+)]
+pub async fn library_events(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<SyncQuery>,
+) -> Result<Json<crate::services::LibraryEventPage>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .library_changes(
+            user.id,
+            library_id,
+            query.after.unwrap_or(0),
+            query.limit.unwrap_or(crate::sync::DEFAULT_SYNC_LIMIT),
+        )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}

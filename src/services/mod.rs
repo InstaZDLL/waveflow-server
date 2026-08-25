@@ -343,6 +343,31 @@ pub struct CatalogSnapshot {
     pub songs: Vec<SongItem>,
 }
 
+/// One fact about a library's catalogue, as its change feed tells it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LibraryEvent {
+    pub cursor: i64,
+    /// `track`, `album` or `artist` — the vocabulary is CHECK-constrained in
+    /// the schema because it is part of the contract.
+    pub entity_type: String,
+    pub entity_id: Uuid,
+    /// `upsert` or `delete`.
+    pub action: String,
+    /// For a track upsert, carries `full_hash`. Nothing else tells a client
+    /// that a file was retagged outside the API: the track keeps its id while
+    /// its bytes move.
+    pub payload: serde_json::Value,
+    pub changed_at: i64,
+}
+
+/// A page of one library's change feed.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LibraryEventPage {
+    pub events: Vec<LibraryEvent>,
+    pub next_cursor: i64,
+    pub has_more: bool,
+}
+
 /// Everything one account has starred, across the three entity kinds.
 #[derive(Debug, Clone)]
 pub struct StarredCatalog {
@@ -690,6 +715,7 @@ mod bookmarks;
 mod catalog;
 mod credentials;
 mod favorites;
+mod library_events;
 mod playback;
 mod playlists;
 mod scan;
