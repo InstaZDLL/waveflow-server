@@ -89,7 +89,9 @@ strict — Symfonium est en Kotlin — peut échouer dès le handshake sur un ob
 vide là où il attend une liste ; Feishin (TypeScript, tolérant) ne pouvait pas
 révéler l'écart. Corrigé dans `src/subsonic.rs` (`json_array_node`), XML
 inchangé, décision « liste vide » du RFC préservée, test de non-régression dans
-`tests/v2_foundations.rs`.
+`tests/v2_foundations.rs`. *Les deux ont été éclatés depuis : la fonction vit
+dans `src/subsonic/protocol.rs` (PR #137) et le test dans
+`tests/subsonic_contract.rs` (PR #142).*
 
 ### Procédure rejouable pour le test Symfonium (avec garde-fous)
 
