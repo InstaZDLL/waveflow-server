@@ -534,3 +534,43 @@ async fn startup_reports_missing_ffmpeg() {
     };
     assert!(error.to_string().contains("ffmpeg is required"));
 }
+
+/// A client cannot size its own concurrency against a ceiling it is not told.
+///
+/// `active` says how busy the server is; without the two limits it enforces, a
+/// caller can only find the line by crossing it — and a `429` costs a request
+/// while saying nothing about how far over it went.
+#[tokio::test]
+async fn transcode_status_reports_the_ceilings_it_enforces() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    state
+        .db
+        .create_account("headroom", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let token = login_token(&router, "headroom", password).await;
+
+    let response = router
+        .oneshot(
+            Request::get("/api/v2/transcode/status")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let status = json_body(response).await;
+    assert_eq!(status["active"], 0);
+    assert_eq!(status["global_limit"], config.transcode_global_limit);
+    assert_eq!(status["per_user_limit"], config.transcode_per_user_limit);
+    // The pair is only useful if it bounds anything, and the config refuses the
+    // other order at startup.
+    assert!(
+        config.transcode_per_user_limit <= config.transcode_global_limit,
+        "one account may not outrun the whole server"
+    );
+}

@@ -1222,6 +1222,15 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .to_str()
         .unwrap()
         .starts_with("image/"));
+    // The hash is the content, so the answer can never change and a client may
+    // stop revalidating. `private` is what the anonymous request below argues
+    // for: a shared cache keyed on this URL would serve one tenant's cover to
+    // another with no credential, and two libraries holding the same cover
+    // share its hash.
+    assert_eq!(
+        native_cover.headers()["cache-control"],
+        "private, max-age=31536000, immutable"
+    );
     // An entity id resolves too, so a client holding only a song need not first
     // read its hash.
     let by_song = router
