@@ -1222,7 +1222,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .to_str()
         .unwrap()
         .starts_with("image/"));
-    // The hash is the content, so the answer can never change and a client may
+    // Addressed by its own hash, the answer can never change and a client may
     // stop revalidating. `private` is what the anonymous request below argues
     // for: a shared cache keyed on this URL would serve one tenant's cover to
     // another with no credential, and two libraries holding the same cover
@@ -1231,6 +1231,8 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         native_cover.headers()["cache-control"],
         "private, max-age=31536000, immutable"
     );
+    let etag = native_cover.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(etag, format!("\"{artwork}\""));
     // An entity id resolves too, so a client holding only a song need not first
     // read its hash.
     let by_song = router
@@ -1244,6 +1246,26 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .await
         .unwrap();
     assert_eq!(by_song.status(), StatusCode::OK);
+    // The same bytes, but not the same resource: this URL resolves whichever
+    // cover the song carries *now*, and a rescan finding new embedded art moves
+    // it. Freezing it for a year would serve a replaced cover until the cache
+    // expired, so the alias stays revalidatable — cheaply, because the hash is
+    // its validator.
+    assert_eq!(by_song.headers()["cache-control"], "private, no-cache");
+    assert_eq!(by_song.headers()["etag"].to_str().unwrap(), etag);
+    let unchanged = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/artwork/{song}"))
+                .header("authorization", format!("Bearer {native_token}"))
+                .header("if-none-match", &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(unchanged.headers()["cache-control"], "private, no-cache");
     // No bearer, no cover: the image is not public just because the hash is
     // unguessable.
     let anonymous_cover = router
