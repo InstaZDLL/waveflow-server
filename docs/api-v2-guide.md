@@ -349,6 +349,49 @@ Valid formats are `raw`, `mp3` and `opus`. Byte ranges apply to originals and
 completed cached transcodes. A live transcode uses temporal `offset_ms` and a
 chunked response; it does not implement arbitrary output-byte ranges.
 
+### Learning that a catalogue changed
+
+`/api/v2/sync/changes` converges **user** state — favourites, ratings, play
+history, playlists, shares, bookmarks, the queue. It says nothing about the
+catalogue, and never has.
+
+`GET /api/v2/libraries/{library_id}/events?after=&limit=` is the counterpart for
+**library** state. Its cursor is a different sequence and advances for different
+reasons, so it is a separate route with a separate cursor: a rescan must not move
+a client's position in its own user journal.
+
+```json
+{
+  "events": [
+    {
+      "cursor": 41,
+      "entity_type": "track",
+      "entity_id": "…",
+      "action": "upsert",
+      "payload": { "full_hash": "…" },
+      "changed_at": 1756142400000
+    }
+  ],
+  "next_cursor": 41,
+  "has_more": false
+}
+```
+
+A track `upsert` carries the file's `full_hash`, and it is the only place on the
+wire that does. **A file retagged outside the API keeps its track id while its
+bytes move** — the scan's skip test compares hashes, so different bytes make it
+apply the track again. A client holding a content-based link has no other way to
+learn its link went stale.
+
+Membership is read on every request. A caller who is not a member of the library
+gets `404`, not `403`, and a member who loses access stops receiving on the next
+request — there is no subscriber list to fall out of step. A cursor that precedes
+the oldest retained event answers `409`: the feed refuses to hand back a
+surviving tail that would look like a successful catch-up, and the client re-reads
+the catalogue instead.
+
+See [RFC-007](rfcs/RFC-007-library-event-stream.md) for the reasoning.
+
 ### When a transcode is refused
 
 Transcoding is bounded twice: once for the whole server and once per account.
@@ -527,6 +570,7 @@ is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
 same answer as for a library that does not exist. Reading the catalogue is
 unaffected.
 | FFmpeg status and transcode headroom | `GET /api/v2/transcode/status` |
+| Library change feed | `GET /api/v2/libraries/{library_id}/events` |
 
 Creating a library starts its first scan and returns both `library_id` and
 `scan_id`. The scan event route uses Server-Sent Events and still requires the
