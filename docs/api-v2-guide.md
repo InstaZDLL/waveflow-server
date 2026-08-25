@@ -299,13 +299,26 @@ curl https://music.example.com/api/v2/artwork/ARTWORK_HASH \
   --output cover.jpg
 ```
 
-The answer carries `Cache-Control: private, max-age=31536000, immutable`. The
-hash *is* the content, so what a given URL returns can never change and a client
-should never revalidate it. It stays `private`, and will not become `public`:
-the route is authenticated and tenant-checked, and two accounts whose libraries
-hold the same cover share its hash — a shared cache keyed on the URL would hand
-one tenant's artwork to another with no credential presented. A private cache is
-the client's own and loses nothing by the restriction.
+**The two forms cache differently, because they are not the same resource.**
+
+Addressed by an `artwork_hash`, the hash *is* the content: the URL can never
+answer differently, and it carries
+`Cache-Control: private, max-age=31536000, immutable` so a client stops asking
+altogether.
+
+Addressed by a track, album or artist ID, the lookup resolves whichever cover
+that entity carries **now** — a rescan finding new embedded art moves it. Those
+carry `Cache-Control: private, no-cache` and stay revalidatable. Both forms send
+an `ETag` of the artwork hash and honour `If-None-Match`, so revalidating an
+alias costs a `304` rather than a second transfer of the same bytes. A client
+that wants the cheap form should read `artwork_hash` off the song and address
+the canonical URL.
+
+Neither form is `public`, and neither will become so: the route is authenticated
+and tenant-checked, and two accounts whose libraries hold the same cover share
+its hash — a shared cache keyed on the URL would hand one tenant's artwork to
+another with no credential presented. A private cache is the client's own and
+loses nothing by the restriction.
 
 Lyrics return embedded or UTF-8 `.lrc`/`.txt` sidecar content. Synchronized
 line starts are milliseconds; plain lines omit `start`:

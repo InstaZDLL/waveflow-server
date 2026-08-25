@@ -42,6 +42,12 @@ const TRANSCODE_PROFILE_VERSION: &str = "waveflow-ffmpeg-v1";
 /// ticket, so the same URL means different things to different callers. No
 /// shared cache may retain a copy.
 const MEDIA_CACHE_CONTROL: &str = "private, no-store";
+/// Artwork addressed by its own hash: the bytes behind the URL cannot change,
+/// so a client never needs to ask again.
+const ARTWORK_CANONICAL_CACHE: &str = "private, max-age=31536000, immutable";
+/// Artwork addressed by a track, album or artist: the URL resolves whichever
+/// cover that entity carries *now*, and a rescan can move it.
+const ARTWORK_ALIAS_CACHE: &str = "private, no-cache";
 
 #[derive(Clone)]
 pub struct MediaService {
@@ -553,32 +559,70 @@ pub async fn artwork(
             MediaError::Internal
         })?
         .ok_or(MediaError::NotFound)?;
+
+    // How the URL was addressed decides what a client may do with the answer,
+    // and the two forms are not the same resource.
+    //
+    // Addressed by hash, the hash *is* the content: this URL can never answer
+    // differently, so a client should stop revalidating it entirely. Addressed
+    // by a track, album or artist id, the lookup above resolved that entity's
+    // *current* cover — and a rescan that finds new embedded art moves it. The
+    // alias must stay revalidatable or a replaced cover would be frozen in
+    // every client's cache for a year.
+    //
+    // `private` on both, and neither becomes `public`: the route is
+    // authenticated and tenant-checked, and two accounts whose libraries hold
+    // the same cover share its hash, so a shared cache keyed on the URL would
+    // hand one tenant's artwork to another with no credential in sight. A
+    // private cache is the client's own and loses nothing by the restriction.
+    let cache_control = if artwork_id == hash {
+        ARTWORK_CANONICAL_CACHE
+    } else {
+        ARTWORK_ALIAS_CACHE
+    };
+    // The validator is the hash either way, which is what makes revalidating an
+    // alias a 304 rather than a second full transfer of the same bytes.
+    let etag = format!("\"{hash}\"");
+    if if_none_match_hits(&headers, &etag) {
+        return Ok((
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::CACHE_CONTROL, cache_control.to_owned()),
+                (header::ETAG, etag),
+            ],
+        )
+            .into_response());
+    }
+
     let (mime, bytes) = read_artwork(&state.artwork_dir, &hash, &format)
         .await
         .ok_or(MediaError::NotFound)?;
     Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, mime),
-            // The hash *is* the content, so what this URL answers can never
-            // change. `immutable` is what tells a client's own cache to stop
-            // revalidating, which is the round trip a desktop pays on every
-            // cover it draws.
-            //
-            // `private` is not an oversight and does not become `public`. This
-            // route is authenticated and tenant-checked, and two accounts whose
-            // libraries hold the same cover share its hash — a shared cache
-            // keyed on the URL would hand one tenant's artwork to another with
-            // no credential in sight. A private cache is the client's own, so
-            // it loses nothing by the restriction.
-            (
-                header::CACHE_CONTROL,
-                "private, max-age=31536000, immutable",
-            ),
+            (header::CONTENT_TYPE, mime.to_owned()),
+            (header::CACHE_CONTROL, cache_control.to_owned()),
+            (header::ETAG, etag),
         ],
         bytes,
     )
         .into_response())
+}
+
+/// Whether the request already holds this exact entity.
+///
+/// `*` matches anything the client has, which for a single-representation
+/// resource is this one.
+fn if_none_match_hits(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|candidate| candidate == etag || candidate == "*")
+        })
 }
 
 #[utoipa::path(
