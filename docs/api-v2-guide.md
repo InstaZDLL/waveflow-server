@@ -299,6 +299,14 @@ curl https://music.example.com/api/v2/artwork/ARTWORK_HASH \
   --output cover.jpg
 ```
 
+The answer carries `Cache-Control: private, max-age=31536000, immutable`. The
+hash *is* the content, so what a given URL returns can never change and a client
+should never revalidate it. It stays `private`, and will not become `public`:
+the route is authenticated and tenant-checked, and two accounts whose libraries
+hold the same cover share its hash — a shared cache keyed on the URL would hand
+one tenant's artwork to another with no credential presented. A private cache is
+the client's own and loses nothing by the restriction.
+
 Lyrics return embedded or UTF-8 `.lrc`/`.txt` sidecar content. Synchronized
 line starts are milliseconds; plain lines omit `start`:
 
@@ -327,6 +335,26 @@ curl "https://music.example.com/api/v2/tracks/TRACK_UUID/stream?format=opus&bitr
 Valid formats are `raw`, `mp3` and `opus`. Byte ranges apply to originals and
 completed cached transcodes. A live transcode uses temporal `offset_ms` and a
 chunked response; it does not implement arbitrary output-byte ranges.
+
+### When a transcode is refused
+
+Transcoding is bounded twice: once for the whole server and once per account.
+`GET /api/v2/transcode/status` reports both ceilings alongside `active`, so a
+client can size its own concurrency before asking rather than discovering the
+limit by being refused:
+
+```json
+{ "available": true, "active": 1, "global_limit": 4, "per_user_limit": 2 }
+```
+
+Over either ceiling the stream route answers `429` with `Retry-After`.
+**Honour it — do not fall back to `format=raw`.** A `429` means transcoding
+capacity is saturated, and the original is several times the bytes of the
+transcode that was refused: falling back replaces a bounded CPU cost with an
+unbounded one on the network, over the very link that made transcoding
+desirable, at the moment every other client is doing the same. Retry with
+jitter and a bounded number of attempts; drop to `raw` only after those are
+spent, only where the link can carry it, and say so in the interface.
 
 Browser media elements cannot attach a Bearer header. Mint a sealed ticket,
 then resolve the returned relative URL against the same server origin:
@@ -485,7 +513,7 @@ takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
 is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
 same answer as for a library that does not exist. Reading the catalogue is
 unaffected.
-| FFmpeg status | `GET /api/v2/transcode/status` |
+| FFmpeg status and transcode headroom | `GET /api/v2/transcode/status` |
 
 Creating a library starts its first scan and returns both `library_id` and
 `scan_id`. The scan event route uses Server-Sent Events and still requires the
@@ -574,7 +602,7 @@ Native JSON errors use:
 | 409 | `conflict` | The operation ID was reused for another intent; reconcile and use a new ID only for a genuinely new operation. |
 | 409 | `cursor_expired` | Discard the sync projection and take a fresh snapshot. |
 | 422 | `validation_error` | Correct the request; retrying it unchanged cannot succeed. |
-| 429 | media response | Back off; a transcode concurrency limit was reached. |
+| 429 | media response | Back off and honour `Retry-After`; a transcode concurrency limit was reached. |
 | 503 | `service_unavailable` | Retry with bounded exponential backoff. |
 
 Never branch on status `409` alone: its two codes require opposite recovery

@@ -54,6 +54,7 @@ struct MediaInner {
     cache_dir: PathBuf,
     cache_max_bytes: u64,
     global: Arc<Semaphore>,
+    global_limit: usize,
     per_user_limit: usize,
     users: DashMap<Uuid, Arc<Semaphore>>,
     cache_locks: DashMap<String, Arc<Mutex<()>>>,
@@ -109,6 +110,7 @@ impl MediaService {
                 cache_dir: config.transcode_cache_dir.clone(),
                 cache_max_bytes: config.transcode_cache_max_bytes,
                 global: Arc::new(Semaphore::new(config.transcode_global_limit)),
+                global_limit: config.transcode_global_limit,
                 per_user_limit: config.transcode_per_user_limit,
                 users: DashMap::new(),
                 cache_locks: DashMap::new(),
@@ -125,6 +127,16 @@ impl MediaService {
 
     pub fn active_transcodes(&self) -> usize {
         self.inner.active_transcodes.load(Ordering::Relaxed)
+    }
+
+    /// The two ceilings a `429` on the stream route is enforcing: the whole
+    /// server's, then one account's.
+    ///
+    /// Reported so a client can size its own concurrency before asking. Without
+    /// them the only way to find the limit is to be refused by it, which costs
+    /// a request and says nothing about how far over the line the caller was.
+    pub fn transcode_limits(&self) -> (usize, usize) {
+        (self.inner.global_limit, self.inner.per_user_limit)
     }
 
     /// The service is only constructed after both FFmpeg tools pass startup
@@ -548,9 +560,21 @@ pub async fn artwork(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, mime),
-            // Immutable in practice: the hash *is* the content. Kept private so
-            // a shared cache never serves one tenant's cover to another.
-            (header::CACHE_CONTROL, "private, max-age=86400"),
+            // The hash *is* the content, so what this URL answers can never
+            // change. `immutable` is what tells a client's own cache to stop
+            // revalidating, which is the round trip a desktop pays on every
+            // cover it draws.
+            //
+            // `private` is not an oversight and does not become `public`. This
+            // route is authenticated and tenant-checked, and two accounts whose
+            // libraries hold the same cover share its hash — a shared cache
+            // keyed on the URL would hand one tenant's artwork to another with
+            // no credential in sight. A private cache is the client's own, so
+            // it loses nothing by the restriction.
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
         ],
         bytes,
     )
@@ -1096,6 +1120,7 @@ mod tests {
             cache_dir: temp.path().to_path_buf(),
             cache_max_bytes: 4,
             global: Arc::new(Semaphore::new(1)),
+            global_limit: 1,
             per_user_limit: 1,
             users: DashMap::new(),
             cache_locks: DashMap::new(),

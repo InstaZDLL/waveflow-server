@@ -39,6 +39,12 @@ pub struct HistoryQuery {
 pub struct TranscodeStatusResponse {
     pub available: bool,
     pub active: usize,
+    /// How many transcodes the whole server may run at once, and how many one
+    /// account may. `active` alone says how busy the server is without saying
+    /// how busy it is allowed to get, so a client had no way to size its own
+    /// concurrency except by being refused.
+    pub global_limit: usize,
+    pub per_user_limit: usize,
 }
 
 #[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
@@ -146,8 +152,11 @@ pub async fn transcode_status(
     headers: HeaderMap,
 ) -> Result<Json<TranscodeStatusResponse>, ApiError> {
     authenticated(&state, &headers, Access::Read).await?;
+    let (global_limit, per_user_limit) = state.media.transcode_limits();
     Ok(Json(TranscodeStatusResponse {
         available: state.media.transcoding_available(),
         active: state.media.active_transcodes(),
+        global_limit,
+        per_user_limit,
     }))
 }
