@@ -187,3 +187,9 @@ sémantique aussi : l'événement ne parle pas de l'utilisateur.
 - La forme exacte de l'acquittement. Le journal utilisateur acquitte par
   `(compte, appareil)` ; l'équivalent ici est `(appareil, bibliothèque)`, mais
   la table qui le porte reste à décider.
+- **L'appareil d'origine.** La table n'en porte pas, au motif écrit dans sa
+  migration qu'aucune ligne ne vient d'un client. L'écriture de métadonnées a
+  rendu ce motif faux, et la réception d'un fichier ([RFC-008](RFC-008-receiving-a-file.md))
+  l'éloigne encore : sans cette colonne, un client reçoit sa propre écriture par
+  le flux et la traite comme une découverte. `sync_event` porte
+  `origin_device_id` depuis son premier jour, exactement pour cela.
