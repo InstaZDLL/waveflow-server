@@ -1,0 +1,18 @@
+-- Where a library's change feed has actually been cut.
+--
+-- The read had derived its expiry floor from `MIN(cursor)` over the whole feed,
+-- copying the user journal. The journal says in its own comment why that only
+-- holds for a policy that trims the head for everyone: deriving a floor from the
+-- rows that survive cannot distinguish "purged" from "never written".
+--
+-- Retention here is per library, so the derived floor would be wrong in a way
+-- that gets worse with use. Trim library A and the global minimum rises above
+-- library B's oldest surviving event — B's clients would then be told a cursor
+-- they never advanced past had expired, and sent to re-read a catalogue that had
+-- not moved.
+--
+-- A watermark records what was removed rather than inferring it from what
+-- stayed. Nothing purges yet, so it sits at 0 and no cursor can precede it; the
+-- column exists now because without it the expiry answer is either dead or
+-- wrong, and clients have to handle it from the first release either way.
+ALTER TABLE library ADD COLUMN events_purged_through INTEGER NOT NULL DEFAULT 0;
