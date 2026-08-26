@@ -1627,6 +1627,60 @@ async fn a_corrected_artist_agrees_with_itself_everywhere() {
         stale.songs.iter().map(|song| song.id).collect::<Vec<_>>()
     );
 
+    // Dropping one list while keeping the other. Treating the pair together
+    // would leave the dropped one corrected, which is the same hole as the
+    // wholesale case seen one field at a time.
+    let patch_body = |body: serde_json::Value| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::patch(format!("/api/v2/tracks/{track_id}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    };
+    let names = |song: &waveflow_server::services::SongItem| {
+        song.artists
+            .iter()
+            .map(|artist| artist.name.clone())
+            .collect::<Vec<_>>()
+    };
+
+    patch_body(serde_json::json!({ "artists": ["Solo"], "genres": ["Ambient"] })).await;
+    patch_body(serde_json::json!({ "artists": ["Solo"] })).await;
+    let one_dropped = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(names(&one_dropped[0]), vec!["Solo".to_owned()], "kept");
+    assert_eq!(
+        one_dropped[0].genres,
+        vec!["Electronic".to_owned(), "Test".to_owned()],
+        "the dropped list goes back to the file while the kept one stays"
+    );
+
+    patch_body(serde_json::json!({ "genres": ["Ambient"] })).await;
+    let other_dropped = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        names(&other_dropped[0]),
+        vec!["Alpha".to_owned(), "Beta".to_owned()],
+        "and the same the other way round"
+    );
+    assert_eq!(other_dropped[0].genres, vec!["Ambient".to_owned()]);
+
     // Removing the correction hands the track back to its file. The rows the
     // correction wrote replaced what the tags said, so this can only be right
     // by re-reading them — and it must not wait for a scan.
