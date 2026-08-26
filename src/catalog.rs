@@ -1109,7 +1109,7 @@ impl Database {
                     &mut tx,
                     self.pid(),
                     library_id,
-                    scan_id,
+                    Some(scan_id),
                     apply,
                     now,
                 )
@@ -1125,11 +1125,27 @@ impl Database {
     /// land in the same transaction that removes it: re-deriving afterwards
     /// would leave a window where the correction is gone and the rows it wrote
     /// are not.
+    /// Writes one track into the catalogue.
+    ///
+    /// `scan_id` is optional, and `None` has a precise meaning: **this row did
+    /// not come from a scan**. It is not "the scan is unknown". A received file
+    /// is applied through this same path so that what lands is by construction
+    /// what a scan would have written — but no scan walked for it, and saying
+    /// otherwise would put a fact in the scan history that never happened.
+    ///
+    /// The helpers above take a real id because they are the scanner's, and a
+    /// scan always has one. This primitive does not: applying to the catalogue
+    /// is not intrinsically a scanner operation, and the signature is where
+    /// that stops being implied.
+    ///
+    /// [`Database::mark_unseen_unavailable`] is the other half of this
+    /// meaning: a row that never came from a scan must not be swept as one a
+    /// scan failed to find.
     pub(crate) async fn apply_catalog_track_in_transaction(
         tx: &mut Transaction<'_, Sqlite>,
         pid: &crate::pid::PidSpecs,
         library_id: Uuid,
-        scan_id: Uuid,
+        scan_id: Option<Uuid>,
         apply: &CatalogApply,
         now: i64,
     ) -> Result<ApplyOutcome, sqlx::Error> {
@@ -1294,7 +1310,7 @@ impl Database {
         .bind(&input.lyrics_hash)
         .bind(input.disc_subtitle.as_deref())
         .bind(track_pid(pid, library_id, input).to_string())
-        .bind(scan_id.to_string()).bind(now).bind(now)
+        .bind(scan_id.map(|id| id.to_string())).bind(now).bind(now)
         .execute(&mut **tx).await?;
 
         sqlx::query("DELETE FROM track_lyrics WHERE track_id = ?")
@@ -1435,15 +1451,38 @@ impl Database {
         let mut tx = self.pool().begin().await?;
         // `RETURNING` rather than a count: the feed needs to name what
         // disappeared, and a number cannot.
+        // Two ways a track can be one this scan did not find, and they are not
+        // the same fact.
+        //
+        // A track another scan stamped is the ordinary case: the walk covered
+        // the library and this one was not in it, so its file is gone.
+        //
+        // A track no scan ever stamped is the other, and it now has a meaning —
+        // `apply_catalog_track_in_transaction` writes NULL for a row that did
+        // not come from a scan, which is what a received file is. Sweeping it
+        // for not having been walked over would mark a file that is on disk as
+        // gone, and announce a deletion to every client seconds after
+        // announcing its arrival: a scan running when the file lands started
+        // its walk before the file existed.
+        //
+        // So an unstamped track is only swept when it predates this scan, which
+        // is the case where the walk genuinely should have found it. The first
+        // scan to walk past a received file stamps it, and it rejoins the
+        // ordinary case for good.
         let gone: Vec<String> = sqlx::query_scalar(
             "UPDATE track SET is_available = 0, updated_at = ? \
              WHERE library_id = ? AND is_available = 1 \
-               AND (last_seen_scan_id IS NULL OR last_seen_scan_id <> ?) \
+               AND ((last_seen_scan_id IS NOT NULL AND last_seen_scan_id <> ?) \
+                 OR (last_seen_scan_id IS NULL \
+                     AND created_at < COALESCE( \
+                       (SELECT started_at FROM scan_job WHERE id = ?), ?))) \
              RETURNING id",
         )
         .bind(now)
         .bind(library_id.to_string())
         .bind(scan_id.to_string())
+        .bind(scan_id.to_string())
+        .bind(now)
         .fetch_all(&mut *tx)
         .await?;
         for id in &gone {

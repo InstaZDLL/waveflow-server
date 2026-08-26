@@ -1502,3 +1502,145 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
         Some("")
     );
 }
+
+/// A track no scan ever stamped is not a track a scan failed to find.
+///
+/// `apply_catalog_track_in_transaction` writes a NULL scan for a row that did
+/// not come from a scan — a received file. A scan that starts its walk before
+/// that file exists cannot find it, and sweeping it would mark a file that is
+/// on disk as gone and announce a deletion to every client. A row that predates
+/// the scan is the other case: the walk should have found it, and it is swept
+/// as before.
+#[tokio::test]
+async fn a_row_that_never_came_from_a_scan_is_swept_only_if_it_predates_it() {
+    let (_temp, config, state) = test_app().await;
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("unstamped", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("unstamped");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Unstamped",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    let seed = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(seed, 2, false).await.unwrap();
+    let mut older = browse_input(
+        90_001,
+        "Older",
+        "Unstamped album",
+        "Unstamped artist",
+        Some(1),
+        Some(1),
+    );
+    older.full_hash = format!("{:064x}", 0x9001);
+    let mut newer = browse_input(
+        90_002,
+        "Newer",
+        "Unstamped album",
+        "Unstamped artist",
+        Some(2),
+        Some(1),
+    );
+    newer.full_hash = format!("{:064x}", 0x9002);
+    for input in [&older, &newer] {
+        state
+            .db
+            .apply_catalog_track(library, seed, input, None, false)
+            .await
+            .unwrap();
+    }
+
+    // The scan that will do the sweeping, and the moment it began.
+    let sweeper = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(sweeper, 0, false).await.unwrap();
+    let started_at: i64 = sqlx::query_scalar("SELECT started_at FROM scan_job WHERE id=?")
+        .bind(sweeper.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+
+    // Both rows lose their scan stamp — the state a received file is written
+    // in — and are placed either side of the moment the walk began.
+    sqlx::query(
+        "UPDATE track SET last_seen_scan_id=NULL, created_at=? \
+         WHERE library_id=? AND full_hash=?",
+    )
+    .bind(started_at - 1)
+    .bind(library.to_string())
+    .bind(format!("{:064x}", 0x9001))
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE track SET last_seen_scan_id=NULL, created_at=? \
+         WHERE library_id=? AND full_hash=?",
+    )
+    .bind(started_at + 1)
+    .bind(library.to_string())
+    .bind(format!("{:064x}", 0x9002))
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+
+    let swept = state
+        .db
+        .mark_unseen_unavailable(library, sweeper)
+        .await
+        .unwrap();
+
+    assert_eq!(swept, 1, "only the row that predates the walk is gone");
+    let still_here: i64 =
+        sqlx::query_scalar("SELECT is_available FROM track WHERE library_id=? AND full_hash=?")
+            .bind(library.to_string())
+            .bind(format!("{:064x}", 0x9002))
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        still_here, 1,
+        "a file that landed after the walk began is not one the walk failed to find"
+    );
+    let predating: i64 =
+        sqlx::query_scalar("SELECT is_available FROM track WHERE library_id=? AND full_hash=?")
+            .bind(library.to_string())
+            .bind(format!("{:064x}", 0x9001))
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        predating, 0,
+        "a row the walk should have found is still swept"
+    );
+
+    // And the sweep must have said so on the feed, once.
+    let deletes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_event \
+         WHERE library_id=? AND action='delete' AND entity_type='track'",
+    )
+    .bind(library.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(deletes, 1);
+}
