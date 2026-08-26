@@ -1138,6 +1138,41 @@ impl Database {
         let credits = track_credits(input);
         let moved = apply.moved;
         let track_id = existing_id.unwrap_or_else(Uuid::new_v4);
+        // A track that already exists may carry corrections, and a scan must
+        // not undo them. Only its own `artist` credits are displaced: a
+        // composer or a conductor comes from the file and nobody corrected it.
+        let overrides = track_override_lists(tx, track_id).await?;
+        let credits = match &overrides.artists {
+            None => credits,
+            Some(names) => {
+                let mut kept: Vec<crate::tags::Credit> = credits
+                    .into_iter()
+                    .filter(|credit| credit.role != crate::tags::Role::Artist)
+                    .collect();
+                for (position, name) in names.iter().enumerate() {
+                    kept.push(crate::tags::Credit {
+                        role: crate::tags::Role::Artist,
+                        sub_role: String::new(),
+                        name: name.clone(),
+                        sort_name: None,
+                        position,
+                    });
+                }
+                kept
+            }
+        };
+        // The display strings follow the correction too, or a track would read
+        // one way in a listing and another in its own row.
+        let artist_display = overrides
+            .artists
+            .as_ref()
+            .map(|names| names.join("; "))
+            .or_else(|| input.artist.clone());
+        let genre_display = overrides
+            .genres
+            .as_ref()
+            .map(|names| names.join("; "))
+            .or_else(|| input.genre.clone());
         let artwork_hash = upsert_artwork(tx, input.artwork.as_ref(), now).await?;
         // The credits arrive already split, already paired with their sort
         // forms and already carrying the album-artist fallback — that is the
@@ -1192,7 +1227,10 @@ impl Database {
             now,
         )
         .await?;
-        let genres = split_values(input.genre.as_deref());
+        let genres = overrides
+            .genres
+            .clone()
+            .unwrap_or_else(|| split_values(genre_display.as_deref()));
         let mut genre_ids = Vec::with_capacity(genres.len());
         for genre in &genres {
             genre_ids.push(upsert_genre(tx, library_id, genre, now).await?);
@@ -1241,7 +1279,7 @@ impl Database {
         .bind(album_id.map(|id| id.to_string())).bind(artwork_hash.as_deref())
         .bind(&input.relative_path).bind(input.file_size).bind(input.modified_at)
         .bind(&input.quick_hash).bind(&input.full_hash).bind(&input.title)
-        .bind(input.album.as_deref()).bind(input.artist.as_deref()).bind(input.genre.as_deref())
+        .bind(input.album.as_deref()).bind(artist_display.as_deref()).bind(genre_display.as_deref())
         .bind(input.year).bind(input.track_number).bind(input.disc_number).bind(input.duration_ms)
         .bind(input.bitrate).bind(input.sample_rate).bind(input.channels).bind(input.bit_depth)
         .bind(input.codec.as_deref()).bind(input.musical_key.as_deref()).bind(input.tag_rating)
@@ -1357,8 +1395,9 @@ impl Database {
             names.join(" ")
         };
         sqlx::query("INSERT INTO track_fts (track_id, library_id, title, album, artists, genres) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(track_id.to_string()).bind(library_id.to_string()).bind(&input.title)
-            .bind(input.album.as_deref()).bind(&searchable).bind(input.genre.as_deref())
+            .bind(track_id.to_string()).bind(library_id.to_string())
+            .bind(overrides.title.as_deref().unwrap_or(input.title.as_str()))
+            .bind(input.album.as_deref()).bind(&searchable).bind(genre_display.as_deref())
             .execute(&mut **tx).await?;
         // The hash travels with the event because nothing else carries it. A
         // client that confirmed a link against this track has no other way to
@@ -1865,6 +1904,108 @@ async fn move_artist_user_data(
         .execute(&mut **tx)
         .await?;
     Ok(moved)
+}
+
+/// The corrections a scan has to respect while re-deriving a track.
+///
+/// The title is here as well as the two lists, and not because the track row
+/// needs it — the projection reads the correction over that row. The full-text
+/// index does not have a projection: it is a copy, rebuilt from the file by
+/// every full scan, so a correction that never reached it would leave the track
+/// findable only under the name it was corrected away from.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TrackOverrideLists {
+    pub title: Option<String>,
+    pub artists: Option<Vec<String>>,
+    pub genres: Option<Vec<String>>,
+}
+
+impl TrackOverrideLists {
+    fn decode(raw: Option<String>) -> Result<Option<Vec<String>>, sqlx::Error> {
+        raw.map(|value| {
+            serde_json::from_str::<Vec<String>>(&value)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))
+        })
+        .transpose()
+    }
+}
+
+/// Reads a track's list corrections, if it carries any.
+pub(crate) async fn track_override_lists(
+    tx: &mut Transaction<'_, Sqlite>,
+    track_id: Uuid,
+) -> Result<TrackOverrideLists, sqlx::Error> {
+    let row = sqlx::query("SELECT title, artists, genres FROM track_override WHERE track_id = ?")
+        .bind(track_id.to_string())
+        .fetch_optional(&mut **tx)
+        .await?;
+    let Some(row) = row else {
+        return Ok(TrackOverrideLists::default());
+    };
+    Ok(TrackOverrideLists {
+        title: row.try_get("title")?,
+        artists: TrackOverrideLists::decode(row.try_get("artists")?)?,
+        genres: TrackOverrideLists::decode(row.try_get("genres")?)?,
+    })
+}
+
+/// Writes the rows an explicit list of artists or genres implies.
+///
+/// Deliberately not the tag mapper's path. That exists to guess where one name
+/// ends in a string a tagger wrote however it liked; a correction arrives
+/// already separated, so parsing it again would only reintroduce the ambiguity
+/// it was made to settle.
+///
+/// Only the `artist` role is rewritten. A composer or a conductor comes from
+/// the file and is untouched by someone correcting who performed the track,
+/// which is why the delete is narrowed rather than wholesale.
+pub(crate) async fn apply_track_override_lists(
+    tx: &mut Transaction<'_, Sqlite>,
+    pid: &crate::pid::PidSpecs,
+    library_id: Uuid,
+    track_id: Uuid,
+    lists: &TrackOverrideLists,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    if let Some(names) = &lists.artists {
+        sqlx::query("DELETE FROM track_participant WHERE track_id = ? AND role = 'artist'")
+            .bind(track_id.to_string())
+            .execute(&mut **tx)
+            .await?;
+        for (position, name) in names.iter().enumerate() {
+            let artist_id = upsert_artist(tx, pid, library_id, name, now).await?;
+            sqlx::query(
+                "INSERT INTO track_participant \
+                   (track_id, artist_id, library_id, role, sub_role, position, sort_name) \
+                 VALUES (?, ?, ?, 'artist', '', ?, NULL) \
+                 ON CONFLICT (track_id, artist_id, role, sub_role) DO NOTHING",
+            )
+            .bind(track_id.to_string())
+            .bind(artist_id.to_string())
+            .bind(library_id.to_string())
+            .bind(position as i64)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    if let Some(names) = &lists.genres {
+        sqlx::query("DELETE FROM track_genre WHERE track_id = ?")
+            .bind(track_id.to_string())
+            .execute(&mut **tx)
+            .await?;
+        for name in names {
+            let genre_id = upsert_genre(tx, library_id, name, now).await?;
+            sqlx::query(
+                "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?)",
+            )
+            .bind(track_id.to_string())
+            .bind(genre_id.to_string())
+            .bind(library_id.to_string())
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Appends one fact to a library's change feed.

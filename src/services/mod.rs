@@ -367,6 +367,13 @@ pub struct TrackMetadataPatch {
     pub disc_number: Option<i64>,
     pub musicbrainz_recording_id: Option<String>,
     pub comment: Option<String>,
+    /// The track's artists, in order, and its genres. Explicit lists rather
+    /// than the `;`-joined string a file carries: that form exists because a
+    /// tagger writes names however it likes and the mapper has to guess where
+    /// one ends, which is not a guess worth reintroducing on a list someone
+    /// typed on purpose.
+    pub artists: Option<Vec<String>>,
+    pub genres: Option<Vec<String>>,
 }
 
 /// One fact about a library's catalogue, as its change feed tells it.
