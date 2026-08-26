@@ -74,3 +74,41 @@ pub async fn get_track_lyrics(
         .map(Json)
         .map_err(service_error)
 }
+
+/// Replaces the corrections a track carries.
+///
+/// The body is the complete set: a field left out is not overridden, and
+/// sending an empty object clears every correction. That is a tag editor's
+/// shape — it submits its whole form — and it means clearing a field is saying
+/// nothing about it rather than sending a null that has to mean something
+/// special.
+///
+/// The file on disk is never written. `full_hash` therefore does not move, so a
+/// client holding a content-based link to this track still holds it afterwards.
+#[utoipa::path(
+    patch,
+    path = "/api/v2/tracks/{track_id}",
+    tag = "catalog",
+    params(("track_id" = Uuid, Path)),
+    request_body = crate::services::TrackMetadataPatch,
+    responses(
+        (status = 200, body = crate::services::SongItem),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 422, body = ErrorResponse)
+    )
+)]
+pub async fn update_track(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(patch): Json<crate::services::TrackMetadataPatch>,
+) -> Result<Json<crate::services::SongItem>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    state
+        .services
+        .set_track_metadata(user.id, track_id, patch)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
