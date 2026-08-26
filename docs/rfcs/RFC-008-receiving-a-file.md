@@ -38,6 +38,20 @@ Un rôle `Uploader` distinct — un membre qui téléverse sans pouvoir rescanne
 est concevable et n'est pas inventé ici. Les deux verrous existants suffisent à
 commencer ; un troisième se décide quand un usage le réclame, pas avant.
 
+Les deux verrous sont réévalués **à chaque étape** : la négociation, chaque
+fragment, la validation. Une session n'est pas une autorisation qu'on emporte.
+
+Le serveur a déjà cette règle ailleurs, et pour la même raison : un ticket de
+lecture rejoue la vérification d'appartenance à chaque redemption, « so revoking
+access takes effect immediately instead of lasting until the ticket expires ».
+Une session de téléversement dure bien plus longtemps qu'un ticket et coûte
+bien plus cher : un membre exclu, ou une bibliothèque refermée par son
+opérateur, doit cesser d'écrire à la requête suivante — pas à la fin d'un
+transfert commencé avant. Le fragment est refusé, la validation aussi, la zone
+de travail est nettoyée et la réservation rendue ; le refus prend la forme du
+verdict correspondant, ou un 404 quand c'est l'appartenance elle-même qui a
+disparu.
+
 ## Décision 2 — l'empreinte avant les octets
 
 Le téléversement se négocie avant de transférer quoi que ce soit. Le client
@@ -130,6 +144,13 @@ La taille annoncée est donc **réservée** à l'ouverture, rendue à l'expirati
 la réservation empêche la course, la revérification rattrape ce que la
 réservation avait seulement supposé.
 
+Une validation réussie ne rend pas la réservation : elle la **convertit**, dans
+la même transaction que la piste. Rendre puis recompter laisserait un intervalle
+pendant lequel l'espace est libre des deux côtés — le fichier est sur le disque
+et le quota ne le compte pas encore — et deux validations simultanées passeraient
+par ce trou. La réservation cesse d'être une promesse au moment où elle devient
+une dépense, sans jamais cesser d'être l'une ou l'autre.
+
 ## Décision 3 — l'empreinte annoncée n'établit jamais rien
 
 Le serveur recalcule le `full_hash` à la validation et refuse si les deux
@@ -214,6 +235,15 @@ correction de métadonnées ne réécrit jamais le fichier ; elle vit à côté 
 couplage que cette décision a écarté, du côté du stockage cette fois — un
 catalogue logique qui commande une organisation physique.
 
+Par empreinte, mais **avec son extension** : `<full_hash>.<extension>`, prise
+dans l'ensemble validé à la négociation. Ce n'est pas de la cosmétique. Le
+parcours ne reconnaît un fichier que par son extension — c'est la même règle qui
+rend un fragment `.part` invisible à la décision 6 — donc un fichier nommé de sa
+seule empreinte serait invisible lui aussi, et le rattrapage de la décision 7,
+qui compte sur le prochain scan pour ramasser un orphelin, ne ramasserait rien.
+Les deux moitiés de cette règle vont ensemble : ce qui est incomplet n'a pas
+d'extension, ce qui est complet en a une.
+
 L'arborescence lisible n'est pas perdue : elle redevient ce qu'elle est, une vue
 — une exportation, si elle est demandée un jour — et non la représentation
 interne.
@@ -293,6 +323,24 @@ rencontre.
 L'événement de bibliothèque appartient à la même transaction que la piste, ce que
 `record_library_event` impose déjà par sa signature — elle prend la transaction,
 pas la connexion.
+
+### Un rejeu ne duplique pas la piste
+
+Une validation rejouée après que le renommage a réussi — la transaction a échoué,
+ou un scan est passé entre-temps — retrouve le fichier à son nom définitif.
+L'identité d'une piste se résout d'abord par son chemin, et le chemin est
+maintenant celui d'une piste qui existe : l'application la met à jour au lieu
+d'en créer une seconde. C'est le cas ordinaire d'un scan, pas un cas
+particulier du téléversement.
+
+Ce qu'un rejeu peut produire en double, c'est l'événement. Il n'a pas de clé
+d'idempotence, et il n'en reçoit pas ici : un `upsert` énonce un état, pas un
+delta, donc un client qui le reçoit deux fois relit deux fois la même piste et
+n'en tire rien de faux. Importer l'`operation_id` du RFC-003 coûterait la
+colonne, sa contrainte et la fusion des deux vocabulaires que le RFC-007 sépare
+délibérément, pour supprimer une relecture. Le jour où un genre d'événement
+énoncera un delta plutôt qu'un état, la question se reposera — et ce sera une
+question du RFC-007.
 
 ### La réponse rend l'identifiant et l'empreinte
 
