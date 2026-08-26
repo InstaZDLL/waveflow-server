@@ -85,15 +85,20 @@ impl DomainServices {
         // This read is a hint about whether to bother — the transaction below
         // is the authority, and disagreeing with it is a race that costs a
         // retry rather than a wrong answer.
-        let clearing_lists = lists.artists.is_none() && lists.genres.is_none();
-        let restored = if clearing_lists {
+        // Per field, not for the pair. A patch that keeps one correction and
+        // drops the other still drops one, and treating the two together left
+        // the dropped list corrected — the same hole the wholesale case had,
+        // one field at a time.
+        let restored = {
             let hint = sqlx::query(
-                "SELECT t.relative_path, l.root_path FROM track t \
+                "SELECT t.relative_path, l.root_path, m.role, \
+                        ovr.artists IS NOT NULL AS had_artists, \
+                        ovr.genres IS NOT NULL AS had_genres \
+                 FROM track t \
                  JOIN library l ON l.id=t.library_id \
                  JOIN library_member m ON m.library_id=t.library_id \
                  JOIN track_override ovr ON ovr.track_id=t.id \
-                 WHERE t.id=? AND m.user_id=? \
-                   AND (ovr.artists IS NOT NULL OR ovr.genres IS NOT NULL)",
+                 WHERE t.id=? AND m.user_id=?",
             )
             .bind(track_id.to_string())
             .bind(user_id.to_string())
@@ -102,25 +107,38 @@ impl DomainServices {
             match hint {
                 None => None,
                 Some(hint) => {
-                    let root: String = hint.try_get("root_path")?;
-                    let relative: String = hint.try_get("relative_path")?;
-                    Some(
-                        self.scanner
-                            .read_track_input(std::path::Path::new(&root), &relative)
-                            .await
-                            .map_err(|error| {
-                                tracing::warn!(
-                                    %error,
-                                    track = %track_id,
-                                    "cannot re-read a track whose correction is being removed"
-                                );
-                                ServiceError::Unavailable
-                            })?,
-                    )
+                    // Refused here as well as under the gate below. This one is
+                    // not the authority and does not need to be: it exists so a
+                    // caller who may not write cannot make the server read a
+                    // file and hash it end to end before being told no.
+                    let role =
+                        crate::database::LibraryRole::from_str(hint.try_get::<&str, _>("role")?)
+                            .map_err(|_| ServiceError::Invalid)?;
+                    let dropped = (hint.try_get::<i64, _>("had_artists")? != 0
+                        && lists.artists.is_none())
+                        || (hint.try_get::<i64, _>("had_genres")? != 0 && lists.genres.is_none());
+                    if !role.may_write_metadata() || !dropped {
+                        None
+                    } else {
+                        Some(
+                            self.scanner
+                                .read_track_input(
+                                    std::path::Path::new(&hint.try_get::<String, _>("root_path")?),
+                                    hint.try_get::<&str, _>("relative_path")?,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    tracing::warn!(
+                                        %error,
+                                        track = %track_id,
+                                        "cannot re-read a track whose correction is being removed"
+                                    );
+                                    ServiceError::Unavailable
+                                })?,
+                        )
+                    }
                 }
             }
-        } else {
-            None
         };
 
         // Authorization is different, and is read under the gate rather than
@@ -133,8 +151,10 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         let row = sqlx::query(
             "SELECT t.library_id, t.title, t.full_hash, t.last_seen_scan_id, m.role, \
-                    (SELECT ovr.artists IS NOT NULL OR ovr.genres IS NOT NULL \
-                       FROM track_override ovr WHERE ovr.track_id=t.id) AS had_lists \
+                    (SELECT ovr.artists IS NOT NULL FROM track_override ovr \
+                       WHERE ovr.track_id=t.id) AS had_artists, \
+                    (SELECT ovr.genres IS NOT NULL FROM track_override ovr \
+                       WHERE ovr.track_id=t.id) AS had_genres \
              FROM track t \
              JOIN library_member m ON m.library_id=t.library_id \
              WHERE t.id=? AND m.user_id=?",
@@ -148,7 +168,11 @@ impl DomainServices {
         let scanned_title: String = row.try_get("title")?;
         let full_hash: String = row.try_get("full_hash")?;
         let last_seen_scan_id: Option<String> = row.try_get("last_seen_scan_id")?;
-        let had_lists = row.try_get::<Option<i64>, _>("had_lists")?.unwrap_or(0) != 0;
+        // The authority, and it decides per field like the hint above.
+        let dropped_a_list = (row.try_get::<Option<i64>, _>("had_artists")?.unwrap_or(0) != 0
+            && lists.artists.is_none())
+            || (row.try_get::<Option<i64>, _>("had_genres")?.unwrap_or(0) != 0
+                && lists.genres.is_none());
         let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_write_metadata() {
@@ -199,7 +223,7 @@ impl DomainServices {
         // it derives from the tags rather than from what it is undoing. In the
         // same transaction, so the removal and the restoration cannot come
         // apart.
-        if had_lists && clearing_lists {
+        if dropped_a_list {
             let Some(input) = restored else {
                 // The hint and the transaction disagreed, which means the
                 // correction appeared between the two reads. Refusing costs the
