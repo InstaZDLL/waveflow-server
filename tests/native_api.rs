@@ -1417,6 +1417,32 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     let (status, _) = patch(listener_token, serde_json::json!({ "title": "Nope" })).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
+    // And a manager may, which is the half of the rule the refusal above cannot
+    // show: were it `Owner` alone, everything asserted so far would still pass.
+    let manager = state
+        .db
+        .create_account("tag-manager", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO library_member (library_id, user_id, role, created_at) \
+         VALUES (?, ?, 'manager', ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(manager.to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let manager_token = login_token(&router, "tag-manager", password).await;
+    let (status, by_manager) = patch(
+        manager_token,
+        serde_json::json!({ "title": "Corrected By Manager" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(by_manager["title"], "Corrected By Manager");
+
     // An empty body carries no corrections, so the track keeps none and the
     // file's own spelling comes back.
     let (status, cleared) = patch(token, serde_json::json!({})).await;

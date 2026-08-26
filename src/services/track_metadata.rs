@@ -25,29 +25,10 @@ impl DomainServices {
         track_id: Uuid,
         patch: TrackMetadataPatch,
     ) -> Result<SongItem, ServiceError> {
-        // Tenancy and role in one read, filtered by membership like every other
-        // projection. A track in a library the caller cannot see is not there.
-        let row = sqlx::query(
-            "SELECT t.library_id, t.title, t.full_hash, m.role FROM track t \
-             JOIN library_member m ON m.library_id=t.library_id \
-             WHERE t.id=? AND m.user_id=?",
-        )
-        .bind(track_id.to_string())
-        .bind(user_id.to_string())
-        .fetch_optional(self.db.pool())
-        .await?
-        .ok_or(ServiceError::NotFound)?;
-        let library_id = parse_uuid(row.try_get("library_id")?)?;
-        let scanned_title: String = row.try_get("title")?;
-        let full_hash: String = row.try_get("full_hash")?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
-            .map_err(|_| ServiceError::Invalid)?;
-        if !role.may_write_metadata() {
-            // Blurred onto 404 by the surfaces above, like every other refusal
-            // that would otherwise confirm what a caller may not reach.
-            return Err(ServiceError::Forbidden);
-        }
-
+        // Shape first, and before the gate. These are pure value checks on the
+        // request: nothing about them can change under a concurrent write, so
+        // refusing a malformed patch should not queue behind a scan for the
+        // right to be told so.
         let title = clean(patch.title);
         let sort_title = clean(patch.sort_title);
         let musicbrainz_recording_id = clean(patch.musicbrainz_recording_id);
@@ -66,9 +47,34 @@ impl DomainServices {
             && patch.track_number.is_none()
             && patch.disc_number.is_none();
 
+        // Authorization is different, and is read under the gate rather than
+        // before it. Membership and role are mutable state, and the gate is
+        // what serialises writers — so a role revoked or downgraded while this
+        // call was deciding cannot commit between the check and the write.
+        // Read inside the transaction as well, so the pair sees one snapshot.
         let _writer = self.db.writer_guard().await;
         let now = now_ms();
         let mut tx = self.db.pool().begin().await?;
+        let row = sqlx::query(
+            "SELECT t.library_id, t.title, t.full_hash, m.role FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE t.id=? AND m.user_id=?",
+        )
+        .bind(track_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ServiceError::NotFound)?;
+        let library_id = parse_uuid(row.try_get("library_id")?)?;
+        let scanned_title: String = row.try_get("title")?;
+        let full_hash: String = row.try_get("full_hash")?;
+        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+            .map_err(|_| ServiceError::Invalid)?;
+        if !role.may_write_metadata() {
+            // Blurred onto 404 by the surfaces above, like every other refusal
+            // that would otherwise confirm what a caller may not reach.
+            return Err(ServiceError::Forbidden);
+        }
         if empty {
             // No corrections left is no row: an override that holds nothing but
             // NULLs would answer the same as its absence while still claiming
