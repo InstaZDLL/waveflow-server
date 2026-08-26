@@ -1360,6 +1360,20 @@ impl Database {
             .bind(track_id.to_string()).bind(library_id.to_string()).bind(&input.title)
             .bind(input.album.as_deref()).bind(&searchable).bind(input.genre.as_deref())
             .execute(&mut **tx).await?;
+        // The hash travels with the event because nothing else carries it. A
+        // client that confirmed a link against this track has no other way to
+        // learn the file was retagged outside the API — the track keeps its id
+        // while its bytes move, and the scan is the only witness.
+        record_library_event(
+            tx,
+            library_id,
+            "track",
+            track_id,
+            "upsert",
+            &serde_json::json!({ "full_hash": input.full_hash }),
+            now,
+        )
+        .await?;
         Ok(if existing_id.is_none() {
             ApplyOutcome::Added
         } else if moved {
@@ -1375,17 +1389,35 @@ impl Database {
         scan_id: Uuid,
     ) -> Result<i64, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let result = sqlx::query(
+        let now = now_ms();
+        let mut tx = self.pool().begin().await?;
+        // `RETURNING` rather than a count: the feed needs to name what
+        // disappeared, and a number cannot.
+        let gone: Vec<String> = sqlx::query_scalar(
             "UPDATE track SET is_available = 0, updated_at = ? \
              WHERE library_id = ? AND is_available = 1 \
-               AND (last_seen_scan_id IS NULL OR last_seen_scan_id <> ?)",
+               AND (last_seen_scan_id IS NULL OR last_seen_scan_id <> ?) \
+             RETURNING id",
         )
-        .bind(now_ms())
+        .bind(now)
         .bind(library_id.to_string())
         .bind(scan_id.to_string())
-        .execute(self.pool())
+        .fetch_all(&mut *tx)
         .await?;
-        Ok(result.rows_affected() as i64)
+        for id in &gone {
+            record_library_event(
+                &mut tx,
+                library_id,
+                "track",
+                parse_uuid(id.clone())?,
+                "delete",
+                &serde_json::json!({}),
+                now,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(gone.len() as i64)
     }
 
     pub async fn add_scan_error(
@@ -1833,6 +1865,37 @@ async fn move_artist_user_data(
         .execute(&mut **tx)
         .await?;
     Ok(moved)
+}
+
+/// Appends one fact to a library's change feed.
+///
+/// Written inside the caller's transaction so an event and the row it describes
+/// commit together: a feed that could outlive a rolled-back write would tell a
+/// client about a track that does not exist.
+async fn record_library_event(
+    tx: &mut Transaction<'_, Sqlite>,
+    library_id: Uuid,
+    entity_type: &str,
+    entity_id: Uuid,
+    action: &str,
+    payload: &serde_json::Value,
+    changed_at: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO library_event \
+           (event_id, library_id, entity_type, entity_id, action, payload_json, changed_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(library_id.to_string())
+    .bind(entity_type)
+    .bind(entity_id.to_string())
+    .bind(action)
+    .bind(payload.to_string())
+    .bind(changed_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 fn library_from_row(row: sqlx::sqlite::SqliteRow) -> Result<LibraryRecord, sqlx::Error> {
