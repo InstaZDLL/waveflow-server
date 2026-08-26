@@ -230,10 +230,12 @@ impl DomainServices {
                 // caller a retry; guessing would cost the track its credits.
                 return Err(ServiceError::Unavailable);
             };
-            let scan_id = last_seen_scan_id
-                .map(parse_uuid)
-                .transpose()?
-                .ok_or(ServiceError::Unavailable)?;
+            // Carried through rather than required. A track that never came
+            // from a scan has none, and re-deriving its tags does not give it
+            // one: this call is not a scan either. Demanding one here would
+            // have refused every received file until a scan happened to walk
+            // past it.
+            let scan_id = last_seen_scan_id.map(parse_uuid).transpose()?;
             crate::database::Database::apply_catalog_track_in_transaction(
                 &mut tx,
                 self.db.pid(),
