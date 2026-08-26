@@ -65,6 +65,12 @@ pub struct AppState {
     /// A batch of two hundred offers does not fit in it, so the route that
     /// needs the room asks for it alone.
     pub upload_batch_body_limit: usize,
+    /// The body ceiling one fragment may occupy.
+    ///
+    /// A little above the advertised fragment size, for the framing rather than
+    /// for slack: a client that sends more than it was told to is refused by
+    /// the route before the service has to read it.
+    pub upload_chunk_body_limit: usize,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -105,6 +111,9 @@ fn negotiation_body_limit(limits: &config::UploadLimits) -> usize {
         api::scan_events,
         api::library_events,
         api::negotiate_uploads,
+        api::upload_session,
+        api::upload_chunk,
+        api::commit_upload,
         api::list_tracks,
         api::get_track,
         api::update_track,
@@ -213,6 +222,7 @@ fn negotiation_body_limit(limits: &config::UploadLimits) -> usize {
         services::UploadVerdict,
         services::UploadDecision,
         services::UploadSessionState,
+        services::CommittedUpload,
         api::NegotiateUploadsRequest,
         api::NegotiateUploadsResponse,
         services::LibraryEvent,
@@ -437,6 +447,9 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         stream_ticket_ttl: config.stream_ticket_ttl,
         refresh_token_ttl: config.refresh_token_ttl,
         upload_batch_body_limit: negotiation_body_limit(&config.uploads),
+        upload_chunk_body_limit: usize::try_from(config.uploads.chunk_bytes)
+            .unwrap_or(usize::MAX)
+            .saturating_add(4096),
     })
 }
 

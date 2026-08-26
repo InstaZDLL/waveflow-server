@@ -449,6 +449,19 @@ pub struct UploadVerdict {
     pub session: Option<UploadSessionState>,
 }
 
+/// What a committed upload became.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CommittedUpload {
+    /// The track the file became, available immediately rather than at the next
+    /// scan.
+    pub track_id: Uuid,
+    /// Recomputed from the bytes that arrived, never the one the client
+    /// declared. At this moment, and only at this moment, both sides know their
+    /// file and this track are the same bytes — which is the link a client
+    /// would otherwise re-read the whole file to establish.
+    pub full_hash: String,
+}
+
 /// One fact about a library's catalogue, as its change feed tells it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LibraryEvent {
@@ -780,6 +793,13 @@ pub struct DomainServices {
     sync: SyncService,
     scanner: crate::scanner::ScanManager,
     uploads: crate::config::UploadLimits,
+    /// One lock per open upload session.
+    ///
+    /// A fragment is a file write and a row update that have to agree, and the
+    /// writer gate cannot be what makes them agree: file I/O has no business
+    /// happening while the process-wide gate is held. The same shape the
+    /// scanner uses for its per-library lock.
+    upload_locks: Arc<dashmap::DashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -847,6 +867,7 @@ impl DomainServices {
             sync,
             scanner,
             uploads,
+            upload_locks: Arc::new(dashmap::DashMap::new()),
         }
     }
 
