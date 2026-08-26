@@ -383,12 +383,17 @@ bytes move** — the scan's skip test compares hashes, so different bytes make i
 apply the track again. A client holding a content-based link has no other way to
 learn its link went stale.
 
-Membership is read on every request. A caller who is not a member of the library
-gets `404`, not `403`, and a member who loses access stops receiving on the next
-request — there is no subscriber list to fall out of step. A cursor that precedes
-the oldest retained event answers `409`: the feed refuses to hand back a
-surviving tail that would look like a successful catch-up, and the client re-reads
-the catalogue instead.
+Membership is enforced in the query itself, not by a check the query then trusts.
+A caller who is not a member of the library gets `404`, not `403`, and a member
+who loses access stops receiving on the next request — there is no subscriber
+list to fall out of step.
+
+A cursor below what has been purged answers `409`: the feed refuses to hand back
+a surviving tail that would look like a successful catch-up, and the client
+re-reads the catalogue instead. The line it compares against is a recorded
+watermark of what was removed, not the oldest row that survives — a feed whose
+first event sits at a high cursor has not lost anything, it started late, and the
+two are indistinguishable from the rows alone.
 
 See [RFC-007](rfcs/RFC-007-library-event-stream.md) for the reasoning.
 
