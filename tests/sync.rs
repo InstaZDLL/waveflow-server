@@ -1051,7 +1051,6 @@ async fn the_library_feed_reports_what_a_scan_changed() {
         .create_account("feed-stranger", &hash, AccountRole::User, now_ms())
         .await
         .unwrap();
-    let _ = stranger;
     let music = config.data_dir.join("feed-music");
     std::fs::create_dir_all(&music).unwrap();
     write_test_wav(&music.join("Kept.wav"));
@@ -1172,6 +1171,47 @@ async fn the_library_feed_reports_what_a_scan_changed() {
     // A caller who is not a member is told the library is not there, not that
     // it is forbidden: answering differently would confirm it exists.
     let stranger_token = login_token(&router, "feed-stranger", password).await;
-    let (status, _) = feed(stranger_token, 0, 500).await;
+    let (status, _) = feed(stranger_token.clone(), 0, 500).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Admitted, then revoked. Membership is read on every request and cached
+    // nowhere, so losing it stops delivery at once — there is no subscriber
+    // list to fall out of step with.
+    sqlx::query(
+        "INSERT INTO library_member (library_id, user_id, role, created_at) \
+         VALUES (?, ?, 'listener', ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(stranger.to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let (status, admitted) = feed(stranger_token.clone(), 0, 500).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!admitted["events"].as_array().unwrap().is_empty());
+    sqlx::query("DELETE FROM library_member WHERE library_id = ? AND user_id = ?")
+        .bind(library_id.to_string())
+        .bind(stranger.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (status, _) = feed(stranger_token, 0, 500).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "revocation is not deferred");
+
+    // A cursor below what has been cut away has missed events, and the feed
+    // says so rather than handing back a tail that would pass for a catch-up.
+    // The watermark records what was purged; nothing purges yet, so the test
+    // moves it by hand — which is exactly what a retention pass will do.
+    let owner_token = login_token(&router, "feed-owner", password).await;
+    sqlx::query("UPDATE library SET events_purged_through = 3 WHERE id = ?")
+        .bind(library_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (status, _) = feed(owner_token.clone(), 2, 500).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // Standing exactly at the cut is not standing before it.
+    let (status, _) = feed(owner_token, 3, 500).await;
+    assert_eq!(status, StatusCode::OK);
 }
