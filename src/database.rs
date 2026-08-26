@@ -114,6 +114,17 @@ impl LibraryRole {
         matches!(self, Self::Owner | Self::Manager)
     }
 
+    /// Whether the role may hand the library a new file.
+    ///
+    /// The same two roles again, and deliberately so: a rescan spends the
+    /// owner's disk, and so does receiving a file — permanently, this time.
+    /// It is never sufficient on its own. `library.accepts_uploads` decides
+    /// where, and a role that may upload into an opted-in library may upload
+    /// into no other.
+    pub fn may_upload(self) -> bool {
+        matches!(self, Self::Owner | Self::Manager)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
@@ -1149,6 +1160,46 @@ impl Database {
         }
         tx.commit().await?;
         Ok(removed)
+    }
+
+    /// Opens or closes a library to receiving files.
+    ///
+    /// Audited, like every other change to what a library permits. The role a
+    /// member holds says who may upload; this says whether the library takes
+    /// anything at all, and it is the operator's call rather than a member's —
+    /// which is why it arrives through the CLI and not through the API.
+    pub async fn set_library_accepts_uploads(
+        &self,
+        actor_id: Uuid,
+        library_id: Uuid,
+        accepts: bool,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let changed = sqlx::query("UPDATE library SET accepts_uploads=? WHERE id=?")
+            .bind(i64::from(accepts))
+            .bind(library_id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
+        if changed {
+            insert_audit(
+                &mut tx,
+                Some(actor_id),
+                if accepts {
+                    "library.uploads_opened"
+                } else {
+                    "library.uploads_closed"
+                },
+                Some(library_id),
+                now_ms,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(changed)
     }
 
     pub async fn set_subsonic_credential(

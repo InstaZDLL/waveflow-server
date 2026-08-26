@@ -5,6 +5,37 @@
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
+/// What the server accepts from a client that offers it a file.
+///
+/// Every one of these is a bound on someone else's disk, which is why they sit
+/// together rather than scattered among the tunables: receiving a file is the
+/// only thing the server does that cannot be undone by restarting it.
+#[derive(Debug, Clone, Copy)]
+pub struct UploadLimits {
+    /// The largest single file the server will take.
+    pub max_file_bytes: i64,
+    /// How much of a library's disk received files may occupy in total, open
+    /// sessions included — a session reserves what it declared, or two
+    /// negotiations racing would each be told there was room for both.
+    pub library_quota_bytes: i64,
+    /// The size a client should send each fragment at. Advertised by the
+    /// negotiation rather than assumed, so it can move without a client
+    /// release.
+    pub chunk_bytes: i64,
+    /// How many offers one negotiation may carry. Bounded because the batch is
+    /// the answer to five thousand round trips, and an unbounded array would
+    /// trade them for one unbounded body.
+    pub batch_limit: usize,
+    /// How many sessions one account may hold open at once, across libraries —
+    /// the same shape as the per-user transcode limit, and for the same reason:
+    /// a client with five thousand files must not open five thousand of
+    /// anything.
+    pub sessions_per_user: usize,
+    /// How long an untouched session survives. Generous, because a large file
+    /// on a domestic link is measured in hours, not minutes.
+    pub session_ttl: Duration,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -32,6 +63,16 @@ pub struct Config {
     pub transcode_cache_max_bytes: u64,
     pub transcode_global_limit: usize,
     pub transcode_per_user_limit: usize,
+    /// What the server will accept when a library opts in to receiving files.
+    ///
+    /// `WAVEFLOW_UPLOAD_MAX_FILE_BYTES`, `WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES`,
+    /// `WAVEFLOW_UPLOAD_CHUNK_BYTES`, `WAVEFLOW_UPLOAD_BATCH_LIMIT`,
+    /// `WAVEFLOW_UPLOAD_SESSIONS_PER_USER`,
+    /// `WAVEFLOW_UPLOAD_SESSION_TTL_SECS`.
+    ///
+    /// None of these matter until an operator sets `accepts_uploads` on a
+    /// library: a server that has only been upgraded accepts nothing.
+    pub uploads: UploadLimits,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
@@ -68,6 +109,7 @@ impl std::fmt::Debug for Config {
             .field("transcode_cache_max_bytes", &self.transcode_cache_max_bytes)
             .field("transcode_global_limit", &self.transcode_global_limit)
             .field("transcode_per_user_limit", &self.transcode_per_user_limit)
+            .field("uploads", &self.uploads)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
             .finish()
@@ -118,6 +160,25 @@ impl Config {
         let transcode_global_limit = parse_positive_env("WAVEFLOW_TRANSCODE_GLOBAL_LIMIT", 4usize)?;
         let transcode_per_user_limit =
             parse_positive_env("WAVEFLOW_TRANSCODE_PER_USER_LIMIT", 2usize)?;
+        let uploads = UploadLimits {
+            max_file_bytes: parse_positive_env("WAVEFLOW_UPLOAD_MAX_FILE_BYTES", 1_073_741_824i64)?,
+            library_quota_bytes: parse_positive_env(
+                "WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES",
+                53_687_091_200i64,
+            )?,
+            chunk_bytes: parse_positive_env("WAVEFLOW_UPLOAD_CHUNK_BYTES", 4_194_304i64)?,
+            batch_limit: parse_positive_env("WAVEFLOW_UPLOAD_BATCH_LIMIT", 200usize)?,
+            sessions_per_user: parse_positive_env("WAVEFLOW_UPLOAD_SESSIONS_PER_USER", 4usize)?,
+            session_ttl: Duration::from_secs(parse_positive_env(
+                "WAVEFLOW_UPLOAD_SESSION_TTL_SECS",
+                86_400u64,
+            )?),
+        };
+        if uploads.max_file_bytes > uploads.library_quota_bytes {
+            anyhow::bail!(
+                "WAVEFLOW_UPLOAD_MAX_FILE_BYTES cannot exceed WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES"
+            );
+        }
         if transcode_per_user_limit > transcode_global_limit {
             anyhow::bail!(
                 "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
@@ -185,6 +246,7 @@ impl Config {
             transcode_cache_max_bytes,
             transcode_global_limit,
             transcode_per_user_limit,
+            uploads,
             allowed_origins,
             pid,
         })
@@ -213,6 +275,17 @@ impl Config {
             transcode_cache_max_bytes: 128 * 1024 * 1024,
             transcode_global_limit: 2,
             transcode_per_user_limit: 1,
+            // Small enough that a test can reach every bound without writing a
+            // gigabyte, and shaped like production rather than unlimited: a
+            // suite that never meets a limit never proves one exists.
+            uploads: UploadLimits {
+                max_file_bytes: 1024 * 1024,
+                library_quota_bytes: 4 * 1024 * 1024,
+                chunk_bytes: 64 * 1024,
+                batch_limit: 8,
+                sessions_per_user: 2,
+                session_ttl: Duration::from_secs(3600),
+            },
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.

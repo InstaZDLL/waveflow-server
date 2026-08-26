@@ -115,3 +115,7 @@ path = "tests/service.rs"
 codegen-units = 1
 lto = "thin"
 strip = "debuginfo"
+
+[[test]]
+name = "uploads"
+path = "tests/uploads.rs"
