@@ -38,6 +38,7 @@ mod shares;
 mod sync;
 mod tokens;
 mod tracks;
+mod uploads;
 mod users;
 mod web_session;
 
@@ -57,6 +58,7 @@ pub use shares::*;
 pub use sync::*;
 pub use tokens::*;
 pub use tracks::*;
+pub use uploads::*;
 pub use users::*;
 pub use web_session::*;
 
@@ -71,6 +73,9 @@ pub const OPERATION_ID_HEADER: &str = "x-waveflow-operation-id";
 pub const DEVICE_ID_HEADER: &str = "x-waveflow-device-id";
 
 pub fn router(state: AppState) -> Router {
+    // Read before the state is moved into the router: the ceiling follows the
+    // batch limit, so the two cannot disagree.
+    let negotiation_body_limit = state.upload_batch_body_limit;
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -97,6 +102,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
+        // Its own body ceiling, and only its own. Raising the router's would
+        // hand every route on the server a surface none of them asked for.
+        .route(
+            "/api/v2/libraries/{library_id}/uploads",
+            post(negotiate_uploads)
+                .layer(axum::extract::DefaultBodyLimit::max(negotiation_body_limit)),
+        )
         .route(
             "/api/v2/tracks/{track_id}",
             get(get_track).patch(update_track),
