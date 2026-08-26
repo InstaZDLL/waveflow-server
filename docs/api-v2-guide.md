@@ -368,16 +368,28 @@ come back. A tag editor submits its whole form, and clearing a field is then
 saying nothing about it rather than sending a null that has to mean something
 special. Blank strings read the same way as absent.
 
-Correctable today: `title`, `sort_title`, `year`, `track_number`, `disc_number`,
-`musicbrainz_recording_id`, `comment`. Each is a column on the track and nothing
-else.
+Correctable: `title`, `sort_title`, `year`, `track_number`, `disc_number`,
+`musicbrainz_recording_id`, `comment`, and the two lists `artists` and `genres`.
 
-**Not correctable yet, and not by oversight.** An artist or a genre is also a row
-in `track_participant` or `track_genre`, rebuilt by every scan from the file, so
-overriding the display string alone would have a track answer `artist` and
-`artists[]` differently until the next scan reconciled them. Album and album
-artist are further out: `album_id` is *derived* from them, so changing one moves
-the track to a different album rather than relabelling it.
+```json
+{ "artists": ["Corrected Performer"], "genres": ["Ambient"] }
+```
+
+The lists are **lists**, not the `;`-joined string a file carries. That form
+exists because a tagger writes names however it likes and the mapper has to guess
+where one ends; a correction arrives already separated, so re-parsing it would
+give back the ambiguity it was made to settle — and would lose any name holding
+the separator. An empty list is a correction meaning the track credits nobody;
+omitting the field is what leaves the file's own credits in place.
+
+Correcting `artists` displaces only the track's own `artist` credits. A composer
+or a conductor comes from the file and is untouched, which is why a correction
+does not flatten the other twelve roles.
+
+**Album and album artist are not correctable**, and not by oversight: `album_id`
+is *derived* from them, so changing one moves the track to a different album —
+minting one if it does not exist and orphaning the old — rather than relabelling
+it. That is re-identification, and it needs its own decision.
 
 A correction belongs to the library, not to the account that made it: every
 member sees it, and only a member who may already spend the owner's disk on a
