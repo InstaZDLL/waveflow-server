@@ -1340,6 +1340,10 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
 
     // The headline. A scan applies `title=excluded.title` over the track row,
     // so a correction stored there would be gone by now.
+    //
+    // Forced full, because nothing about the file changed and an ordinary scan
+    // would take the skip path — proving only that the apply never ran.
+    state.db.request_full_scan_everywhere().await.unwrap();
     run_scan(&state, owner, library).await;
     let tracks = state
         .db
@@ -1449,4 +1453,266 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cleared["title"], "Mispelled Titel");
     assert!(cleared["year"].is_null());
+}
+
+/// A corrected artist agrees with itself everywhere it is written down.
+///
+/// This is what makes artists and genres different from a title: they are also
+/// rows in `track_participant` and `track_genre`, rebuilt by every scan from
+/// the file. Correcting the display string alone would have a track answer
+/// `artist` and `artists[]` differently, and stay findable under the name it
+/// was corrected away from.
+#[tokio::test]
+async fn a_corrected_artist_agrees_with_itself_everywhere() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("credits-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("credit-fix-music");
+    std::fs::create_dir_all(&music).unwrap();
+    // Tagged by FFmpeg, so the track starts with real credits and real genres
+    // to be corrected away from.
+    generate_audio_fixture(&music.join("Mistagged.flac"), "flac", "flac");
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Credit fix library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Credit fix library".into(),
+        root_path: root,
+    };
+    run_scan(&state, owner, library.clone()).await;
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
+
+    let track_id = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()[0]
+        .id;
+    let before = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        before[0]
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Alpha", "Beta"],
+        "the file credits two artists to begin with"
+    );
+
+    let token = login_token(&router, "credits-owner", password).await;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v2/tracks/{track_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "artists": ["Corrected Performer"],
+                        "genres": ["Corrected Genre"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Everything the track says about itself, checked together — the display
+    // string, the structured list, and the index.
+    let agrees = |songs: Vec<waveflow_server::services::SongItem>, when: &str| {
+        let song = &songs[0];
+        assert_eq!(
+            song.artist.as_deref(),
+            Some("Corrected Performer"),
+            "{when}"
+        );
+        assert_eq!(
+            song.artists
+                .iter()
+                .map(|artist| artist.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Corrected Performer"],
+            "{when}: the structured list has to agree with the display string"
+        );
+        assert_eq!(song.genres, vec!["Corrected Genre".to_owned()], "{when}");
+    };
+    agrees(
+        state
+            .services
+            .songs_by_ids(owner, &[track_id])
+            .await
+            .unwrap(),
+        "right after the correction",
+    );
+
+    let found = state
+        .services
+        .catalog_search(
+            owner,
+            &[],
+            "Corrected",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        found.songs.iter().map(|song| song.id).collect::<Vec<_>>(),
+        vec![track_id],
+        "a corrected credit has to be findable under its new name"
+    );
+
+    // And the scan that rebuilds both relations from the file has to leave them
+    // corrected, which is the whole reason it consults the override.
+    //
+    // A full scan, and not an ordinary one: nothing about the file changed, so
+    // an ordinary scan takes the skip path and never re-applies the track at
+    // all. Asserting against that would prove only that the apply did not run.
+    state.db.request_full_scan_everywhere().await.unwrap();
+    run_scan(&state, owner, library).await;
+    agrees(
+        state
+            .services
+            .songs_by_ids(owner, &[track_id])
+            .await
+            .unwrap(),
+        "after a rescan rebuilt the relations from the file",
+    );
+
+    // A search for the name it was corrected away from must come back empty.
+    // Asserting only that the new name is findable would pass while the index
+    // still carried the old one alongside it.
+    let stale = state
+        .services
+        .catalog_search(
+            owner,
+            &[],
+            "Alpha",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        stale.songs.is_empty(),
+        "the corrected track must not answer to its old credit: {:?}",
+        stale.songs.iter().map(|song| song.id).collect::<Vec<_>>()
+    );
+
+    // Dropping one list while keeping the other. Treating the pair together
+    // would leave the dropped one corrected, which is the same hole as the
+    // wholesale case seen one field at a time.
+    let patch_body = |body: serde_json::Value| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::patch(format!("/api/v2/tracks/{track_id}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    };
+    let names = |song: &waveflow_server::services::SongItem| {
+        song.artists
+            .iter()
+            .map(|artist| artist.name.clone())
+            .collect::<Vec<_>>()
+    };
+
+    patch_body(serde_json::json!({ "artists": ["Solo"], "genres": ["Ambient"] })).await;
+    patch_body(serde_json::json!({ "artists": ["Solo"] })).await;
+    let one_dropped = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(names(&one_dropped[0]), vec!["Solo".to_owned()], "kept");
+    assert_eq!(
+        one_dropped[0].genres,
+        vec!["Electronic".to_owned(), "Test".to_owned()],
+        "the dropped list goes back to the file while the kept one stays"
+    );
+
+    patch_body(serde_json::json!({ "genres": ["Ambient"] })).await;
+    let other_dropped = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        names(&other_dropped[0]),
+        vec!["Alpha".to_owned(), "Beta".to_owned()],
+        "and the same the other way round"
+    );
+    assert_eq!(other_dropped[0].genres, vec!["Ambient".to_owned()]);
+
+    // Removing the correction hands the track back to its file. The rows the
+    // correction wrote replaced what the tags said, so this can only be right
+    // by re-reading them — and it must not wait for a scan.
+    let cleared = router
+        .oneshot(
+            Request::patch(format!("/api/v2/tracks/{track_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), StatusCode::OK);
+    let restored = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        restored[0]
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Alpha", "Beta"],
+        "clearing a correction restores the file's own credits"
+    );
+    assert_eq!(restored[0].artist.as_deref(), Some("Alpha; Beta"));
+    assert_eq!(
+        restored[0].genres,
+        vec!["Electronic".to_owned(), "Test".to_owned()],
+        "and its own genres"
+    );
 }
