@@ -376,6 +376,79 @@ pub struct TrackMetadataPatch {
     pub genres: Option<Vec<String>>,
 }
 
+/// One file a client is offering, before any of its bytes have moved.
+///
+/// `full_hash` is what the client computed over the whole file. It is used to
+/// avoid a transfer and never to establish an identity: the server recomputes
+/// it from the bytes it actually received, and an identity founded on what a
+/// client asserts would let any authorised member pass one file off as another.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct UploadOffer {
+    pub full_hash: String,
+    pub size_bytes: i64,
+    /// Without its dot, and matched case-insensitively against the extensions
+    /// the scanner can index. It is not proof of anything — the file is read
+    /// for real at commit — but it is what makes a refusal cheap here rather
+    /// than after the last byte.
+    pub extension: String,
+}
+
+/// What the server decided about one offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UploadDecision {
+    /// This library already holds these bytes. Scoped to this library on
+    /// purpose: a server-wide lookup would tell a member of one library that
+    /// some library they cannot see holds exactly this file, and would leave
+    /// them believing they had a track they do not have.
+    Present,
+    /// A session is open and the bytes are wanted.
+    Accepted,
+    /// The extension is not one the scanner can index, so storing the file
+    /// would spend disk on something the catalogue could never show.
+    UnsupportedFormat,
+    /// Above the per-file ceiling.
+    TooLarge,
+    /// The library has no room, counting what open sessions have reserved.
+    QuotaExceeded,
+    /// The caller is entitled to be here and the library does not accept
+    /// files. Distinct from a 404, which is what someone not entitled gets.
+    LibraryClosed,
+    /// The account already holds as many sessions as it may.
+    TooManySessions,
+}
+
+/// An open session, as the client needs to see it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UploadSessionState {
+    pub session_id: Uuid,
+    /// The fragment the server wants next. A client that restarts asks rather
+    /// than assumes, so a lost acknowledgement costs one request instead of a
+    /// transfer.
+    pub next_chunk: i64,
+    pub received_bytes: i64,
+    /// The size to send each fragment at, advertised rather than assumed.
+    pub chunk_bytes: i64,
+    pub expires_at: i64,
+}
+
+/// One verdict, carrying back the hash it answers.
+///
+/// The hash rather than a position: a client matching verdicts to offers by
+/// index is one reordering away from filing a session under the wrong file.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UploadVerdict {
+    pub full_hash: String,
+    pub decision: UploadDecision,
+    /// Set when the decision is `present` — the track that already holds these
+    /// bytes, so the client can reconcile without a catalogue sweep.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<Uuid>,
+    /// Set when the decision is `accepted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<UploadSessionState>,
+}
+
 /// One fact about a library's catalogue, as its change feed tells it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LibraryEvent {
@@ -706,6 +779,7 @@ pub struct DomainServices {
     secret_box: Arc<SecretBox>,
     sync: SyncService,
     scanner: crate::scanner::ScanManager,
+    uploads: crate::config::UploadLimits,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -757,6 +831,7 @@ mod shares;
 mod songs;
 mod sync;
 mod track_metadata;
+mod uploads;
 
 impl DomainServices {
     pub fn new(
@@ -764,12 +839,14 @@ impl DomainServices {
         secret_box: Arc<SecretBox>,
         sync: SyncService,
         scanner: crate::scanner::ScanManager,
+        uploads: crate::config::UploadLimits,
     ) -> Self {
         Self {
             db,
             secret_box,
             sync,
             scanner,
+            uploads,
         }
     }
 
