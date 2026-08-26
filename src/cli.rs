@@ -72,6 +72,7 @@ pub enum LibraryCommand {
     Add(AddLibraryArgs),
     SetMember(SetMemberArgs),
     RemoveMember(RemoveMemberArgs),
+    SetUploads(SetUploadsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -96,6 +97,20 @@ pub struct SetMemberArgs {
     username: String,
     #[arg(long, default_value = "listener")]
     role: String,
+}
+
+/// Whether a library will receive files at all.
+///
+/// Off until an operator says otherwise: upgrading a server must not turn a
+/// read-only installation into one that grows.
+#[derive(Debug, Args)]
+pub struct SetUploadsArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    library_id: uuid::Uuid,
+    #[arg(long)]
+    accept: bool,
 }
 
 #[derive(Debug, Args)]
@@ -183,6 +198,7 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
             LibraryCommand::Add(args) => add_library(state, args).await,
             LibraryCommand::SetMember(args) => set_member(db, args).await,
             LibraryCommand::RemoveMember(args) => remove_member(db, args).await,
+            LibraryCommand::SetUploads(args) => set_uploads(db, args).await,
         },
         Command::Credential { command } => match command {
             CredentialCommand::Set(args) => set_credential(db, &state.secret_box, args).await,
@@ -360,6 +376,22 @@ async fn set_member(db: &Database, args: SetMemberArgs) -> anyhow::Result<()> {
     db.add_library_member(actor.id, args.library_id, member.id, role, now_ms())
         .await?;
     println!("Updated member {} on {}", args.username, args.library_id);
+    Ok(())
+}
+
+async fn set_uploads(db: &Database, args: SetUploadsArgs) -> anyhow::Result<()> {
+    let actor = require_admin(db, &args.actor).await?;
+    if !db
+        .set_library_accepts_uploads(actor.id, args.library_id, args.accept, now_ms())
+        .await?
+    {
+        anyhow::bail!("library not found: {}", args.library_id);
+    }
+    println!(
+        "Library {} {} uploads",
+        args.library_id,
+        if args.accept { "accepts" } else { "refuses" }
+    );
     Ok(())
 }
 

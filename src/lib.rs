@@ -56,6 +56,23 @@ pub struct AppState {
     pub public_url: Option<String>,
     pub stream_ticket_ttl: std::time::Duration,
     pub refresh_token_ttl: std::time::Duration,
+    /// The body ceiling the upload negotiation route carries, derived from how
+    /// many offers a batch may hold.
+    ///
+    /// The router's global limit is sixteen kilobytes and stays there: an API
+    /// whose every route accepts that much cannot be drowned in a request body,
+    /// and that property is worth more than the convenience of raising it once.
+    /// A batch of two hundred offers does not fit in it, so the route that
+    /// needs the room asks for it alone.
+    pub upload_batch_body_limit: usize,
+}
+
+/// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
+/// short extension and their punctuation — times the batch, with a fixed
+/// allowance for the envelope. Derived rather than configured, so a raised
+/// batch limit cannot quietly start rejecting the batches it just permitted.
+fn negotiation_body_limit(limits: &config::UploadLimits) -> usize {
+    limits.batch_limit.saturating_mul(160).saturating_add(1024)
 }
 
 #[derive(OpenApi)]
@@ -87,6 +104,7 @@ pub struct AppState {
         api::scan_status,
         api::scan_events,
         api::library_events,
+        api::negotiate_uploads,
         api::list_tracks,
         api::get_track,
         api::update_track,
@@ -191,6 +209,12 @@ pub struct AppState {
         api::SyncSnapshot,
         services::LibraryEventPage,
         services::TrackMetadataPatch,
+        services::UploadOffer,
+        services::UploadVerdict,
+        services::UploadDecision,
+        services::UploadSessionState,
+        api::NegotiateUploadsRequest,
+        api::NegotiateUploadsResponse,
         services::LibraryEvent,
         api::TranscodeStatusResponse,
         api::CreateUserRequest,
@@ -397,6 +421,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         Arc::clone(&secret_box),
         sync.clone(),
         scanner.clone(),
+        config.uploads,
     );
     Ok(AppState {
         db,
@@ -411,6 +436,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         public_url: config.public_url.clone(),
         stream_ticket_ttl: config.stream_ticket_ttl,
         refresh_token_ttl: config.refresh_token_ttl,
+        upload_batch_body_limit: negotiation_body_limit(&config.uploads),
     })
 }
 
