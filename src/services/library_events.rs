@@ -23,18 +23,33 @@ impl DomainServices {
         if after < 0 || !(1..=MAX_SYNC_LIMIT).contains(&limit) {
             return Err(ServiceError::Invalid);
         }
-        // Membership and the retention watermark in one read, and the events
-        // query below joins `library_member` again rather than trusting this
-        // answer. That join is what makes a concurrent revocation return
-        // nothing: tenancy belongs in the query, not in a check the query then
-        // takes on faith. A read transaction around the pair would add locking
-        // for what the join already gives.
+        // Every read below runs on one transaction, so the watermark and the
+        // events it guards come from the same snapshot.
         //
-        // The membership row is still read separately, because it is what
-        // separates "not a member" from "a member with nothing new". Both
-        // answers are safe — an empty page and a 404 confirm nothing about a
-        // library the caller cannot see — but a revoked client that only ever
-        // got empty pages would poll forever believing it was up to date.
+        // Two statements on the pool take two snapshots, and a retention pass
+        // between them defeats the guard exactly where it matters: read the
+        // watermark at 0, let a purge cut through cursor 100 and move it, then
+        // read events after 5 and hand back a page starting at 101. The client
+        // takes that for a successful catch-up and never learns it skipped
+        // ninety-four events. Inside one snapshot the pair can only be both
+        // before the purge — the events are still there — or both after it,
+        // where the watermark refuses.
+        //
+        // The membership row is read on its own because it is what separates
+        // "not a member" from "a member with nothing new". Both answers are
+        // safe — an empty page and a 404 confirm equally little about a library
+        // the caller cannot see — but a revoked client that only ever saw empty
+        // pages would poll forever believing it was up to date.
+        //
+        // The events query joins `library_member` as well, and the snapshot is
+        // precisely what makes that redundant: membership is fixed for the
+        // duration, so the check and the join cannot disagree. It stays because
+        // the rule is that tenancy lives in the query rather than in a check
+        // the query trusts — which is what keeps the read safe if this
+        // transaction is ever taken away again. No test covers it, and none
+        // can: the case it guards is a revocation landing between two reads
+        // that now share one snapshot.
+        let mut tx = self.db.pool().begin().await?;
         let watermark: Option<i64> = sqlx::query_scalar(
             "SELECT l.events_purged_through FROM library l \
              JOIN library_member m ON m.library_id = l.id \
@@ -42,7 +57,7 @@ impl DomainServices {
         )
         .bind(library_id.to_string())
         .bind(user_id.to_string())
-        .fetch_optional(self.db.pool())
+        .fetch_optional(&mut *tx)
         .await?;
         let Some(watermark) = watermark else {
             return Err(ServiceError::NotFound);
@@ -72,8 +87,14 @@ impl DomainServices {
         .bind(library_id.to_string())
         .bind(after)
         .bind(limit + 1)
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *tx)
         .await?;
+        // Nothing was written, so this only releases the snapshot; the two
+        // early returns above release it the same way by dropping the
+        // transaction. Closed here rather than left to the end of the function
+        // because a read snapshot held open is a checkpoint the WAL cannot
+        // take.
+        tx.commit().await?;
         let has_more = rows.len() as i64 > limit;
         let events = rows
             .into_iter()
