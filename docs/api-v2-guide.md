@@ -379,8 +379,12 @@ The lists are **lists**, not the `;`-joined string a file carries. That form
 exists because a tagger writes names however it likes and the mapper has to guess
 where one ends; a correction arrives already separated, so re-parsing it would
 give back the ambiguity it was made to settle — and would lose any name holding
-the separator. An empty list is a correction meaning the track credits nobody;
-omitting the field is what leaves the file's own credits in place.
+the separator. An empty list is a correction meaning the track credits nobody.
+
+**Omitting the field removes the correction and restores what the file's tags
+say** — which the server can only do by re-reading the file, since the correction
+replaced those rows in the catalogue. A track whose file cannot be read at that
+moment refuses the whole request rather than half-clearing it.
 
 Correcting `artists` displaces only the track's own `artist` credits. A composer
 or a conductor comes from the file and is untouched, which is why a correction

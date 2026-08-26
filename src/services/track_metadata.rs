@@ -75,6 +75,54 @@ impl DomainServices {
             && lists.artists.is_none()
             && lists.genres.is_none();
 
+        // Removing a list correction needs the file, because the rows it wrote
+        // replaced what the tags said and the catalogue no longer holds the
+        // original. Read here, before the gate: file I/O has no business
+        // happening while the process-wide writer gate is held, and a file that
+        // cannot be read has to refuse the whole call rather than leave a
+        // correction removed and its rows behind.
+        //
+        // This read is a hint about whether to bother — the transaction below
+        // is the authority, and disagreeing with it is a race that costs a
+        // retry rather than a wrong answer.
+        let clearing_lists = lists.artists.is_none() && lists.genres.is_none();
+        let restored = if clearing_lists {
+            let hint = sqlx::query(
+                "SELECT t.relative_path, l.root_path FROM track t \
+                 JOIN library l ON l.id=t.library_id \
+                 JOIN library_member m ON m.library_id=t.library_id \
+                 JOIN track_override ovr ON ovr.track_id=t.id \
+                 WHERE t.id=? AND m.user_id=? \
+                   AND (ovr.artists IS NOT NULL OR ovr.genres IS NOT NULL)",
+            )
+            .bind(track_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?;
+            match hint {
+                None => None,
+                Some(hint) => {
+                    let root: String = hint.try_get("root_path")?;
+                    let relative: String = hint.try_get("relative_path")?;
+                    Some(
+                        self.scanner
+                            .read_track_input(std::path::Path::new(&root), &relative)
+                            .await
+                            .map_err(|error| {
+                                tracing::warn!(
+                                    %error,
+                                    track = %track_id,
+                                    "cannot re-read a track whose correction is being removed"
+                                );
+                                ServiceError::Unavailable
+                            })?,
+                    )
+                }
+            }
+        } else {
+            None
+        };
+
         // Authorization is different, and is read under the gate rather than
         // before it. Membership and role are mutable state, and the gate is
         // what serialises writers — so a role revoked or downgraded while this
@@ -84,7 +132,10 @@ impl DomainServices {
         let now = now_ms();
         let mut tx = self.db.pool().begin().await?;
         let row = sqlx::query(
-            "SELECT t.library_id, t.title, t.full_hash, m.role FROM track t \
+            "SELECT t.library_id, t.title, t.full_hash, t.last_seen_scan_id, m.role, \
+                    (SELECT ovr.artists IS NOT NULL OR ovr.genres IS NOT NULL \
+                       FROM track_override ovr WHERE ovr.track_id=t.id) AS had_lists \
+             FROM track t \
              JOIN library_member m ON m.library_id=t.library_id \
              WHERE t.id=? AND m.user_id=?",
         )
@@ -96,6 +147,8 @@ impl DomainServices {
         let library_id = parse_uuid(row.try_get("library_id")?)?;
         let scanned_title: String = row.try_get("title")?;
         let full_hash: String = row.try_get("full_hash")?;
+        let last_seen_scan_id: Option<String> = row.try_get("last_seen_scan_id")?;
+        let had_lists = row.try_get::<Option<i64>, _>("had_lists")?.unwrap_or(0) != 0;
         let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_write_metadata() {
@@ -138,6 +191,45 @@ impl DomainServices {
             .bind(now)
             .execute(&mut *tx)
             .await?;
+        }
+
+        // A correction being removed hands the track back to its file, and the
+        // way to be sure the result is what a scan would have written is to run
+        // the scan's own apply — with the correction already deleted above, so
+        // it derives from the tags rather than from what it is undoing. In the
+        // same transaction, so the removal and the restoration cannot come
+        // apart.
+        if had_lists && clearing_lists {
+            let Some(input) = restored else {
+                // The hint and the transaction disagreed, which means the
+                // correction appeared between the two reads. Refusing costs the
+                // caller a retry; guessing would cost the track its credits.
+                return Err(ServiceError::Unavailable);
+            };
+            let scan_id = last_seen_scan_id
+                .map(parse_uuid)
+                .transpose()?
+                .ok_or(ServiceError::Unavailable)?;
+            crate::database::Database::apply_catalog_track_in_transaction(
+                &mut tx,
+                self.db.pid(),
+                library_id,
+                scan_id,
+                &crate::catalog::CatalogApply {
+                    input,
+                    existing_id: Some(track_id),
+                    moved: false,
+                },
+                now,
+            )
+            .await?;
+            tx.commit().await?;
+            drop(_writer);
+            return self
+                .songs_by_ids(user_id, &[track_id])
+                .await?
+                .pop()
+                .ok_or(ServiceError::NotFound);
         }
 
         // The rows an explicit list implies, written through the same helper the
