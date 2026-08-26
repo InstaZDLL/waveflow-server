@@ -1716,3 +1716,118 @@ async fn a_corrected_artist_agrees_with_itself_everywhere() {
         "and its own genres"
     );
 }
+
+/// A correction can be removed from a track that never came from a scan.
+///
+/// Dropping a list correction hands the track back to its file, which the apply
+/// re-reads — and the apply used to demand the scan that had last seen the
+/// track. A received file has no such scan until one happens to walk past it,
+/// so that demand would have answered 503 to every correction made on a file
+/// before its first scan.
+#[tokio::test]
+async fn a_correction_clears_on_a_track_that_never_came_from_a_scan() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("unscanned-tagger", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("unscanned-tag-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Unscanned.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Unscanned library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Unscanned library".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track_id = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()[0]
+        .id;
+
+    // The state a received file is written in: on disk, in the catalogue, and
+    // never walked over by a scan.
+    sqlx::query("UPDATE track SET last_seen_scan_id=NULL WHERE id=?")
+        .bind(track_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    let token = login_token(&router, "unscanned-tagger", password).await;
+    let patch = |body: serde_json::Value| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::patch(format!("/api/v2/tracks/{track_id}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    assert_eq!(
+        patch(serde_json::json!({ "artists": ["Corrected Name"] }))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    // The drop: this is the path that re-reads the file, and the one that used
+    // to need a scan id.
+    let dropped = patch(serde_json::json!({})).await;
+    assert_eq!(
+        dropped.status(),
+        StatusCode::OK,
+        "removing a correction must not require a scan the track never had"
+    );
+
+    let restored = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert!(
+        restored[0]
+            .artists
+            .iter()
+            .all(|artist| artist.name != "Corrected Name"),
+        "the track went back to what its file says"
+    );
+    let stamp: Option<String> =
+        sqlx::query_scalar("SELECT last_seen_scan_id FROM track WHERE id=?")
+            .bind(track_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert!(
+        stamp.is_none(),
+        "and re-deriving its tags did not invent a scan for it"
+    );
+}
