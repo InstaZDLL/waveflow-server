@@ -1121,7 +1121,11 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn apply_catalog_track_in_transaction(
+    /// Reachable from the domain services because clearing a correction has to
+    /// land in the same transaction that removes it: re-deriving afterwards
+    /// would leave a window where the correction is gone and the rows it wrote
+    /// are not.
+    pub(crate) async fn apply_catalog_track_in_transaction(
         tx: &mut Transaction<'_, Sqlite>,
         pid: &crate::pid::PidSpecs,
         library_id: Uuid,
@@ -1163,16 +1167,11 @@ impl Database {
         };
         // The display strings follow the correction too, or a track would read
         // one way in a listing and another in its own row.
-        let artist_display = overrides
-            .artists
-            .as_ref()
-            .map(|names| names.join("; "))
-            .or_else(|| input.artist.clone());
-        let genre_display = overrides
-            .genres
-            .as_ref()
-            .map(|names| names.join("; "))
-            .or_else(|| input.genre.clone());
+        // An empty correction says the track credits nobody, which is absence
+        // rather than an empty string: `Some("")` would render as a blank name
+        // where `None` renders as none at all.
+        let artist_display = display_of(overrides.artists.as_deref(), input.artist.as_deref());
+        let genre_display = display_of(overrides.genres.as_deref(), input.genre.as_deref());
         let artwork_hash = upsert_artwork(tx, input.artwork.as_ref(), now).await?;
         // The credits arrive already split, already paired with their sort
         // forms and already carrying the album-artist fallback — that is the
@@ -1389,7 +1388,11 @@ impl Database {
             let mut names: Vec<&str> = credits.iter().map(|credit| credit.name.as_str()).collect();
             names.sort_unstable();
             names.dedup();
-            if let Some(display) = input.artist.as_deref() {
+            // The effective display string, not the file's. Pushing
+            // `input.artist` here would leave a corrected track findable under
+            // the very name it was corrected away from — the same failure the
+            // title had, one column over.
+            if let Some(display) = artist_display.as_deref() {
                 names.push(display);
             }
             names.join(" ")
@@ -1904,6 +1907,19 @@ async fn move_artist_user_data(
         .execute(&mut **tx)
         .await?;
     Ok(moved)
+}
+
+/// The display string a correction implies, or the file's when there is none.
+///
+/// An empty list is a correction meaning "nobody", and joins to nothing — which
+/// has to become absence rather than an empty string, or a track answers with a
+/// blank name instead of with no name.
+pub(crate) fn display_of(corrected: Option<&[String]>, scanned: Option<&str>) -> Option<String> {
+    match corrected {
+        None => scanned.map(str::to_owned),
+        Some([]) => None,
+        Some(names) => Some(names.join("; ")),
+    }
 }
 
 /// The corrections a scan has to respect while re-deriving a track.

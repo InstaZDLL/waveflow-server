@@ -1605,4 +1605,60 @@ async fn a_corrected_artist_agrees_with_itself_everywhere() {
             .unwrap(),
         "after a rescan rebuilt the relations from the file",
     );
+
+    // A search for the name it was corrected away from must come back empty.
+    // Asserting only that the new name is findable would pass while the index
+    // still carried the old one alongside it.
+    let stale = state
+        .services
+        .catalog_search(
+            owner,
+            &[],
+            "Alpha",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        stale.songs.is_empty(),
+        "the corrected track must not answer to its old credit: {:?}",
+        stale.songs.iter().map(|song| song.id).collect::<Vec<_>>()
+    );
+
+    // Removing the correction hands the track back to its file. The rows the
+    // correction wrote replaced what the tags said, so this can only be right
+    // by re-reading them — and it must not wait for a scan.
+    let cleared = router
+        .oneshot(
+            Request::patch(format!("/api/v2/tracks/{track_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), StatusCode::OK);
+    let restored = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        restored[0]
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Alpha", "Beta"],
+        "clearing a correction restores the file's own credits"
+    );
+    assert_eq!(restored[0].artist.as_deref(), Some("Alpha; Beta"));
+    assert_eq!(
+        restored[0].genres,
+        vec!["Electronic".to_owned(), "Test".to_owned()],
+        "and its own genres"
+    );
 }

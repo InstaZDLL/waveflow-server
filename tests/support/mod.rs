@@ -249,6 +249,10 @@ pub fn generate_audio_fixture(path: &std::path::Path, codec: &str, extension: &s
             "album_artist=Matrix Artist",
             "-metadata",
             "genre=Electronic; Test",
+            // A credit that is not the track's artist, so a test can show that
+            // correcting the artist leaves the other twelve roles alone.
+            "-metadata",
+            "composer=Session Composer",
             "-c:a",
             codec,
         ])

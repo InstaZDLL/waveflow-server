@@ -56,6 +56,30 @@ pub struct ScanManager {
 }
 
 impl ScanManager {
+    /// Reads one track's file and returns what its tags say.
+    ///
+    /// For a caller that removed a correction and now needs the file's own
+    /// values back: they were overwritten in the catalogue, so the file is the
+    /// only place left holding them. Read before anything is written, so a file
+    /// that cannot be read refuses the whole operation rather than leaving a
+    /// correction removed and its rows behind.
+    pub(crate) async fn read_track_input(
+        &self,
+        root_path: &std::path::Path,
+        relative_path: &str,
+    ) -> Result<CatalogTrackInput, String> {
+        let root = tokio::fs::canonicalize(root_path)
+            .await
+            .map_err(|error| format!("library root: {error}"))?;
+        let path = root.join(relative_path);
+        let artwork_dir = self.artwork_dir.clone();
+        let mut input = tokio::task::spawn_blocking(move || extract_file(&path, &artwork_dir))
+            .await
+            .map_err(|error| format!("extract worker failed: {error}"))??;
+        input.relative_path = relative_path.to_owned();
+        Ok(input)
+    }
+
     pub fn new(db: Database, artwork_dir: PathBuf, parallelism: usize) -> Self {
         Self {
             db,
@@ -439,7 +463,7 @@ fn relative_path(root: &Path, path: &Path) -> anyhow::Result<String> {
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
-fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, String> {
+pub(crate) fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, String> {
     let metadata = fs::metadata(path).map_err(|error| format!("metadata: {error}"))?;
     let size = metadata.len() as i64;
     let modified_at = metadata

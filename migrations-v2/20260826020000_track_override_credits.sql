@@ -12,7 +12,14 @@
 -- override is a list someone typed on purpose — re-parsing it with a heuristic
 -- would be inventing ambiguity that was never there, and would lose any name
 -- holding the separator.
+--
+-- The CHECK asserts an array and not merely valid JSON, so a scalar or an object
+-- is refused at the door rather than decoded into a surprise. It stops there:
+-- asserting that every element is a string needs `json_each`, and SQLite
+-- prohibits subqueries in a CHECK outright. The service writes these columns
+-- from a `Vec<String>` and nothing else does, so the element type is held by the
+-- one writer rather than by the schema — worth knowing rather than assuming.
 ALTER TABLE track_override ADD COLUMN artists TEXT
-    CHECK (artists IS NULL OR json_valid(artists));
+    CHECK (artists IS NULL OR json_type(artists) = 'array');
 ALTER TABLE track_override ADD COLUMN genres TEXT
-    CHECK (genres IS NULL OR json_valid(genres));
+    CHECK (genres IS NULL OR json_type(genres) = 'array');
