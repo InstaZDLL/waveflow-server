@@ -342,6 +342,33 @@ délibérément, pour supprimer une relecture. Le jour où un genre d'événemen
 énoncera un delta plutôt qu'un état, la question se reposera — et ce sera une
 question du RFC-007.
 
+### Un fichier reçu n'a pas de scan, et le dit
+
+Le chemin d'application demandait l'identifiant du scan qui écrit la piste. Un
+téléversement n'en a pas : aucun parcours n'a eu lieu.
+
+Trois issues, et deux sont mauvaises. Inscrire un faux job de scan mettrait dans
+l'historique un fait qui n'a pas eu lieu, et ce mensonge ressortirait ailleurs —
+métriques, purge, écran d'administration. Élargir la contrainte `CHECK` de
+`scan_job.trigger` obligerait à reconstruire la table, pour déclarer qu'un
+téléversement est une sorte de scan alors qu'il n'en est pas une.
+
+La colonne est déjà `NULL`able. C'est la signature qui était trop étroite : elle
+prend maintenant un identifiant optionnel, et `NULL` veut dire **cette ligne ne
+vient pas d'un scan** — jamais « scan inconnu ». Appliquer au catalogue n'est pas
+intrinsèquement une opération du scanner, et la signature est l'endroit où cela
+cesse d'être sous-entendu.
+
+Ce sens n'existe que si la balayeuse de fin de scan le respecte, et elle ne le
+faisait pas : elle traitait `NULL` comme « jamais vu », donc comme disparu. Un
+fichier reçu pendant qu'un scan tourne aurait été marqué indisponible par ce
+scan — dont le parcours avait commencé avant que le fichier existe — et une
+suppression aurait été annoncée à tous les clients quelques secondes après son
+arrivée. Une ligne sans scan n'est donc balayée que si elle précède le scan
+courant, cas où le parcours aurait effectivement dû la trouver. Le premier scan
+qui passe sur un fichier reçu l'estampille, et il rejoint le cas ordinaire pour
+de bon.
+
 ### La réponse rend l'identifiant et l'empreinte
 
 La réponse de validation porte l'identifiant de la piste créée et son
