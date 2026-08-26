@@ -349,6 +349,42 @@ Valid formats are `raw`, `mp3` and `opus`. Byte ranges apply to originals and
 completed cached transcodes. A live transcode uses temporal `offset_ms` and a
 chunked response; it does not implement arbitrary output-byte ranges.
 
+### Correcting a track's tags
+
+`PATCH /api/v2/tracks/{track_id}` writes corrections that survive a rescan
+**without touching the file**. `full_hash` therefore never moves, so a client
+holding a content-based link to the track still holds it afterwards.
+
+```bash
+curl -X PATCH https://music.example.com/api/v2/tracks/TRACK_UUID \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Misspelled Title","year":1998}'
+```
+
+**The body is the complete set of corrections**, not a delta. A field left out
+is not overridden, and `{}` clears every correction so the file's own values
+come back. A tag editor submits its whole form, and clearing a field is then
+saying nothing about it rather than sending a null that has to mean something
+special. Blank strings read the same way as absent.
+
+Correctable today: `title`, `sort_title`, `year`, `track_number`, `disc_number`,
+`musicbrainz_recording_id`, `comment`. Each is a column on the track and nothing
+else.
+
+**Not correctable yet, and not by oversight.** An artist or a genre is also a row
+in `track_participant` or `track_genre`, rebuilt by every scan from the file, so
+overriding the display string alone would have a track answer `artist` and
+`artists[]` differently until the next scan reconciled them. Album and album
+artist are further out: `album_id` is *derived* from them, so changing one moves
+the track to a different album rather than relabelling it.
+
+A correction belongs to the library, not to the account that made it: every
+member sees it, and only a member who may already spend the owner's disk on a
+rescan may write one. A listener gets `404`, like every refusal that would
+otherwise confirm what a caller cannot reach. Corrections are announced on the
+library feed above, not in the user journal.
+
 ### Learning that a catalogue changed
 
 `/api/v2/sync/changes` converges **user** state — favourites, ratings, play

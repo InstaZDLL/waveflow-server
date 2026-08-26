@@ -1872,7 +1872,11 @@ async fn move_artist_user_data(
 /// Written inside the caller's transaction so an event and the row it describes
 /// commit together: a feed that could outlive a rolled-back write would tell a
 /// client about a track that does not exist.
-async fn record_library_event(
+///
+/// Reachable from the domain services because a scan is no longer the only
+/// thing that changes a catalogue — correcting a track's tags does too, and the
+/// two must land on the same feed rather than each inventing one.
+pub(crate) async fn record_library_event(
     tx: &mut Transaction<'_, Sqlite>,
     library_id: Uuid,
     entity_type: &str,

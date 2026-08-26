@@ -104,6 +104,16 @@ impl LibraryRole {
         matches!(self, Self::Owner | Self::Manager)
     }
 
+    /// Whether the role may correct a track's tags.
+    ///
+    /// The same two roles as [`Self::may_scan`], and not by coincidence: a
+    /// correction is written once and read by every member, so it asks the same
+    /// trust as spending the owner's disk. Named apart because the two rules
+    /// answer different questions and one of them may move.
+    pub fn may_write_metadata(self) -> bool {
+        matches!(self, Self::Owner | Self::Manager)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",

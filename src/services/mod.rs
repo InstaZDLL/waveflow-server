@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -22,11 +22,14 @@ use crate::{
 /// bind is always the user id.
 macro_rules! song_select {
     () => {
-        "SELECT t.id, t.library_id, t.album_id, t.title, t.album_title, t.artist_display, \
+        "SELECT t.id, t.library_id, t.album_id, \
+                COALESCE(ovr.title, t.title) AS title, t.album_title, t.artist_display, \
                 (SELECT tp.artist_id FROM track_participant tp \
                   WHERE tp.track_id=t.id AND tp.role='artist' \
                   ORDER BY tp.position LIMIT 1) AS artist_id, \
-                t.genre_display, t.year, t.track_number, t.disc_number, t.duration_ms, t.bitrate, \
+                t.genre_display, COALESCE(ovr.year, t.year) AS year, \
+                COALESCE(ovr.track_number, t.track_number) AS track_number, \
+                COALESCE(ovr.disc_number, t.disc_number) AS disc_number, t.duration_ms, t.bitrate, \
                 t.codec, t.relative_path, t.file_size, t.artwork_hash, t.full_hash, t.created_at, \
                 us.starred_at, ur.rating AS user_rating, \
                 t.sample_rate, t.channels, t.bit_depth, \
@@ -36,12 +39,16 @@ macro_rules! song_select {
                 (SELECT MAX(pe.played_at) FROM play_event pe \
                  WHERE pe.user_id=m.user_id AND pe.submission=1 AND pe.track_id=t.id) \
                  AS last_played_at, \
-                t.musicbrainz_recording_id, t.replay_gain_track_gain, t.replay_gain_track_peak, \
-                t.replay_gain_album_gain, t.replay_gain_album_peak, t.bpm, t.sort_title, \
-                t.comment, t.isrc, t.moods, t.explicit_status, \
+                COALESCE(ovr.musicbrainz_recording_id, t.musicbrainz_recording_id) \
+                  AS musicbrainz_recording_id, \
+                t.replay_gain_track_gain, t.replay_gain_track_peak, \
+                t.replay_gain_album_gain, t.replay_gain_album_peak, t.bpm, \
+                COALESCE(ovr.sort_title, t.sort_title) AS sort_title, \
+                COALESCE(ovr.comment, t.comment) AS comment, t.isrc, t.moods, t.explicit_status, \
                 alb.album_artist_name, alb.album_artist_id \
          FROM track t JOIN library_member m ON m.library_id=t.library_id \
          LEFT JOIN album alb ON alb.id=t.album_id \
+         LEFT JOIN track_override ovr ON ovr.track_id=t.id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \
          WHERE m.user_id=? AND t.is_available=1"
@@ -341,6 +348,25 @@ pub struct CatalogSnapshot {
     pub artists: Vec<ArtistSummary>,
     pub albums: Vec<AlbumItem>,
     pub songs: Vec<SongItem>,
+}
+
+/// The complete set of corrections a track carries.
+///
+/// Wholesale rather than incremental: the body is every override the track
+/// should have afterwards, and a field left out is not overridden. A tag editor
+/// sends its whole form, so clearing a correction is saying nothing about that
+/// field rather than sending a null that means something special. An empty or
+/// blank string is read the same way — no correction — because a track with no
+/// title is not a correction anyone wants to store.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct TrackMetadataPatch {
+    pub title: Option<String>,
+    pub sort_title: Option<String>,
+    pub year: Option<i64>,
+    pub track_number: Option<i64>,
+    pub disc_number: Option<i64>,
+    pub musicbrainz_recording_id: Option<String>,
+    pub comment: Option<String>,
 }
 
 /// One fact about a library's catalogue, as its change feed tells it.
@@ -723,6 +749,7 @@ mod search;
 mod shares;
 mod songs;
 mod sync;
+mod track_metadata;
 
 impl DomainServices {
     pub fn new(
