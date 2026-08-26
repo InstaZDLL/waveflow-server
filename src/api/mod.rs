@@ -97,7 +97,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
-        .route("/api/v2/tracks/{track_id}", get(get_track))
+        .route(
+            "/api/v2/tracks/{track_id}",
+            get(get_track).patch(update_track),
+        )
         .route("/api/v2/tracks/{track_id}/lyrics", get(get_track_lyrics))
         .route("/api/v2/albums", get(list_albums))
         .route("/api/v2/genres", get(list_genres))

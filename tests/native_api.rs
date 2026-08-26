@@ -1253,3 +1253,200 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
+
+/// A correction outlives the scan that would have erased it.
+///
+/// Writing tags had two obvious routes and both were wrong: rewriting the file
+/// breaks the invariant that makes a scan safe, and writing the track row is
+/// undone by the next scan's `title=excluded.title`. The correction therefore
+/// lives beside the row, and this asserts the three things that buys — it
+/// shows, it survives, and the file's hash never moves.
+#[tokio::test]
+async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("tagger", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let listener = state
+        .db
+        .create_account("tag-listener", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("tag-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Mispelled Titel.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Tag library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Tag library".into(),
+        root_path: root,
+    };
+    run_scan(&state, owner, library.clone()).await;
+
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    let track_id = tracks[0].id;
+    let scanned_hash = tracks[0].full_hash.clone();
+    assert_eq!(tracks[0].title, "Mispelled Titel");
+
+    let token = login_token(&router, "tagger", password).await;
+    let patch = |token: String, body: serde_json::Value| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::patch(format!("/api/v2/tracks/{track_id}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (response.status(), json_body(response).await)
+        }
+    };
+
+    let (status, corrected) = patch(
+        token.clone(),
+        serde_json::json!({ "title": "Misspelled Title", "year": 1998 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(corrected["title"], "Misspelled Title");
+    assert_eq!(corrected["year"], 1998);
+    // The file was not touched, which is what keeps a content-based link valid
+    // across an edit.
+    assert_eq!(corrected["full_hash"], scanned_hash);
+
+    // The headline. A scan applies `title=excluded.title` over the track row,
+    // so a correction stored there would be gone by now.
+    run_scan(&state, owner, library).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks[0].id, track_id);
+    assert_eq!(tracks[0].full_hash, scanned_hash, "the file never moved");
+    let after_scan = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    assert_eq!(after_scan[0].title, "Misspelled Title");
+    assert_eq!(after_scan[0].year, Some(1998));
+
+    // The index holds a copy of the title, and a corrected track that still
+    // answered to the old spelling would be corrected only to the eye.
+    let found = state
+        .services
+        .catalog_search(
+            owner,
+            &[],
+            "Misspelled",
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+            waveflow_server::services::BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        found.songs.iter().map(|song| song.id).collect::<Vec<_>>(),
+        vec![track_id],
+        "the search index follows the correction"
+    );
+
+    // It is a library fact, so it lands on the library feed rather than in one
+    // account's journal.
+    let feed = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v2/libraries/{library_id}/events?after=0&limit=500"
+            ))
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let feed = json_body(feed).await;
+    assert!(
+        feed["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["entity_id"] == track_id.to_string() && event["action"] == "upsert"),
+        "the correction is announced on the feed"
+    );
+
+    // A listener may read the library and may not rewrite what everyone else
+    // reads. Blurred onto 404, like every refusal that would otherwise confirm
+    // what a caller cannot reach.
+    sqlx::query(
+        "INSERT INTO library_member (library_id, user_id, role, created_at) \
+         VALUES (?, ?, 'listener', ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(listener.to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let listener_token = login_token(&router, "tag-listener", password).await;
+    let (status, _) = patch(listener_token, serde_json::json!({ "title": "Nope" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // And a manager may, which is the half of the rule the refusal above cannot
+    // show: were it `Owner` alone, everything asserted so far would still pass.
+    let manager = state
+        .db
+        .create_account("tag-manager", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO library_member (library_id, user_id, role, created_at) \
+         VALUES (?, ?, 'manager', ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(manager.to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let manager_token = login_token(&router, "tag-manager", password).await;
+    let (status, by_manager) = patch(
+        manager_token,
+        serde_json::json!({ "title": "Corrected By Manager" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(by_manager["title"], "Corrected By Manager");
+
+    // An empty body carries no corrections, so the track keeps none and the
+    // file's own spelling comes back.
+    let (status, cleared) = patch(token, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cleared["title"], "Mispelled Titel");
+    assert!(cleared["year"].is_null());
+}
