@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router {
     // Read before the state is moved into the router: the ceiling follows the
     // batch limit, so the two cannot disagree.
     let negotiation_body_limit = state.upload_batch_body_limit;
+    let chunk_body_limit = state.upload_chunk_body_limit;
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -109,6 +110,14 @@ pub fn router(state: AppState) -> Router {
             post(negotiate_uploads)
                 .layer(axum::extract::DefaultBodyLimit::max(negotiation_body_limit)),
         )
+        .route("/api/v2/uploads/{session_id}", get(upload_session))
+        // The one route on the server that carries a payload worth megabytes,
+        // and the only one that asks for the room.
+        .route(
+            "/api/v2/uploads/{session_id}/chunks/{index}",
+            put(upload_chunk).layer(axum::extract::DefaultBodyLimit::max(chunk_body_limit)),
+        )
+        .route("/api/v2/uploads/{session_id}/commit", post(commit_upload))
         .route(
             "/api/v2/tracks/{track_id}",
             get(get_track).patch(update_track),
