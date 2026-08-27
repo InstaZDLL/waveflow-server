@@ -174,11 +174,7 @@ impl Config {
                 86_400u64,
             )?),
         };
-        if uploads.max_file_bytes > uploads.library_quota_bytes {
-            anyhow::bail!(
-                "WAVEFLOW_UPLOAD_MAX_FILE_BYTES cannot exceed WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES"
-            );
-        }
+        validate_uploads(&uploads)?;
         if transcode_per_user_limit > transcode_global_limit {
             anyhow::bail!(
                 "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
@@ -294,6 +290,30 @@ impl Config {
     }
 }
 
+/// The upload limits that only make sense against each other.
+///
+/// Apart here rather than inline so the rules can be exercised without
+/// rewriting the process environment, which is global and shared by every test
+/// running beside it.
+fn validate_uploads(uploads: &UploadLimits) -> anyhow::Result<()> {
+    if uploads.max_file_bytes > uploads.library_quota_bytes {
+        anyhow::bail!(
+            "WAVEFLOW_UPLOAD_MAX_FILE_BYTES cannot exceed WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES"
+        );
+    }
+    // The fragment route turns this into a body ceiling, and a value it cannot
+    // represent would have to fall back to something. Every fallback for a
+    // ceiling is wrong — too small breaks the configured size, too large is no
+    // ceiling at all — so it is refused here, where the operator can see why.
+    if usize::try_from(uploads.chunk_bytes).is_err() {
+        anyhow::bail!("invalid WAVEFLOW_UPLOAD_CHUNK_BYTES: too large for this platform");
+    }
+    if uploads.chunk_bytes > uploads.max_file_bytes {
+        anyhow::bail!("WAVEFLOW_UPLOAD_CHUNK_BYTES cannot exceed WAVEFLOW_UPLOAD_MAX_FILE_BYTES");
+    }
+    Ok(())
+}
+
 fn normalize_public_url(value: &str) -> anyhow::Result<String> {
     let parsed = url::Url::parse(value.trim())
         .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_PUBLIC_URL: {error}"))?;
@@ -386,6 +406,45 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 #[cfg(test)]
 mod tests {
     use super::normalize_public_url;
+    use super::{validate_uploads, UploadLimits};
+    use std::time::Duration;
+
+    fn workable() -> UploadLimits {
+        UploadLimits {
+            max_file_bytes: 1024 * 1024,
+            library_quota_bytes: 4 * 1024 * 1024,
+            chunk_bytes: 64 * 1024,
+            batch_limit: 8,
+            sessions_per_user: 2,
+            session_ttl: Duration::from_secs(3600),
+        }
+    }
+
+    #[test]
+    fn upload_limits_that_contradict_each_other_are_refused() {
+        assert!(validate_uploads(&workable()).is_ok());
+
+        // A fragment bigger than the largest file it could belong to.
+        let mut oversized_chunk = workable();
+        oversized_chunk.chunk_bytes = oversized_chunk.max_file_bytes + 1;
+        assert!(validate_uploads(&oversized_chunk).is_err());
+
+        // A file bigger than the whole library may hold.
+        let mut oversized_file = workable();
+        oversized_file.max_file_bytes = oversized_file.library_quota_bytes + 1;
+        assert!(validate_uploads(&oversized_file).is_err());
+
+        // And a fragment this platform could not turn into a body ceiling. The
+        // fallback for that conversion must never be "no ceiling", so the value
+        // has to be refused before it reaches one.
+        if usize::try_from(i64::MAX).is_err() {
+            let mut unrepresentable = workable();
+            unrepresentable.chunk_bytes = i64::MAX;
+            unrepresentable.max_file_bytes = i64::MAX;
+            unrepresentable.library_quota_bytes = i64::MAX;
+            assert!(validate_uploads(&unrepresentable).is_err());
+        }
+    }
 
     #[test]
     fn public_url_is_reduced_to_a_safe_http_origin() {
