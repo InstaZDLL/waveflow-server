@@ -548,8 +548,21 @@ impl DomainServices {
     ) -> Result<bool, ServiceError> {
         let relative = format!("{MANAGED_DIR}/{declared_hash}.{extension}");
         let path = std::path::Path::new(root).join(&relative);
-        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-            return Ok(true);
+        match tokio::fs::try_exists(&path).await {
+            Ok(false) => return Ok(true),
+            Ok(true) => {}
+            // Not the same thing as absent, and reading it as absent would drop
+            // the row while the file it names may well be there — the orphan
+            // this whole path exists to prevent, one question earlier.
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    session = %session_id,
+                    file = %relative,
+                    "cannot tell whether a stuck file is there; keeping the session so the sweep retries"
+                );
+                return Ok(false);
+            }
         }
         let claimed: i64 = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM track WHERE library_id=? AND relative_path=?)",

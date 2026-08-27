@@ -1750,3 +1750,58 @@ async fn a_file_another_session_may_be_committing_is_spared() {
         .unwrap();
     assert_eq!(survivors, 1, "and the live session is untouched");
 }
+
+/// Not being able to tell is not the same as being told there is nothing.
+///
+/// The sweep asks whether a file is stuck under the final name before deciding
+/// the session can go. Reading an I/O error from that question as "absent"
+/// drops the row while the file it names may well be there — the orphan this
+/// whole path exists to prevent, one question earlier.
+///
+/// A symlink pointing at itself is the deterministic way to make the question
+/// fail: following it errors, while the staging file beside it is an ordinary
+/// file the sweep would have removed without a second thought.
+#[tokio::test]
+async fn a_file_the_sweep_cannot_ask_about_keeps_its_session() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "unaskable").await;
+    let session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let (sent, _) = put_chunk(&config, &state, &fixture.token, &session, 0, &bytes[..512]).await;
+    assert_eq!(sent, StatusCode::OK);
+
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let final_name = root.join(format!(".waveflow-managed/{}.wav", blake3_of(&bytes)));
+    std::os::unix::fs::symlink(&final_name, &final_name).unwrap();
+    assert!(
+        std::fs::metadata(&final_name).is_err(),
+        "the point of this test is a path that cannot be resolved"
+    );
+
+    sqlx::query("UPDATE upload_session SET expires_at=1")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(333, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&session)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 1,
+        "a question that could not be answered must not be answered as 'nothing there'"
+    );
+    assert!(
+        root.join(format!(".waveflow-managed/{session}.part"))
+            .is_file(),
+        "and the transfer it had already received is still there"
+    );
+}
