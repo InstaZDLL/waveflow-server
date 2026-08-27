@@ -310,15 +310,23 @@ donc une décision, pas un détail d'implémentation :
 
 1. la taille reçue correspond à la taille annoncée ;
 2. l'empreinte recalculée correspond à l'empreinte annoncée ;
-3. le fichier s'ouvre et s'extrait réellement ;
-4. renommage atomique vers son nom définitif ;
+3. renommage atomique vers son nom définitif ;
+4. le fichier s'ouvre et s'extrait réellement ;
 5. une seule transaction SQLite : la piste et l'événement de bibliothèque.
 
-Une panne entre 4 et 5 laisse un fichier orphelin sur le disque, que le prochain
+Une panne entre 3 et 5 laisse un fichier orphelin sur le disque, que le prochain
 scan ramasse — c'est très exactement ce qu'un scan sait faire, et le fichier
 porte déjà son nom définitif. L'ordre inverse laisserait une ligne de catalogue
 qui pointe vers rien : un état que rien ne répare tout seul et que chaque lecture
 rencontre.
+
+L'extraction vient après le renommage et non avant, contrairement à ce que la
+première version de cette RFC posait. L'extracteur choisit sa branche DSD sur
+l'extension du fichier : lire un fragment nommé `.part` prendrait la mauvaise
+branche et refuserait un DSF parfaitement valide. Et la fenêtre que cet ordre
+ouvre est vide — un fichier que l'extracteur ne sait pas lire n'est pas
+indexable par un scan non plus, puisque c'est le même extracteur. Ce qui ne
+s'ouvre pas est retiré, sans que rien ait pu s'y accrocher entre-temps.
 
 L'événement de bibliothèque appartient à la même transaction que la piste, ce que
 `record_library_event` impose déjà par sa signature — elle prend la transaction,

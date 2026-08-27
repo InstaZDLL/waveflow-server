@@ -32,6 +32,9 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
         );
     }
     state.scanner.spawn_background(config.scan_interval);
+    // Abandoned transfers hold the operator's disk, and nothing else would
+    // reclaim it until somebody offered another file.
+    state.services.spawn_upload_sweeper();
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)

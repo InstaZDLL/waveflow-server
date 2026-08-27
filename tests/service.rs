@@ -86,6 +86,9 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         "/api/v2/transcode/status",
         "/api/v2/tracks/{track_id}/lyrics",
         "/api/v2/libraries/{library_id}/uploads",
+        "/api/v2/uploads/{session_id}",
+        "/api/v2/uploads/{session_id}/chunks/{index}",
+        "/api/v2/uploads/{session_id}/commit",
     ] {
         assert!(document["paths"][path].is_object(), "missing {path}");
     }
