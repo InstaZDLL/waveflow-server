@@ -1589,3 +1589,164 @@ async fn a_failed_commit_keeps_a_session_whose_file_it_could_not_remove() {
         0
     );
 }
+
+/// A file stuck under its final name is reclaimed, and only when nobody else
+/// could be using it.
+///
+/// A commit that renamed the file and then could neither move it back nor
+/// remove it leaves one there. Nothing else looks under that name, so without
+/// the sweep it would outlive the row that remembers it and be lost for good.
+///
+/// The guards are the point. That name is the hash, not the session's own
+/// property: the unique index is per member, so two members can hold sessions
+/// for the same hash in one library, and a successful commit by either produces
+/// exactly that file.
+#[tokio::test]
+async fn a_file_stuck_under_its_final_name_is_reclaimed_unless_claimed() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "stuck-final").await;
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let hash = blake3_of(&bytes);
+    let relative = format!(".waveflow-managed/{hash}.wav");
+    let stuck = root.join(&relative);
+
+    // The state a commit leaves when it can neither move the file back nor
+    // remove it: a session, and a file under the final name.
+    let _session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    std::fs::create_dir_all(stuck.parent().unwrap()).unwrap();
+    std::fs::write(&stuck, &bytes).unwrap();
+    sqlx::query("UPDATE upload_session SET expires_at=1")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    // A track claiming that path first: the file is in use, and the sweep must
+    // not touch it.
+    let scan_id = state
+        .db
+        .create_scan_job(fixture.library, Some(fixture.owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 1, false).await.unwrap();
+    let mut input = catalog_input(1, "Claiming Artist");
+    input.relative_path = relative.clone();
+    input.full_hash = hash.clone();
+    state
+        .db
+        .apply_catalog_track(fixture.library, scan_id, &input, None, false)
+        .await
+        .unwrap();
+
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(555, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        stuck.is_file(),
+        "a file a track is using must survive somebody else's abandoned session"
+    );
+
+    // Now the same state with nothing claiming it. The track goes first: while
+    // it exists the negotiation answers `present`, which is the whole point of
+    // the first half.
+    sqlx::query("DELETE FROM track WHERE library_id=?")
+        .bind(fixture.library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let _session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    sqlx::query("UPDATE upload_session SET expires_at=1")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(556, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !stuck.exists(),
+        "and one nobody is using must not outlive the row that remembers it"
+    );
+}
+
+/// And spared while another member could still be committing it.
+///
+/// Between a commit's rename and its transaction there is no track yet, so the
+/// track guard alone would let a stranger's expired session delete the file
+/// that commit is about to catalogue. A live session on the same hash is what
+/// says the name is not free.
+#[tokio::test]
+async fn a_file_another_session_may_be_committing_is_spared() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "contested-final").await;
+
+    let password = security::generate_token("test-password-");
+    let hashed = security::hash_password(&password).unwrap();
+    let other = state
+        .db
+        .create_account("contesting-manager", &hashed, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(
+            fixture.owner,
+            fixture.library,
+            other,
+            LibraryRole::Manager,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let as_other = Fixture {
+        owner: other,
+        library: fixture.library,
+        token: login_token(
+            &waveflow_server::app(&config, state.clone()),
+            "contesting-manager",
+            &password,
+        )
+        .await,
+    };
+
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let hash = blake3_of(&bytes);
+    let stuck = root.join(format!(".waveflow-managed/{hash}.wav"));
+
+    // Both sessions are opened before either expires. A negotiation sweeps
+    // before it answers, so opening the second one afterwards would sweep the
+    // first while nothing yet contested the name — and the test would pass for
+    // a reason that has nothing to do with the guard.
+    let _abandoned = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let live = open_session(&config, &state, &as_other, &bytes, "wav").await;
+    std::fs::create_dir_all(stuck.parent().unwrap()).unwrap();
+    std::fs::write(&stuck, &bytes).unwrap();
+    sqlx::query("UPDATE upload_session SET expires_at=1 WHERE user_id=?")
+        .bind(fixture.owner.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(444, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(
+        stuck.is_file(),
+        "an expired session must not delete the file another one is committing"
+    );
+    let survivors: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&live)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(survivors, 1, "and the live session is untouched");
+}
