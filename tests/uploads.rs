@@ -1481,3 +1481,111 @@ async fn abandoned_transfers_are_swept_without_a_negotiation() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+/// A staging file that cannot be removed keeps its session.
+///
+/// File first, row second was chosen so a failure could be retried. A failure
+/// that deletes the row anyway is not a retry — it is exactly the orphan that
+/// order was avoiding, since the row is the only thing that remembers the file
+/// exists. Here the staging path is made undeletable by turning it into a
+/// non-empty directory, which `remove_file` refuses for a reason that is not
+/// "already gone".
+#[tokio::test]
+async fn a_staging_file_that_cannot_be_removed_keeps_its_session() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "stuck").await;
+    let session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let (first, _) = put_chunk(&config, &state, &fixture.token, &session, 0, &bytes[..512]).await;
+    assert_eq!(first, StatusCode::OK);
+
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let staging = root
+        .join(".waveflow-managed")
+        .join(format!("{session}.part"));
+    std::fs::remove_file(&staging).unwrap();
+    std::fs::create_dir(&staging).unwrap();
+    std::fs::write(staging.join("occupied"), b"x").unwrap();
+
+    sqlx::query("UPDATE upload_session SET expires_at=1")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    // A negotiation sweeps first; the sweep must decline to forget this one.
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(777, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&session)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 1,
+        "the row is the only record that this file exists; dropping it orphans the file"
+    );
+
+    // And once the obstruction is gone, the next sweep finishes the job.
+    std::fs::remove_dir_all(&staging).unwrap();
+    let (status, _) = negotiate(&config, &state, &fixture, vec![offer(778, 4096, "flac")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&session)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a retry is what the order was for");
+}
+
+/// The same rule when a commit gives up on the bytes it received.
+#[tokio::test]
+async fn a_failed_commit_keeps_a_session_whose_file_it_could_not_remove() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 4096).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "stuck-commit").await;
+    let session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let (sent, _) = put_chunk(&config, &state, &fixture.token, &session, 0, &bytes).await;
+    assert_eq!(sent, StatusCode::OK);
+
+    // The transfer looks complete to the catalogue, and the file it points at
+    // can be neither hashed nor removed.
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let staging = root
+        .join(".waveflow-managed")
+        .join(format!("{session}.part"));
+    std::fs::remove_file(&staging).unwrap();
+    std::fs::create_dir(&staging).unwrap();
+    std::fs::write(staging.join("occupied"), b"x").unwrap();
+
+    let (status, _) = commit(&config, &state, &fixture.token, &session).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&session)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 1,
+        "a commit that could not clean up must leave the record that says so"
+    );
+    assert_eq!(
+        state
+            .db
+            .list_tracks_for_user(fixture.owner, fixture.library)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+}
