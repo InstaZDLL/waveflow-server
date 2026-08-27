@@ -327,12 +327,50 @@ fn refused(full_hash: String, decision: UploadDecision) -> UploadVerdict {
 }
 
 impl DomainServices {
+    /// Sweeps abandoned sessions on a schedule, so cleanup does not wait for
+    /// somebody to offer another file.
+    ///
+    /// Without this the sweep only runs inside a negotiation. Nothing breaks —
+    /// the quota is decided by that same negotiation, which sweeps first — but
+    /// a client that abandons a batch of transfers and never returns leaves its
+    /// staging files holding the operator's disk with nothing to signal it.
+    ///
+    /// Boot first, then one pass per session lifetime: an abandoned file then
+    /// lives at most twice the lifetime a session was promised, which is the
+    /// same order of magnitude that promise already makes. The shape is the
+    /// scanner's `spawn_background`, deliberately.
+    pub fn spawn_upload_sweeper(&self) {
+        let services = self.clone();
+        let interval = services.uploads.session_ttl;
+        tokio::spawn(async move {
+            services.sweep_now().await;
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                services.sweep_now().await;
+            }
+        });
+    }
+
+    async fn sweep_now(&self) {
+        if let Err(error) = self.sweep_expired_sessions(now_ms()).await {
+            tracing::warn!(%error, "could not sweep expired upload sessions");
+        }
+    }
+
     /// Removes what expired sessions left behind, before anything counts them.
     ///
-    /// Files first, rows second, and that order is deliberate: dying between
-    /// the two leaves rows whose files are already gone, which the next sweep
-    /// simply repeats. The other order would leave staging files nothing knows
-    /// about, on a disk the quota is supposed to be measuring.
+    /// Each session is swept under its own lock, and that is not tidiness. A
+    /// fragment that read its session just before it expired can be writing
+    /// while this runs: delete the file and the row without the lock, and that
+    /// write recreates the staging file a moment later with no row left to
+    /// remember it — a file on the operator's disk nothing will ever sweep
+    /// again. The lock makes the two mutually exclusive.
+    ///
+    /// File first, row second, and that order is deliberate too: dying between
+    /// the two leaves a row whose file is already gone, which the next sweep
+    /// repeats harmlessly. The other order leaves the orphan.
     ///
     /// Run before the writer gate is taken. File I/O has no business happening
     /// while the process-wide gate is held, and a session that expires during
@@ -346,15 +384,15 @@ impl DomainServices {
         .bind(now)
         .fetch_all(self.db.pool())
         .await?;
-        if expired.is_empty() {
-            return Ok(());
-        }
         for row in &expired {
-            let session_id: String = row.try_get("id")?;
+            let session_id = parse_uuid(row.try_get::<String, _>("id")?)?;
             let root: String = row.try_get("root_path")?;
             let path = std::path::Path::new(&root)
                 .join(MANAGED_DIR)
                 .join(format!("{session_id}.part"));
+
+            let lock = self.session_lock(session_id);
+            let held = lock.lock().await;
             // Already gone is the ordinary case — this sweep repeats after a
             // crash, and a session that never sent a fragment has no file.
             if let Err(error) = tokio::fs::remove_file(&path).await {
@@ -362,13 +400,20 @@ impl DomainServices {
                     tracing::warn!(%error, session = %session_id, "cannot remove an expired staging file");
                 }
             }
-            self.upload_locks.remove(&parse_uuid(session_id)?);
+            {
+                let _writer = self.db.writer_guard().await;
+                sqlx::query("DELETE FROM upload_session WHERE id=? AND expires_at <= ?")
+                    .bind(session_id.to_string())
+                    .bind(now)
+                    .execute(self.db.pool())
+                    .await?;
+            }
+            // Released before the entry goes, so a caller arriving between the
+            // two waits on a mutex nobody holds rather than on one this sweep
+            // is still using.
+            drop(held);
+            self.upload_locks.remove(&session_id);
         }
-        let _writer = self.db.writer_guard().await;
-        sqlx::query("DELETE FROM upload_session WHERE expires_at <= ?")
-            .bind(now)
-            .execute(self.db.pool())
-            .await?;
         Ok(())
     }
 
@@ -428,6 +473,18 @@ impl DomainServices {
         })
     }
 
+    /// How many sessions this process is currently coordinating.
+    ///
+    /// The locks are created on lookup, so this is also the count of sessions
+    /// that have been looked up and not yet finished. It is exposed because the
+    /// rule that no lock exists for a session that is not real and not the
+    /// caller's has no other visible consequence — an entry that should not be
+    /// there costs memory and nothing else, which is precisely the kind of
+    /// invariant that rots unwatched.
+    pub fn tracked_upload_locks(&self) -> usize {
+        self.upload_locks.len()
+    }
+
     fn session_lock(&self, session_id: Uuid) -> Arc<tokio::sync::Mutex<()>> {
         self.upload_locks
             .entry(session_id)
@@ -472,8 +529,16 @@ impl DomainServices {
         index: i64,
         bytes: &[u8],
     ) -> Result<UploadSessionState, ServiceError> {
+        // Resolved before any lock exists for it. `session_lock` inserts on
+        // lookup, so locking first would let a caller mint a map entry for
+        // every uuid they can type; resolving first bounds the entries to
+        // sessions that are real and theirs.
+        self.session_target(user_id, session_id, now_ms()).await?;
         let lock = self.session_lock(session_id);
         let _held = lock.lock().await;
+        // Read again under the lock. The check above decided whether to take
+        // the lock; this one is what the rest of the call acts on, and only it
+        // is protected from a sweep or another fragment moving underneath.
         let now = now_ms();
         let target = self.session_target(user_id, session_id, now).await?;
         if index < 0 {
@@ -575,6 +640,8 @@ impl DomainServices {
         user_id: Uuid,
         session_id: Uuid,
     ) -> Result<CommittedUpload, ServiceError> {
+        // Resolved before the lock, for the same reason as above.
+        self.session_target(user_id, session_id, now_ms()).await?;
         let lock = self.session_lock(session_id);
         let _held = lock.lock().await;
         let now = now_ms();

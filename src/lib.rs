@@ -81,6 +81,20 @@ fn negotiation_body_limit(limits: &config::UploadLimits) -> usize {
     limits.batch_limit.saturating_mul(160).saturating_add(1024)
 }
 
+/// One fragment, plus room for its framing.
+///
+/// `Config` refuses a fragment size this platform cannot represent, so the
+/// fallback below is unreachable. It is a small finite number rather than
+/// `usize::MAX` anyway: a ceiling that falls back to "no ceiling" is the one
+/// mistake this value must never make, and an unreachable branch is exactly
+/// where that would go unnoticed.
+fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
+    const FALLBACK: usize = 16 * 1024 * 1024;
+    usize::try_from(limits.chunk_bytes)
+        .unwrap_or(FALLBACK)
+        .saturating_add(4096)
+}
+
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -447,9 +461,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         stream_ticket_ttl: config.stream_ticket_ttl,
         refresh_token_ttl: config.refresh_token_ttl,
         upload_batch_body_limit: negotiation_body_limit(&config.uploads),
-        upload_chunk_body_limit: usize::try_from(config.uploads.chunk_bytes)
-            .unwrap_or(usize::MAX)
-            .saturating_add(4096),
+        upload_chunk_body_limit: chunk_body_limit(&config.uploads),
     })
 }
 

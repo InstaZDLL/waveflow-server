@@ -1374,3 +1374,110 @@ async fn committing_an_unfinished_transfer_does_not_destroy_it() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(committed["full_hash"], blake3_of(&bytes));
 }
+
+/// A session nobody owns leaves nothing behind in the process.
+///
+/// The per-session locks are created on lookup, so locking before resolving
+/// would let any authorised caller mint one entry per uuid they can type — a
+/// map that only ever grows, for sessions that never existed. Resolving first
+/// bounds the entries to sessions that are real and theirs.
+#[tokio::test]
+async fn a_session_that_does_not_exist_leaves_nothing_behind() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "phantom").await;
+
+    for _ in 0..16 {
+        let stranger = uuid::Uuid::new_v4().to_string();
+        let (status, _) =
+            put_chunk(&config, &state, &fixture.token, &stranger, 0, &bytes[..512]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (committed, _) = commit(&config, &state, &fixture.token, &stranger).await;
+        assert_eq!(committed, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(
+        state.services.tracked_upload_locks(),
+        0,
+        "sessions that never existed must not be coordinated"
+    );
+
+    // A real one is tracked while it runs, and released when it ends.
+    let session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let (status, _) = put_chunk(&config, &state, &fixture.token, &session, 0, &bytes[..512]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state.services.tracked_upload_locks(), 1);
+
+    let mut sent = 512usize;
+    let mut index = 1usize;
+    while sent < bytes.len() {
+        let end = (sent + 512).min(bytes.len());
+        let (status, _) = put_chunk(
+            &config,
+            &state,
+            &fixture.token,
+            &session,
+            index,
+            &bytes[sent..end],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        sent = end;
+        index += 1;
+    }
+    let (status, _) = commit(&config, &state, &fixture.token, &session).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        state.services.tracked_upload_locks(),
+        0,
+        "and a finished session is not coordinated any more"
+    );
+}
+
+/// Cleanup does not wait for somebody to offer another file.
+///
+/// The sweep otherwise only runs inside a negotiation. Nothing breaks — the
+/// quota is decided by that same negotiation — but a client that abandons a
+/// batch of transfers and never returns would leave its staging files holding
+/// the operator's disk with nothing to signal it.
+#[tokio::test]
+async fn abandoned_transfers_are_swept_without_a_negotiation() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
+    let (fixture, bytes) = ready_to_send(&config, &state, "abandoned").await;
+    let session = open_session(&config, &state, &fixture, &bytes, "wav").await;
+    let (first, _) = put_chunk(&config, &state, &fixture.token, &session, 0, &bytes[..512]).await;
+    assert_eq!(first, StatusCode::OK);
+
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let staging = root
+        .join(".waveflow-managed")
+        .join(format!("{session}.part"));
+    assert!(staging.is_file(), "there is something to reclaim");
+
+    sqlx::query("UPDATE upload_session SET expires_at=1")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    // No negotiation, no request of any kind: only the scheduled sweep.
+    state.services.spawn_upload_sweeper();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while staging.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    assert!(
+        !staging.exists(),
+        "an abandoned transfer must not hold the disk until someone happens to upload again"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
+        .bind(&session)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
