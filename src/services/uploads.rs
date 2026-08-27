@@ -399,7 +399,8 @@ impl DomainServices {
     /// this sweep is one the next sweep gets.
     async fn sweep_expired_sessions(&self, now: i64) -> Result<(), ServiceError> {
         let expired = sqlx::query(
-            "SELECT s.id, l.root_path FROM upload_session s \
+            "SELECT s.id, s.library_id, s.declared_hash, s.extension, l.root_path \
+             FROM upload_session s \
              JOIN library l ON l.id = s.library_id \
              WHERE s.expires_at <= ?",
         )
@@ -408,6 +409,9 @@ impl DomainServices {
         .await?;
         for row in &expired {
             let session_id = parse_uuid(row.try_get::<String, _>("id")?)?;
+            let library_id: String = row.try_get("library_id")?;
+            let declared_hash: String = row.try_get("declared_hash")?;
+            let extension: String = row.try_get("extension")?;
             let root: String = row.try_get("root_path")?;
             let path = std::path::Path::new(&root)
                 .join(MANAGED_DIR)
@@ -415,6 +419,17 @@ impl DomainServices {
 
             let lock = self.session_lock(session_id);
             let held = lock.lock().await;
+            // A commit that got as far as renaming and could neither move the
+            // file back nor remove it leaves one under the final name. Nothing
+            // else would ever look there, so the sweep does — under two guards,
+            // because that name is the hash and is not this session's to claim
+            // on its own.
+            if !self
+                .final_file_is_gone(&library_id, &declared_hash, &extension, &root, session_id)
+                .await?
+            {
+                continue;
+            }
             if !staging_is_gone(&path, session_id).await {
                 // The row stays, and so does the lock entry. Deleting either
                 // would discard the only record that this file exists — the
@@ -506,6 +521,71 @@ impl DomainServices {
     /// invariant that rots unwatched.
     pub fn tracked_upload_locks(&self) -> usize {
         self.upload_locks.len()
+    }
+
+    /// Whether nothing of this session survives under the final name.
+    ///
+    /// The final name is `<hash>.<ext>`, and it is emphatically not this
+    /// session's private property: the unique index is per member, so two
+    /// members can hold sessions for the same hash in one library, and a
+    /// successful commit by either produces exactly that file. Removing it
+    /// unguarded would delete a live track's file to clean up a stranger's
+    /// failure — which is why the earlier shape of this fix was refused.
+    ///
+    /// Two guards make it safe, and they are the two ways the file can belong
+    /// to somebody else. A track naming that path is using it. Another session
+    /// on the same hash may be committing right now, between its rename and its
+    /// transaction, in which case there is no track yet and the file is still
+    /// not ours. Neither, and the only thing that could have put a file there
+    /// is the commit this session gave up on.
+    async fn final_file_is_gone(
+        &self,
+        library_id: &str,
+        declared_hash: &str,
+        extension: &str,
+        root: &str,
+        session_id: Uuid,
+    ) -> Result<bool, ServiceError> {
+        let relative = format!("{MANAGED_DIR}/{declared_hash}.{extension}");
+        let path = std::path::Path::new(root).join(&relative);
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Ok(true);
+        }
+        let claimed: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM track WHERE library_id=? AND relative_path=?)",
+        )
+        .bind(library_id)
+        .bind(&relative)
+        .fetch_one(self.db.pool())
+        .await?;
+        let contested: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM upload_session \
+             WHERE library_id=? AND declared_hash=? AND id<>?)",
+        )
+        .bind(library_id)
+        .bind(declared_hash)
+        .bind(session_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        if claimed != 0 || contested != 0 {
+            // Somebody else's, either already or possibly. The row goes anyway:
+            // keeping it would hold a reservation against a file this session
+            // no longer owns.
+            return Ok(true);
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    session = %session_id,
+                    file = %relative,
+                    "cannot remove a stuck file; keeping the session so the sweep retries"
+                );
+                Ok(false)
+            }
+        }
     }
 
     fn session_lock(&self, session_id: Uuid) -> Arc<tokio::sync::Mutex<()>> {
@@ -713,21 +793,41 @@ impl DomainServices {
             Ok(input) => input,
             Err(error) => {
                 tracing::warn!(%error, "a received file is not one the catalogue can read");
-                // Removed here or not at all. The sweep looks for the staging
-                // name, and it must not be taught to look for this one: the
-                // final name is the hash, and a successful commit by somebody
-                // else produces exactly that file — a sweep that removed it
-                // would delete a track's file to clean up a stranger's failure.
-                if let Err(error) = tokio::fs::remove_file(&final_path).await {
-                    tracing::error!(
-                        %error,
-                        file = %relative,
-                        "a file the catalogue cannot read is stuck in the library"
-                    );
-                    // The session is left alone, so its reservation keeps
-                    // counting the space until an operator deals with the file.
-                    return Err(ServiceError::Unavailable);
+                // Put back under the name this session owns, before anything
+                // else is decided.
+                //
+                // Everything that cleans up after a session — the sweep, and
+                // the rule that keeps a session whose file would not go — knows
+                // one name: the staging one. A file left under the final name
+                // is outside all of it, and the sweep would then find nothing,
+                // call it already gone, drop the row, and leave the file with
+                // nothing that remembers it.
+                //
+                // Teaching the sweep the final name is the obvious repair and
+                // the wrong one: that name is the hash, and two members may
+                // hold sessions for the same hash in one library — the unique
+                // index is per member. A sweep that removed it could delete a
+                // live track's file to clean up a stranger's failure. Moving
+                // the file back needs no such judgement.
+                let put_back = tokio::fs::rename(&final_path, &staging).await.is_ok();
+                if !put_back {
+                    if let Err(error) = tokio::fs::remove_file(&final_path).await {
+                        tracing::error!(
+                            %error,
+                            file = %relative,
+                            "a file the catalogue cannot read is stuck in the library"
+                        );
+                        // Neither moved nor removed. The session is kept, and
+                        // the sweep reaches the final name too — under guards,
+                        // since that name is the hash rather than this
+                        // session's own — so the file does not outlive the row
+                        // that remembers it.
+                        return Err(ServiceError::Unavailable);
+                    }
                 }
+                // Removes the staging file if it is back, and keeps the session
+                // if it will not go — the same rule as everywhere else, which
+                // is the point of putting the file back first.
                 self.abandon(session_id, &staging).await;
                 return Err(ServiceError::Invalid);
             }
