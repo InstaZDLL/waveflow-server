@@ -326,6 +326,28 @@ fn refused(full_hash: String, decision: UploadDecision) -> UploadVerdict {
     }
 }
 
+/// Whether the file a session owned is gone — removed now, or already absent.
+///
+/// `false` means it is still there and the session must be kept: the row is the
+/// only thing that remembers the file exists, so dropping it would leave the
+/// operator's disk carrying something nothing will ever look for again. Absent
+/// is success, and the ordinary case — this runs after crashes, and a session
+/// that never received a fragment has no file at all.
+async fn staging_is_gone(path: &std::path::Path, session_id: Uuid) -> bool {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                session = %session_id,
+                "cannot remove a staging file; keeping the session so the sweep retries"
+            );
+            false
+        }
+    }
+}
+
 impl DomainServices {
     /// Sweeps abandoned sessions on a schedule, so cleanup does not wait for
     /// somebody to offer another file.
@@ -393,12 +415,13 @@ impl DomainServices {
 
             let lock = self.session_lock(session_id);
             let held = lock.lock().await;
-            // Already gone is the ordinary case — this sweep repeats after a
-            // crash, and a session that never sent a fragment has no file.
-            if let Err(error) = tokio::fs::remove_file(&path).await {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(%error, session = %session_id, "cannot remove an expired staging file");
-                }
+            if !staging_is_gone(&path, session_id).await {
+                // The row stays, and so does the lock entry. Deleting either
+                // would discard the only record that this file exists — the
+                // order of file-then-row was chosen so a failure could be
+                // retried, and a failure that deletes the row anyway is not a
+                // retry, it is the orphan the order was avoiding.
+                continue;
             }
             {
                 let _writer = self.db.writer_guard().await;
@@ -690,7 +713,21 @@ impl DomainServices {
             Ok(input) => input,
             Err(error) => {
                 tracing::warn!(%error, "a received file is not one the catalogue can read");
-                let _ = tokio::fs::remove_file(&final_path).await;
+                // Removed here or not at all. The sweep looks for the staging
+                // name, and it must not be taught to look for this one: the
+                // final name is the hash, and a successful commit by somebody
+                // else produces exactly that file — a sweep that removed it
+                // would delete a track's file to clean up a stranger's failure.
+                if let Err(error) = tokio::fs::remove_file(&final_path).await {
+                    tracing::error!(
+                        %error,
+                        file = %relative,
+                        "a file the catalogue cannot read is stuck in the library"
+                    );
+                    // The session is left alone, so its reservation keeps
+                    // counting the space until an operator deals with the file.
+                    return Err(ServiceError::Unavailable);
+                }
                 self.abandon(session_id, &staging).await;
                 return Err(ServiceError::Invalid);
             }
@@ -758,10 +795,12 @@ impl DomainServices {
     /// File first, row second, like the sweep: dying in between leaves a row
     /// whose file is gone, which the next sweep repeats harmlessly.
     async fn abandon(&self, session_id: Uuid, staging: &std::path::Path) {
-        if let Err(error) = tokio::fs::remove_file(staging).await {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(%error, session = %session_id, "cannot remove a staging file");
-            }
+        if !staging_is_gone(staging, session_id).await {
+            // Kept for the sweep, for the same reason it is kept there: the row
+            // is what remembers the file. The session expires on its own, and
+            // its reservation keeps counting the space the file is still using
+            // until it does.
+            return;
         }
         let _writer = self.db.writer_guard().await;
         if let Err(error) = sqlx::query("DELETE FROM upload_session WHERE id=?")
