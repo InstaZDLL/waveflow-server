@@ -1761,6 +1761,12 @@ async fn a_file_another_session_may_be_committing_is_spared() {
 /// A symlink pointing at itself is the deterministic way to make the question
 /// fail: following it errors, while the staging file beside it is an ordinary
 /// file the sweep would have removed without a second thought.
+///
+/// The branch under test is not POSIX-specific, but the way to reach it is:
+/// creating a symlink on Windows needs a privilege the runner does not have.
+/// Gated rather than made portable — a test that has to be told which error to
+/// expect proves less than one that provokes a real one.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_file_the_sweep_cannot_ask_about_keeps_its_session() {
     let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 512).await;
