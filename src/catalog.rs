@@ -141,6 +141,12 @@ pub struct CatalogApply {
     pub input: CatalogTrackInput,
     pub existing_id: Option<Uuid>,
     pub moved: bool,
+    /// The device that asked for this, when a client did.
+    ///
+    /// `None` for a scan, which is nobody's request in particular, and also for
+    /// a client that named no device — the header is optional, and a client
+    /// that would rather hear its own changes back simply omits it.
+    pub origin_device_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1084,6 +1090,7 @@ impl Database {
                     input: input.clone(),
                     existing_id,
                     moved,
+                    origin_device_id: None,
                 }],
             )
             .await?;
@@ -1424,12 +1431,15 @@ impl Database {
         // while its bytes move, and the scan is the only witness.
         record_library_event(
             tx,
-            library_id,
-            "track",
-            track_id,
-            "upsert",
-            &serde_json::json!({ "full_hash": input.full_hash }),
-            now,
+            LibraryChange {
+                library_id,
+                entity_type: "track",
+                entity_id: track_id,
+                action: "upsert",
+                payload: serde_json::json!({ "full_hash": input.full_hash }),
+                changed_at: now,
+                origin_device_id: apply.origin_device_id,
+            },
         )
         .await?;
         Ok(if existing_id.is_none() {
@@ -1488,12 +1498,16 @@ impl Database {
         for id in &gone {
             record_library_event(
                 &mut tx,
-                library_id,
-                "track",
-                parse_uuid(id.clone())?,
-                "delete",
-                &serde_json::json!({}),
-                now,
+                LibraryChange {
+                    library_id,
+                    entity_type: "track",
+                    entity_id: parse_uuid(id.clone())?,
+                    action: "delete",
+                    payload: serde_json::json!({}),
+                    changed_at: now,
+                    // A scan noticing a file is gone is nobody's request.
+                    origin_device_id: None,
+                },
             )
             .await?;
         }
@@ -2072,19 +2086,41 @@ pub(crate) async fn apply_track_override_lists(
 /// Reachable from the domain services because a scan is no longer the only
 /// thing that changes a catalogue — correcting a track's tags does too, and the
 /// two must land on the same feed rather than each inventing one.
+/// One fact for a library's change feed.
+///
+/// A struct rather than a row of arguments, and not only because the list grew
+/// past what clippy tolerates: `entity_type` and `action` are adjacent strings
+/// with no type between them, and swapping them at a call site would compile,
+/// pass, and write a vocabulary the CHECK constraint happens to accept.
+pub(crate) struct LibraryChange<'a> {
+    pub library_id: Uuid,
+    pub entity_type: &'a str,
+    pub entity_id: Uuid,
+    pub action: &'a str,
+    pub payload: serde_json::Value,
+    pub changed_at: i64,
+    /// The device that asked, when a client did. `None` for a scan.
+    pub origin_device_id: Option<Uuid>,
+}
+
 pub(crate) async fn record_library_event(
     tx: &mut Transaction<'_, Sqlite>,
-    library_id: Uuid,
-    entity_type: &str,
-    entity_id: Uuid,
-    action: &str,
-    payload: &serde_json::Value,
-    changed_at: i64,
+    change: LibraryChange<'_>,
 ) -> Result<(), sqlx::Error> {
+    let LibraryChange {
+        library_id,
+        entity_type,
+        entity_id,
+        action,
+        payload,
+        changed_at,
+        origin_device_id,
+    } = change;
     sqlx::query(
         "INSERT INTO library_event \
-           (event_id, library_id, entity_type, entity_id, action, payload_json, changed_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+           (event_id, library_id, entity_type, entity_id, action, payload_json, changed_at, \
+            origin_device_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(library_id.to_string())
@@ -2093,6 +2129,7 @@ pub(crate) async fn record_library_event(
     .bind(action)
     .bind(payload.to_string())
     .bind(changed_at)
+    .bind(origin_device_id.map(|id| id.to_string()))
     .execute(&mut **tx)
     .await?;
     Ok(())

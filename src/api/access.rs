@@ -109,6 +109,26 @@ pub(super) async fn mutation_context(
 ) -> Result<crate::sync::MutationContext, ApiError> {
     let operation_id =
         optional_uuid_header(headers, OPERATION_ID_HEADER)?.unwrap_or_else(Uuid::new_v4);
+    let origin_device_id = origin_device(state, headers, user_id).await?;
+    Ok(crate::sync::MutationContext {
+        operation_id,
+        origin_device_id,
+    })
+}
+
+/// The device a caller says it is, once the server has agreed it is theirs.
+///
+/// Split out of [`mutation_context`] because library changes need the device
+/// and have no use for an operation id: nothing about a scan or a correction is
+/// replayed, so minting one would be inventing a fact. The ownership check is
+/// the part that matters and it is shared — an unchecked header would let one
+/// account attribute its writes to another account's device, and every client
+/// filtering its own changes out of the feed would then drop somebody else's.
+pub(super) async fn origin_device(
+    state: &AppState,
+    headers: &HeaderMap,
+    user_id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
     let origin_device_id = optional_uuid_header(headers, DEVICE_ID_HEADER)?;
     if let Some(device_id) = origin_device_id {
         let owned = state
@@ -120,10 +140,7 @@ pub(super) async fn mutation_context(
             return Err(ApiError::Validation);
         }
     }
-    Ok(crate::sync::MutationContext {
-        operation_id,
-        origin_device_id,
-    })
+    Ok(origin_device_id)
 }
 
 pub(super) fn optional_uuid_header(

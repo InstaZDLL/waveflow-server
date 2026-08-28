@@ -43,6 +43,7 @@ impl DomainServices {
         user_id: Uuid,
         track_id: Uuid,
         patch: TrackMetadataPatch,
+        origin_device_id: Option<Uuid>,
     ) -> Result<SongItem, ServiceError> {
         // Shape first, and before the gate. These are pure value checks on the
         // request: nothing about them can change under a concurrent write, so
@@ -245,6 +246,7 @@ impl DomainServices {
                     input,
                     existing_id: Some(track_id),
                     moved: false,
+                    origin_device_id,
                 },
                 now,
             )
@@ -320,12 +322,15 @@ impl DomainServices {
         // survived the edit.
         crate::catalog::record_library_event(
             &mut tx,
-            library_id,
-            "track",
-            track_id,
-            "upsert",
-            &serde_json::json!({ "full_hash": full_hash }),
-            now,
+            crate::catalog::LibraryChange {
+                library_id,
+                entity_type: "track",
+                entity_id: track_id,
+                action: "upsert",
+                payload: serde_json::json!({ "full_hash": full_hash }),
+                changed_at: now,
+                origin_device_id,
+            },
         )
         .await?;
         tx.commit().await?;
