@@ -755,6 +755,7 @@ impl DomainServices {
         &self,
         user_id: Uuid,
         session_id: Uuid,
+        origin_device_id: Option<Uuid>,
     ) -> Result<CommittedUpload, ServiceError> {
         // Resolved before the lock, for the same reason as above.
         self.session_target(user_id, session_id, now_ms()).await?;
@@ -869,6 +870,9 @@ impl DomainServices {
                 input,
                 existing_id: existing_id.map(parse_uuid).transpose()?,
                 moved: false,
+                // So the client that sent this file does not read it back off
+                // the feed as a track it has just discovered.
+                origin_device_id,
             },
             now,
         )

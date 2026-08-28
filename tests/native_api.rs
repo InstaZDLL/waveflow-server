@@ -1831,3 +1831,96 @@ async fn a_correction_clears_on_a_track_that_never_came_from_a_scan() {
         "and re-deriving its tags did not invent a scan for it"
     );
 }
+
+/// A correction names the device that made it, on the library feed.
+///
+/// The same reason as an upload: without it the client that typed the
+/// correction reads it back as a change somebody else made, and has no way to
+/// tell one from the other.
+#[tokio::test]
+async fn a_correction_names_the_device_that_made_it() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("attributing-tagger", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("attributing-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Attributed.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Attributing",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Attributing".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track_id = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()[0]
+        .id;
+    let (token, device) = login_session(&router, "attributing-tagger", password).await;
+
+    let corrected = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v2/tracks/{track_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-waveflow-device-id", &device)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "title": "Named" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(corrected.status(), StatusCode::OK);
+
+    let feed = router
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v2/libraries/{library_id}/events?after=0&limit=100"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(feed.status(), StatusCode::OK);
+    let body = json_body(feed).await;
+    let events = body["events"].as_array().unwrap();
+    let last = events.last().expect("the correction is on the feed");
+    assert_eq!(last["entity_id"], track_id.to_string());
+    assert_eq!(
+        last["origin_device_id"], device,
+        "the device that typed the correction is named"
+    );
+    // The scan that created the track came first, and belongs to nobody.
+    assert!(
+        events[0]["origin_device_id"].is_null(),
+        "a scan is nobody's request in particular"
+    );
+}

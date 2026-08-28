@@ -105,9 +105,12 @@ pub async fn update_track(
     Json(patch): Json<crate::services::TrackMetadataPatch>,
 ) -> Result<Json<crate::services::SongItem>, ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
+    // Named on the library feed, so the client that made the correction can
+    // tell its own change from somebody else's.
+    let device = origin_device(&state, &headers, user.id).await?;
     state
         .services
-        .set_track_metadata(user.id, track_id, patch)
+        .set_track_metadata(user.id, track_id, patch, device)
         .await
         .map(Json)
         .map_err(service_error)
