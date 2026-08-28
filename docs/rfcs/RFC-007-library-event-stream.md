@@ -104,6 +104,27 @@ pour la même raison : il fait partie du contrat.
 - `entity_type` : `track`, `album`, `artist`
 - `action` : `upsert`, `delete`
 
+### L'appareil d'origine, tranché
+
+Un événement porte l'appareil qui l'a demandé, quand un client l'a demandé.
+
+La table a d'abord été créée sans, au motif écrit dans sa migration qu'aucune
+ligne ne venait d'un client. L'écriture de métadonnées a rendu ce motif faux et
+la réception d'un fichier ([RFC-008](RFC-008-receiving-a-file.md)) l'a éloigné
+davantage : sans cette colonne, un client relit son propre téléversement sur le
+flux comme une piste qu'il vient de découvrir, et la traite comme telle. Le
+journal utilisateur porte `origin_device_id` depuis son premier jour, exactement
+pour cela.
+
+`NULL` garde son sens simple : personne ne l'a demandé. Un scan écrit `NULL`, et
+un client qui ne nomme pas d'appareil aussi — l'en-tête est facultatif, et celui
+qui préfère recevoir ses propres changements se contente de l'omettre.
+
+L'appartenance de l'appareil est vérifiée avant d'être écrite. Sans ce contrôle,
+un compte pourrait attribuer ses écritures à l'appareil d'un autre — et tout
+client qui filtre ses propres changements hors du flux écarterait alors ceux de
+quelqu'un d'autre.
+
 **La charge utile d'un `upsert` de piste porte son `full_hash`.** C'est le point
 que rien d'autre ne fournit, et il mérite d'être expliqué.
 
@@ -187,9 +208,3 @@ sémantique aussi : l'événement ne parle pas de l'utilisateur.
 - La forme exacte de l'acquittement. Le journal utilisateur acquitte par
   `(compte, appareil)` ; l'équivalent ici est `(appareil, bibliothèque)`, mais
   la table qui le porte reste à décider.
-- **L'appareil d'origine.** La table n'en porte pas, au motif écrit dans sa
-  migration qu'aucune ligne ne vient d'un client. L'écriture de métadonnées a
-  rendu ce motif faux, et la réception d'un fichier ([RFC-008](RFC-008-receiving-a-file.md))
-  l'éloigne encore : sans cette colonne, un client reçoit sa propre écriture par
-  le flux et la traite comme une découverte. `sync_event` porte
-  `origin_device_id` depuis son premier jour, exactement pour cela.

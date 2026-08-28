@@ -124,9 +124,10 @@ pub async fn commit_upload(
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<crate::services::CommittedUpload>), ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
+    let device = origin_device(&state, &headers, user.id).await?;
     let committed = state
         .services
-        .commit_upload(user.id, session_id)
+        .commit_upload(user.id, session_id, device)
         .await
         .map_err(service_error)?;
     Ok((StatusCode::CREATED, Json(committed)))

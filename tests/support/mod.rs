@@ -326,6 +326,18 @@ pub async fn subsonic_json(
 }
 
 pub async fn login_token(router: &axum::Router, username: &str, password: &str) -> String {
+    login_session(router, username, password).await.0
+}
+
+/// The access token and the device the login registered.
+///
+/// A caller that has to name its device on a mutation needs both, and the
+/// device id is only ever handed out here.
+pub async fn login_session(
+    router: &axum::Router,
+    username: &str,
+    password: &str,
+) -> (String, String) {
     let response = router
         .clone()
         .oneshot(json_request(
@@ -339,10 +351,11 @@ pub async fn login_token(router: &axum::Router, username: &str, password: &str) 
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    json_body(response).await["access_token"]
-        .as_str()
-        .unwrap()
-        .to_owned()
+    let body = json_body(response).await;
+    (
+        body["access_token"].as_str().unwrap().to_owned(),
+        body["device_id"].as_str().unwrap().to_owned(),
+    )
 }
 
 /// Catalogue fixture for the native browse endpoints. Unlike [`catalog_input`]

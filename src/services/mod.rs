@@ -477,6 +477,14 @@ pub struct LibraryEvent {
     /// its bytes move.
     pub payload: serde_json::Value,
     pub changed_at: i64,
+    /// The device that asked for this change, when a client did.
+    ///
+    /// `None` means no client asked — a scan wrote it — or that the client did
+    /// not name a device. A client filters its own writes out of the feed with
+    /// this; without it, its own upload comes back as a track it just
+    /// discovered and it treats it as one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<Uuid>,
 }
 
 /// A page of one library's change feed.

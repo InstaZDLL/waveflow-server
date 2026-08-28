@@ -77,7 +77,8 @@ impl DomainServices {
         }
 
         let rows = sqlx::query(
-            "SELECT e.cursor, e.entity_type, e.entity_id, e.action, e.payload_json, e.changed_at \
+            "SELECT e.cursor, e.entity_type, e.entity_id, e.action, e.payload_json, \
+                    e.changed_at, e.origin_device_id \
              FROM library_event e \
              JOIN library_member m ON m.library_id = e.library_id \
              WHERE m.user_id = ? AND e.library_id = ? AND e.cursor > ? \
@@ -119,5 +120,9 @@ fn library_event_from_row(row: sqlx::sqlite::SqliteRow) -> Result<LibraryEvent, 
         payload: serde_json::from_str(row.try_get::<String, _>("payload_json")?.as_str())
             .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
         changed_at: row.try_get("changed_at")?,
+        origin_device_id: row
+            .try_get::<Option<String>, _>("origin_device_id")?
+            .map(parse_uuid)
+            .transpose()?,
     })
 }

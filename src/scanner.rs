@@ -319,6 +319,8 @@ impl ScanManager {
                             input,
                             existing_id,
                             moved,
+                            // A scan is nobody's request in particular.
+                            origin_device_id: None,
                         });
                     }
                     (relative, result) => {
