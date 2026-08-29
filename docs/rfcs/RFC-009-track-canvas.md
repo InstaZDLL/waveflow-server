@@ -50,10 +50,30 @@ douze pistes d'un album qui partagent une boucle partagent les octets, et douze
 lignes les nomment. C'est la forme juste — un canvas est par piste, comme la
 demande le formule, mais il est presque toujours par album dans les faits.
 
+**Une table `canvas` décrit le blob**, `hash` en clé primaire, plus `format`,
+`byte_size` et `created_at` : le même quatuor que la table `artwork`, pour la
+même raison. Le nom sur le disque est `<empreinte>.<format>`, et une route qui ne
+reçoit que l'empreinte ne peut pas le reconstituer — `read_artwork` prend déjà
+les deux, parce que la base les lui donne. Deviner en essayant les extensions de
+la liste blanche l'une après l'autre serait un balayage du système de fichiers à
+chaque requête, pour une réponse que la base tient. La table le tient donc aussi
+ici, et c'est elle qui rend le comptage de la décision 5 et le balayage de la
+décision 6 possibles : sans elle, le nombre de références d'un blob n'est écrit
+nulle part.
+
 ## Décision 2 — il se pose à côté de la piste, jamais dessus
 
-Une table `track_canvas`, clé primaire `track_id`, `ON DELETE CASCADE`, avec le
-`library_id` que la tenancy exige. Pas une colonne de `track`.
+Une table `track_canvas`, clé primaire `track_id`, `ON DELETE CASCADE`, portant
+l'empreinte du blob et le `library_id` que la tenancy exige. Pas une colonne de
+`track`.
+
+Ce `library_id` est **dérivé de la piste**, lu dans la même transaction que
+l'écriture, jamais accepté de la requête — c'est ce que fait déjà
+`track_override`, dont la route relit `t.library_id` avant d'insérer. Une clé
+étrangère composite vers `track(id, library_id)` dirait la même chose au schéma,
+mais elle demanderait un index unique sur `track(id, library_id)` que rien
+d'autre ne justifie, et la contrainte réelle — que personne ne choisisse la
+bibliothèque à laquelle il rattache une piste — est déjà tenue par la lecture.
 
 Le canvas est **fourni par un humain** : rien dans le fichier ne le produit, donc
 aucun scan ne peut le retrouver. C'est exactement la propriété qui a donné
@@ -116,6 +136,16 @@ piste, elle résout le lien du moment et doit rester revalidable. `private` sur
 les deux, pour la même raison qu'alors — deux comptes dont les bibliothèques
 tiennent le même canvas en partagent l'empreinte.
 
+**L'empreinte n'est pas une autorisation.** C'est le corollaire de la phrase
+précédente et il vaut d'être écrit : puisque deux comptes étrangers l'un à
+l'autre peuvent tenir la même, connaître une empreinte n'établit rien.
+`GET /api/v2/canvas/{empreinte}` la résout donc comme `artwork_for_user` résout
+une pochette — en exigeant qu'une bibliothèque dont le demandeur est membre la
+référence — et répond 404 sinon. Ni `private` ni l'`ETag` ne remplacent ce
+contrôle : le premier parle des caches intermédiaires, le second de la fraîcheur.
+Une empreinte que personne d'accessible ne référence et une qui n'existe pas
+répondent la même chose, comme partout ailleurs dans cette API.
+
 `canvas-stream` et non `canvas/{ticket}` : un segment littéral sous le même
 préfixe qu'un paramètre est un piège pour le prochain lecteur, même quand le
 routeur tranche correctement.
@@ -172,6 +202,20 @@ téléversements. Les mélanger laisserait les boucles affamer la place que le q
 existe pour protéger — celle de la musique — et les deux magasins peuvent vivre
 sur des disques différents.
 
+Il compte **les blobs distincts qu'une bibliothèque référence**, pas ses liens :
+le canvas partagé par les douze pistes d'un album est facturé une fois, ce qui
+est exactement ce que la déduplication de la décision 1 économise. Facturer les
+liens rendrait le prix d'un canvas dépendant du nombre de pistes auxquelles on
+l'attache, et un membre paierait douze fois des octets écrits une seule.
+
+Un blob que **deux bibliothèques** référencent est compté par chacune, bien qu'il
+n'existe qu'une fois sur le disque. C'est délibéré : le plafond d'une
+bibliothèque ne doit pas dépendre de ce qu'une autre se trouve tenir, sans quoi
+la première à poser un canvas le paierait et la seconde l'obtiendrait pour rien,
+jusqu'à ce que la première l'enlève et voie sa voisine hériter de la facture.
+L'opérateur y perd une somme qui surestime son disque ; il n'y perd pas la
+capacité de prévoir ce qu'une bibliothèque peut coûter.
+
 **Rien à réserver.** La réservation du RFC-008 existe parce qu'une négociation
 est une promesse ouverte que rien ne tient jusqu'à la validation, et que deux
 promesses simultanées franchissent un contrôle qui ne compte encore rien. Ici il
@@ -190,6 +234,15 @@ Le magasin est adressé par contenu, donc énumérable : un balayage peut lister
 Des octets orphelins se retrouvent. Une ligne qui nomme un fichier absent, elle,
 ne se retrouve pas — c'est un lien mort que le client voit.
 
+**Et le fichier ne part qu'avec la dernière référence.** Retirer son canvas à une
+piste retire une ligne de `track_canvas`, pas un blob : onze autres pistes
+peuvent le nommer. La suppression de la ligne, le décompte des références
+restantes et la décision d'effacer les octets tiennent donc dans **une seule
+transaction**, sous le verrou d'écriture — c'est ce qui empêche deux retraits
+simultanés de conclure chacun qu'il reste une référence et de laisser un blob que
+plus rien ne nomme. Le quota se rend au même moment, et pour la bibliothèque qui
+a perdu sa dernière référence seulement.
+
 C'est l'inverse de l'ordre du RFC-008, et sans contradiction : là-bas la ligne de
 session **était** le seul souvenir qu'un fichier de travail existait, sous un nom
 que rien n'énumère. Ici c'est le contenu qui se souvient de lui-même.
@@ -206,6 +259,16 @@ chemin `LibraryChange` qu'une correction de métadonnées, avec l'appareil
 d'origine que la PR #152 vient d'ajouter — sans quoi le client qui vient de poser
 le canvas le recevrait comme une découverte. Rien de neuf n'est nécessaire, et
 c'est la mesure que le RFC-007 a été construit au bon endroit.
+
+**La charge de l'événement ne change pas non plus.** Elle porte aujourd'hui
+`{ "full_hash": … }` sur un `upsert`, et rien d'autre : le condensé y est parce
+que **rien d'autre ne le porte** — une piste garde son identifiant pendant que
+ses octets bougent, et l'événement est le seul témoin. Un lien de canvas n'est
+pas dans ce cas ; il se lit sur la piste, que le client relit de toute façon en
+recevant l'événement. Y ajouter un champ, et un `canvas: null` pour dire qu'il a
+disparu, ferait de la charge une projection partielle de la piste — un second
+modèle à tenir d'accord avec le premier, pour une information déjà disponible à
+un aller-retour de là.
 
 ## Décision 8 — ce que le canvas ne fait pas
 
@@ -245,12 +308,15 @@ déjà.
   compromis voulu. L'argument inverse est qu'un opérateur ne devrait pas avoir à
   trouver deux interrupteurs pour une seule question. Réversible dans les deux
   sens tant que rien n'est publié.
-- **Le balayage du magasin.** La décision 6 le rend possible ; elle ne dit pas
-  qui le déclenche, ni quand. `artwork_dir` a exactement la même propriété et
-  n'est balayé par rien aujourd'hui, ce qui est un constat et pas une excuse.
 - **Le son d'un canvas.** Les boucles de ce genre sont muettes par convention.
   Refuser un flux audio, l'ignorer à la lecture, ou laisser le client décider —
   aucun des trois n'est manifestement juste, et aucun n'est urgent.
-- **Le partage d'un même blob entre bibliothèques**, qui demande d'abord de
-  décider ce que ces frontières signifient — la même question ouverte que le
-  RFC-008 a laissée.
+- **Le balayage du magasin.** La décision 6 dit quand un blob cesse d'être
+  référencé et par quelle transaction ; elle ne dit pas qui ramasse les octets
+  qu'une panne a laissés derrière. `artwork_dir` a exactement la même propriété
+  et n'est balayé par rien aujourd'hui, ce qui est un constat et pas une excuse.
+- **Le partage d'un même blob entre bibliothèques.** La décision 5 en fixe le
+  prix — chacune le compte — sans trancher ce que la frontière signifie
+  vraiment : une bibliothèque devrait-elle seulement pouvoir *apprendre*
+  l'existence d'une empreinte qu'une autre a déposée. Même question ouverte que
+  le RFC-008 a laissée.
