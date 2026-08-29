@@ -108,6 +108,18 @@ de ticket propre au canvas, ou un discriminant.
 expiry (8)`, et `verify` rend le genre avec la paire ; chaque route affirme celui
 qu'elle attend.
 
+Les deux valeurs sont figées ici : **`0x01` pour l'audio, `0x02` pour le
+canvas**. `0x00` n'en est pas une, et c'est délibéré — un octet nul est ce qu'une
+charge tronquée ou mal remplie produit le plus volontiers, et le genre ne doit
+pas être ce que l'erreur choisit. `mint` n'accepte que ces deux valeurs et
+`verify` refuse toute autre, du même refus indistinct que la longueur fausse ou
+le scellé rompu. Sans ces constantes écrites, deux implémentations lisent le même
+ticket différemment et l'une des deux ouvre la mauvaise ressource, ce que le
+discriminant existe précisément pour empêcher. Les vecteurs de test couvrent les
+deux sens : un aller-retour par genre, et un genre inconnu **scellé sous la bonne
+clé**, qui doit être refusé — un ticket forgé ne prouverait rien de ce contrat,
+puisqu'il échoue déjà au déchiffrement.
+
 Ce n'est pas de l'économie de code. Sans le discriminant, **un ticket émis pour
 un canvas ouvre l'audio**, et réciproquement : deux ressources dont l'une coûte
 mille fois l'autre en bande passante, derrière la même autorisation. Le client
@@ -145,6 +157,17 @@ référence — et répond 404 sinon. Ni `private` ni l'`ETag` ne remplacent ce
 contrôle : le premier parle des caches intermédiaires, le second de la fraîcheur.
 Une empreinte que personne d'accessible ne référence et une qui n'existe pas
 répondent la même chose, comme partout ailleurs dans cette API.
+
+**L'alias n'en est pas dispensé.** `GET /api/v2/tracks/{id}/canvas` s'adresse par
+un identifiant de piste, qui se devine aussi mal et se partage aussi bien qu'une
+empreinte : connaître l'un n'établit pas plus que connaître l'autre. La route
+exige donc l'appartenance à la bibliothèque de la piste, relue **à chaque
+requête** et pas seulement à la première, et répond 404 dans les trois cas qui
+doivent se ressembler — la piste n'existe pas, elle appartient à quelqu'un
+d'autre, elle n'a pas de canvas. C'est la règle générale du projet, la tenancy
+tenue dans les requêtes et `Forbidden` projeté sur 404 ; elle se répète ici parce
+qu'une route qui *résout* un lien avant de servir des octets est exactement
+l'endroit où l'on autorise le lien et où l'on oublie la piste.
 
 `canvas-stream` et non `canvas/{ticket}` : un segment littéral sous le même
 préfixe qu'un paramètre est un piège pour le prochain lecteur, même quand le
@@ -243,6 +266,31 @@ simultanés de conclure chacun qu'il reste une référence et de laisser un blob
 plus rien ne nomme. Le quota se rend au même moment, et pour la bibliothèque qui
 a perdu sa dernière référence seulement.
 
+**Les octets ne partent qu'après le commit.** La transaction décide, l'effacement
+suit une fois la base engagée. L'ordre inverse — effacer puis commettre — laisse
+une ligne qui nomme un fichier absent dès que la transaction échoue, c'est-à-dire
+exactement le lien mort que tout cet ordre existe pour éviter. La panne entre les
+deux laisse au contraire des octets que plus rien ne nomme, et elle se rattrape :
+c'est la reprise, et c'est ce pour quoi le magasin est énumérable.
+
+**Et la ligne `canvas` part avec la dernière référence.** Elle décrit un blob ;
+quand plus rien ne nomme le blob, elle ment. Elle est donc supprimée dans la même
+transaction que la dernière ligne `track_canvas` — donc avant les octets, comme
+la ligne de lien et pour la même raison — et jamais marquée : un état « décrit un
+fichier disparu » se propagerait dans toutes les lectures pour n'être utile à
+aucune.
+
+**La cascade contourne tout cela**, et cela vaut d'être écrit plutôt que
+découvert. `track_canvas` cascade depuis `track`, qui cascade depuis `library` :
+supprimer une piste ou une bibliothèque effacerait les liens sans décompter les
+références, sans rendre le quota et sans toucher aux octets. Rien n'emprunte ce
+chemin aujourd'hui — aucune route ni commande ne supprime une piste ou une
+bibliothèque, une piste absente est *marquée indisponible* — donc c'est un piège
+posé pour plus tard et non un défaut actuel. Le jour où l'une des deux
+suppressions existe, elle passe par la transaction de la décision 6 ou elle
+laisse derrière elle un magasin que seul le balayage rattrape. `artwork` a déjà
+exactement cette propriété et personne ne l'avait écrite.
+
 C'est l'inverse de l'ordre du RFC-008, et sans contradiction : là-bas la ligne de
 session **était** le seul souvenir qu'un fichier de travail existait, sous un nom
 que rien n'énumère. Ici c'est le contenu qui se souvient de lui-même.
@@ -312,8 +360,10 @@ déjà.
   Refuser un flux audio, l'ignorer à la lecture, ou laisser le client décider —
   aucun des trois n'est manifestement juste, et aucun n'est urgent.
 - **Le balayage du magasin.** La décision 6 dit quand un blob cesse d'être
-  référencé et par quelle transaction ; elle ne dit pas qui ramasse les octets
-  qu'une panne a laissés derrière. `artwork_dir` a exactement la même propriété
+  référencé et par quelle transaction, et elle nomme les deux sources d'octets
+  orphelins — la panne entre le commit et l'effacement, la cascade le jour où
+  une suppression de piste ou de bibliothèque existera. Elle ne dit pas *qui*
+  les ramasse, ni à quelle cadence. `artwork_dir` a exactement la même propriété
   et n'est balayé par rien aujourd'hui, ce qui est un constat et pas une excuse.
 - **Le partage d'un même blob entre bibliothèques.** La décision 5 en fixe le
   prix — chacune le compte — sans trancher ce que la frontière signifie
