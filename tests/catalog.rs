@@ -2079,4 +2079,38 @@ async fn an_acknowledgement_records_a_device_without_holding_the_purge_back() {
         purged.devices_stranded, 1,
         "and the cut is reported against the device it sent back"
     );
+
+    // A pass answers for what it cost, not for what it inherits. Write two more
+    // events, age them, and trim again: the device is still below the
+    // watermark, but this pass is not what put it there.
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 2, false).await.unwrap();
+    for index in 3..5usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * 24 * 60 * 60 * 1000i64)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let purged = state.services.purge_library_events(now).await.unwrap();
+    assert!(purged.events_removed > 0, "there was something left to cut");
+    assert_eq!(
+        purged.devices_stranded, 0,
+        "already stranded is not stranded again — a bill that only grows is not a bill"
+    );
 }

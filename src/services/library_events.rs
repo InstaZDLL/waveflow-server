@@ -92,15 +92,10 @@ impl DomainServices {
             // writer gate is process-wide, and holding it across every feed on
             // a server with fifty libraries would stall every other mutation
             // for the whole pass.
-            let removed = self.purge_one_library(&library_id, cutoff).await?;
+            let (removed, stranded) = self.purge_one_library(&library_id, cutoff).await?;
             if removed > 0 {
                 purged.events_removed += removed;
                 purged.libraries_trimmed += 1;
-                // What the cut cost, and to whom. This is the whole of what
-                // decision 8's table is for: the ack does not hold the purge
-                // back, so the only useful thing it can do is say which devices
-                // the purge has just sent back to the snapshot.
-                let stranded = self.devices_left_behind(&library_id).await?;
                 if stranded > 0 {
                     tracing::info!(
                         library = %library_id,
@@ -114,19 +109,6 @@ impl DomainServices {
         Ok(purged)
     }
 
-    /// How many devices this library's watermark has just overtaken.
-    async fn devices_left_behind(&self, library_id: &str) -> Result<usize, ServiceError> {
-        let stranded: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM library_event_ack a \
-             JOIN library l ON l.id=a.library_id \
-             WHERE a.library_id=? AND a.cursor < l.events_purged_through",
-        )
-        .bind(library_id)
-        .fetch_one(self.db.pool())
-        .await?;
-        Ok(usize::try_from(stranded).unwrap_or(0))
-    }
-
     /// Cuts one library's feed and moves its watermark with it.
     ///
     /// The delete and the watermark are one transaction, and that is the whole
@@ -134,7 +116,12 @@ impl DomainServices {
     /// window where the watermark claims less than has gone — and a client
     /// reading into it is handed a catch-up that looks complete while silently
     /// skipping the gap, which is the failure decision 4 exists to refuse.
-    async fn purge_one_library(&self, library_id: &str, cutoff: i64) -> Result<u64, ServiceError> {
+    /// Answers what was cut and how many devices the cut has *newly* stranded.
+    async fn purge_one_library(
+        &self,
+        library_id: &str,
+        cutoff: i64,
+    ) -> Result<(u64, usize), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
 
@@ -162,7 +149,7 @@ impl DomainServices {
         let removed: i64 = eligible.try_get("n")?;
         let highest: Option<i64> = eligible.try_get("highest")?;
         let (Some(highest), true) = (highest, removed > 0) else {
-            return Ok(0);
+            return Ok((0, 0));
         };
 
         sqlx::query(
@@ -178,6 +165,29 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
 
+        // Counted between the two watermarks rather than below the new one:
+        // this pass is answering for what *it* cost. A device already below the
+        // old watermark was sent back to the catalogue by an earlier pass, and
+        // counting it again every time the feed is trimmed would report a bill
+        // that only ever grows.
+        //
+        // Inside the transaction because both watermarks are known here and
+        // nowhere else — read afterwards, the old one is already gone.
+        let previous: i64 =
+            sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+                .bind(library_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let stranded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM library_event_ack \
+             WHERE library_id=? AND cursor >= ? AND cursor < ?",
+        )
+        .bind(library_id)
+        .bind(previous)
+        .bind(highest)
+        .fetch_one(&mut *tx)
+        .await?;
+
         // `MAX` never decreases: a pass that cut an older tail must not lower a
         // watermark an earlier one raised, and two passes racing must not
         // either.
@@ -189,7 +199,10 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(u64::try_from(removed).unwrap_or(0))
+        Ok((
+            u64::try_from(removed).unwrap_or(0),
+            usize::try_from(stranded).unwrap_or(0),
+        ))
     }
 
     /// Records how far a device has read one library's feed.
