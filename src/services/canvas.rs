@@ -57,6 +57,9 @@ const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 struct Probed {
     format: String,
     duration_secs: f64,
+    /// Whether the file carries sound nobody will ever hear. See
+    /// [`DomainServices::strip_canvas_audio`].
+    has_audio: bool,
 }
 
 impl DomainServices {
@@ -131,13 +134,17 @@ impl DomainServices {
         })?;
 
         let outcome = self
-            .identify_and_place(user_id, track_id, byte_size, &staging, origin_device_id)
+            .identify_and_place(user_id, track_id, &staging, origin_device_id)
             .await;
         // Whatever happened, nothing of this attempt is left under a name only
-        // this call knows.
-        if tokio::fs::try_exists(&staging).await.unwrap_or(false) {
-            if let Err(error) = tokio::fs::remove_file(&staging).await {
-                tracing::warn!(%error, "a staged canvas could not be removed");
+        // this call knows. Two names: what arrived, and what it became once the
+        // soundtrack was taken out — the second exists only sometimes, and on a
+        // failing path it is exactly the one that would be left behind.
+        for leftover in [staging.clone(), staging.with_extension("silent")] {
+            if tokio::fs::try_exists(&leftover).await.unwrap_or(false) {
+                if let Err(error) = tokio::fs::remove_file(&leftover).await {
+                    tracing::warn!(%error, "a staged canvas could not be removed");
+                }
             }
         }
         outcome
@@ -148,7 +155,6 @@ impl DomainServices {
         &self,
         user_id: Uuid,
         track_id: Uuid,
-        byte_size: i64,
         staging: &std::path::Path,
         origin_device_id: Option<Uuid>,
     ) -> Result<CanvasBlob, ServiceError> {
@@ -158,6 +164,21 @@ impl DomainServices {
         if probed.duration_secs > f64::from(self.canvas.max_duration_secs) {
             return Err(ServiceError::Invalid);
         }
+        // RFC-009 decision 9. A canvas plays over a track that is already
+        // playing, so the desktop's `<video>` carries a hard-coded `muted` —
+        // there is no client that could choose otherwise. Keeping the stream
+        // would spend the ceiling on bytes nobody can hear, at the expense of
+        // the picture those bytes could have bought.
+        //
+        // Stripped rather than refused: an mp4 that is otherwise perfectly good
+        // must not be rejected over a stream the sender did not necessarily
+        // choose to include, and plenty of encoders write an empty track by
+        // default.
+        let staging = if probed.has_audio {
+            &self.strip_canvas_audio(staging, &probed.format).await?
+        } else {
+            staging
+        };
         // Hashed through the scanner's own function rather than a second
         // implementation, so a canvas is named the way everything else in this
         // project is named.
@@ -170,6 +191,15 @@ impl DomainServices {
                     tracing::error!(%error, "cannot hash a staged canvas");
                     ServiceError::Unavailable
                 })?
+        };
+        // What the quota is charged is what the store holds, which is not what
+        // arrived when the audio has been taken out of it.
+        let byte_size = match tokio::fs::metadata(staging).await {
+            Ok(meta) => i64::try_from(meta.len()).map_err(|_| ServiceError::Invalid)?,
+            Err(error) => {
+                tracing::error!(%error, "cannot measure a staged canvas");
+                return Err(ServiceError::Unavailable);
+            }
         };
         let blob = CanvasBlob {
             hash,
@@ -631,6 +661,87 @@ impl DomainServices {
         parse_uuid(row.try_get::<String, _>("library_id")?).map_err(Into::into)
     }
 
+    /// Rewrites a staged canvas without its soundtrack.
+    ///
+    /// A **remux, never a re-encode**: `-c copy` moves the video packets across
+    /// untouched, so this is not what decision 8 refuses. That decision's
+    /// argument was that transcoding would make a canvas a compute charge *per
+    /// playback*; this is one stream copy, once, at ingestion, and the picture
+    /// comes out bit for bit what it went in as.
+    ///
+    /// `-map_metadata -1` and `-fflags +bitexact` are load-bearing rather than
+    /// tidy. The store is content-addressed, so two members offering the same
+    /// file must produce the same output or the deduplication of decision 1
+    /// quietly stops working and each of them is charged for a blob. Those two
+    /// flags drop the creation timestamp and the encoder string that would
+    /// otherwise differ between two runs a second apart.
+    ///
+    /// It holds within one deployment. Two different FFmpeg versions may still
+    /// mux the same packets differently, so a server upgrade can give the same
+    /// source a second blob — which costs a duplicate, never a wrong answer,
+    /// and is the reason this is written down rather than assumed.
+    ///
+    /// **The suite does not cover those two flags, and does not claim to.**
+    /// `canvas` asserts that the same bytes offered twice give the same blob,
+    /// and that holds with the flags removed: one FFmpeg build muxing the same
+    /// packets twice agrees with itself either way. What the flags defend
+    /// against is the version string this muxer writes, which differs between
+    /// builds — a difference no test running against a single build can see.
+    async fn strip_canvas_audio(
+        &self,
+        staging: &std::path::Path,
+        format: &str,
+    ) -> Result<PathBuf, ServiceError> {
+        // A name the caller can predict without knowing the container, so its
+        // cleanup reaches this file on every path out — including the ones that
+        // fail after it exists. The muxer is named with `-f` rather than
+        // inferred from an extension, which is what lets the name stay plain.
+        let silent = staging.with_extension("silent");
+        let output = tokio::time::timeout(
+            PROBE_TIMEOUT,
+            tokio::process::Command::new(&self.ffmpeg_path)
+                .arg("-hide_banner")
+                .arg("-loglevel")
+                .arg("error")
+                .arg("-y")
+                .arg("-fflags")
+                .arg("+bitexact")
+                .arg("-i")
+                .arg(staging)
+                .arg("-map")
+                .arg("0:v")
+                .arg("-c")
+                .arg("copy")
+                .arg("-an")
+                .arg("-map_metadata")
+                .arg("-1")
+                .arg("-fflags")
+                .arg("+bitexact")
+                .arg("-f")
+                .arg(format)
+                .arg(&silent)
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            tracing::warn!("ffmpeg timed out taking the sound out of a canvas");
+            ServiceError::Invalid
+        })?
+        .map_err(|error| {
+            tracing::error!(%error, "cannot run ffmpeg on a canvas");
+            ServiceError::Unavailable
+        })?;
+        if !output.status.success() {
+            // The probe already said this is a container we accept, so a remux
+            // that fails is about this file rather than about the server.
+            tracing::warn!("a canvas could not be stripped of its audio");
+            return Err(ServiceError::Invalid);
+        }
+        Ok(silent)
+    }
+
     /// Reads the container and the duration out of the bytes themselves.
     ///
     /// Never from a `Content-Type` or an extension: anything at all can be
@@ -705,6 +816,20 @@ impl DomainServices {
         if !has_video {
             return Err(ServiceError::Invalid);
         }
+        // Reported rather than refused. RFC-009 decision 9: a canvas loops over a
+        // track that is already playing and the desktop's `<video>` is muted in
+        // its markup, so nobody can hear this — and keeping it would spend the
+        // ceiling on bytes that buy nothing. `identify_and_place` remuxes the
+        // stream out before the file reaches the store; this only says whether
+        // there is one to take out.
+        let has_audio = probed
+            .get("streams")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|streams| {
+                streams.iter().any(|stream| {
+                    stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("audio")
+                })
+            });
 
         // A container that does not say how long it runs cannot be checked
         // against the ceiling, and an unchecked ceiling is not one.
@@ -719,6 +844,7 @@ impl DomainServices {
         Ok(Probed {
             format: (*format).to_owned(),
             duration_secs,
+            has_audio,
         })
     }
 }

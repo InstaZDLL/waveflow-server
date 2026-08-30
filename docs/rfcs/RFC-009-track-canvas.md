@@ -392,6 +392,45 @@ un aller-retour de là.
   visiteur sans compte ; y ajouter une surface se décide séparément, pas en
   passant.
 
+## Décision 9 — le son part à l'ingestion
+
+Ouvert par la première version de cette RFC, qui posait trois options sans en
+choisir : refuser un flux audio, l'ignorer à la lecture, ou laisser le client
+décider. Tranché le 2026-08-30, et il fallait le trancher parce que le code
+l'avait déjà tranché **par omission** — la sonde exigeait un flux vidéo et ne
+disait rien de l'audio, donc un canvas sonore était accepté sans que personne
+l'ait décidé.
+
+**La troisième option n'existe pas.** Le desktop rend son `<video>` avec `muted`
+en dur, plus `aria-hidden` et `pointer-events-none` : ce n'est pas un réglage,
+c'est ce qu'un canvas est — une boucle qui tourne par-dessus une piste déjà en
+cours de lecture. Aucun client ne peut décider d'entendre ce son sans parler
+par-dessus la musique. « Laisser le client décider » revenait donc à stocker et
+servir des octets que personne n'entendra jamais.
+
+Et ces octets coûtent. Ils sont pris sur les 4 Mio du plafond, au détriment de
+l'image que les mêmes octets auraient pu payer.
+
+**Le vrai choix est donc entre refuser à la sonde et accepter en retirant la
+piste.** C'est la seconde. Refuser rejetterait un mp4 par ailleurs valable pour
+un flux que celui qui l'envoie n'a pas forcément choisi d'inclure — beaucoup
+d'encodeurs écrivent une piste vide par défaut — et pour un motif que
+l'opérateur ne peut pas diagnostiquer en regardant sa vidéo.
+
+**C'est un remuxage, pas un ré-encodage**, et la décision 8 n'y fait pas
+obstacle. Son argument était qu'un transcodage ferait du canvas une charge de
+calcul *par lecture* ; ici c'est une copie de flux, une fois, à l'ingestion, et
+l'image ressort bit pour bit ce qu'elle était.
+
+**L'empreinte se calcule après.** Le magasin est adressé par contenu, donc deux
+membres offrant le même fichier doivent produire la même sortie, sans quoi la
+déduplication de la décision 1 cesse silencieusement de fonctionner et chacun
+paie son blob. Le remuxage est donc rendu reproductible — métadonnées écartées,
+sortie *bitexact*. Cela tient à l'intérieur d'un déploiement ; deux versions de
+FFmpeg peuvent encore muxer les mêmes paquets différemment, si bien qu'une mise
+à jour du serveur peut donner un second blob au même fichier source. Cela coûte
+un doublon, jamais une réponse fausse.
+
 ## Ce que cette RFC change ailleurs
 
 **La charge du ticket de flux grandit d'un octet**, et les tickets frappés avant
@@ -407,13 +446,20 @@ persisté.
 l'une contre l'autre se valident au démarrage, comme `validate_uploads` le fait
 déjà.
 
+**Les valeurs retenues**, choisies en implémentant et livrées par la PR #156 :
+
+| Réglage | Défaut | Pourquoi celui-là |
+| --- | --- | --- |
+| `WAVEFLOW_CANVAS_MAX_BYTES` | 4 Mio | Une vraie boucle pèse quelques centaines de kilooctets. Confortablement au-dessus de tout ce qui est encore une boucle, assez bas pour que le plafond de corps dérivé reste un plafond. |
+| `WAVEFLOW_CANVAS_MAX_DURATION_SECS` | 15 | Ces boucles durent trois à huit secondes. De la place pour une inhabituelle, pas pour un épisode. |
+| `WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES` | 1 Gio | Des milliers de canvas réels, et un nombre qu'un opérateur peut tenir contre un disque. |
+| Liste blanche des conteneurs | `mp4`, `webm` | Les deux que navigateur et bureau lisent sans décodeur à embarquer. Courte exprès : chaque entrée est un format que le serveur promet de servir pour toujours, puisque les octets derrière une empreinte ne changent jamais. |
+
+`canvas_dir` se dérive de `WAVEFLOW_DATA_DIR` plutôt que de se régler seul,
+exactement comme `artwork_dir`.
+
 ## Ce qui reste ouvert
 
-- **Les valeurs** : plafond d'un canvas, durée maximale, quota par bibliothèque,
-  liste blanche des conteneurs.
-- **Le son d'un canvas.** Les boucles de ce genre sont muettes par convention.
-  Refuser un flux audio, l'ignorer à la lecture, ou laisser le client décider —
-  aucun des trois n'est manifestement juste, et aucun n'est urgent.
 - **Le balayage du magasin.** La décision 6 dit quand un blob cesse d'être
   référencé et par quelle transaction, et elle nomme les deux sources d'octets
   orphelins — la panne entre le commit et l'effacement, la cascade le jour où
