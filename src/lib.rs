@@ -318,8 +318,10 @@ const BEARER_SECURITY_SCHEME: &str = "bearer";
 /// Operations that carry their own credential, or none at all. The global
 /// requirement above would otherwise claim a token is needed to log in.
 ///
-/// `/api/v2/stream/{ticket}` belongs here on purpose: the sealed ticket in the
-/// path *is* the credential, because `<audio src>` cannot send a header.
+/// The two `{ticket}` routes belong here on purpose: the sealed ticket in the
+/// path *is* the credential, because neither `<audio src>` nor `<video src>`
+/// can send a header. A document that omitted them would generate clients
+/// convinced a bearer is required, and they would send one that is not read.
 const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     ("/health", "get"),
     ("/ready", "get"),
@@ -333,6 +335,7 @@ const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v2/web/auth/logout", "post"),
     ("/api/v2/oauth/token", "post"),
     ("/api/v2/stream/{ticket}", "get"),
+    ("/api/v2/canvas-stream/{ticket}", "get"),
 ];
 
 fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
