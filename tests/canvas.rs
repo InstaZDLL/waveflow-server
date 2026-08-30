@@ -83,10 +83,12 @@ async fn fixture(
     )
     .await;
     // A canvas spends the operator's disk, so it follows the deposit rules: a
-    // server that was merely upgraded must not have become one.
+    // server that was merely upgraded must not have become one. Its own flag,
+    // not the upload one — the fixture leaves `accepts_uploads` off precisely
+    // so that every test here runs on a library that takes no audio.
     state
         .db
-        .set_library_accepts_uploads(owner, library, true, now_ms())
+        .set_library_accepts_canvas(owner, library, true, now_ms())
         .await
         .unwrap();
     let mut tracks: Vec<uuid::Uuid> = state
@@ -403,7 +405,7 @@ async fn a_closed_library_takes_no_canvas_but_still_gives_one_back() {
 
     state
         .db
-        .set_library_accepts_uploads(fixture.owner, fixture.library, false, now_ms())
+        .set_library_accepts_canvas(fixture.owner, fixture.library, false, now_ms())
         .await
         .unwrap();
 
@@ -1034,4 +1036,54 @@ async fn library_events(
         .as_array()
         .expect("the feed answers a list")
         .clone()
+}
+
+#[tokio::test]
+async fn the_two_doors_are_independent_in_both_directions() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-doors", 1).await;
+    let bytes = canvas_bytes(temp.path(), "loop.mp4", "1", "black");
+    let track = fixture.tracks[0];
+
+    // The case that made this a separate flag. `fixture` opened the canvas door
+    // and left the upload one shut, which is the read-only server the desktop
+    // named: it refuses to grow in audio and still takes a loop.
+    // Stated rather than inherited from the fixture, so the situation this test
+    // is about is visible in the test.
+    state
+        .db
+        .set_library_accepts_uploads(fixture.owner, fixture.library, false, now_ms())
+        .await
+        .unwrap();
+    state
+        .services
+        .place_canvas(fixture.owner, track, &bytes, None)
+        .await
+        .unwrap();
+
+    // And the reverse: opening the library to files says nothing about loops.
+    // A flag inherited from the other would be the operator opting into
+    // something he never named.
+    state
+        .services
+        .remove_canvas(fixture.owner, track, None)
+        .await
+        .unwrap();
+    state
+        .db
+        .set_library_accepts_canvas(fixture.owner, fixture.library, false, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .set_library_accepts_uploads(fixture.owner, fixture.library, true, now_ms())
+        .await
+        .unwrap();
+    assert!(matches!(
+        state
+            .services
+            .place_canvas(fixture.owner, track, &bytes, None)
+            .await,
+        Err(waveflow_server::services::ServiceError::Forbidden)
+    ));
 }

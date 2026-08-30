@@ -244,7 +244,7 @@ impl DomainServices {
 
         // Authoritative, unlike the check that let this call get this far.
         let row = sqlx::query(
-            "SELECT t.library_id, t.full_hash, l.accepts_uploads, m.role FROM track t \
+            "SELECT t.library_id, t.full_hash, l.accepts_canvas, m.role FROM track t \
              JOIN library l ON l.id=t.library_id \
              JOIN library_member m ON m.library_id=t.library_id \
              WHERE t.id=? AND m.user_id=?",
@@ -259,7 +259,7 @@ impl DomainServices {
         if !role.may_upload() {
             return Err(ServiceError::Forbidden);
         }
-        if row.try_get::<i64, _>("accepts_uploads")? == 0 {
+        if row.try_get::<i64, _>("accepts_canvas")? == 0 {
             return Err(ServiceError::Forbidden);
         }
         // Derived from the track inside the writing transaction and never taken
@@ -418,7 +418,7 @@ impl DomainServices {
             }
             let library_id: String = row.try_get("library_id")?;
             let full_hash: String = row.try_get("full_hash")?;
-            // Deliberately not gated on `accepts_uploads`. Closing a library to
+            // Deliberately not gated on `accepts_canvas`. Closing a library to
             // new files must not strand what it already holds, and taking
             // something away never spends the operator's disk.
             let hash: Option<String> = sqlx::query_scalar(
@@ -613,7 +613,7 @@ impl DomainServices {
         track_id: Uuid,
     ) -> Result<Uuid, ServiceError> {
         let row = sqlx::query(
-            "SELECT t.library_id, l.accepts_uploads, m.role FROM track t \
+            "SELECT t.library_id, l.accepts_canvas, m.role FROM track t \
              JOIN library l ON l.id=t.library_id \
              JOIN library_member m ON m.library_id=t.library_id \
              WHERE t.id=? AND m.user_id=?",
@@ -625,7 +625,7 @@ impl DomainServices {
         .ok_or(ServiceError::NotFound)?;
         let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
-        if !role.may_upload() || row.try_get::<i64, _>("accepts_uploads")? == 0 {
+        if !role.may_upload() || row.try_get::<i64, _>("accepts_canvas")? == 0 {
             return Err(ServiceError::Forbidden);
         }
         parse_uuid(row.try_get::<String, _>("library_id")?).map_err(Into::into)

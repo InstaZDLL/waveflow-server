@@ -73,6 +73,7 @@ pub enum LibraryCommand {
     SetMember(SetMemberArgs),
     RemoveMember(RemoveMemberArgs),
     SetUploads(SetUploadsArgs),
+    SetCanvas(SetCanvasArgs),
 }
 
 #[derive(Debug, Args)]
@@ -105,6 +106,19 @@ pub struct SetMemberArgs {
 /// read-only installation into one that grows.
 #[derive(Debug, Args)]
 pub struct SetUploadsArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    library_id: uuid::Uuid,
+    #[arg(long)]
+    accept: bool,
+}
+
+/// Off until an operator says otherwise, and separate from the upload flag on
+/// purpose: a server that refuses to grow in audio may still take a few hundred
+/// kilobytes of video loop, which is the most common installation there is.
+#[derive(Debug, Args)]
+pub struct SetCanvasArgs {
     #[arg(long)]
     actor: String,
     #[arg(long)]
@@ -199,6 +213,7 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
             LibraryCommand::SetMember(args) => set_member(db, args).await,
             LibraryCommand::RemoveMember(args) => remove_member(db, args).await,
             LibraryCommand::SetUploads(args) => set_uploads(db, args).await,
+            LibraryCommand::SetCanvas(args) => set_canvas(db, args).await,
         },
         Command::Credential { command } => match command {
             CredentialCommand::Set(args) => set_credential(db, &state.secret_box, args).await,
@@ -389,6 +404,22 @@ async fn set_uploads(db: &Database, args: SetUploadsArgs) -> anyhow::Result<()> 
     }
     println!(
         "Library {} {} uploads",
+        args.library_id,
+        if args.accept { "accepts" } else { "refuses" }
+    );
+    Ok(())
+}
+
+async fn set_canvas(db: &Database, args: SetCanvasArgs) -> anyhow::Result<()> {
+    let actor = require_admin(db, &args.actor).await?;
+    if !db
+        .set_library_accepts_canvas(actor.id, args.library_id, args.accept, now_ms())
+        .await?
+    {
+        anyhow::bail!("library not found: {}", args.library_id);
+    }
+    println!(
+        "Library {} {} canvases",
         args.library_id,
         if args.accept { "accepts" } else { "refuses" }
     );
