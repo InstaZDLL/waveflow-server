@@ -10,6 +10,19 @@ updates:
       time: "06:00"
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
+    # A version has to sit in the wild for a few days before this repository
+    # asks for it. Two reasons, and the second is the one that has actually
+    # cost time here: a freshly published release is when a compromised or
+    # simply broken artefact is most likely to still be up, and a bump that
+    # lands the day it ships has had nobody else find its regression first.
+    # This repo has already had `main` go red under a dependency bump while a
+    # feature branch was open, so the branch inherited a failure it had not
+    # caused. Majors wait longest because they are the ones that need code.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     labels:
       - "scope: deps"
       - "scope: server"
@@ -38,6 +51,19 @@ updates:
       time: "06:00"
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
+    # A version has to sit in the wild for a few days before this repository
+    # asks for it. Two reasons, and the second is the one that has actually
+    # cost time here: a freshly published release is when a compromised or
+    # simply broken artefact is most likely to still be up, and a bump that
+    # lands the day it ships has had nobody else find its regression first.
+    # This repo has already had `main` go red under a dependency bump while a
+    # feature branch was open, so the branch inherited a failure it had not
+    # caused. Majors wait longest because they are the ones that need code.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     labels:
       - "scope: deps"
       - "scope: web"
@@ -80,6 +106,19 @@ updates:
       time: "06:10"
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 10
+    # A version has to sit in the wild for a few days before this repository
+    # asks for it. Two reasons, and the second is the one that has actually
+    # cost time here: a freshly published release is when a compromised or
+    # simply broken artefact is most likely to still be up, and a bump that
+    # lands the day it ships has had nobody else find its regression first.
+    # This repo has already had `main` go red under a dependency bump while a
+    # feature branch was open, so the branch inherited a failure it had not
+    # caused. Majors wait longest because they are the ones that need code.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     labels:
       - "scope: deps"
       - "scope: tooling"
