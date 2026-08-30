@@ -1,6 +1,11 @@
 # RFC-008 — Réception d'un fichier
 
 - **Statut** : Proposed
+- **Implémentée par** : [#149](https://github.com/InstaZDLL/waveflow-server/pull/149)
+  (la négociation), [#150](https://github.com/InstaZDLL/waveflow-server/pull/150)
+  (l'apply rendu indépendant du scan), [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)
+  (le transfert). Le champ *Statut* ci-dessus ne bascule jamais dans ce projet :
+  c'est cette ligne qui dit ce qui tourne.
 - **Date** : 2026-08-26
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
