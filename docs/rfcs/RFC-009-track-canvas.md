@@ -273,30 +273,46 @@ exactement le lien mort que tout cet ordre existe pour éviter. La panne entre l
 deux laisse au contraire des octets que plus rien ne nomme, et elle se rattrape :
 c'est la reprise, et c'est ce pour quoi le magasin est énumérable.
 
-**Mais le verrou ne se rend qu'après.** Commettre puis effacer ouvre une fenêtre,
-et elle n'est pas théorique : entre les deux, un `PUT` du même contenu ne trouve
-plus aucune ligne, écrit ses octets, insère la sienne — et l'effacement qui suit
-emporte le fichier d'un lien vivant. C'est le lien mort à nouveau, atteint par
-l'autre bout. Le verrou d'écriture est donc **tenu jusqu'à ce que les octets
-soient partis**, et non rendu au commit.
+**Mais un verrou couvre le cycle entier.** Commettre puis effacer ouvre une
+fenêtre, et elle n'est pas théorique : entre les deux, un `PUT` du même contenu
+ne trouve plus aucune ligne, écrit ses octets, insère la sienne — et l'effacement
+qui suit emporte le fichier d'un lien vivant. C'est le lien mort à nouveau,
+atteint par l'autre bout. Et tenir la barrière d'écriture plus longtemps ne
+suffirait pas : la pose écrit le fichier *avant* sa ligne, donc une écriture
+faufilée avant la barrière et une ligne insérée après elle rejoindraient la même
+fenêtre par le côté.
 
-Cela ne suffit pas seul, et c'est la partie qu'il faut dire : la pose écrit le
-fichier *avant* sa ligne, donc une écriture faufilée avant le verrou et une ligne
-insérée après lui rejoindraient la même fenêtre par le côté. **Le verrou couvre
-donc le cycle entier de chaque côté** — pris avant l'écriture des octets à la
-pose, rendu après leur effacement au retrait. Poser un canvas et en retirer un ne
-se chevauchent jamais. Avant, et non plus tôt : le sondage `ffprobe` de la
-décision 4 ne touche à rien et reste dehors, sous peine de tenir un verrou de
-processus pendant qu'on attend un sous-processus.
+**Un verrou par empreinte**, et non la barrière d'écriture. La pose le prend
+avant d'écrire les octets et le rend après avoir inséré la ligne ; le retrait le
+prend avant sa transaction et le rend après l'effacement. Poser un canvas et en
+retirer un ne se chevauchent donc jamais — et deux empreintes différentes ne se
+gênent pas, ce que la barrière globale leur imposerait sans rien y gagner : la
+course est par blob.
 
-Le prix est nommable : un `remove_file` d'un côté, et de l'autre une écriture
-bornée par le plafond de corps de la route, quelques centaines de kilooctets sous
-un verrou de processus. Le RFC-008 ne pouvait pas payer cela pour un gigaoctet —
-d'où ses sessions, son nom de travail et son balayage sous garde, et d'où le
-commentaire de `commit_upload` qui constate qu'une autre session sur la même
-empreinte peut être en train de commettre entre son rename et sa transaction.
-C'est la même course. L'échelle décide si on la ferme ou si on la garde, et ici
-elle se ferme.
+Ce n'est pas seulement plus fin, c'est la seule forme disponible. La barrière
+d'écriture est **process-wide** et ne doit jamais couvrir une E/S fichier — c'est
+la règle que `upload_locks` suit déjà, écrite dans `src/services/mod.rs` : « file
+I/O has no business happening while the process-wide gate is held ». Une version
+antérieure de cette décision demandait le contraire ; elle avait été écrite sans
+cette règle sous les yeux. La barrière reste donc ce qu'elle est partout
+ailleurs, l'enveloppe d'une transaction SQL, et le verrou par empreinte porte le
+reste.
+
+Le sondage `ffprobe` de la décision 4 reste dehors des deux : il ne touche à
+rien, et attendre un sous-processus sous un verrou est ce qu'on ne fait pas.
+
+Le RFC-008 avait la même course et n'a pas pu la fermer : `commit_upload`
+constate qu'une autre session sur la même empreinte peut être en train de
+commettre entre son rename et sa transaction, et un fichier d'un gigaoctet ne se
+sérialise pas derrière un verrou. Il l'a donc *gardée*, avec des sessions, un nom
+de travail et un balayage sous garde. Ici l'échelle permet de la fermer.
+
+**Et le schéma ferme la même porte une seconde fois.** `track_canvas.canvas_hash`
+référence `canvas(hash)` sans clause `ON DELETE`, donc SQLite refuse de supprimer
+la ligne d'un blob qu'un lien nomme encore. Le décompte de la transaction et
+cette contrainte disent la même chose ; la contrainte est celle qui parle en
+dernier, et c'est bien qu'elle existe — un décompte est du code, une contrainte
+est une propriété.
 
 **Et la ligne `canvas` part avec la dernière référence.** Elle décrit un blob ;
 quand plus rien ne nomme le blob, elle ment. Elle est donc supprimée dans la même

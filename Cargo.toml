@@ -119,3 +119,7 @@ strip = "debuginfo"
 [[test]]
 name = "uploads"
 path = "tests/uploads.rs"
+
+[[test]]
+name = "canvas"
+path = "tests/canvas.rs"

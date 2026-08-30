@@ -808,6 +808,19 @@ pub struct DomainServices {
     /// happening while the process-wide gate is held. The same shape the
     /// scanner uses for its per-library lock.
     upload_locks: Arc<dashmap::DashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    canvas: crate::config::CanvasLimits,
+    canvas_dir: PathBuf,
+    ffprobe_path: PathBuf,
+    /// One lock per canvas blob, keyed by its hash.
+    ///
+    /// Placing and removing the same blob must not interleave: between a
+    /// removal's commit and its unlink, a placement of the same content would
+    /// find no row, write its bytes and insert its own, and the unlink would
+    /// then carry off the file of a live link. Keyed by hash rather than being
+    /// the writer gate, because the race is per blob and because file I/O has
+    /// no business happening while the process-wide gate is held — the same
+    /// reason `upload_locks` exists.
+    canvas_locks: Arc<dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -847,6 +860,7 @@ mod admin;
 mod albums;
 mod artists;
 mod bookmarks;
+mod canvas;
 mod catalog;
 mod credentials;
 mod favorites;
@@ -867,15 +881,22 @@ impl DomainServices {
         secret_box: Arc<SecretBox>,
         sync: SyncService,
         scanner: crate::scanner::ScanManager,
-        uploads: crate::config::UploadLimits,
+        config: &crate::config::Config,
     ) -> Self {
+        // Copied here rather than borrowed, which is why mutating a `Config`
+        // after `initialize` changes nothing: these are the values this
+        // instance runs under for its lifetime.
         Self {
             db,
             secret_box,
             sync,
             scanner,
-            uploads,
+            uploads: config.uploads,
             upload_locks: Arc::new(dashmap::DashMap::new()),
+            canvas: config.canvas,
+            canvas_dir: config.canvas_dir.clone(),
+            ffprobe_path: config.ffprobe_path.clone(),
+            canvas_locks: Arc::new(dashmap::DashMap::new()),
         }
     }
 
