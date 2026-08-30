@@ -6,7 +6,9 @@
   (l'appareil d'origine), [#159](https://github.com/InstaZDLL/waveflow-server/pull/159)
   (les événements d'album, décision 6),
   [#166](https://github.com/InstaZDLL/waveflow-server/pull/166) (la rétention,
-  décision 7). Le champ *Statut* ci-dessus ne bascule jamais dans ce
+  décision 7),
+  [#167](https://github.com/InstaZDLL/waveflow-server/pull/167) (l'acquittement,
+  décision 8). Le champ *Statut* ci-dessus ne bascule jamais dans ce
   projet : c'est cette ligne qui dit ce qui tourne, et elle se vérifie — une PR
   se lit, un mot de statut ne s'audite pas.
 - **Date** : 2026-08-25
@@ -293,7 +295,7 @@ sautant le trou. C'est exactement la panne que la décision 4 refuse.
 
 ## Décision 8 — l'acquittement, et ce qu'il ne décide pas
 
-> **Décidée le 2026-08-30, pas encore construite.**
+> **Construite.** Voir la ligne *Implémentée par* de l'en-tête.
 
 Une table `library_event_ack`, clé primaire `(library_id, device_id)`, portant
 le curseur et sa date. C'est `sync_ack` moins sa colonne de compte : là-bas la
@@ -325,6 +327,6 @@ Plus rien de cette RFC n'est ouvert. Les trois questions qu'elle portait ont
   pour les deux.
 - ~~La forme exacte de l'acquittement.~~ Décision 8.
 
-La décision 7 est construite ; la **décision 8 est décidée et pas encore
-construite**. La ligne *Implémentée par* de l'en-tête ne nomme que ce qui
-tourne, et c'est elle qu'il faut lire — pas cette section.
+Les décisions 7 et 8 sont construites, et cette RFC n'a plus rien en attente.
+La ligne *Implémentée par* de l'en-tête ne nomme que ce qui tourne, et c'est
+elle qu'il faut lire — pas cette section.

@@ -1919,3 +1919,304 @@ async fn retention_cuts_by_age_never_below_the_floor_and_never_at_the_bound() {
         "the floor kept a usable tail rather than an empty feed"
     );
 }
+
+/// RFC-007 decision 8. The acknowledgement says how far a device has read; what
+/// it deliberately does not do is hold the purge back.
+#[tokio::test]
+async fn an_acknowledgement_records_a_device_without_holding_the_purge_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.library_event_retention.min_events = 1;
+    config.library_event_retention.days = 30;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("ack", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("ack-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Ack",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3, false).await.unwrap();
+    for index in 0..3usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let (token, device) = login_session(&router, "ack", &password).await;
+    let cursors: Vec<i64> =
+        sqlx::query_scalar("SELECT cursor FROM library_event WHERE library_id=? ORDER BY cursor")
+            .bind(library.to_string())
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+
+    let ack = |cursor: i64, device: String, token: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::put(format!("/api/v2/libraries/{library}/events/ack"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({ "device_id": device, "cursor": cursor })
+                                .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+
+    assert_eq!(
+        ack(cursors[0], device.clone(), token.clone()).await,
+        StatusCode::NO_CONTENT
+    );
+    // A cursor beyond what the feed has written would let a client mark itself
+    // caught up with events that do not exist yet, and be silently behind when
+    // they arrive.
+    assert_eq!(
+        ack(cursors[2] + 1, device.clone(), token.clone()).await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    // Somebody else's device, refused the same way a library one cannot see is
+    // — one answer for all of them, or the refusal tells them apart.
+    let stranger_hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("ack-stranger", &stranger_hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let (stranger_token, stranger_device) =
+        login_session(&router, "ack-stranger", "correct horse battery staple").await;
+    assert_eq!(
+        ack(cursors[0], stranger_device.clone(), token.clone()).await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a device that is not this account's"
+    );
+    // Their own device, and a library they are not a member of. This is the
+    // case the membership join answers — the one above is refused a step
+    // earlier, by the device check, so it says nothing about tenancy.
+    assert_eq!(
+        ack(cursors[0], stranger_device, stranger_token).await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a library this account is not a member of"
+    );
+
+    // Never lowered: two of a client's own requests racing must not let the
+    // older one win.
+    assert_eq!(
+        ack(cursors[2], device.clone(), token.clone()).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        ack(cursors[0], device.clone(), token).await,
+        StatusCode::NO_CONTENT
+    );
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT cursor FROM library_event_ack WHERE library_id=? AND device_id=?",
+    )
+    .bind(library.to_string())
+    .bind(&device)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, cursors[2], "the highest acknowledged cursor stands");
+
+    // And the point of the whole table: it does not hold the purge back. This
+    // device has acknowledged everything, then the feed is aged out anyway —
+    // one forgotten phone must not stop a shared library being trimmed.
+    sqlx::query("UPDATE library_event_ack SET cursor=? WHERE library_id=?")
+        .bind(cursors[0])
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let now = now_ms();
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * 24 * 60 * 60 * 1000i64)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let purged = state.services.purge_library_events(now).await.unwrap();
+    assert_eq!(
+        purged.events_removed, 2,
+        "the floor of one keeps the newest"
+    );
+    assert_eq!(
+        purged.devices_stranded, 1,
+        "and the cut is reported against the device it sent back"
+    );
+
+    // A pass answers for what it cost, not for what it inherits. Write two more
+    // events, age them, and trim again: the device is still below the
+    // watermark, but this pass is not what put it there.
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 2, false).await.unwrap();
+    for index in 3..5usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * 24 * 60 * 60 * 1000i64)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let purged = state.services.purge_library_events(now).await.unwrap();
+    assert!(purged.events_removed > 0, "there was something left to cut");
+    assert_eq!(
+        purged.devices_stranded, 0,
+        "already stranded is not stranded again — a bill that only grows is not a bill"
+    );
+}
+
+/// The acknowledgement's ceiling counts the watermark, not only the rows.
+///
+/// **The configuration here is one the server would refuse to start with.**
+/// `parse_positive_env` rejects a floor of zero, so a feed can never actually
+/// be trimmed to nothing in production, and this state is unreachable. The
+/// guard exists anyway because "the furthest position a client could have
+/// reached" should not be an expression that happens to be right thanks to a
+/// bound enforced three files away — and a test that never reaches the branch
+/// is a guard nobody can check. `Config::for_data_dir` does not validate, which
+/// is what lets this be written at all.
+#[tokio::test]
+async fn a_cursor_at_the_watermark_is_acknowledged_even_with_the_feed_emptied() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.library_event_retention.min_events = 0;
+    config.library_event_retention.days = 30;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("watermark-ack", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("watermark-ack-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Watermark",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 2, false).await.unwrap();
+    for index in 0..2usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let now = now_ms();
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * 24 * 60 * 60 * 1000i64)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state.services.purge_library_events(now).await.unwrap();
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM library_event WHERE library_id=?")
+            .bind(library.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0, "the floor of zero let the feed empty");
+    let watermark: i64 = sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(watermark > 0);
+
+    // `library_changes` accepts reading from the watermark, so the
+    // acknowledgement has to accept recording it — the two must not disagree
+    // about the same number.
+    let router = waveflow_server::app(&config, state.clone());
+    let (token, device) = login_session(&router, "watermark-ack", &password).await;
+    assert!(state
+        .services
+        .library_changes(owner, library, watermark, 500)
+        .await
+        .is_ok());
+    let response = router
+        .oneshot(
+            Request::put(format!("/api/v2/libraries/{library}/events/ack"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "device_id": device, "cursor": watermark }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}

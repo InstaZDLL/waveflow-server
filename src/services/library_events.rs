@@ -20,6 +20,13 @@ pub struct EventPurge {
     pub events_removed: u64,
     /// Libraries that lost at least one.
     pub libraries_trimmed: usize,
+    /// Devices whose acknowledged cursor now sits below the watermark.
+    ///
+    /// They have been sent back to the catalogue snapshot. Counted rather than
+    /// prevented — RFC-007 decision 8 says the acknowledgement informs and does
+    /// not decide, or one forgotten phone would stop a shared library from ever
+    /// being trimmed.
+    pub devices_stranded: usize,
 }
 
 impl DomainServices {
@@ -85,10 +92,18 @@ impl DomainServices {
             // writer gate is process-wide, and holding it across every feed on
             // a server with fifty libraries would stall every other mutation
             // for the whole pass.
-            let removed = self.purge_one_library(&library_id, cutoff).await?;
+            let (removed, stranded) = self.purge_one_library(&library_id, cutoff).await?;
             if removed > 0 {
                 purged.events_removed += removed;
                 purged.libraries_trimmed += 1;
+                if stranded > 0 {
+                    tracing::info!(
+                        library = %library_id,
+                        devices = stranded,
+                        "trimming this feed sent devices back to the catalogue"
+                    );
+                    purged.devices_stranded += stranded;
+                }
             }
         }
         Ok(purged)
@@ -101,7 +116,12 @@ impl DomainServices {
     /// window where the watermark claims less than has gone — and a client
     /// reading into it is handed a catch-up that looks complete while silently
     /// skipping the gap, which is the failure decision 4 exists to refuse.
-    async fn purge_one_library(&self, library_id: &str, cutoff: i64) -> Result<u64, ServiceError> {
+    /// Answers what was cut and how many devices the cut has *newly* stranded.
+    async fn purge_one_library(
+        &self,
+        library_id: &str,
+        cutoff: i64,
+    ) -> Result<(u64, usize), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
 
@@ -129,7 +149,7 @@ impl DomainServices {
         let removed: i64 = eligible.try_get("n")?;
         let highest: Option<i64> = eligible.try_get("highest")?;
         let (Some(highest), true) = (highest, removed > 0) else {
-            return Ok(0);
+            return Ok((0, 0));
         };
 
         sqlx::query(
@@ -145,6 +165,29 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
 
+        // Counted between the two watermarks rather than below the new one:
+        // this pass is answering for what *it* cost. A device already below the
+        // old watermark was sent back to the catalogue by an earlier pass, and
+        // counting it again every time the feed is trimmed would report a bill
+        // that only ever grows.
+        //
+        // Inside the transaction because both watermarks are known here and
+        // nowhere else — read afterwards, the old one is already gone.
+        let previous: i64 =
+            sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+                .bind(library_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let stranded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM library_event_ack \
+             WHERE library_id=? AND cursor >= ? AND cursor < ?",
+        )
+        .bind(library_id)
+        .bind(previous)
+        .bind(highest)
+        .fetch_one(&mut *tx)
+        .await?;
+
         // `MAX` never decreases: a pass that cut an older tail must not lower a
         // watermark an earlier one raised, and two passes racing must not
         // either.
@@ -156,7 +199,111 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(u64::try_from(removed).unwrap_or(0))
+        Ok((
+            u64::try_from(removed).unwrap_or(0),
+            usize::try_from(stranded).unwrap_or(0),
+        ))
+    }
+
+    /// Records how far a device has read one library's feed.
+    ///
+    /// RFC-007 decision 8. Two checks rather than one, and both are in the
+    /// statement: the device must be this account's and unrevoked, and the
+    /// account must be a member of the library. `sync_ack` needs only the
+    /// first, because the journal is keyed per account and there is no second
+    /// scope to escape into; here there is.
+    ///
+    /// `false` for anything refused — an unknown or revoked device, a library
+    /// this account cannot see, a cursor beyond what the feed has written. A
+    /// caller who is not a member learns nothing about whether the library
+    /// exists, which is the rule everywhere else in this API.
+    pub async fn acknowledge_library_events(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+        device_id: Uuid,
+        cursor: i64,
+    ) -> Result<bool, ServiceError> {
+        if cursor < 0 {
+            return Ok(false);
+        }
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+
+        // A cursor beyond what the feed has written would let a client mark
+        // itself caught up with events that do not exist yet, and then be
+        // silently behind when they arrive.
+        //
+        // Scoped by membership as well, and that is the project's rule rather
+        // than a leak being closed: today both paths out of this function
+        // answer 422, so a caller cannot tell "beyond the feed" from "not your
+        // library" whichever way this reads. But tenancy lives in the query
+        // here, never in a check the query trusts — `library_changes` keeps a
+        // redundant membership predicate for the same reason, so that removing
+        // one guard cannot quietly widen another.
+        // The maximum is a *subquery* rather than an aggregate over the join,
+        // and that is not style. `SELECT MAX(...) FROM ... WHERE <no match>`
+        // returns one row holding NULL, so `COALESCE(..., 0)` would hand back
+        // `Some(0)` for a library the caller cannot see and the predicate above
+        // would decide nothing. Non-aggregate over `library_member`, zero
+        // matching rows means zero rows returned, which is the answer wanted.
+        // The watermark counts as well as the surviving rows, because the
+        // question is "the furthest position a client could legitimately have
+        // reached" and a purge does not move that backwards. Read from the rows
+        // alone, a feed trimmed to nothing would answer 0 and refuse an
+        // acknowledgement at a cursor `library_changes` accepts to read from —
+        // the two would disagree about the same number.
+        //
+        // Unreachable while `min_events` must be positive, since a floor of one
+        // leaves a row whose cursor is at or above the watermark. That is an
+        // invariant enforced three files away in `parse_positive_env`, and this
+        // is the expression that does not depend on it.
+        let latest: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX( \
+               l.events_purged_through, \
+               COALESCE((SELECT MAX(e.cursor) FROM library_event e \
+                          WHERE e.library_id=m.library_id), 0)) \
+             FROM library_member m \
+             JOIN device d ON d.user_id=m.user_id \
+             JOIN library l ON l.id=m.library_id \
+             WHERE m.library_id=? AND m.user_id=? AND d.id=? AND d.revoked_at IS NULL",
+        )
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .bind(device_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(latest) = latest else {
+            return Ok(false);
+        };
+        if cursor > latest {
+            return Ok(false);
+        }
+
+        let result = sqlx::query(
+            "INSERT INTO library_event_ack (library_id, device_id, cursor, acknowledged_at) \
+             SELECT ?, ?, ?, ? WHERE EXISTS ( \
+               SELECT 1 FROM device d \
+               JOIN library_member m ON m.user_id=d.user_id \
+               WHERE d.id=? AND d.user_id=? AND d.revoked_at IS NULL AND m.library_id=? \
+             ) ON CONFLICT (library_id, device_id) DO UPDATE SET \
+               cursor=MAX(library_event_ack.cursor, excluded.cursor), \
+               acknowledged_at=excluded.acknowledged_at",
+        )
+        .bind(library_id.to_string())
+        .bind(device_id.to_string())
+        .bind(cursor)
+        .bind(now_ms())
+        .bind(device_id.to_string())
+        .bind(user_id.to_string())
+        .bind(library_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        // Never lowered: a client that acknowledges an older cursor after a
+        // newer one has raced its own two requests, and the server is not the
+        // place to decide which of them is the truth.
+        Ok(result.rows_affected() == 1)
     }
 
     /// One page of a library's changes, for a caller entitled to that library.
