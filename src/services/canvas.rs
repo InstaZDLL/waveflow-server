@@ -1078,10 +1078,14 @@ fn classify_store_entry(name: &str) -> StoreEntry {
             hash: stem.to_owned(),
         };
     }
-    // The two names a placement writes before it knows the final one. Their
-    // stem is a UUID this call invented, so it identifies nothing and is not
-    // checked: what makes them ours is the extension.
-    if matches!(extension, "part" | "silent") {
+    // The two names a placement writes before it knows the final one, and the
+    // stem is checked as strictly as a blob's. It is a UUID this module
+    // invented — `place_canvas` writes `<uuid>.part`, and the strip renames it
+    // to `<uuid>.silent` — so requiring one to parse costs nothing and closes
+    // the asymmetry an earlier version of this function had: sixty-four hex
+    // demanded of a blob, and any stem at all accepted before `.part`. The
+    // operator's `notes.part` is not this module's file.
+    if matches!(extension, "part" | "silent") && Uuid::parse_str(stem).is_ok() {
         return StoreEntry::Working;
     }
     StoreEntry::Unknown
