@@ -822,6 +822,7 @@ pub struct DomainServices {
     sync: SyncService,
     scanner: crate::scanner::ScanManager,
     uploads: crate::config::UploadLimits,
+    library_event_retention: crate::config::LibraryEventRetention,
     /// One lock per open upload session.
     ///
     /// A fragment is a file write and a row update that have to agree, and the
@@ -914,6 +915,7 @@ impl DomainServices {
             sync,
             scanner,
             uploads: config.uploads,
+            library_event_retention: config.library_event_retention,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,
             canvas_dir: config.canvas_dir.clone(),

@@ -36,6 +36,7 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // reclaim it until somebody offered another file.
     state.services.spawn_upload_sweeper();
     state.services.spawn_canvas_sweeper();
+    state.services.spawn_library_event_purge();
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)

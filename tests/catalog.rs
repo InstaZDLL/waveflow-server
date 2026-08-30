@@ -1758,3 +1758,164 @@ async fn an_album_that_is_merely_retagged_announces_itself_once() {
     assert_eq!(announced.len(), 1, "the retag is announced: {announced:?}");
     assert_eq!(announced[0].action, "upsert");
 }
+
+/// RFC-007 decision 7: an age and a floor, the floor winning, and the age bound
+/// exclusive. Nothing purged before this, so the feed's expiry answer was
+/// correct code that had never once run.
+#[tokio::test]
+async fn retention_cuts_by_age_never_below_the_floor_and_never_at_the_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    // Tuned before `initialize`: `DomainServices` copies these out of `Config`
+    // when it is built, so raising a bound on the returned one changes nothing.
+    config.library_event_retention.min_events = 2;
+    config.library_event_retention.days = 30;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("retention", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("retention-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Retention",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    // Five events through the ordinary path. No album on the inputs, so each
+    // track writes one event and nothing else — an album upsert emits its own
+    // since #159, and a count this test reasons about must not include them.
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 5, false).await.unwrap();
+    for index in 0..5usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let cursors: Vec<i64> =
+        sqlx::query_scalar("SELECT cursor FROM library_event WHERE library_id=? ORDER BY cursor")
+            .bind(library.to_string())
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(cursors.len(), 5, "one event per track and no album events");
+
+    // Backdated in SQL because the ages are what this test is about: two far
+    // past the bound, one exactly on it, two inside.
+    //
+    // `now` is handed to the purge rather than read by it. The bound is
+    // exclusive, so "exactly thirty days old" is a single instant: read the
+    // clock twice and the boundary event lands a millisecond on the wrong side,
+    // and this test passes or fails on how long the lines above it took.
+    let day = 24 * 60 * 60 * 1000i64;
+    let now = now_ms();
+    for (cursor, age) in cursors
+        .iter()
+        .zip([40 * day, 35 * day, 30 * day, 10 * day, 0])
+    {
+        sqlx::query("UPDATE library_event SET changed_at=? WHERE cursor=?")
+            .bind(now - age)
+            .bind(cursor)
+            .execute(state.db.pool())
+            .await
+            .unwrap();
+    }
+
+    let purged = state.services.purge_library_events(now).await.unwrap();
+    assert_eq!(purged.libraries_trimmed, 1);
+    // Two go. The thirty-day one sits exactly on the bound and the bound is
+    // exclusive — keeping one event too many breaks nobody, cutting one too
+    // many sends somebody back to the snapshot.
+    assert_eq!(purged.events_removed, 2, "only what is strictly older");
+
+    // The watermark moved with the delete, in the same transaction. Written
+    // separately there is a window where it claims less than has gone, and a
+    // client reading into it gets a catch-up that looks complete while skipping
+    // the gap.
+    let watermark: i64 = sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(watermark, cursors[1], "the highest cursor actually cut");
+    assert_eq!(
+        state
+            .services
+            .library_changes(owner, library, watermark, 500)
+            .await
+            .unwrap()
+            .events
+            .len(),
+        3,
+        "the bound and everything after it stay"
+    );
+    assert!(
+        matches!(
+            state
+                .services
+                .library_changes(owner, library, watermark - 1, 500)
+                .await,
+            Err(ServiceError::Conflict)
+        ),
+        "a cursor below the watermark has missed events"
+    );
+
+    // And the floor wins over the age. Everything left is now ancient, and the
+    // floor is two: exactly one may go.
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * day)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let purged = state.services.purge_library_events(now).await.unwrap();
+    assert_eq!(
+        purged.events_removed, 1,
+        "three rows, a floor of two: one may go however old they all are"
+    );
+
+    // A second pass changes nothing: the floor is reached and stays reached.
+    assert_eq!(
+        state.services.purge_library_events(now).await.unwrap(),
+        Default::default(),
+        "a library at its floor is not trimmed again"
+    );
+    let watermark: i64 = sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .services
+            .library_changes(owner, library, watermark, 500)
+            .await
+            .unwrap()
+            .events
+            .len(),
+        2,
+        "the floor kept a usable tail rather than an empty feed"
+    );
+}
