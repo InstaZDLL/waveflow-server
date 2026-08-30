@@ -36,6 +36,21 @@ pub struct UploadLimits {
     pub session_ttl: Duration,
 }
 
+/// How long a library's change feed keeps what it has written.
+///
+/// The floor wins over the age: a library below it keeps everything, however
+/// old. RFC-007 decision 7.
+#[derive(Debug, Clone, Copy)]
+pub struct LibraryEventRetention {
+    /// Whole days. Only what is **strictly** older is cut, so an event exactly
+    /// this old survives — the same exclusive bound `stream_ticket::verify`
+    /// uses, and the cautious direction: keeping one event too many breaks
+    /// nobody, cutting one too many sends somebody back to the snapshot.
+    pub days: u32,
+    /// The fewest events a library keeps whatever their age.
+    pub min_events: i64,
+}
+
 /// What the server accepts when a member attaches a loop to a track.
 ///
 /// Apart from [`UploadLimits`] rather than folded into it: the two magazines
@@ -104,6 +119,16 @@ pub struct Config {
     /// the matching MIME map, so a video in that directory would oblige the two
     /// lists to agree forever.
     pub canvas_dir: PathBuf,
+    /// How long a library's change feed keeps what it has written.
+    ///
+    /// `WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS`,
+    /// `WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN`.
+    ///
+    /// Two bounds because either alone fails in the opposite direction: an age
+    /// alone lets a library that rescans daily grow without limit, and a count
+    /// alone cuts the head off a quiet one whose ten thousand events cover two
+    /// years. RFC-007 decision 7.
+    pub library_event_retention: LibraryEventRetention,
     /// What the server accepts when a member attaches a loop to a track.
     ///
     /// `WAVEFLOW_CANVAS_MAX_BYTES`, `WAVEFLOW_CANVAS_MAX_DURATION_SECS`,
@@ -152,6 +177,7 @@ impl std::fmt::Debug for Config {
             .field("transcode_global_limit", &self.transcode_global_limit)
             .field("transcode_per_user_limit", &self.transcode_per_user_limit)
             .field("uploads", &self.uploads)
+            .field("library_event_retention", &self.library_event_retention)
             .field("canvas_dir", &self.canvas_dir)
             .field("canvas", &self.canvas)
             .field("allowed_origins", &self.allowed_origins)
@@ -236,6 +262,14 @@ impl Config {
             )?,
         };
         validate_canvas(&canvas)?;
+        // Both refuse zero and negatives at startup rather than falling back:
+        // every fallback for a bound is wrong, and the operator is turned away
+        // where they can see why. No ceiling — an enormous value means "purge
+        // nothing", which is safe and legible.
+        let library_event_retention = LibraryEventRetention {
+            days: parse_positive_env("WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS", 30u32)?,
+            min_events: parse_positive_env("WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN", 10_000i64)?,
+        };
         if transcode_per_user_limit > transcode_global_limit {
             anyhow::bail!(
                 "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
@@ -305,6 +339,7 @@ impl Config {
             transcode_global_limit,
             transcode_per_user_limit,
             uploads,
+            library_event_retention,
             canvas_dir,
             canvas,
             allowed_origins,
@@ -346,6 +381,13 @@ impl Config {
                 batch_limit: 8,
                 sessions_per_user: 2,
                 session_ttl: Duration::from_secs(3600),
+            },
+            // Small enough that a test can write past the floor without
+            // writing ten thousand rows, and shaped like production rather
+            // than unlimited.
+            library_event_retention: LibraryEventRetention {
+                days: 30,
+                min_events: 4,
             },
             canvas_dir: canvas_dir_for_tests,
             // Same reasoning as the upload limits above: small enough that a

@@ -6,7 +6,159 @@
 use super::*;
 use crate::sync::MAX_SYNC_LIMIT;
 
+/// How often the feed is trimmed.
+///
+/// Retention is measured in days, so a pass a day is the coarsest interval that
+/// still honours it: the oldest surviving event is never more than a day past
+/// the bound. The other sweepers in this crate have the same shape.
+const PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// What one pass of the retention purge removed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct EventPurge {
+    /// Rows cut, across every library.
+    pub events_removed: u64,
+    /// Libraries that lost at least one.
+    pub libraries_trimmed: usize,
+}
+
 impl DomainServices {
+    /// Trims every library's feed to what RFC-007 decision 7 says it keeps.
+    ///
+    /// Boot first, then a pass a day. The other sweepers in this crate have the
+    /// same shape, and for the same reason: a server that has been down should
+    /// not wait a full interval to catch up on what it owes.
+    pub fn spawn_library_event_purge(&self) {
+        let services = self.clone();
+        tokio::spawn(async move {
+            services.purge_now().await;
+            let mut ticker = tokio::time::interval(PURGE_INTERVAL);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                services.purge_now().await;
+            }
+        });
+    }
+
+    async fn purge_now(&self) {
+        match self.purge_library_events(now_ms()).await {
+            Ok(purged) if purged == EventPurge::default() => {}
+            Ok(purged) => tracing::info!(
+                events = purged.events_removed,
+                libraries = purged.libraries_trimmed,
+                "library event feeds trimmed"
+            ),
+            Err(error) => tracing::warn!(%error, "could not trim the library event feeds"),
+        }
+    }
+
+    /// One pass. Public so a test can run it rather than wait a day for it.
+    ///
+    /// Two bounds, and the floor wins. An age alone lets a library that rescans
+    /// daily grow without limit; a count alone cuts the head off a quiet one
+    /// whose ten thousand events cover two years.
+    ///
+    /// `now_ms` is a parameter for the same reason `sweep_expired_sessions`
+    /// takes one: the bound is exclusive, so a caller that cannot name the
+    /// instant cannot place an event *on* it — it can only put one a few
+    /// milliseconds either side and hope. A test written that way passes or
+    /// fails on how long the lines between it and here took to run.
+    pub async fn purge_library_events(&self, now_ms: i64) -> Result<EventPurge, ServiceError> {
+        let retention = self.library_event_retention;
+        // Whole days in milliseconds, and the multiplication is checked: a
+        // configured value large enough to overflow means "keep everything",
+        // which is what a cutoff of zero produces anyway.
+        let cutoff = i64::from(retention.days)
+            .checked_mul(24 * 60 * 60 * 1000)
+            .and_then(|window| now_ms.checked_sub(window));
+        let Some(cutoff) = cutoff else {
+            return Ok(EventPurge::default());
+        };
+
+        let libraries: Vec<String> = sqlx::query_scalar("SELECT id FROM library")
+            .fetch_all(self.db.pool())
+            .await?;
+        let mut purged = EventPurge::default();
+        for library_id in libraries {
+            // One transaction per library rather than one for all of them: the
+            // writer gate is process-wide, and holding it across every feed on
+            // a server with fifty libraries would stall every other mutation
+            // for the whole pass.
+            let removed = self.purge_one_library(&library_id, cutoff).await?;
+            if removed > 0 {
+                purged.events_removed += removed;
+                purged.libraries_trimmed += 1;
+            }
+        }
+        Ok(purged)
+    }
+
+    /// Cuts one library's feed and moves its watermark with it.
+    ///
+    /// The delete and the watermark are one transaction, and that is the whole
+    /// of what makes the expiry answer honest. Written separately, there is a
+    /// window where the watermark claims less than has gone — and a client
+    /// reading into it is handed a catch-up that looks complete while silently
+    /// skipping the gap, which is the failure decision 4 exists to refuse.
+    async fn purge_one_library(&self, library_id: &str, cutoff: i64) -> Result<u64, ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+
+        // What is eligible, measured before it is gone. `changes()` after the
+        // delete would give the count and not the highest cursor, and reading
+        // the maximum back afterwards would read a table the delete has already
+        // emptied of exactly the rows in question.
+        //
+        // The floor is expressed as the newest cursor that may be cut: skip the
+        // `min_events` newest rows and take the one after them. With fewer rows
+        // than the floor this subquery is NULL, `cursor <= NULL` is never true,
+        // and the library keeps everything however old — which is the rule.
+        let eligible = sqlx::query(
+            "SELECT COUNT(*) AS n, MAX(cursor) AS highest FROM library_event \
+             WHERE library_id=? AND changed_at < ? AND cursor <= ( \
+               SELECT cursor FROM library_event WHERE library_id=? \
+               ORDER BY cursor DESC LIMIT 1 OFFSET ?)",
+        )
+        .bind(library_id)
+        .bind(cutoff)
+        .bind(library_id)
+        .bind(self.library_event_retention.min_events)
+        .fetch_one(&mut *tx)
+        .await?;
+        let removed: i64 = eligible.try_get("n")?;
+        let highest: Option<i64> = eligible.try_get("highest")?;
+        let (Some(highest), true) = (highest, removed > 0) else {
+            return Ok(0);
+        };
+
+        sqlx::query(
+            "DELETE FROM library_event \
+             WHERE library_id=? AND changed_at < ? AND cursor <= ( \
+               SELECT cursor FROM library_event WHERE library_id=? \
+               ORDER BY cursor DESC LIMIT 1 OFFSET ?)",
+        )
+        .bind(library_id)
+        .bind(cutoff)
+        .bind(library_id)
+        .bind(self.library_event_retention.min_events)
+        .execute(&mut *tx)
+        .await?;
+
+        // `MAX` never decreases: a pass that cut an older tail must not lower a
+        // watermark an earlier one raised, and two passes racing must not
+        // either.
+        sqlx::query(
+            "UPDATE library SET events_purged_through=MAX(events_purged_through, ?) WHERE id=?",
+        )
+        .bind(highest)
+        .bind(library_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(u64::try_from(removed).unwrap_or(0))
+    }
+
     /// One page of a library's changes, for a caller entitled to that library.
     ///
     /// A caller who is not a member gets `NotFound`, not `Forbidden`: a feed
