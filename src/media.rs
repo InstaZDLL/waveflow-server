@@ -662,11 +662,17 @@ pub async fn create_stream_ticket(
             tracing::error!("stream ticket TTL does not fit in an epoch timestamp");
             MediaError::Internal
         })?;
-    let ticket = crate::stream_ticket::mint(&state.secret_box, user.id, track_id, expires_at)
-        .map_err(|error| {
-            tracing::error!(error = %error, "stream ticket minting failed");
-            MediaError::Internal
-        })?;
+    let ticket = crate::stream_ticket::mint(
+        &state.secret_box,
+        crate::stream_ticket::TicketKind::Audio,
+        user.id,
+        track_id,
+        expires_at,
+    )
+    .map_err(|error| {
+        tracing::error!(error = %error, "stream ticket minting failed");
+        MediaError::Internal
+    })?;
     // Deliberately relative, and deliberately unlike `createShare`, which does
     // prefix WAVEFLOW_PUBLIC_URL. A share link is made to leave the
     // application; a ticket is consumed by the client that just authenticated.
@@ -704,9 +710,12 @@ pub async fn stream_with_ticket(
     headers: HeaderMap,
 ) -> Result<Response, MediaError> {
     // An invalid, forged or expired ticket is indistinguishable from an unknown
-    // track, so probing tells an attacker nothing.
-    let (user_id, track_id) =
+    // track, so probing tells an attacker nothing. A ticket of another kind
+    // joins them: this route serves audio, and it says so rather than trusting
+    // that only audio tickets reach it.
+    let (_, user_id, track_id) =
         crate::stream_ticket::verify(&state.secret_box, &ticket, crate::authentication::now_ms())
+            .filter(|(kind, ..)| *kind == crate::stream_ticket::TicketKind::Audio)
             .ok_or(MediaError::NotFound)?;
     let track = state
         .db
