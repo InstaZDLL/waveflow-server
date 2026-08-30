@@ -58,6 +58,7 @@ pub async fn negotiate_uploads(
     responses(
         (status = 200, body = crate::services::UploadSessionState),
         (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
         (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse)
     )

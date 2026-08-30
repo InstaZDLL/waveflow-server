@@ -311,6 +311,7 @@ impl utoipa::Modify for SecurityAddon {
         )]);
 
         clear_security_on_public_operations(openapi);
+        annotate_scope_refusals(openapi);
         annotate_mutation_headers(openapi);
     }
 }
@@ -352,6 +353,74 @@ fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
         };
         if let Some(operation) = operation {
             operation.security = Some(Vec::new());
+        }
+    }
+}
+
+/// Declares the refusal a narrowed credential meets, on every mutation that can
+/// meet it.
+///
+/// [`api::authenticated`] answers `Forbidden` — 403 — whenever a route asks for
+/// `Access::Write` or `Access::Admin` and the caller's scopes do not grant it.
+/// Every mutation asks for one of the two, so every secured mutation can answer
+/// 403; nineteen of them documented 401 and 422 and stopped there. A client
+/// generated from that document has no branch for the refusal and reads a
+/// perfectly ordinary answer as a transport failure.
+///
+/// Injected here rather than written onto each `#[utoipa::path]`, for the
+/// reason [`annotate_mutation_headers`] is: a property that holds of every
+/// route in a class is stated once, somewhere adding a route cannot forget it.
+/// The nineteen were not an oversight repeated nineteen times — they are what
+/// happens when the same true sentence has to be typed again per route.
+///
+/// Reads are excluded because a read normally cannot produce it: `Access::Read`
+/// is granted by every scope list. That is a statement about `Access::Read` and
+/// not about GET, and the two come apart — `GET /api/v2/uploads/{session_id}`
+/// asks for `Access::Write`, because reading a transfer's state belongs to the
+/// write flow. Such a route documents its own 403, and
+/// `every_refusal_a_narrow_token_meets_is_documented` is what notices when one
+/// does not: it asks the server rather than this list.
+fn annotate_scope_refusals(openapi: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::{ContentBuilder, Ref, RefOr, ResponseBuilder};
+
+    for item in openapi.paths.paths.values_mut() {
+        // GET excluded on purpose: see above.
+        let operations = [
+            item.put.as_mut(),
+            item.post.as_mut(),
+            item.delete.as_mut(),
+            item.patch.as_mut(),
+        ];
+        for operation in operations.into_iter().flatten() {
+            // Emptied by `clear_security_on_public_operations`, which must
+            // therefore have run before this: a route that carries no
+            // credential has none to have refused.
+            if operation.security.as_ref().is_some_and(Vec::is_empty) {
+                continue;
+            }
+            // `or_insert_with`, so a route that already describes its own 403
+            // — the administrative ones, and the library feed acknowledgement —
+            // keeps the wording it chose.
+            operation
+                .responses
+                .responses
+                .entry("403".to_owned())
+                .or_insert_with(|| {
+                    ResponseBuilder::new()
+                        .description(
+                            "Forbidden. `code` is `forbidden`: the credential authenticates, \
+                             but its scopes do not admit this operation. Retrying is futile \
+                             — the token has to be reissued with wider scopes.",
+                        )
+                        .content(
+                            "application/json",
+                            ContentBuilder::new()
+                                .schema(Some(RefOr::Ref(Ref::from_schema_name("ErrorResponse"))))
+                                .build(),
+                        )
+                        .build()
+                        .into()
+                });
         }
     }
 }
