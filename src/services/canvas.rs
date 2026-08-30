@@ -773,7 +773,7 @@ impl DomainServices {
     ///
     /// **Both halves are covered now.** Removing the count fails a test — a
     /// referenced blob is taken. Removing the lock fails
-    /// [`tests::a_placement_that_commits_while_the_sweep_waits_keeps_its_bytes`],
+    /// `tests::a_placement_that_commits_while_the_sweep_waits_keeps_its_bytes`,
     /// which does not race for the interleaving but arranges it: the test holds
     /// this lock, which is what a placement holds between its bytes and its
     /// row, and the sweep has to wait. That needed a unit test rather than an
