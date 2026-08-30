@@ -109,8 +109,11 @@ pub struct Config {
     /// `WAVEFLOW_CANVAS_MAX_BYTES`, `WAVEFLOW_CANVAS_MAX_DURATION_SECS`,
     /// `WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES`.
     ///
-    /// Gated by the same `accepts_uploads` flag as a file: both answer "may a
-    /// member of this library spend the operator's disk".
+    /// Gated by `accepts_canvas`, which is its own flag rather than the upload
+    /// one. A read-only server that refuses to grow in audio may still want a
+    /// few hundred kilobytes of loop, and that is the most common installation
+    /// there is — sharing the flag made this whole feature inert exactly where
+    /// it is most wanted.
     pub canvas: CanvasLimits,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
