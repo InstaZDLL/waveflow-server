@@ -832,6 +832,7 @@ pub struct DomainServices {
     canvas: crate::config::CanvasLimits,
     canvas_dir: PathBuf,
     ffprobe_path: PathBuf,
+    ffmpeg_path: PathBuf,
     /// One lock per canvas blob, keyed by its hash.
     ///
     /// Placing and removing the same blob must not interleave: between a
@@ -917,6 +918,7 @@ impl DomainServices {
             canvas: config.canvas,
             canvas_dir: config.canvas_dir.clone(),
             ffprobe_path: config.ffprobe_path.clone(),
+            ffmpeg_path: config.ffmpeg_path.clone(),
             canvas_locks: Arc::new(dashmap::DashMap::new()),
         }
     }

@@ -1087,3 +1087,107 @@ async fn the_two_doors_are_independent_in_both_directions() {
         Err(waveflow_server::services::ServiceError::Forbidden)
     ));
 }
+
+/// RFC-009 decision 9. A canvas plays over a track that is already playing and
+/// the desktop's `<video>` carries a hard-coded `muted`, so there is no client
+/// that could choose to hear this. Keeping it would spend the ceiling on bytes
+/// nobody can hear.
+#[tokio::test]
+async fn a_loop_that_carries_sound_is_taken_without_it() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-sound", 2).await;
+    let noisy = noisy_canvas_bytes(temp.path());
+
+    // Accepted rather than refused: an otherwise perfectly good mp4 must not be
+    // rejected over a stream the sender did not necessarily choose to include.
+    let placed = state
+        .services
+        .place_canvas(fixture.owner, fixture.tracks[0], &noisy, None)
+        .await
+        .unwrap();
+    assert_eq!(placed.format, "mp4");
+    assert_eq!(stored_files(&config), vec![placed.file_name()]);
+
+    // And stored without it. This is the assertion the previous shape of this
+    // test was missing: accepting the file was true before the strip existed.
+    let stored = config.canvas_dir.join(placed.file_name());
+    assert!(
+        !has_audio_stream(&stored),
+        "the soundtrack must not be in the store"
+    );
+    assert_eq!(
+        placed.byte_size,
+        std::fs::metadata(&stored).unwrap().len() as i64,
+        "the quota is charged what the store holds"
+    );
+    assert!(
+        placed.byte_size < noisy.len() as i64,
+        "and what it holds is smaller than what arrived"
+    );
+
+    // The strip has to be deterministic or the deduplication of decision 1
+    // quietly stops working: the same loop offered twice would land as two
+    // blobs and be charged twice.
+    let again = state
+        .services
+        .place_canvas(fixture.owner, fixture.tracks[1], &noisy, None)
+        .await
+        .unwrap();
+    assert_eq!(again, placed, "the same source must give the same blob");
+    assert_eq!(stored_files(&config), vec![placed.file_name()]);
+}
+
+/// An mp4 carrying both a picture and a soundtrack.
+fn noisy_canvas_bytes(dir: &std::path::Path) -> Vec<u8> {
+    let path = dir.join("noisy.mp4");
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:r=10:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&path)
+        .output()
+        .expect("ffmpeg must be on PATH");
+    assert!(
+        output.status.success(),
+        "ffmpeg failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(has_audio_stream(&path), "the fixture must carry sound");
+    bytes
+}
+
+fn has_audio_stream(path: &std::path::Path) -> bool {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .expect("ffprobe must be on PATH");
+    assert!(output.status.success());
+    !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+}
