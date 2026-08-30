@@ -670,7 +670,12 @@ scopes are checked:
 | `write` | any mutation: playlists, favorites, ratings, the queue, bookmarks, shares, scrobbles, scans |
 | `admin` | the administrative routes, and everything `write` admits |
 
-Reading needs no scope, so a token naming neither is read-only. **Minting a
+Reading needs no scope, so a token naming neither is read-only. That is a
+statement about reading and not about `GET`: `GET /api/v2/uploads/{session_id}`
+asks for `write`, because a transfer's state belongs to the flow that writes it,
+and a `catalog:read` token is refused there. Every operation that can answer
+`403` declares it in `openapi.json`, so a generated client has the branch
+without having to know which reads are really writes. **Minting a
 credential needs no scope either — it needs the absence of one**: the
 authorization code flow at `POST /api/v2/oauth/authorize` is refused to any
 token carrying a scope list at all, because the session it returns is

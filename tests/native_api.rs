@@ -1924,3 +1924,167 @@ async fn a_correction_names_the_device_that_made_it() {
         "a scan is nobody's request in particular"
     );
 }
+
+/// Every refusal a narrowed token actually meets is one the document declares.
+///
+/// The scope check has been enforced since the tokens landed, and nineteen
+/// mutations answered 403 without saying so anywhere a client generator could
+/// see. `annotate_scope_refusals` closes that by construction for mutations,
+/// which is worth exactly nothing on its own: a pass that injects a response
+/// and a test that reads the same document back agree with each other whether
+/// or not either matches the server.
+///
+/// So this asks the server. It mints a `catalog:read` token, walks every
+/// secured operation the document publishes, and requires that anything
+/// answering 403 also declares 403. The oracle is the running router; the
+/// document is what is on trial.
+///
+/// That is also what makes it catch the case the injection cannot see.
+/// `GET /api/v2/uploads/{session_id}` asks for `Access::Write` — reading a
+/// transfer's state belongs to the write flow — so it refuses a narrow token
+/// while being a read, and a pass that annotates mutations walks straight past
+/// it. No list here knows that. The sweep found it by being told 403.
+#[tokio::test]
+async fn every_refusal_a_narrow_token_meets_is_documented() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("sweep-admin", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let login = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": "sweep-admin",
+                "password": "correct horse battery staple",
+                "device_name": "Integration"
+            }),
+        ))
+        .await
+        .unwrap();
+    let access = json_body(login).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // An administrator's token, narrowed to reading. The account behind it may
+    // do everything; the credential may not, which is the whole point.
+    let minted = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v2/admin/users/sweep-admin/tokens")
+                .header("authorization", format!("Bearer {access}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"name": "sweep", "scopes": ["catalog:read"]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(minted.status(), StatusCode::CREATED);
+    let narrow = json_body(minted).await["secret"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let document = json_body(
+        router
+            .clone()
+            .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    // Enough of a value that the extractor in front of the handler accepts it:
+    // a rejected path parameter never reaches `authenticated`, and the
+    // implication below simply does not fire for that route.
+    let canvas_hash = "a".repeat(64);
+    let fill = |path: &str| {
+        let mut filled = String::new();
+        let mut rest = path;
+        while let Some(open) = rest.find('{') {
+            let close = rest.find('}').expect("a balanced parameter");
+            filled.push_str(&rest[..open]);
+            filled.push_str(match &rest[open + 1..close] {
+                "entity_type" => "track",
+                "username" => "sweep-admin",
+                "index" => "0",
+                "canvas_hash" => canvas_hash.as_str(),
+                _ => "00000000-0000-4000-8000-000000000000",
+            });
+            rest = &rest[close + 1..];
+        }
+        filled.push_str(rest);
+        filled
+    };
+
+    let mut refused = Vec::new();
+    let mut undocumented = Vec::new();
+    let paths = document["paths"].as_object().expect("a path map");
+    for (path, item) in paths {
+        if !path.starts_with("/api/v2/") {
+            continue;
+        }
+        for method in ["get", "put", "post", "delete", "patch"] {
+            let Some(operation) = item.get(method) else {
+                continue;
+            };
+            // A route that carries no credential has none to have refused.
+            if operation["security"].as_array().is_some_and(Vec::is_empty) {
+                continue;
+            }
+            let request = Request::builder()
+                .method(Method::from_bytes(method.to_uppercase().as_bytes()).unwrap())
+                .uri(fill(path))
+                .header("authorization", format!("Bearer {narrow}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            let status = router.clone().oneshot(request).await.unwrap().status();
+            if status != StatusCode::FORBIDDEN {
+                continue;
+            }
+            refused.push(format!("{} {path}", method.to_uppercase()));
+            if operation["responses"]["403"].is_null() {
+                undocumented.push(format!("{} {path}", method.to_uppercase()));
+            }
+        }
+    }
+
+    assert!(
+        undocumented.is_empty(),
+        "these refuse a narrowed token without documenting 403: {undocumented:#?}"
+    );
+
+    // An implication passes whenever nothing satisfies it, so the sweep has to
+    // show it reached the routes it claims to judge. Both of these fail if the
+    // requests stop arriving — a changed fixture, an extractor rejecting every
+    // filled path — rather than letting the test go quietly vacuous.
+    //
+    // Twenty and not the forty-odd secured operations, because axum runs the
+    // extractors before the handler body: a route taking `Json<T>` with a
+    // required field answers 422 to this sweep's `{}` and never reaches
+    // `authenticated`. Sending each route a body it would accept would mean
+    // keeping a hand-written fixture per route here — which is the list this
+    // test exists to not have. So it judges what it can reach, and the number
+    // records how much that is.
+    assert!(
+        refused.len() >= 20,
+        "the sweep reached too few refusals to mean anything: {refused:#?}"
+    );
+    assert!(
+        refused
+            .iter()
+            .any(|route| route == "GET /api/v2/uploads/{session_id}"),
+        "the read that asks for write authority is what this sweep is for: {refused:#?}"
+    );
+}

@@ -58,6 +58,9 @@ pub async fn negotiate_uploads(
     responses(
         (status = 200, body = crate::services::UploadSessionState),
         (status = 401, body = ErrorResponse),
+        (status = 403, description = "Forbidden. `code` is `forbidden`: the credential \
+             authenticates, but its scopes do not admit this operation. Retrying is futile \
+             — the token has to be reissued with wider scopes.", body = ErrorResponse),
         (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse)
     )

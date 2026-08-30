@@ -311,6 +311,7 @@ impl utoipa::Modify for SecurityAddon {
         )]);
 
         clear_security_on_public_operations(openapi);
+        annotate_scope_refusals(openapi);
         annotate_mutation_headers(openapi);
     }
 }
@@ -345,13 +346,89 @@ fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
         let Some(item) = openapi.paths.paths.get_mut(*path) else {
             continue;
         };
+        // Every method the list may name, not only the two it happens to name
+        // today. `annotate_scope_refusals` reads what this leaves behind, so a
+        // public `PUT` that fell through here would keep the global requirement
+        // and be handed a 403 it can never answer — the pass would be declaring
+        // a refusal on a route that has no credential to refuse.
         let operation = match *method {
             "get" => item.get.as_mut(),
             "post" => item.post.as_mut(),
+            "put" => item.put.as_mut(),
+            "delete" => item.delete.as_mut(),
+            "patch" => item.patch.as_mut(),
             _ => None,
         };
         if let Some(operation) = operation {
             operation.security = Some(Vec::new());
+        }
+    }
+}
+
+/// Declares the refusal a narrowed credential meets, on every mutation that can
+/// meet it.
+///
+/// [`api::authenticated`] answers `Forbidden` — 403 — whenever a route asks for
+/// `Access::Write` or `Access::Admin` and the caller's scopes do not grant it.
+/// Every mutation asks for one of the two, so every secured mutation can answer
+/// 403; nineteen of them documented 401 and 422 and stopped there. A client
+/// generated from that document has no branch for the refusal and reads a
+/// perfectly ordinary answer as a transport failure.
+///
+/// Injected here rather than written onto each `#[utoipa::path]`, for the
+/// reason [`annotate_mutation_headers`] is: a property that holds of every
+/// route in a class is stated once, somewhere adding a route cannot forget it.
+/// The nineteen were not an oversight repeated nineteen times — they are what
+/// happens when the same true sentence has to be typed again per route.
+///
+/// Reads are excluded because a read normally cannot produce it: `Access::Read`
+/// is granted by every scope list. That is a statement about `Access::Read` and
+/// not about GET, and the two come apart — `GET /api/v2/uploads/{session_id}`
+/// asks for `Access::Write`, because reading a transfer's state belongs to the
+/// write flow. Such a route documents its own 403, and
+/// `every_refusal_a_narrow_token_meets_is_documented` is what notices when one
+/// does not: it asks the server rather than this list.
+fn annotate_scope_refusals(openapi: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::{ContentBuilder, Ref, RefOr, ResponseBuilder};
+
+    for item in openapi.paths.paths.values_mut() {
+        // GET excluded on purpose: see above.
+        let operations = [
+            item.put.as_mut(),
+            item.post.as_mut(),
+            item.delete.as_mut(),
+            item.patch.as_mut(),
+        ];
+        for operation in operations.into_iter().flatten() {
+            // Emptied by `clear_security_on_public_operations`, which must
+            // therefore have run before this: a route that carries no
+            // credential has none to have refused.
+            if operation.security.as_ref().is_some_and(Vec::is_empty) {
+                continue;
+            }
+            // `or_insert_with`, so a route that already describes its own 403
+            // — the administrative ones, and the library feed acknowledgement —
+            // keeps the wording it chose.
+            operation
+                .responses
+                .responses
+                .entry("403".to_owned())
+                .or_insert_with(|| {
+                    ResponseBuilder::new()
+                        .description(
+                            "Forbidden. `code` is `forbidden`: the credential authenticates, \
+                             but its scopes do not admit this operation. Retrying is futile \
+                             — the token has to be reissued with wider scopes.",
+                        )
+                        .content(
+                            "application/json",
+                            ContentBuilder::new()
+                                .schema(Some(RefOr::Ref(Ref::from_schema_name("ErrorResponse"))))
+                                .build(),
+                        )
+                        .build()
+                        .into()
+                });
         }
     }
 }
@@ -626,6 +703,43 @@ pub async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::trace_path;
+
+    /// Every entry in `PUBLIC_OPERATIONS` names an operation that exists, and
+    /// leaves it carrying no security requirement.
+    ///
+    /// The list is looked up by two strings, so a path that is renamed or a
+    /// method spelled `PUT` instead of `put` matches nothing, clears nothing,
+    /// and goes on looking correct. That was cheap while the result was only a
+    /// missing security block. `annotate_scope_refusals` reads what this pass
+    /// leaves behind, so a public operation that keeps the global requirement
+    /// is now handed a 403 it can never answer — a refusal documented on a
+    /// route that holds no credential to refuse.
+    #[test]
+    fn every_public_operation_is_found_and_cleared() {
+        use utoipa::OpenApi;
+
+        let openapi = super::ApiDoc::openapi();
+        for (path, method) in super::PUBLIC_OPERATIONS {
+            let item = openapi
+                .paths
+                .paths
+                .get(*path)
+                .unwrap_or_else(|| panic!("{path} is named here but is not a documented path"));
+            let operation = match *method {
+                "get" => item.get.as_ref(),
+                "post" => item.post.as_ref(),
+                "put" => item.put.as_ref(),
+                "delete" => item.delete.as_ref(),
+                "patch" => item.patch.as_ref(),
+                other => panic!("{other} is not a method this list may name"),
+            }
+            .unwrap_or_else(|| panic!("{method} {path} is not a documented operation"));
+            assert!(
+                operation.security.as_ref().is_some_and(Vec::is_empty),
+                "{method} {path} is public and must carry no security requirement"
+            );
+        }
+    }
 
     #[test]
     fn trace_paths_redact_public_share_bearer_tokens() {
