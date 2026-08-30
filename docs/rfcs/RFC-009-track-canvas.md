@@ -273,6 +273,31 @@ exactement le lien mort que tout cet ordre existe pour éviter. La panne entre l
 deux laisse au contraire des octets que plus rien ne nomme, et elle se rattrape :
 c'est la reprise, et c'est ce pour quoi le magasin est énumérable.
 
+**Mais le verrou ne se rend qu'après.** Commettre puis effacer ouvre une fenêtre,
+et elle n'est pas théorique : entre les deux, un `PUT` du même contenu ne trouve
+plus aucune ligne, écrit ses octets, insère la sienne — et l'effacement qui suit
+emporte le fichier d'un lien vivant. C'est le lien mort à nouveau, atteint par
+l'autre bout. Le verrou d'écriture est donc **tenu jusqu'à ce que les octets
+soient partis**, et non rendu au commit.
+
+Cela ne suffit pas seul, et c'est la partie qu'il faut dire : la pose écrit le
+fichier *avant* sa ligne, donc une écriture faufilée avant le verrou et une ligne
+insérée après lui rejoindraient la même fenêtre par le côté. **Le verrou couvre
+donc le cycle entier de chaque côté** — pris avant l'écriture des octets à la
+pose, rendu après leur effacement au retrait. Poser un canvas et en retirer un ne
+se chevauchent jamais. Avant, et non plus tôt : le sondage `ffprobe` de la
+décision 4 ne touche à rien et reste dehors, sous peine de tenir un verrou de
+processus pendant qu'on attend un sous-processus.
+
+Le prix est nommable : un `remove_file` d'un côté, et de l'autre une écriture
+bornée par le plafond de corps de la route, quelques centaines de kilooctets sous
+un verrou de processus. Le RFC-008 ne pouvait pas payer cela pour un gigaoctet —
+d'où ses sessions, son nom de travail et son balayage sous garde, et d'où le
+commentaire de `commit_upload` qui constate qu'une autre session sur la même
+empreinte peut être en train de commettre entre son rename et sa transaction.
+C'est la même course. L'échelle décide si on la ferme ou si on la garde, et ici
+elle se ferme.
+
 **Et la ligne `canvas` part avec la dernière référence.** Elle décrit un blob ;
 quand plus rien ne nomme le blob, elle ment. Elle est donc supprimée dans la même
 transaction que la dernière ligne `track_canvas` — donc avant les octets, comme
