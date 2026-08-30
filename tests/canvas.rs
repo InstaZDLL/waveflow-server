@@ -643,20 +643,76 @@ async fn a_canvas_is_placed_read_back_and_taken_away_over_http() {
     // the alias a 304 rather than a second transfer of the same bytes.
     assert_eq!(alias.headers()["etag"], etag);
 
-    let revalidated = router
-        .clone()
-        .oneshot(
-            authorized(
-                Request::get(format!("/api/v2/tracks/{track}/canvas")),
-                &fixture.token,
+    // Revalidation on both shapes. The alias is the one that has to answer 304
+    // — it is the URL a client keeps asking about — but the canonical one must
+    // too, or a client that does ask pays for the bytes twice.
+    for path in [
+        format!("/api/v2/tracks/{track}/canvas"),
+        format!("/api/v2/canvas/{hash}"),
+    ] {
+        let revalidated = router
+            .clone()
+            .oneshot(
+                authorized(Request::get(&path), &fixture.token)
+                    .header("if-none-match", &etag)
+                    .body(Body::empty())
+                    .unwrap(),
             )
-            .header("if-none-match", &etag)
-            .body(Body::empty())
+            .await
+            .unwrap();
+        assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED, "{path}");
+        // The validator comes back with the 304, so the entry stays fresh
+        // rather than being evicted for having lost its tag.
+        assert_eq!(revalidated.headers()["etag"], etag, "{path}");
+    }
+
+    // A <video> element asks for ranges, and it asks the ticket URL. All three
+    // ways in serve the same file through the same helper, so all three answer
+    // 206 and carry the validator on the partial too.
+    let ticket = json_body(
+        router
+            .clone()
+            .oneshot(
+                authorized(
+                    Request::post(format!("/api/v2/tracks/{track}/canvas-ticket")),
+                    &fixture.token,
+                )
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
             .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+    )
+    .await["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (path, bearer) in [
+        (format!("/api/v2/canvas/{hash}"), true),
+        (format!("/api/v2/tracks/{track}/canvas"), true),
+        // No Authorization header at all: the sealed ticket is the credential.
+        (ticket, false),
+    ] {
+        let request = Request::get(&path);
+        let request = if bearer {
+            authorized(request, &fixture.token)
+        } else {
+            request
+        };
+        let ranged = router
+            .clone()
+            .oneshot(
+                request
+                    .header("range", "bytes=0-15")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT, "{path}");
+        assert_eq!(ranged.headers()["etag"], etag, "{path}");
+        assert_eq!(ranged.headers()["content-length"], "16", "{path}");
+    }
 
     let removed = router
         .clone()
