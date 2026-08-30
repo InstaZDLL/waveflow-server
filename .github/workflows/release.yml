@@ -56,8 +56,10 @@ jobs:
           persist-credentials: false
 
       - id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
+          tag="$TAG"
           tag_version="${tag#v}"
           # Same bounded form as the MSRV job: whitespace-tolerant, and
           # stopped at the closing quote, so a trailing comment cannot join
