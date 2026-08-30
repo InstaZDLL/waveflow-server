@@ -346,9 +346,17 @@ fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
         let Some(item) = openapi.paths.paths.get_mut(*path) else {
             continue;
         };
+        // Every method the list may name, not only the two it happens to name
+        // today. `annotate_scope_refusals` reads what this leaves behind, so a
+        // public `PUT` that fell through here would keep the global requirement
+        // and be handed a 403 it can never answer — the pass would be declaring
+        // a refusal on a route that has no credential to refuse.
         let operation = match *method {
             "get" => item.get.as_mut(),
             "post" => item.post.as_mut(),
+            "put" => item.put.as_mut(),
+            "delete" => item.delete.as_mut(),
+            "patch" => item.patch.as_mut(),
             _ => None,
         };
         if let Some(operation) = operation {
@@ -695,6 +703,43 @@ pub async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::trace_path;
+
+    /// Every entry in `PUBLIC_OPERATIONS` names an operation that exists, and
+    /// leaves it carrying no security requirement.
+    ///
+    /// The list is looked up by two strings, so a path that is renamed or a
+    /// method spelled `PUT` instead of `put` matches nothing, clears nothing,
+    /// and goes on looking correct. That was cheap while the result was only a
+    /// missing security block. `annotate_scope_refusals` reads what this pass
+    /// leaves behind, so a public operation that keeps the global requirement
+    /// is now handed a 403 it can never answer — a refusal documented on a
+    /// route that holds no credential to refuse.
+    #[test]
+    fn every_public_operation_is_found_and_cleared() {
+        use utoipa::OpenApi;
+
+        let openapi = super::ApiDoc::openapi();
+        for (path, method) in super::PUBLIC_OPERATIONS {
+            let item = openapi
+                .paths
+                .paths
+                .get(*path)
+                .unwrap_or_else(|| panic!("{path} is named here but is not a documented path"));
+            let operation = match *method {
+                "get" => item.get.as_ref(),
+                "post" => item.post.as_ref(),
+                "put" => item.put.as_ref(),
+                "delete" => item.delete.as_ref(),
+                "patch" => item.patch.as_ref(),
+                other => panic!("{other} is not a method this list may name"),
+            }
+            .unwrap_or_else(|| panic!("{method} {path} is not a documented operation"));
+            assert!(
+                operation.security.as_ref().is_some_and(Vec::is_empty),
+                "{method} {path} is public and must carry no security requirement"
+            );
+        }
+    }
 
     #[test]
     fn trace_paths_redact_public_share_bearer_tokens() {
