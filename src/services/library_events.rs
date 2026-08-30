@@ -247,10 +247,25 @@ impl DomainServices {
         // `Some(0)` for a library the caller cannot see and the predicate above
         // would decide nothing. Non-aggregate over `library_member`, zero
         // matching rows means zero rows returned, which is the answer wanted.
+        // The watermark counts as well as the surviving rows, because the
+        // question is "the furthest position a client could legitimately have
+        // reached" and a purge does not move that backwards. Read from the rows
+        // alone, a feed trimmed to nothing would answer 0 and refuse an
+        // acknowledgement at a cursor `library_changes` accepts to read from —
+        // the two would disagree about the same number.
+        //
+        // Unreachable while `min_events` must be positive, since a floor of one
+        // leaves a row whose cursor is at or above the watermark. That is an
+        // invariant enforced three files away in `parse_positive_env`, and this
+        // is the expression that does not depend on it.
         let latest: Option<i64> = sqlx::query_scalar(
-            "SELECT COALESCE( \
-               (SELECT MAX(e.cursor) FROM library_event e WHERE e.library_id=m.library_id), 0) \
-             FROM library_member m JOIN device d ON d.user_id=m.user_id \
+            "SELECT MAX( \
+               l.events_purged_through, \
+               COALESCE((SELECT MAX(e.cursor) FROM library_event e \
+                          WHERE e.library_id=m.library_id), 0)) \
+             FROM library_member m \
+             JOIN device d ON d.user_id=m.user_id \
+             JOIN library l ON l.id=m.library_id \
              WHERE m.library_id=? AND m.user_id=? AND d.id=? AND d.revoked_at IS NULL",
         )
         .bind(library_id.to_string())
