@@ -485,6 +485,7 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     // An expired ticket is refused even though it is otherwise well formed.
     let expired = waveflow_server::stream_ticket::mint(
         &secret_box,
+        waveflow_server::stream_ticket::TicketKind::Audio,
         owner,
         uuid::Uuid::parse_str(&track_id).unwrap(),
         now_ms() - 1,
@@ -500,6 +501,29 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
         .await
         .unwrap();
     assert_eq!(expired.status(), StatusCode::NOT_FOUND);
+
+    // A ticket of another kind does not open audio, even minted for this very
+    // track by this very account under the instance key, and unexpired. The
+    // kind is the only thing separating it from the ticket that works two
+    // assertions above — which is the whole reason the byte exists.
+    let wrong_kind = waveflow_server::stream_ticket::mint(
+        &secret_box,
+        waveflow_server::stream_ticket::TicketKind::Canvas,
+        owner,
+        uuid::Uuid::parse_str(&track_id).unwrap(),
+        now_ms() + 60_000,
+    )
+    .unwrap();
+    let wrong_kind = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/stream/{wrong_kind}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_kind.status(), StatusCode::NOT_FOUND);
 
     // A tampered ticket is indistinguishable from an unknown track. The flipped
     // character sits mid-ticket: trailing base64url characters carry spare bits,
