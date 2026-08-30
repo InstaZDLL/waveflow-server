@@ -124,7 +124,7 @@ pub(super) async fn mutation_context(
 /// the part that matters and it is shared — an unchecked header would let one
 /// account attribute its writes to another account's device, and every client
 /// filtering its own changes out of the feed would then drop somebody else's.
-pub(super) async fn origin_device(
+pub(crate) async fn origin_device(
     state: &AppState,
     headers: &HeaderMap,
     user_id: Uuid,

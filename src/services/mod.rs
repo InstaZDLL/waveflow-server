@@ -432,6 +432,27 @@ pub struct UploadSessionState {
     pub expires_at: i64,
 }
 
+/// One blob of the canvas store.
+///
+/// Cross-cutting rather than private to the canvas service: the media surface
+/// serves it, and the hash it carries is both the file name and the `ETag`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+pub struct CanvasBlob {
+    pub hash: String,
+    /// `mp4` or `webm`, decided by reading the bytes rather than by trusting
+    /// what the request called them.
+    pub format: String,
+    pub byte_size: i64,
+}
+
+impl CanvasBlob {
+    /// The name the bytes carry on disk. The hash is the name, so this is a
+    /// pure function of the row rather than something stored twice.
+    pub fn file_name(&self) -> String {
+        format!("{}.{}", self.hash, self.format)
+    }
+}
+
 /// One verdict, carrying back the hash it answers.
 ///
 /// The hash rather than a position: a client matching verdicts to offers by

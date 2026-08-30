@@ -71,6 +71,9 @@ pub struct AppState {
     /// for slack: a client that sends more than it was told to is refused by
     /// the route before the service has to read it.
     pub upload_chunk_body_limit: usize,
+    /// The body ceiling the canvas route carries, derived from
+    /// `WAVEFLOW_CANVAS_MAX_BYTES` so the two cannot disagree.
+    pub canvas_body_limit: usize,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -179,7 +182,13 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         media::stream_track,
         media::create_stream_ticket,
         media::stream_with_ticket,
-        media::artwork
+        media::artwork,
+        media::canvas_by_hash,
+        media::canvas_for_track,
+        media::put_canvas,
+        media::delete_canvas,
+        media::create_canvas_ticket,
+        media::canvas_with_ticket
     ),
     components(schemas(
         api::ProbeResponse,
@@ -255,6 +264,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         sync::SyncChange,
         sync::SyncPage,
         media::StreamTicketResponse,
+        media::CanvasResponse,
         scanner::ScanProgress
     )),
     modifiers(&SecurityAddon),
@@ -462,6 +472,9 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         refresh_token_ttl: config.refresh_token_ttl,
         upload_batch_body_limit: negotiation_body_limit(&config.uploads),
         upload_chunk_body_limit: chunk_body_limit(&config.uploads),
+        // Refused at startup if it does not fit, so this conversion cannot be
+        // the place that decides what a ceiling falls back to.
+        canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
     })
 }
 

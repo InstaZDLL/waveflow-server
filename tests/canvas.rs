@@ -5,6 +5,10 @@
 //! it charges for them, and what it refuses are decided here rather than at the
 //! surface, so they are tested here.
 
+use axum::body::Body;
+use axum::http::Request;
+use axum::http::StatusCode;
+use tower::ServiceExt;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::catalog::LibraryRecord;
 use waveflow_server::config::CanvasLimits;
@@ -41,6 +45,7 @@ struct Fixture {
     owner: uuid::Uuid,
     library: uuid::Uuid,
     tracks: Vec<uuid::Uuid>,
+    token: String,
 }
 
 /// An owner, an open library, and `count` scanned tracks in it.
@@ -94,10 +99,17 @@ async fn fixture(
         .collect();
     tracks.sort();
     assert_eq!(tracks.len(), count);
+    let token = login_token(
+        &waveflow_server::app(config, state.clone()),
+        name,
+        "correct horse battery staple",
+    )
+    .await;
     Fixture {
         owner,
         library,
         tracks,
+        token,
     }
 }
 
@@ -174,7 +186,7 @@ async fn a_canvas_is_stored_once_shared_by_reference_and_erased_with_the_last_li
 
     let placed = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &bytes)
+        .place_canvas(fixture.owner, fixture.tracks[0], &bytes, None)
         .await
         .unwrap();
     assert_eq!(placed.format, "mp4");
@@ -204,7 +216,7 @@ async fn a_canvas_is_stored_once_shared_by_reference_and_erased_with_the_last_li
     // there are two, and one file.
     let second = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[1], &bytes)
+        .place_canvas(fixture.owner, fixture.tracks[1], &bytes, None)
         .await
         .unwrap();
     assert_eq!(second, placed);
@@ -214,7 +226,7 @@ async fn a_canvas_is_stored_once_shared_by_reference_and_erased_with_the_last_li
     // it, and a file erased here would be a dead link for somebody else.
     state
         .services
-        .remove_canvas(fixture.owner, fixture.tracks[0])
+        .remove_canvas(fixture.owner, fixture.tracks[0], None)
         .await
         .unwrap();
     assert_eq!(
@@ -236,7 +248,7 @@ async fn a_canvas_is_stored_once_shared_by_reference_and_erased_with_the_last_li
     // The last one takes the bytes with it.
     state
         .services
-        .remove_canvas(fixture.owner, fixture.tracks[1])
+        .remove_canvas(fixture.owner, fixture.tracks[1], None)
         .await
         .unwrap();
     assert!(stored_files(&config).is_empty());
@@ -254,7 +266,7 @@ async fn a_canvas_is_stored_once_shared_by_reference_and_erased_with_the_last_li
     assert!(matches!(
         state
             .services
-            .remove_canvas(fixture.owner, fixture.tracks[1])
+            .remove_canvas(fixture.owner, fixture.tracks[1], None)
             .await,
         Err(waveflow_server::services::ServiceError::NotFound)
     ));
@@ -269,12 +281,12 @@ async fn replacing_a_canvas_releases_the_one_it_replaced() {
 
     let first = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &first)
+        .place_canvas(fixture.owner, fixture.tracks[0], &first, None)
         .await
         .unwrap();
     let second = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &second)
+        .place_canvas(fixture.owner, fixture.tracks[0], &second, None)
         .await
         .unwrap();
     assert_ne!(first.hash, second.hash);
@@ -299,7 +311,7 @@ async fn replacing_a_canvas_releases_the_one_it_replaced() {
         assert_eq!(
             state
                 .services
-                .place_canvas(fixture.owner, *track, &first_bytes)
+                .place_canvas(fixture.owner, *track, &first_bytes, None)
                 .await
                 .unwrap()
                 .hash,
@@ -310,7 +322,7 @@ async fn replacing_a_canvas_releases_the_one_it_replaced() {
 
     state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &second_bytes)
+        .place_canvas(fixture.owner, fixture.tracks[0], &second_bytes, None)
         .await
         .unwrap();
     let mut expected = vec![first.file_name(), second.file_name()];
@@ -327,7 +339,7 @@ async fn a_canvas_belongs_to_the_library_and_not_to_whoever_knows_its_name() {
 
     let placed = state
         .services
-        .place_canvas(owner.owner, owner.tracks[0], &bytes)
+        .place_canvas(owner.owner, owner.tracks[0], &bytes, None)
         .await
         .unwrap();
 
@@ -355,14 +367,14 @@ async fn a_canvas_belongs_to_the_library_and_not_to_whoever_knows_its_name() {
     assert!(matches!(
         state
             .services
-            .place_canvas(stranger.owner, owner.tracks[0], &bytes)
+            .place_canvas(stranger.owner, owner.tracks[0], &bytes, None)
             .await,
         Err(waveflow_server::services::ServiceError::NotFound)
     ));
     assert!(matches!(
         state
             .services
-            .remove_canvas(stranger.owner, owner.tracks[0])
+            .remove_canvas(stranger.owner, owner.tracks[0], None)
             .await,
         Err(waveflow_server::services::ServiceError::NotFound)
     ));
@@ -371,7 +383,7 @@ async fn a_canvas_belongs_to_the_library_and_not_to_whoever_knows_its_name() {
     // learning anything about the neighbour who already held it.
     let theirs = state
         .services
-        .place_canvas(stranger.owner, stranger.tracks[0], &bytes)
+        .place_canvas(stranger.owner, stranger.tracks[0], &bytes, None)
         .await
         .unwrap();
     assert_eq!(theirs.hash, placed.hash);
@@ -385,7 +397,7 @@ async fn a_closed_library_takes_no_canvas_but_still_gives_one_back() {
     let bytes = canvas_bytes(temp.path(), "loop.mp4", "1", "black");
     state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &bytes)
+        .place_canvas(fixture.owner, fixture.tracks[0], &bytes, None)
         .await
         .unwrap();
 
@@ -400,7 +412,7 @@ async fn a_closed_library_takes_no_canvas_but_still_gives_one_back() {
     assert!(matches!(
         state
             .services
-            .place_canvas(fixture.owner, fixture.tracks[0], &bytes)
+            .place_canvas(fixture.owner, fixture.tracks[0], &bytes, None)
             .await,
         Err(waveflow_server::services::ServiceError::Forbidden)
     ));
@@ -408,7 +420,7 @@ async fn a_closed_library_takes_no_canvas_but_still_gives_one_back() {
     // strand what it already holds.
     state
         .services
-        .remove_canvas(fixture.owner, fixture.tracks[0])
+        .remove_canvas(fixture.owner, fixture.tracks[0], None)
         .await
         .unwrap();
     assert!(stored_files(&config).is_empty());
@@ -423,7 +435,12 @@ async fn what_is_not_a_short_loop_is_refused_and_leaves_nothing_behind() {
     assert!(matches!(
         state
             .services
-            .place_canvas(library.owner, library.tracks[0], b"this is not a container")
+            .place_canvas(
+                library.owner,
+                library.tracks[0],
+                b"this is not a container",
+                None
+            )
             .await,
         Err(waveflow_server::services::ServiceError::Invalid)
     ));
@@ -435,7 +452,8 @@ async fn what_is_not_a_short_loop_is_refused_and_leaves_nothing_behind() {
             .place_canvas(
                 library.owner,
                 library.tracks[0],
-                &soundtrack_only(temp.path())
+                &soundtrack_only(temp.path()),
+                None
             )
             .await,
         Err(waveflow_server::services::ServiceError::Invalid)
@@ -447,7 +465,7 @@ async fn what_is_not_a_short_loop_is_refused_and_leaves_nothing_behind() {
     assert!(matches!(
         state
             .services
-            .place_canvas(library.owner, library.tracks[0], &long)
+            .place_canvas(library.owner, library.tracks[0], &long, None)
             .await,
         Err(waveflow_server::services::ServiceError::Invalid)
     ));
@@ -464,7 +482,7 @@ async fn what_is_not_a_short_loop_is_refused_and_leaves_nothing_behind() {
     assert!(matches!(
         state2
             .services
-            .place_canvas(small.owner, small.tracks[0], &ordinary)
+            .place_canvas(small.owner, small.tracks[0], &ordinary, None)
             .await,
         Err(waveflow_server::services::ServiceError::Invalid)
     ));
@@ -520,7 +538,7 @@ async fn the_quota_counts_distinct_blobs_and_refuses_the_one_that_would_cross_it
 
     let placed = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &first)
+        .place_canvas(fixture.owner, fixture.tracks[0], &first, None)
         .await
         .unwrap();
 
@@ -529,7 +547,7 @@ async fn the_quota_counts_distinct_blobs_and_refuses_the_one_that_would_cross_it
     // in the price.
     state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[1], &first)
+        .place_canvas(fixture.owner, fixture.tracks[1], &first, None)
         .await
         .unwrap();
     assert_eq!(stored_files(&config), vec![placed.file_name()]);
@@ -538,11 +556,426 @@ async fn the_quota_counts_distinct_blobs_and_refuses_the_one_that_would_cross_it
     assert!(matches!(
         state
             .services
-            .place_canvas(fixture.owner, fixture.tracks[2], &second)
+            .place_canvas(fixture.owner, fixture.tracks[2], &second, None)
             .await,
         Err(waveflow_server::services::ServiceError::Conflict)
     ));
     // And the refusal left no bytes: the file was written before the row, so a
     // transaction that says no has to take them back.
     assert_eq!(stored_files(&config), vec![placed.file_name()]);
+}
+
+// ---------------------------------------------------------------------------
+// The surfaces. RFC-009 decisions 3 and 4.
+// ---------------------------------------------------------------------------
+
+fn authorized(request: axum::http::request::Builder, token: &str) -> axum::http::request::Builder {
+    request.header("authorization", format!("Bearer {token}"))
+}
+
+#[tokio::test]
+async fn a_canvas_is_placed_read_back_and_taken_away_over_http() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-routes", 1).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let bytes = canvas_bytes(temp.path(), "loop.mp4", "1", "black");
+    let track = fixture.tracks[0];
+
+    let placed = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::put(format!("/api/v2/tracks/{track}/canvas")),
+                &fixture.token,
+            )
+            .body(Body::from(bytes.clone()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(placed.status(), StatusCode::OK);
+    let placed = json_body(placed).await;
+    assert_eq!(placed["format"], "mp4");
+    assert_eq!(placed["byte_size"], bytes.len() as i64);
+    let hash = placed["hash"].as_str().unwrap().to_owned();
+    assert_eq!(placed["url"], format!("/api/v2/canvas/{hash}"));
+
+    // Addressed by content: this URL can never answer differently, so the
+    // client is told to stop asking.
+    let by_hash = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::get(format!("/api/v2/canvas/{hash}")),
+                &fixture.token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_hash.status(), StatusCode::OK);
+    assert_eq!(by_hash.headers()["content-type"], "video/mp4");
+    assert_eq!(
+        by_hash.headers()["cache-control"],
+        "private, max-age=31536000, immutable"
+    );
+    let etag = by_hash.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(etag, format!("\"{hash}\""));
+
+    // Addressed by track: it resolves the link of the moment, which a member
+    // can replace, so it stays revalidatable.
+    let alias = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::get(format!("/api/v2/tracks/{track}/canvas")),
+                &fixture.token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(alias.status(), StatusCode::OK);
+    assert_eq!(alias.headers()["cache-control"], "private, no-cache");
+    // The validator is the hash either way, which is what makes revalidating
+    // the alias a 304 rather than a second transfer of the same bytes.
+    assert_eq!(alias.headers()["etag"], etag);
+
+    let revalidated = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::get(format!("/api/v2/tracks/{track}/canvas")),
+                &fixture.token,
+            )
+            .header("if-none-match", &etag)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+
+    let removed = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::delete(format!("/api/v2/tracks/{track}/canvas")),
+                &fixture.token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+
+    for gone in [
+        format!("/api/v2/tracks/{track}/canvas"),
+        format!("/api/v2/canvas/{hash}"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                authorized(Request::get(&gone), &fixture.token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{gone}");
+    }
+}
+
+#[tokio::test]
+async fn a_ticket_opens_the_canvas_it_was_minted_for_and_nothing_else() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-ticket", 1).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let track = fixture.tracks[0];
+    state
+        .services
+        .place_canvas(
+            fixture.owner,
+            track,
+            &canvas_bytes(temp.path(), "loop.mp4", "1", "black"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let minted = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::post(format!("/api/v2/tracks/{track}/canvas-ticket")),
+                &fixture.token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(minted.status(), StatusCode::OK);
+    let url = json_body(minted).await["url"].as_str().unwrap().to_owned();
+    assert!(url.starts_with("/api/v2/canvas-stream/"));
+
+    // What <video src> does: no Authorization header at all.
+    let played = router
+        .clone()
+        .oneshot(Request::get(&url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(played.status(), StatusCode::OK);
+    assert_eq!(played.headers()["content-type"], "video/mp4");
+
+    // The two kinds do not answer for each other, which is the whole reason the
+    // kind is sealed inside the payload. An audio ticket for this very track,
+    // minted for this very account and unexpired, does not open the canvas.
+    let audio = waveflow_server::stream_ticket::mint(
+        &state.secret_box,
+        waveflow_server::stream_ticket::TicketKind::Audio,
+        fixture.owner,
+        track,
+        now_ms() + 60_000,
+    )
+    .unwrap();
+    let refused = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/canvas-stream/{audio}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+
+    // And the reverse: the canvas ticket does not open the audio route.
+    let canvas_ticket = url.rsplit('/').next().unwrap();
+    let refused = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/stream/{canvas_ticket}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_route_carries_its_own_ceiling_and_the_neighbour_sees_nothing() {
+    let (temp, config, state) = canvas_app(|canvas| {
+        canvas.max_bytes = 4096;
+        canvas.library_quota_bytes = 1024 * 1024;
+    })
+    .await;
+    let owner = fixture(&config, &state, "canvas-ceiling-http", 1).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let track = owner.tracks[0];
+
+    // Over the route's own ceiling. The router's global 16 KiB limit would have
+    // let this through, so what refuses it is the limit this route carries.
+    let oversized = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::put(format!("/api/v2/tracks/{track}/canvas")),
+                &owner.token,
+            )
+            .body(Body::from(vec![0u8; 8192]))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    // Under the ceiling and still not a loop: the request was well formed, and
+    // what it carried is not something this server will keep.
+    let garbage = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::put(format!("/api/v2/tracks/{track}/canvas")),
+                &owner.token,
+            )
+            .body(Body::from(vec![7u8; 2048]))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(garbage.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A real one, so the neighbour has something to fail to see.
+    let (_temp2, config2, state2) = canvas_app(|_| {}).await;
+    let roomy = fixture(&config2, &state2, "canvas-roomy", 1).await;
+    let router2 = waveflow_server::app(&config2, state2.clone());
+    let placed = state2
+        .services
+        .place_canvas(
+            roomy.owner,
+            roomy.tracks[0],
+            &canvas_bytes(temp.path(), "loop.mp4", "1", "black"),
+            None,
+        )
+        .await
+        .unwrap();
+    let neighbour = fixture(&config2, &state2, "canvas-neighbour-2", 1).await;
+
+    // Knowing the hash establishes nothing, and neither does knowing the track.
+    for path in [
+        format!("/api/v2/canvas/{}", placed.hash),
+        format!("/api/v2/tracks/{}/canvas", roomy.tracks[0]),
+    ] {
+        let response = router2
+            .clone()
+            .oneshot(
+                authorized(Request::get(&path), &neighbour.token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    // And they cannot put one on somebody else's track either.
+    let intruding = router2
+        .clone()
+        .oneshot(
+            authorized(
+                Request::put(format!("/api/v2/tracks/{}/canvas", roomy.tracks[0])),
+                &neighbour.token,
+            )
+            .body(Body::from(vec![7u8; 512]))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(intruding.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn placing_and_removing_a_canvas_travels_in_the_track_upsert() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-feed", 1).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let (token, device) =
+        login_session(&router, "canvas-feed", "correct horse battery staple").await;
+    let track = fixture.tracks[0];
+    let library = fixture.library;
+
+    // Where the feed already stood, so what follows is what this test caused
+    // rather than what the scan left behind.
+    let before = library_events(&router, &token, library).await.len();
+
+    let placed = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::put(format!("/api/v2/tracks/{track}/canvas")),
+                &token,
+            )
+            .header("x-waveflow-device-id", &device)
+            .body(Body::from(canvas_bytes(
+                temp.path(),
+                "loop.mp4",
+                "1",
+                "black",
+            )))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(placed.status(), StatusCode::OK);
+
+    let events = library_events(&router, &token, library).await;
+    assert_eq!(events.len(), before + 1, "one event, and only one");
+    let event = events.last().unwrap();
+    // RFC-009 decision 7: no event for the blob, because the bytes behind a
+    // hash never change. Only the link is a change, and the link is part of the
+    // track — so it travels in the track's own upsert.
+    assert_eq!(event["entity_type"], "track");
+    assert_eq!(event["action"], "upsert");
+    assert_eq!(event["entity_id"], track.to_string());
+    // And the payload does not grow. `full_hash` is there because nothing else
+    // carries it; a canvas link is read off the track the client refetches.
+    assert!(
+        event["payload"]["full_hash"].is_string(),
+        "the payload is the one a tag correction sends"
+    );
+    assert!(
+        event["payload"].get("canvas").is_none(),
+        "no canvas field: that would make the payload a partial projection"
+    );
+    // So the client that just placed it does not read it back as a discovery.
+    assert_eq!(event["origin_device_id"], device);
+
+    // Taking it away is a change too, and it is the same shape.
+    let removed = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::delete(format!("/api/v2/tracks/{track}/canvas")),
+                &token,
+            )
+            .header("x-waveflow-device-id", &device)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    let events = library_events(&router, &token, library).await;
+    assert_eq!(events.len(), before + 2);
+    assert_eq!(events.last().unwrap()["action"], "upsert");
+
+    // A removal that found nothing changed nothing, and says nothing.
+    let again = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::delete(format!("/api/v2/tracks/{track}/canvas")),
+                &token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        library_events(&router, &token, library).await.len(),
+        before + 2,
+        "nothing happened, so nothing was announced"
+    );
+}
+
+async fn library_events(
+    router: &axum::Router,
+    token: &str,
+    library: uuid::Uuid,
+) -> Vec<serde_json::Value> {
+    let feed = router
+        .clone()
+        .oneshot(
+            authorized(
+                Request::get(format!(
+                    "/api/v2/libraries/{library}/events?after=0&limit=500"
+                )),
+                token,
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(feed.status(), StatusCode::OK);
+    json_body(feed).await["events"]
+        .as_array()
+        .expect("the feed answers a list")
+        .clone()
 }
