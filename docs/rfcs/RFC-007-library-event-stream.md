@@ -260,8 +260,27 @@ rescan complet d'une grande bibliothèque le dépasse à lui seul : après un
 rescan, un client absent *doit* repartir de l'instantané, et c'est correct
 puisque le rescan a pu tout déplacer.
 
-`WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS` et
-`WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN`, réglables comme le reste.
+Le contrat des deux réglages, écrit ici parce que la moitié s'en décide sinon
+par accident dans le code :
+
+| Variable | Unité | Défaut | Absente | Invalide |
+| --- | --- | --- | --- | --- |
+| `WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS` | jours entiers | `30` | le défaut | le démarrage échoue |
+| `WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN` | événements | `10000` | le défaut | le démarrage échoue |
+
+Les deux passent par `parse_positive_env`, donc **zéro et les valeurs négatives
+sont refusées au démarrage**, pas ramenées à un défaut. C'est la règle que
+`validate_uploads` et `validate_canvas` suivent déjà, et pour la raison qui y
+est écrite : tout repli sur une borne est faux — trop petit trahit la valeur
+configurée, trop grand n'est plus une borne — donc l'opérateur est refusé là où
+il peut voir pourquoi. Il n'y a pas de plafond : une valeur énorme signifie « ne
+purge rien », ce qui est sûr et lisible.
+
+Et la borne est **exclusive**. Un événement qui a exactement trente jours
+survit ; seul ce qui est strictement plus vieux est coupé. C'est la convention
+que `stream_ticket::verify` suit déjà — son test dit `expiry is exclusive` — et
+c'est aussi la direction prudente : garder un événement de trop ne casse aucun
+client, en couper un de trop renvoie quelqu'un à l'instantané.
 
 **Et le filigrane avance dans la transaction qui coupe.** `library_event` et
 `library.events_purged_through` disent la même chose de deux endroits ; les
