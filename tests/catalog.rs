@@ -2114,3 +2114,109 @@ async fn an_acknowledgement_records_a_device_without_holding_the_purge_back() {
         "already stranded is not stranded again — a bill that only grows is not a bill"
     );
 }
+
+/// The acknowledgement's ceiling counts the watermark, not only the rows.
+///
+/// **The configuration here is one the server would refuse to start with.**
+/// `parse_positive_env` rejects a floor of zero, so a feed can never actually
+/// be trimmed to nothing in production, and this state is unreachable. The
+/// guard exists anyway because "the furthest position a client could have
+/// reached" should not be an expression that happens to be right thanks to a
+/// bound enforced three files away — and a test that never reaches the branch
+/// is a guard nobody can check. `Config::for_data_dir` does not validate, which
+/// is what lets this be written at all.
+#[tokio::test]
+async fn a_cursor_at_the_watermark_is_acknowledged_even_with_the_feed_emptied() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.library_event_retention.min_events = 0;
+    config.library_event_retention.days = 30;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("watermark-ack", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("watermark-ack-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Watermark",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 2, false).await.unwrap();
+    for index in 0..2usize {
+        let mut input = catalog_input(index, "Nova Kern");
+        input.title = format!("Track {index}");
+        input.album = None;
+        input.album_artist = None;
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let now = now_ms();
+    sqlx::query("UPDATE library_event SET changed_at=? WHERE library_id=?")
+        .bind(now - 400 * 24 * 60 * 60 * 1000i64)
+        .bind(library.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state.services.purge_library_events(now).await.unwrap();
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM library_event WHERE library_id=?")
+            .bind(library.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0, "the floor of zero let the feed empty");
+    let watermark: i64 = sqlx::query_scalar("SELECT events_purged_through FROM library WHERE id=?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(watermark > 0);
+
+    // `library_changes` accepts reading from the watermark, so the
+    // acknowledgement has to accept recording it — the two must not disagree
+    // about the same number.
+    let router = waveflow_server::app(&config, state.clone());
+    let (token, device) = login_session(&router, "watermark-ack", &password).await;
+    assert!(state
+        .services
+        .library_changes(owner, library, watermark, 500)
+        .await
+        .is_ok());
+    let response = router
+        .oneshot(
+            Request::put(format!("/api/v2/libraries/{library}/events/ack"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "device_id": device, "cursor": watermark }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
