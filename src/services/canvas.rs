@@ -14,9 +14,12 @@
 //!
 //! The file first and the row second when placing; the row first and the file
 //! second when removing. Both orders leave the same failure, and it is the
-//! recoverable one — bytes nothing names, in a store that can be enumerated. A
-//! row naming an absent file is the one that cannot be recovered, because it is
-//! a dead link every read runs into.
+//! recoverable *kind* — bytes nothing names, in a store that is
+//! content-addressed and therefore enumerable, so a sweep could find them. No
+//! sweep exists yet; RFC-009 leaves it open, as `artwork_dir` has left it open
+//! since the beginning. A row naming an absent file is the failure that could
+//! not be recovered even in principle, because it is a dead link every read
+//! runs into.
 //!
 //! Between a commit and the unlink that follows it there is a window, and it is
 //! not theoretical: a `PUT` of the same content lands in it, finds no row,
@@ -41,6 +44,14 @@ use crate::authentication::now_ms;
 /// entry is a format the server promises to serve forever, since the bytes
 /// behind a hash never change.
 const ACCEPTED_FORMATS: [&str; 2] = ["mp4", "webm"];
+
+/// How long `ffprobe` gets to read a canvas.
+///
+/// The same five seconds `check_tool` allows the version probe. A loop of a few
+/// seconds and a few hundred kilobytes is read in milliseconds, so this is not
+/// a budget anything legitimate spends — it is the bound on something that will
+/// never finish.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One blob of the store.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +84,24 @@ impl DomainServices {
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .value(),
         )
+    }
+
+    /// Drops the entry once the last holder has let go.
+    ///
+    /// Without this the map keeps a mutex for every hash the server has ever
+    /// touched, which is a leak measured in the size of the catalogue rather
+    /// than in anything bounded — `upload_locks` removes its entry after a
+    /// commit for the same reason.
+    ///
+    /// **Call this only after the caller's own `Arc` has been dropped**, so
+    /// `strong_count == 1` means the map holds the last one. The count is read
+    /// under the shard lock, and [`Self::canvas_lock`] takes that same lock to
+    /// insert, so a concurrent holder either arrives first and is counted, or
+    /// arrives after and inserts a fresh mutex. Either order is correct: the
+    /// entry is a rendezvous point, not state.
+    fn release_canvas_lock(&self, hash: &str) {
+        self.canvas_locks
+            .remove_if(hash, |_, lock| Arc::strong_count(lock) == 1);
     }
 
     fn canvas_path(&self, blob: &CanvasBlob) -> PathBuf {
@@ -162,34 +191,43 @@ impl DomainServices {
             byte_size,
         };
 
-        let lock = self.canvas_lock(&blob.hash);
-        let _held = lock.lock().await;
+        // Scoped so the guard and this call's own `Arc` are both gone before
+        // the entry is offered back to the map, on the failing paths as well as
+        // the succeeding one.
+        let linked = {
+            let lock = self.canvas_lock(&blob.hash);
+            let _held = lock.lock().await;
+            async {
+                // The file first. Already there means another track holds the
+                // same loop, and the bytes are identical by construction —
+                // rewriting them would be a write for nothing, over a file a
+                // live link may be being served from.
+                let final_path = self.canvas_path(&blob);
+                if !tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
+                    tokio::fs::rename(staging, &final_path)
+                        .await
+                        .map_err(|error| {
+                            tracing::error!(%error, "cannot move a canvas into the store");
+                            ServiceError::Unavailable
+                        })?;
+                }
 
-        // The file first. Already there means another track holds the same
-        // loop, and the bytes are identical by construction — rewriting them
-        // would be a write for nothing, over a file a live link may be being
-        // served from.
-        let final_path = self.canvas_path(&blob);
-        if !tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
-            tokio::fs::rename(staging, &final_path)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "cannot move a canvas into the store");
-                    ServiceError::Unavailable
-                })?;
-        }
-
-        let replaced = match self.link_canvas(user_id, track_id, &blob).await {
-            Ok(replaced) => replaced,
-            Err(error) => {
-                // The row did not happen, so the bytes must not stay unless
-                // something else already named them. Still under the lock, so
-                // no concurrent placement can have named them since.
-                self.discard_unreferenced_blob(&blob, &final_path).await;
-                return Err(error);
+                match self.link_canvas(user_id, track_id, &blob).await {
+                    Ok(replaced) => Ok(replaced),
+                    Err(error) => {
+                        // The row did not happen, so the bytes must not stay
+                        // unless something else already named them. Still under
+                        // the lock, so no concurrent placement can have named
+                        // them since.
+                        self.discard_unreferenced_blob(&blob, &final_path).await;
+                        Err(error)
+                    }
+                }
             }
+            .await
         };
-        drop(_held);
+        self.release_canvas_lock(&blob.hash);
+        let replaced = linked?;
 
         // A replacement is a removal too: the loop this track used to carry has
         // lost a reference, and may have lost its last. Taken after the link is
@@ -350,28 +388,45 @@ impl DomainServices {
     ///
     /// The count, the row and the unlink are one decision taken under the
     /// blob's lock, so two removals cannot each conclude that a reference
-    /// remains and leave bytes nothing names. Failing here is not an error the
-    /// caller can act on: the link is already gone, which is what they asked
-    /// for, and orphaned bytes are what the store sweep exists to collect.
+    /// remains and leave bytes nothing names.
+    ///
+    /// Failing here is not an error the caller can act on: the link is already
+    /// gone, which is what they asked for. What it does leave is bytes nothing
+    /// names, and **nothing collects those today** — RFC-009 leaves the store
+    /// sweep open, noting that `artwork_dir` has had exactly the same property
+    /// from the start. The consolation is only that the store is
+    /// content-addressed and therefore enumerable, so a sweep remains possible
+    /// to write; it is not one that exists.
     async fn release_canvas_blob(&self, hash: &str) {
-        let lock = self.canvas_lock(hash);
-        let _held = lock.lock().await;
-        let doomed = match self.forget_unreferenced_blob(hash).await {
-            Ok(doomed) => doomed,
-            Err(error) => {
-                tracing::warn!(%error, "cannot decide whether a canvas is still referenced");
-                return;
+        // Scoped for the same reason as the placing path: the entry goes back
+        // to the map only once this call holds nothing.
+        {
+            let lock = self.canvas_lock(hash);
+            let _held = lock.lock().await;
+            async {
+                let doomed = match self.forget_unreferenced_blob(hash).await {
+                    Ok(doomed) => doomed,
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "cannot decide whether a canvas is still referenced"
+                        );
+                        return;
+                    }
+                };
+                let Some(blob) = doomed else { return };
+                let path = self.canvas_path(&blob);
+                // After the commit, never before: the other order leaves a row
+                // naming an absent file the moment the transaction fails.
+                if let Err(error) = tokio::fs::remove_file(&path).await {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        tracing::warn!(%error, "an unreferenced canvas is left in the store");
+                    }
+                }
             }
-        };
-        let Some(blob) = doomed else { return };
-        let path = self.canvas_path(&blob);
-        // After the commit, never before: the other order leaves a row naming
-        // an absent file the moment the transaction fails.
-        if let Err(error) = tokio::fs::remove_file(&path).await {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(%error, "an unreferenced canvas is left in the store");
-            }
+            .await;
         }
+        self.release_canvas_lock(hash);
     }
 
     /// Drops the `canvas` row when the last link to it is gone, and says which
@@ -519,22 +574,41 @@ impl DomainServices {
     /// called `.mp4`. `ffprobe` is already a dependency and already on the
     /// `PATH` of every deployment, and reading the file is the only thing that
     /// is evidence.
+    ///
+    /// Bounded, and killed if this future is dropped. The bytes being read were
+    /// chosen by whoever sent them, so a container crafted to make a demuxer
+    /// spin is an input this route has to survive: without the bound one
+    /// request holds a task forever, and without `kill_on_drop` a client that
+    /// hangs up leaves the process behind to finish spinning alone. Both
+    /// already exist in `MediaService` — the five-second bound on `check_tool`,
+    /// and `kill_on_drop` on the transcode child.
     async fn probe_canvas(&self, path: &std::path::Path) -> Result<Probed, ServiceError> {
-        let output = tokio::process::Command::new(&self.ffprobe_path)
-            .arg("-v")
-            .arg("error")
-            .arg("-print_format")
-            .arg("json")
-            .arg("-show_format")
-            .arg("-show_streams")
-            .arg(path)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "cannot run ffprobe on a canvas");
-                ServiceError::Unavailable
-            })?;
+        let output = tokio::time::timeout(
+            PROBE_TIMEOUT,
+            tokio::process::Command::new(&self.ffprobe_path)
+                .arg("-v")
+                .arg("error")
+                .arg("-print_format")
+                .arg("json")
+                .arg("-show_format")
+                .arg("-show_streams")
+                .arg(path)
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            // The server is fine; this file is not something it will finish
+            // reading. Refusing the offer says that without pretending the
+            // deployment is broken.
+            tracing::warn!("ffprobe timed out on a canvas");
+            ServiceError::Invalid
+        })?
+        .map_err(|error| {
+            tracing::error!(%error, "cannot run ffprobe on a canvas");
+            ServiceError::Unavailable
+        })?;
         if !output.status.success() {
             // Not an outage: what arrived is not something ffprobe can read,
             // which is a verdict on the offer rather than on the server.
