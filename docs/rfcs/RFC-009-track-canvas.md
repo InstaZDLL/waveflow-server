@@ -204,7 +204,7 @@ de l'hébergement vidéo, qui est un autre produit avec d'autres coûts.
 ## Décision 5 — c'est le disque de l'opérateur, et il l'a dit une fois
 
 Le rôle requis est `may_upload` — `Owner` ou `Manager` — et la bibliothèque doit
-porter `accepts_uploads`.
+porter `accepts_canvas`.
 
 Le canvas suit les règles du **dépôt**, pas celles de la correction. La ligne est
 là : une correction de tags dépense des octets dans une ligne, un canvas dépense
