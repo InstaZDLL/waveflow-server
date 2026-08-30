@@ -1095,14 +1095,14 @@ async fn the_two_doors_are_independent_in_both_directions() {
 #[tokio::test]
 async fn a_loop_that_carries_sound_is_taken_without_it() {
     let (temp, config, state) = canvas_app(|_| {}).await;
-    let fixture = fixture(&config, &state, "canvas-sound", 2).await;
+    let library = fixture(&config, &state, "canvas-sound", 2).await;
     let noisy = noisy_canvas_bytes(temp.path());
 
     // Accepted rather than refused: an otherwise perfectly good mp4 must not be
     // rejected over a stream the sender did not necessarily choose to include.
     let placed = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[0], &noisy, None)
+        .place_canvas(library.owner, library.tracks[0], &noisy, None)
         .await
         .unwrap();
     assert_eq!(placed.format, "mp4");
@@ -1130,11 +1130,80 @@ async fn a_loop_that_carries_sound_is_taken_without_it() {
     // blobs and be charged twice.
     let again = state
         .services
-        .place_canvas(fixture.owner, fixture.tracks[1], &noisy, None)
+        .place_canvas(library.owner, library.tracks[1], &noisy, None)
         .await
         .unwrap();
     assert_eq!(again, placed, "the same source must give the same blob");
     assert_eq!(stored_files(&config), vec![placed.file_name()]);
+
+    // And the quota charges what the store holds, not what arrived. Asserting
+    // `byte_size` above says what the row carries; this says what the quota
+    // spends, which is the number that can silently go wrong.
+    //
+    // It cannot be shown by squeezing the quota to the stripped size, because
+    // `validate_canvas` refuses a per-canvas ceiling above the library quota
+    // and the ceiling has to admit the *arriving* bytes. So the room is filled
+    // instead: a first canvas takes all but exactly the stripped size, and the
+    // noisy one fits only if it is charged what it became.
+    // A test pattern rather than a flat colour: flat black compresses to about
+    // a kilobyte a second, far too little to fill a quota against an 11 KB
+    // arrival, and a filler long enough to get there would trip the duration
+    // ceiling instead.
+    let filler = detailed_canvas_bytes(temp.path());
+    let (_temp2, config2, state2) = canvas_app(|canvas| {
+        // The ceiling has to admit both arrivals — the filler and the noisy
+        // one — while staying under the quota, which is what makes this a
+        // configuration the server would actually start with.
+        canvas.max_bytes = filler.len().max(noisy.len()) as i64;
+        canvas.library_quota_bytes = filler.len() as i64 + placed.byte_size;
+    })
+    .await;
+    assert!(
+        filler.len() as i64 + placed.byte_size >= filler.len().max(noisy.len()) as i64,
+        "the ceiling must fit under the quota, or this config would not validate"
+    );
+    let tight = fixture(&config2, &state2, "canvas-charged", 2).await;
+    state2
+        .services
+        .place_canvas(tight.owner, tight.tracks[0], &filler, None)
+        .await
+        .unwrap();
+    // Exactly the stripped size is left. Charged `noisy.len()` this is a
+    // `Conflict`; charged what the store holds it fits to the byte.
+    let squeezed = state2
+        .services
+        .place_canvas(tight.owner, tight.tracks[1], &noisy, None)
+        .await
+        .unwrap();
+    assert_eq!(squeezed.byte_size, placed.byte_size);
+}
+
+/// An mp4 big enough to fill a quota without running long enough to trip the
+/// duration ceiling: detail costs bytes where duration costs seconds.
+fn detailed_canvas_bytes(dir: &std::path::Path) -> Vec<u8> {
+    let path = dir.join("filler.mp4");
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=s=160x120:r=10:d=2",
+            "-c:v",
+            "mpeg4",
+        ])
+        .arg(&path)
+        .output()
+        .expect("ffmpeg must be on PATH");
+    assert!(
+        output.status.success(),
+        "ffmpeg failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::read(&path).unwrap()
 }
 
 /// An mp4 carrying both a picture and a soundtrack.
