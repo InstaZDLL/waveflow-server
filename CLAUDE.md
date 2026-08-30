@@ -34,7 +34,7 @@ bun run build                          # webapp first, then cargo — the order 
 
 Tests need no service container: `test_app()` builds a `Config` over a `TempDir` and the suite drives the same router `main` serves. FFmpeg and ffprobe must be on `PATH`.
 
-The integration suite is thirteen targets under `tests/`, one per subject — `auth`, `scanner`, `identity`, `catalog`, `subsonic_contract`, `subsonic_browse`, `subsonic_fields`, `subsonic_methods`, `native_api`, `sync`, `media`, `service`, `uploads` — sharing `tests/support/mod.rs`. Each is declared in `Cargo.toml`, so a new file under `tests/` is not a target until it is. That is a module and not a target: anything directly under `tests/` is compiled as its own test binary. File a new test by the surface it exercises, and check that by what it calls rather than by what its name says.
+The integration suite is fourteen targets under `tests/`, one per subject — `auth`, `scanner`, `identity`, `catalog`, `subsonic_contract`, `subsonic_browse`, `subsonic_fields`, `subsonic_methods`, `native_api`, `sync`, `media`, `service`, `uploads`, `canvas` — sharing `tests/support/mod.rs`. Each is declared in `Cargo.toml`, so a new file under `tests/` is not a target until it is. That is a module and not a target: anything directly under `tests/` is compiled as its own test binary. File a new test by the surface it exercises, and check that by what it calls rather than by what its name says.
 
 `cargo build` works without a client build — `build.rs` embeds a placeholder page when `webapp/dist` is absent. A real `vite build` overwrites it.
 
