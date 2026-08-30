@@ -204,12 +204,42 @@ bibliothèque à quarante membres retaguée sur deux mille pistes écrirait quat
 vingt mille lignes pour deux mille faits, dans une table sans compaction — et la
 sémantique aussi : l'événement ne parle pas de l'utilisateur.
 
+## Décision 6 — l'album a son événement, l'artiste n'en a pas besoin
+
+Ouvert par la première version de cette RFC, tranché le 2026-08-30 sur un cas que
+le desktop a nommé.
+
+**L'album en émet un.** Le miroir incrémental du desktop saute un album dont le
+`song_count` n'a pas bougé — c'est toute l'économie de son parcours. Un album
+*simplement retagué* lui est donc invisible : une date de sortie apprise, une
+pochette trouvée, un artiste d'album corrigé ne changent aucun compte. Sans
+événement, la seule façon de l'apprendre est de redemander tous les albums, ce
+qui annule exactement ce que le parcours économise.
+
+Il n'est émis **que si la ligne a réellement été écrite**. L'`upsert` d'album
+tourne une fois par piste appliquée, donc douze fois pour un album de douze
+titres ; une clause `WHERE` sur le `DO UPDATE` compare les colonnes qui portent
+du sens — `updated_at` exclu, que rien ne lit — et `RETURNING` ne rend une ligne
+que si quelque chose a bougé. Un événement par album, jamais un par piste, et
+rien du tout pour un rescan qui ne trouve aucun changement.
+
+La charge est vide. Celle de la piste porte `full_hash` parce qu'aucune autre
+surface ne l'expose ; tout ce qui décrit un album est sur l'album, que le client
+relit en recevant l'événement.
+
+**L'artiste n'en émet pas.** Les compteurs se dérivent, et une vérité stockée en
+double périme. Le desktop réservait un cas — la photo d'artiste, qui ne se dérive
+d'aucun `GROUP BY` — et ce cas n'existe pas : `artist.artwork_hash` est lu
+partout dans ce serveur et **écrit nulle part**. Une photo d'artiste ne peut pas
+changer parce qu'il n'y en a jamais. La question se rouvrira le jour où quelque
+chose l'écrira, et ce jour-là ce sera cette ligne qu'il faudra relire.
+
 ## Ce qui reste ouvert
 
 - Les valeurs de rétention.
-- Si des événements `album` et `artist` sont nécessaires ou seulement dérivables
-  des événements `track` par le client. La contrainte `CHECK` les admet dès
-  maintenant ; rien n'oblige à les émettre tout de suite.
+- ~~Si des événements `album` et `artist` sont nécessaires ou seulement
+  dérivables des événements `track` par le client.~~ **Tranché le 2026-08-30**,
+  et différemment pour les deux — voir la décision 6.
 - La forme exacte de l'acquittement. Le journal utilisateur acquitte par
   `(compte, appareil)` ; l'équivalent ici est `(appareil, bibliothèque)`, mais
   la table qui le porte reste à décider.
