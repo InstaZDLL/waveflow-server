@@ -36,6 +36,26 @@ pub struct UploadLimits {
     pub session_ttl: Duration,
 }
 
+/// What the server accepts when a member attaches a loop to a track.
+///
+/// Apart from [`UploadLimits`] rather than folded into it: the two magazines
+/// can live on different disks, and mixing the quotas would let loops starve
+/// the space the upload quota exists to protect — the music.
+#[derive(Debug, Clone, Copy)]
+pub struct CanvasLimits {
+    /// The largest canvas the server will take. The route derives its own body
+    /// ceiling from this, so it is also the largest body that route accepts.
+    pub max_bytes: i64,
+    /// How long a loop may run. Not prudence: without it, "a short loop"
+    /// becomes video hosting, which is a different product with different
+    /// costs.
+    pub max_duration_secs: u32,
+    /// How much of a library's disk canvases may occupy. Counted in distinct
+    /// blobs a library references, never in links, so an album's shared loop is
+    /// billed once however many tracks name it.
+    pub library_quota_bytes: i64,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -73,6 +93,25 @@ pub struct Config {
     /// None of these matter until an operator sets `accepts_uploads` on a
     /// library: a server that has only been upgraded accepts nothing.
     pub uploads: UploadLimits,
+    /// Where canvas blobs live: a content-addressed store beside `artwork_dir`,
+    /// under `data/`.
+    ///
+    /// Derived from `WAVEFLOW_DATA_DIR` rather than set on its own, exactly as
+    /// `artwork_dir` is. Not the library root — that is the operator's
+    /// collection, and an object the server produced has no business changing
+    /// what "delete the library" means. Not `artwork_dir` either: the `artwork`
+    /// table constrains the format to a set of images and `read_artwork` holds
+    /// the matching MIME map, so a video in that directory would oblige the two
+    /// lists to agree forever.
+    pub canvas_dir: PathBuf,
+    /// What the server accepts when a member attaches a loop to a track.
+    ///
+    /// `WAVEFLOW_CANVAS_MAX_BYTES`, `WAVEFLOW_CANVAS_MAX_DURATION_SECS`,
+    /// `WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES`.
+    ///
+    /// Gated by the same `accepts_uploads` flag as a file: both answer "may a
+    /// member of this library spend the operator's disk".
+    pub canvas: CanvasLimits,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
@@ -110,6 +149,8 @@ impl std::fmt::Debug for Config {
             .field("transcode_global_limit", &self.transcode_global_limit)
             .field("transcode_per_user_limit", &self.transcode_per_user_limit)
             .field("uploads", &self.uploads)
+            .field("canvas_dir", &self.canvas_dir)
+            .field("canvas", &self.canvas)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
             .finish()
@@ -175,6 +216,23 @@ impl Config {
             )?),
         };
         validate_uploads(&uploads)?;
+        let canvas = CanvasLimits {
+            // A Spotify-style loop is a few seconds of portrait video: a few
+            // hundred kilobytes in practice. Four megabytes is comfortably
+            // above anything that is still a loop, and low enough that the
+            // body ceiling derived from it stays a ceiling.
+            max_bytes: parse_positive_env("WAVEFLOW_CANVAS_MAX_BYTES", 4_194_304i64)?,
+            // Those loops run three to eight seconds. Fifteen leaves room for
+            // an unusual one without leaving room for an episode.
+            max_duration_secs: parse_positive_env("WAVEFLOW_CANVAS_MAX_DURATION_SECS", 15u32)?,
+            // A gigabyte is thousands of real canvases, and still a number an
+            // operator can reason about against a disk.
+            library_quota_bytes: parse_positive_env(
+                "WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES",
+                1_073_741_824i64,
+            )?,
+        };
+        validate_canvas(&canvas)?;
         if transcode_per_user_limit > transcode_global_limit {
             anyhow::bail!(
                 "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
@@ -219,6 +277,7 @@ impl Config {
             );
         }
         let transcode_cache_dir = data_dir.join("transcode-cache");
+        let canvas_dir = data_dir.join("canvas");
 
         Ok(Self {
             bind_addr,
@@ -243,6 +302,8 @@ impl Config {
             transcode_global_limit,
             transcode_per_user_limit,
             uploads,
+            canvas_dir,
+            canvas,
             allowed_origins,
             pid,
         })
@@ -250,6 +311,7 @@ impl Config {
 
     pub fn for_data_dir(data_dir: PathBuf) -> Self {
         let transcode_cache_dir = data_dir.join("transcode-cache");
+        let canvas_dir_for_tests = data_dir.join("canvas");
         Self {
             bind_addr: "127.0.0.1:0".parse().expect("literal socket address"),
             public_url: Some("http://waveflow.test".to_owned()),
@@ -282,6 +344,15 @@ impl Config {
                 sessions_per_user: 2,
                 session_ttl: Duration::from_secs(3600),
             },
+            canvas_dir: canvas_dir_for_tests,
+            // Same reasoning as the upload limits above: small enough that a
+            // test can reach every bound, shaped like production rather than
+            // unlimited.
+            canvas: CanvasLimits {
+                max_bytes: 256 * 1024,
+                max_duration_secs: 15,
+                library_quota_bytes: 1024 * 1024,
+            },
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.
@@ -310,6 +381,23 @@ fn validate_uploads(uploads: &UploadLimits) -> anyhow::Result<()> {
     }
     if uploads.chunk_bytes > uploads.max_file_bytes {
         anyhow::bail!("WAVEFLOW_UPLOAD_CHUNK_BYTES cannot exceed WAVEFLOW_UPLOAD_MAX_FILE_BYTES");
+    }
+    Ok(())
+}
+
+/// The canvas limits that only make sense against each other.
+fn validate_canvas(canvas: &CanvasLimits) -> anyhow::Result<()> {
+    if canvas.max_bytes > canvas.library_quota_bytes {
+        anyhow::bail!(
+            "WAVEFLOW_CANVAS_MAX_BYTES cannot exceed WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES"
+        );
+    }
+    // The route turns this into a body ceiling, and a value it cannot represent
+    // would have to fall back to something. Every fallback for a ceiling is
+    // wrong, so it is refused here where the operator can see why — the same
+    // rule the upload chunk size follows.
+    if usize::try_from(canvas.max_bytes).is_err() {
+        anyhow::bail!("invalid WAVEFLOW_CANVAS_MAX_BYTES: too large for this platform");
     }
     Ok(())
 }
@@ -406,6 +494,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 #[cfg(test)]
 mod tests {
     use super::normalize_public_url;
+    use super::{validate_canvas, CanvasLimits};
     use super::{validate_uploads, UploadLimits};
     use std::time::Duration;
 
@@ -443,6 +532,34 @@ mod tests {
             unrepresentable.max_file_bytes = i64::MAX;
             unrepresentable.library_quota_bytes = i64::MAX;
             assert!(validate_uploads(&unrepresentable).is_err());
+        }
+    }
+
+    #[test]
+    fn canvas_limits_that_contradict_each_other_are_refused() {
+        let workable = CanvasLimits {
+            max_bytes: 256 * 1024,
+            max_duration_secs: 15,
+            library_quota_bytes: 1024 * 1024,
+        };
+        assert!(validate_canvas(&workable).is_ok());
+
+        // A single canvas larger than the whole library may hold: the first one
+        // placed would be refused by a quota it can never fit under, which is a
+        // misconfiguration rather than a verdict.
+        let mut oversized = workable;
+        oversized.max_bytes = oversized.library_quota_bytes + 1;
+        assert!(validate_canvas(&oversized).is_err());
+
+        // And a ceiling this platform cannot represent, for the same reason the
+        // upload chunk size is refused: every fallback for a ceiling is wrong.
+        if usize::try_from(i64::MAX).is_err() {
+            let unrepresentable = CanvasLimits {
+                max_bytes: i64::MAX,
+                max_duration_secs: 15,
+                library_quota_bytes: i64::MAX,
+            };
+            assert!(validate_canvas(&unrepresentable).is_err());
         }
     }
 

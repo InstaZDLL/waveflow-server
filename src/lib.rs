@@ -445,7 +445,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         Arc::clone(&secret_box),
         sync.clone(),
         scanner.clone(),
-        config.uploads,
+        config,
     );
     Ok(AppState {
         db,
