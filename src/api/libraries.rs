@@ -223,6 +223,54 @@ pub async fn scan_events(
 /// a different sequence and advances for different reasons, so it is a separate
 /// route with a separate cursor rather than a widening of the other — a rescan
 /// must not move a client's position in its own user journal.
+/// How far a device has read one library's feed.
+///
+/// A body rather than a header for the device, exactly like `/api/v2/sync/ack`:
+/// the acknowledgement *is* about that device, so it is the request rather than
+/// a note attached to it. The two are refused identically — 422 — for an
+/// unknown or revoked device, a library the account cannot see, and a cursor
+/// beyond what the feed has written. One answer for all three, because telling
+/// them apart would say whether a library exists to somebody who may not know.
+#[utoipa::path(
+    put,
+    path = "/api/v2/libraries/{library_id}/events/ack",
+    tag = "libraries",
+    params(("library_id" = Uuid, Path)),
+    request_body = LibraryEventAckRequest,
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorResponse),
+        (status = 422, body = ErrorResponse)
+    )
+)]
+pub async fn library_events_ack(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<LibraryEventAckRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    let acknowledged = state
+        .services
+        .acknowledge_library_events(user.id, library_id, request.device_id, request.cursor)
+        .await
+        .map_err(service_error)?;
+    if !acknowledged {
+        return Err(ApiError::Validation);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What a device says it has read.
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct LibraryEventAckRequest {
+    pub device_id: Uuid,
+    /// The highest cursor this device has processed. Never lowered by the
+    /// server: a client that acknowledges an older cursor after a newer one has
+    /// raced its own two requests.
+    pub cursor: i64,
+}
+
 #[utoipa::path(
     get,
     path = "/api/v2/libraries/{library_id}/events",
