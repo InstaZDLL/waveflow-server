@@ -212,13 +212,26 @@ des octets sur un disque. `may_write_metadata` et `may_upload` nomment la même
 paire de rôles aujourd'hui ; la question n'est pas laquelle choisir mais laquelle
 suivre le jour où elles divergent, et c'est la seconde.
 
-Réutiliser `accepts_uploads` plutôt qu'inventer un second drapeau : le drapeau
-répond à « un membre de cette bibliothèque peut-il dépenser le disque de
-l'opérateur », et les deux réponses vont ensemble tant que personne n'a montré un
-cas où elles se séparent. Le RFC-008 a refusé d'inventer un rôle `Uploader`
-avant qu'un usage le réclame ; même discipline. Le coût est réel et il est nommé
-dans les questions ouvertes : sur un serveur qui n'accepte pas de fichiers, la
-demande (d) ne fait rien.
+**Un drapeau propre**, `accepts_canvas`, éteint par défaut et distinct
+d'`accepts_uploads`.
+
+Cette RFC avait d'abord tranché l'inverse : un seul drapeau, qui répond « un
+membre de cette bibliothèque peut-il dépenser le disque de l'opérateur », et les
+deux réponses vont ensemble *tant que personne n'a montré un cas où elles se
+séparent*. La condition était explicite, et le cas est venu — du desktop, le
+2026-08-30. Un serveur en lecture seule est l'installation la plus courante qui
+soit, et un opérateur peut parfaitement vouloir quelques centaines de kilooctets
+de boucle sur une machine dont il refuse absolument qu'elle grossisse en audio.
+Lier les deux rendait la demande (d) inerte exactement là où elle est le plus
+attendue — un coût que la version précédente nommait dans ses questions ouvertes
+en le croyant théorique.
+
+Le rôle ne bouge pas : `may_upload`, la paire `Owner | Manager`. C'est le
+*quoi* qui se sépare, pas le *qui*.
+
+Éteint par défaut, et surtout **pas hérité d'`accepts_uploads`** : une
+bibliothèque qui prend déjà des fichiers n'a rien dit sur les boucles, et
+l'héritage ferait souscrire l'opérateur à quelque chose qu'il n'a pas nommé.
 
 **Un quota propre**, `WAVEFLOW_CANVAS_LIBRARY_QUOTA_BYTES`, distinct de celui des
 téléversements. Les mélanger laisserait les boucles affamer la place que le quota
@@ -392,11 +405,6 @@ déjà.
 
 - **Les valeurs** : plafond d'un canvas, durée maximale, quota par bibliothèque,
   liste blanche des conteneurs.
-- **Un drapeau propre.** Réutiliser `accepts_uploads` rend la demande (d) inerte
-  sur tout serveur qui refuse les fichiers, ce qui n'est peut-être pas le
-  compromis voulu. L'argument inverse est qu'un opérateur ne devrait pas avoir à
-  trouver deux interrupteurs pour une seule question. Réversible dans les deux
-  sens tant que rien n'est publié.
 - **Le son d'un canvas.** Les boucles de ce genre sont muettes par convention.
   Refuser un flux audio, l'ignorer à la lecture, ou laisser le client décider —
   aucun des trois n'est manifestement juste, et aucun n'est urgent.
