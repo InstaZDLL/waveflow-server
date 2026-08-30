@@ -3,7 +3,10 @@
 - **Statut** : Proposed
 - **Implémentée par** : [#145](https://github.com/InstaZDLL/waveflow-server/pull/145)
   (le flux et son filigrane), [#152](https://github.com/InstaZDLL/waveflow-server/pull/152)
-  (l'appareil d'origine). Le champ *Statut* ci-dessus ne bascule jamais dans ce
+  (l'appareil d'origine), [#159](https://github.com/InstaZDLL/waveflow-server/pull/159)
+  (les événements d'album, décision 6),
+  [#166](https://github.com/InstaZDLL/waveflow-server/pull/166) (la rétention,
+  décision 7). Le champ *Statut* ci-dessus ne bascule jamais dans ce
   projet : c'est cette ligne qui dit ce qui tourne, et elle se vérifie — une PR
   se lit, un mot de statut ne s'audite pas.
 - **Date** : 2026-08-25
@@ -235,9 +238,7 @@ chose l'écrira, et ce jour-là ce sera cette ligne qu'il faudra relire.
 
 ## Décision 7 — deux bornes, parce qu'une seule se trompe toujours
 
-> **Décidée le 2026-08-30, pas encore construite.** Rien ne purge aujourd'hui ;
-> `library.events_purged_through` existe et vaut 0. Cette décision dit ce que la
-> purge fera, et la ligne *Implémentée par* de cet en-tête dira quand.
+> **Construite.** Voir la ligne *Implémentée par* de l'en-tête.
 
 **Un âge et un plancher, tenus ensemble.** Ni l'un ni l'autre ne suffit, et les
 deux échouent dans des directions opposées.
@@ -324,6 +325,6 @@ Plus rien de cette RFC n'est ouvert. Les trois questions qu'elle portait ont
   pour les deux.
 - ~~La forme exacte de l'acquittement.~~ Décision 8.
 
-Les décisions 7 et 8 sont **décidées et pas encore construites**. La ligne
-*Implémentée par* de l'en-tête ne les nommera que lorsqu'elles le seront ; c'est
-elle qui dit ce qui tourne, pas cette section.
+La décision 7 est construite ; la **décision 8 est décidée et pas encore
+construite**. La ligne *Implémentée par* de l'en-tête ne nomme que ce qui
+tourne, et c'est elle qu'il faut lire — pas cette section.
