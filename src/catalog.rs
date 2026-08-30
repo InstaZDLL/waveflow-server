@@ -1238,7 +1238,7 @@ impl Database {
                 })
                 .collect::<Vec<_>>()
         };
-        let album_id = upsert_album(
+        let album = upsert_album(
             tx,
             pid,
             library_id,
@@ -1249,6 +1249,40 @@ impl Database {
             now,
         )
         .await?;
+        let album_id = album.map(|(id, _)| id);
+        // RFC-007 left open whether an album needs its own event or whether a
+        // client can derive one from the tracks. It cannot, and the desktop
+        // named the case: its incremental mirror skips an album whose
+        // `song_count` has not moved, so an album that was merely *retagged* —
+        // a release date learned, a cover found, an album artist corrected —
+        // is invisible to that walk. The only way to catch it without an event
+        // is to refetch every album, which is exactly the saving the walk
+        // exists for.
+        //
+        // Emitted only when the row was really written, so a twelve-track album
+        // produces one event and not twelve. It carries the origin device of
+        // the track that caused it, for the same reason the track's own event
+        // does: the client that just wrote must not read its own change back as
+        // a discovery.
+        if let Some((id, _)) = album.filter(|(_, changed)| *changed) {
+            record_library_event(
+                tx,
+                LibraryChange {
+                    library_id,
+                    entity_type: "album",
+                    entity_id: id,
+                    action: "upsert",
+                    // Nothing to carry. The track's event carries `full_hash`
+                    // because no other surface exposes it; everything about an
+                    // album is on the album, which the client refetches on
+                    // seeing this.
+                    payload: serde_json::json!({}),
+                    changed_at: now,
+                    origin_device_id: apply.origin_device_id,
+                },
+            )
+            .await?;
+        }
         let genres = overrides
             .genres
             .clone()
@@ -1863,7 +1897,7 @@ async fn upsert_album(
     album_artist_id: Option<Uuid>,
     artwork: Option<&str>,
     now: i64,
-) -> Result<Option<Uuid>, sqlx::Error> {
+) -> Result<Option<(Uuid, bool)>, sqlx::Error> {
     let Some(title) = input.album.as_deref().filter(|s| !s.trim().is_empty()) else {
         return Ok(None);
     };
@@ -1872,7 +1906,7 @@ async fn upsert_album(
         library,
         &TrackIdentity::new(input, album_artist.unwrap_or_default()),
     );
-    sqlx::query(
+    let written = sqlx::query(
         "INSERT INTO album (id, library_id, title, canonical_title, album_artist_id, \
            album_artist_name, is_compilation, year, artwork_hash, \
            original_release_date, release_date, release_types, record_labels, \
@@ -1889,7 +1923,20 @@ async fn upsert_album(
            release_date=COALESCE(excluded.release_date, album.release_date), \
            release_types=COALESCE(excluded.release_types, album.release_types), \
            record_labels=COALESCE(excluded.record_labels, album.record_labels), \
-           updated_at=excluded.updated_at",
+           updated_at=excluded.updated_at \
+         WHERE album.title IS NOT excluded.title \
+            OR album.canonical_title IS NOT excluded.canonical_title \
+            OR album.album_artist_id IS NOT excluded.album_artist_id \
+            OR album.album_artist_name IS NOT excluded.album_artist_name \
+            OR album.is_compilation IS NOT excluded.is_compilation \
+            OR album.year IS NOT COALESCE(excluded.year, album.year) \
+            OR album.artwork_hash IS NOT COALESCE(excluded.artwork_hash, album.artwork_hash) \
+            OR album.original_release_date \
+                 IS NOT COALESCE(excluded.original_release_date, album.original_release_date) \
+            OR album.release_date IS NOT COALESCE(excluded.release_date, album.release_date) \
+            OR album.release_types IS NOT COALESCE(excluded.release_types, album.release_types) \
+            OR album.record_labels IS NOT COALESCE(excluded.record_labels, album.record_labels) \
+         RETURNING id",
     )
     .bind(id.to_string())
     .bind(library.to_string())
@@ -1906,9 +1953,13 @@ async fn upsert_album(
     .bind(input.record_labels.as_deref())
     .bind(now)
     .bind(now)
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await?;
-    Ok(Some(id))
+    // A row came back only if one was written: inserted, or updated because the
+    // `WHERE` above found a difference. Twelve tracks of one album run this
+    // twelve times and the first is the only one that writes, which is what
+    // makes the event below one per album rather than one per track.
+    Ok(Some((id, written.is_some())))
 }
 
 fn split_values(raw: Option<&str>) -> Vec<String> {
