@@ -1,0 +1,16 @@
+-- A second door, because a canvas and an audio file are not the same expense.
+--
+-- RFC-009 decision 5 reused `accepts_uploads`, on the argument that one flag
+-- answers "may a member of this library spend the operator's disk" and that
+-- nobody had shown a case where the two answers part. The desktop showed one:
+-- a read-only installation is the most common configuration there is, and an
+-- operator may perfectly well want a few hundred kilobytes of video loop on a
+-- server he refuses to let grow in audio. Tying them made request (d) inert
+-- exactly where it is most wanted.
+--
+-- Off by default, and deliberately not inherited from `accepts_uploads`. The
+-- flag says *where*, and where is the operator's call: a library that already
+-- takes files has said nothing about taking loops, and a server that was merely
+-- upgraded must not have become a deposit for a second kind of thing. Nothing
+-- is released yet, so nobody is opted out of something they were using.
+ALTER TABLE library ADD COLUMN accepts_canvas INTEGER NOT NULL DEFAULT 0;

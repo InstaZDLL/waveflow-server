@@ -1202,6 +1202,50 @@ impl Database {
         Ok(changed)
     }
 
+    /// Opens or closes a library to receiving canvases.
+    ///
+    /// A second door rather than the same one, and the reasoning is in
+    /// `20260830010000_library_accepts_canvas.sql`: a read-only server that
+    /// refuses to grow in audio may still want a few hundred kilobytes of video
+    /// loop, and that is the most common installation there is.
+    ///
+    /// Audited and CLI-only, exactly like the upload flag. The role a member
+    /// holds says who may place one; this says whether the library takes any at
+    /// all, and that is the operator's call rather than a member's.
+    pub async fn set_library_accepts_canvas(
+        &self,
+        actor_id: Uuid,
+        library_id: Uuid,
+        accepts: bool,
+        now_ms: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        let changed = sqlx::query("UPDATE library SET accepts_canvas=? WHERE id=?")
+            .bind(i64::from(accepts))
+            .bind(library_id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
+        if changed {
+            insert_audit(
+                &mut tx,
+                Some(actor_id),
+                if accepts {
+                    "library.canvas_opened"
+                } else {
+                    "library.canvas_closed"
+                },
+                Some(library_id),
+                now_ms,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(changed)
+    }
+
     pub async fn set_subsonic_credential(
         &self,
         actor_id: Uuid,
