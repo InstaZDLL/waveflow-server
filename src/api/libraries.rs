@@ -240,6 +240,7 @@ pub async fn scan_events(
     responses(
         (status = 204),
         (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
         (status = 422, body = ErrorResponse)
     )
 )]
