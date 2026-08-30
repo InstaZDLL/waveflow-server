@@ -771,11 +771,14 @@ impl DomainServices {
     /// two mutually exclusive, and the count is re-read inside it rather than
     /// trusted from the walk.
     ///
-    /// **The suite covers the re-read and not the lock.** Removing the count
-    /// fails a test — a referenced blob is taken. Removing the lock fails
-    /// nothing, because the damage needs a placement and a sweep to interleave
-    /// at one instant, and no test here can force that ordering. The lock is
-    /// reasoned, not demonstrated.
+    /// **Both halves are covered now.** Removing the count fails a test — a
+    /// referenced blob is taken. Removing the lock fails
+    /// [`tests::a_placement_that_commits_while_the_sweep_waits_keeps_its_bytes`],
+    /// which does not race for the interleaving but arranges it: the test holds
+    /// this lock, which is what a placement holds between its bytes and its
+    /// row, and the sweep has to wait. That needed a unit test rather than an
+    /// integration one — the lock is private, and reaching it is the whole
+    /// trick.
     async fn discard_orphan_blob(&self, hash: &str, path: &std::path::Path) -> bool {
         let removed = {
             let lock = self.canvas_lock(hash);
@@ -1100,4 +1103,85 @@ fn blob_from_row(row: Option<sqlx::sqlite::SqliteRow>) -> Result<Option<CanvasBl
     })
     .transpose()
     .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The lock in [`DomainServices::discard_orphan_blob`], demonstrated.
+    ///
+    /// Its own comment said the suite covered the re-read and not the lock:
+    /// removing the count fails a test, removing the lock fails nothing,
+    /// because the damage needs a placement and a sweep to interleave at one
+    /// instant and no *integration* test can force that ordering.
+    ///
+    /// A unit test can, because it sits in the module and may hold the lock
+    /// itself — which is exactly what a placement holds between writing its
+    /// bytes and inserting its row. So the interleaving is not raced for, it is
+    /// arranged: the sweep starts, finds the blob, and blocks. The row is
+    /// committed while it waits. The lock is released, the sweep re-reads, and
+    /// the file it was about to take is now somebody's canvas.
+    ///
+    /// Removing the lock fails this: the sweep reads no row at once and unlinks
+    /// before the placement ever commits, leaving a live row naming nothing.
+    #[tokio::test]
+    async fn a_placement_that_commits_while_the_sweep_waits_keeps_its_bytes() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let config = crate::Config::for_data_dir(temp.path().join("data"));
+        let state = crate::initialize(&config).await.expect("initialize");
+        let services = state.services.clone();
+
+        // Bytes in the store and no row: what a placement looks like from
+        // outside, one instant before it commits.
+        tokio::fs::create_dir_all(&config.canvas_dir)
+            .await
+            .expect("canvas store");
+        let hash = "c".repeat(64);
+        let path = config.canvas_dir.join(format!("{hash}.mp4"));
+        tokio::fs::write(&path, b"loop bytes").await.expect("write");
+
+        let lock = services.canvas_lock(&hash);
+        let held = lock.lock().await;
+
+        let sweeper = {
+            let services = services.clone();
+            tokio::spawn(async move { services.sweep_canvas_store().await })
+        };
+
+        // Every chance to run and find no row. Without the lock this is where
+        // the bytes go.
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            path.exists(),
+            "the sweep took a blob whose lock was held: it never waited"
+        );
+
+        sqlx::query(
+            "INSERT INTO canvas (hash, format, byte_size, created_at) VALUES (?, 'mp4', 10, ?)",
+        )
+        .bind(&hash)
+        .bind(now_ms())
+        .execute(services.db.pool())
+        .await
+        .expect("the placement commits");
+        drop(held);
+
+        let swept = sweeper
+            .await
+            .expect("the sweep finishes")
+            .expect("no error");
+        assert_eq!(
+            swept.blobs_removed, 0,
+            "the re-read under the lock is what sees the new row"
+        );
+        assert!(
+            path.exists(),
+            "a live row must not be left naming bytes the sweep carried off"
+        );
+        assert_eq!(swept.dead_links, 0);
+    }
 }
