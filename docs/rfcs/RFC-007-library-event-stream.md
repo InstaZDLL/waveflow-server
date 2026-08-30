@@ -250,8 +250,10 @@ ans chez un opérateur qui n'ajoute rien, et les rogner à date fixe ne gêne
 personne, mais les rogner à quantité fixe efface un historique que rien
 n'obligeait à effacer.
 
-Donc : **on garde ce qui a moins de trente jours, et jamais moins de dix mille
-événements par bibliothèque**, la seconde règle l'emportant sur la première.
+Donc : **on ne coupe que ce qui a plus de trente jours, et jamais en deçà de dix
+mille événements par bibliothèque**, la seconde règle l'emportant sur la
+première. Plus de trente jours, strictement — la borne est exclusive, et le
+paragraphe qui la fixe plus bas dit pourquoi.
 
 Trente jours parce que la borne à battre est la plus longue absence
 plausible d'un client — des vacances, un portable rangé pour un mois — au-delà
