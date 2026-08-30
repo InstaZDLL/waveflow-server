@@ -5,8 +5,9 @@
   (le discriminant du ticket), [#156](https://github.com/InstaZDLL/waveflow-server/pull/156)
   (le magasin et le modèle), [#157](https://github.com/InstaZDLL/waveflow-server/pull/157)
   (les six routes), [#158](https://github.com/InstaZDLL/waveflow-server/pull/158)
-  (le drapeau propre). Le champ *Statut* ci-dessus ne bascule jamais dans ce
-  projet : c'est cette ligne qui dit ce qui tourne.
+  (le drapeau propre), [#163](https://github.com/InstaZDLL/waveflow-server/pull/163)
+  (le balayage du magasin). Le champ *Statut* ci-dessus ne bascule jamais dans
+  ce projet : c'est cette ligne qui dit ce qui tourne.
 - **Date** : 2026-08-28
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
@@ -473,6 +474,36 @@ décision 6 appelle irrécupérable — un lien mort que le client voit — et l
 lien mort en le rendant absent est une plus mauvaise réponse que de dire la
 vérité à l'opérateur.
 
+## Décision 11 — les octets se partagent, la connaissance non
+
+La décision 5 fixe le prix d'un blob que deux bibliothèques tiennent — chacune
+le compte — sans dire ce que la frontière signifie. La voici, et l'essentiel est
+qu'elle décrit ce que le code fait déjà plutôt que ce qu'il devrait faire.
+
+**Le fichier est partagé, l'existence de l'empreinte ne l'est pas.** Une seule
+copie sur le disque, et `canvas_for_user` n'y donne accès qu'à travers une
+bibliothèque dont le demandeur est membre. Une empreinte que personne
+d'accessible ne référence et une empreinte qui n'existe pas répondent la même
+chose. Le RFC-008 avait déjà tranché la question analogue et pour la raison qui
+vaut ici : une déduplication *visible* entre bibliothèques serait l'oracle que
+la règle du 404 interdit — elle dirait à B qu'un fichier qu'elle ne possède pas
+existe quelque part.
+
+C'est pourquoi chacune paie. Ce n'est pas une maladresse comptable : facturer au
+premier déposant ferait dépendre le plafond d'une bibliothèque de ce qu'une
+autre se trouve tenir, et le jour où la première retire son canvas, sa voisine
+hériterait d'une facture qu'elle n'a pas vue venir. L'opérateur y perd une somme
+qui surestime son disque ; il n'y perd pas la capacité de prévoir ce qu'une
+bibliothèque peut coûter.
+
+**Ce qui reste hors de cette RFC** est ce que le RFC-008 en avait déjà écarté :
+rattacher, lier matériellement ou copier un blob d'une bibliothèque vers une
+autre. Ce sont des opérations qui *déplacent une frontière* plutôt que de la
+respecter, et aucune n'est demandée. Elles ne sont pas exclues pour toujours ;
+elles demandent de décider ce qu'une bibliothèque a le droit d'apprendre d'une
+autre, et ce n'est pas une question que le canvas doit trancher pour tout le
+monde.
+
 ## Ce que cette RFC change ailleurs
 
 **La charge du ticket de flux grandit d'un octet**, et les tickets frappés avant
@@ -502,13 +533,12 @@ exactement comme `artwork_dir`.
 
 ## Ce qui reste ouvert
 
+Aucune question de forme ne reste ouverte : la décision 11 ferme la dernière.
+Ce qui suit est du travail en attente, pas un arbitrage.
+
 - **Le balayage de `artwork_dir`.** La décision 10 ramasse les octets du
   magasin de canvas ; la pochette a exactement la même propriété depuis le
-  début et reste sans balayeur. C'est le même travail sur un autre magasin,
-  avec des références réparties sur trois colonnes au lieu d'une — donc pas la
-  même prudence, et pas le même jour.
-- **Le partage d'un même blob entre bibliothèques.** La décision 5 en fixe le
-  prix — chacune le compte — sans trancher ce que la frontière signifie
-  vraiment : une bibliothèque devrait-elle seulement pouvoir *apprendre*
-  l'existence d'une empreinte qu'une autre a déposée. Même question ouverte que
-  le RFC-008 a laissée.
+  début et reste sans balayeur. Le même travail sur un autre magasin, avec des
+  références réparties sur trois colonnes au lieu d'une — donc pas la même
+  prudence, et pas le même jour que du code qui supprime des fichiers.
+
