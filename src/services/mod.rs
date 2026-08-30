@@ -832,6 +832,10 @@ pub struct DomainServices {
     upload_locks: Arc<dashmap::DashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
     canvas: crate::config::CanvasLimits,
     canvas_dir: PathBuf,
+    /// Where covers and their thumbnails live. Read by the sweep only: the
+    /// scanner writes this directory through `waveflow_core`, which is the
+    /// whole reason the sweep cannot hold a lock over the writer.
+    artwork_dir: PathBuf,
     ffprobe_path: PathBuf,
     ffmpeg_path: PathBuf,
     /// One lock per canvas blob, keyed by its hash.
@@ -882,6 +886,7 @@ impl From<crate::sync::SyncError> for ServiceError {
 mod admin;
 mod albums;
 mod artists;
+mod artwork;
 mod bookmarks;
 mod canvas;
 mod catalog;
@@ -919,6 +924,7 @@ impl DomainServices {
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,
             canvas_dir: config.canvas_dir.clone(),
+            artwork_dir: config.artwork_dir.clone(),
             ffprobe_path: config.ffprobe_path.clone(),
             ffmpeg_path: config.ffmpeg_path.clone(),
             canvas_locks: Arc::new(dashmap::DashMap::new()),

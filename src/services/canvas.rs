@@ -15,9 +15,10 @@
 //! The file first and the row second when placing; the row first and the file
 //! second when removing. Both orders leave the same failure, and it is the
 //! recoverable *kind* — bytes nothing names, in a store that is
-//! content-addressed and therefore enumerable, so a sweep could find them. No
-//! sweep exists yet; RFC-009 leaves it open, as `artwork_dir` has left it open
-//! since the beginning. A row naming an absent file is the failure that could
+//! content-addressed and therefore enumerable, so a sweep can find them.
+//! [`DomainServices::sweep_canvas_store`] is that sweep; `artwork_dir`, which
+//! had left the same question open since the beginning, has its own in
+//! [`super::artwork`]. A row naming an absent file is the failure that could
 //! not be recovered even in principle, because it is a dead link every read
 //! runs into.
 //!
@@ -518,11 +519,9 @@ impl DomainServices {
     ///
     /// Failing here is not an error the caller can act on: the link is already
     /// gone, which is what they asked for. What it does leave is bytes nothing
-    /// names, and **nothing collects those today** — RFC-009 leaves the store
-    /// sweep open, noting that `artwork_dir` has had exactly the same property
-    /// from the start. The consolation is only that the store is
-    /// content-addressed and therefore enumerable, so a sweep remains possible
-    /// to write; it is not one that exists.
+    /// names, and [`DomainServices::sweep_canvas_store`] is what collects those
+    /// — the store is content-addressed and therefore enumerable, which is what
+    /// made the sweep writable at all.
     async fn release_canvas_blob(&self, hash: &str) {
         // Scoped for the same reason as the placing path: the entry goes back
         // to the map only once this call holds nothing.
