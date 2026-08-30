@@ -455,6 +455,12 @@ aucune ligne ne les mentionne et il n'existe pas de verrou à prendre pour eux,
 donc l'âge tient lieu des deux. Une heure est très au-delà de ce qu'une pose
 vivante peut encore être en train de faire.
 
+Le radical est vérifié aussi strictement que celui d'un blob : c'est un UUID que
+ce module a inventé, et l'exiger ne coûte rien. Sans cette exigence,
+l'`avancement.part` de l'opérateur serait la seule chose du magasin à porter une
+extension qui suffit à la faire disparaître — une asymétrie qui contredirait la
+règle du paragraphe suivant au moment même où on l'énonce.
+
 **Et tout le reste est compté, jamais supprimé.** Le magasin vit sous le `data/`
 de l'opérateur. Un balayeur qui efface ce qu'il ne sait pas nommer est un
 balayeur que personne ne devrait lancer : un fichier n'est candidat que s'il est

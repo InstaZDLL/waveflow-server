@@ -1297,19 +1297,31 @@ async fn the_sweep_collects_orphans_and_leaves_everything_else_alone() {
     // `data/`, and a sweep that deletes what it cannot name is one nobody
     // should run.
     std::fs::write(store.join("operator-notes.txt"), b"do not delete").unwrap();
+    // And the same thing wearing this module's extension. The stem is what
+    // says whose file it is: a working name has a UUID for a stem because
+    // `place_canvas` put one there, and `notes.part` is not that. Backdated so
+    // that only the stem stands between it and deletion.
+    let disguised = store.join("operator-notes.part");
+    std::fs::write(&disguised, b"do not delete either").unwrap();
+    set_age(&disguised, std::time::Duration::from_secs(2 * 60 * 60));
 
     let swept = state.services.sweep_canvas_store().await.unwrap();
     assert_eq!(swept.blobs_removed, 1, "the unreferenced blob goes");
     assert_eq!(swept.staging_removed, 1, "the abandoned working file goes");
-    assert_eq!(swept.unknown, 1, "and the stranger is counted, not removed");
+    assert_eq!(
+        swept.unknown, 2,
+        "and the strangers are counted, not removed"
+    );
     assert_eq!(swept.dead_links, 0);
 
     let left = stored_files(&config);
     assert!(left.contains(&placed.file_name()), "the live canvas stays");
-    assert!(
-        left.contains(&"operator-notes.txt".to_owned()),
-        "a file the sweep does not recognise is left exactly where it was"
-    );
+    for kept in ["operator-notes.txt", "operator-notes.part"] {
+        assert!(
+            left.contains(&kept.to_owned()),
+            "a file the sweep does not recognise is left exactly where it was: {kept}"
+        );
+    }
     assert!(
         left.iter().any(|name| name.ends_with(".silent")),
         "a working file young enough to belong to a live request stays"
