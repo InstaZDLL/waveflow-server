@@ -79,7 +79,13 @@ pub(super) async fn media_response(
         Err(error @ (MediaError::RangeNotSatisfiable(_) | MediaError::Busy)) => {
             Ok(error.into_response())
         }
-        Err(MediaError::Internal) => Err(internal("media service failed")),
+        // `Conflict` belongs to the canvas routes, which have no Subsonic
+        // surface — the facade is frozen for v2.0-beta and no validated client
+        // asks for a loop. `serve` cannot produce it, so this arm exists to
+        // keep the match exhaustive rather than to describe a reachable state,
+        // and it says "internal" because reaching it would mean the media
+        // service returned something it has no way to return.
+        Err(MediaError::Internal | MediaError::Conflict) => Err(internal("media service failed")),
     }
 }
 

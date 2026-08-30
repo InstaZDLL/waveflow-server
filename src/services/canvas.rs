@@ -34,7 +34,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 use sqlx::Row;
 use uuid::Uuid;
 
-use super::{parse_uuid, DomainServices, ServiceError};
+use super::{parse_uuid, CanvasBlob, DomainServices, ServiceError};
 use crate::authentication::now_ms;
 
 /// The containers a canvas may arrive in.
@@ -52,22 +52,6 @@ const ACCEPTED_FORMATS: [&str; 2] = ["mp4", "webm"];
 /// a budget anything legitimate spends — it is the bound on something that will
 /// never finish.
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// One blob of the store.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CanvasBlob {
-    pub hash: String,
-    pub format: String,
-    pub byte_size: i64,
-}
-
-impl CanvasBlob {
-    /// The name the bytes carry on disk. The hash is the name, so this is a
-    /// pure function of the row rather than something stored twice.
-    pub fn file_name(&self) -> String {
-        format!("{}.{}", self.hash, self.format)
-    }
-}
 
 /// What `ffprobe` had to say about the bytes offered.
 struct Probed {
@@ -118,6 +102,7 @@ impl DomainServices {
         user_id: Uuid,
         track_id: Uuid,
         bytes: &[u8],
+        origin_device_id: Option<Uuid>,
     ) -> Result<CanvasBlob, ServiceError> {
         let byte_size = i64::try_from(bytes.len()).map_err(|_| ServiceError::Invalid)?;
         if byte_size == 0 || byte_size > self.canvas.max_bytes {
@@ -146,7 +131,7 @@ impl DomainServices {
         })?;
 
         let outcome = self
-            .identify_and_place(user_id, track_id, byte_size, &staging)
+            .identify_and_place(user_id, track_id, byte_size, &staging, origin_device_id)
             .await;
         // Whatever happened, nothing of this attempt is left under a name only
         // this call knows.
@@ -165,6 +150,7 @@ impl DomainServices {
         track_id: Uuid,
         byte_size: i64,
         staging: &std::path::Path,
+        origin_device_id: Option<Uuid>,
     ) -> Result<CanvasBlob, ServiceError> {
         // Outside every lock: probing spawns a subprocess and reads a file, and
         // neither belongs under a mutex the rest of the server is waiting on.
@@ -212,7 +198,10 @@ impl DomainServices {
                         })?;
                 }
 
-                match self.link_canvas(user_id, track_id, &blob).await {
+                match self
+                    .link_canvas(user_id, track_id, &blob, origin_device_id)
+                    .await
+                {
                     Ok(replaced) => Ok(replaced),
                     Err(error) => {
                         // The row did not happen, so the bytes must not stay
@@ -247,6 +236,7 @@ impl DomainServices {
         user_id: Uuid,
         track_id: Uuid,
         blob: &CanvasBlob,
+        origin_device_id: Option<Uuid>,
     ) -> Result<Option<String>, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
@@ -254,7 +244,7 @@ impl DomainServices {
 
         // Authoritative, unlike the check that let this call get this far.
         let row = sqlx::query(
-            "SELECT t.library_id, l.accepts_uploads, m.role FROM track t \
+            "SELECT t.library_id, t.full_hash, l.accepts_uploads, m.role FROM track t \
              JOIN library l ON l.id=t.library_id \
              JOIN library_member m ON m.library_id=t.library_id \
              WHERE t.id=? AND m.user_id=?",
@@ -276,6 +266,9 @@ impl DomainServices {
         // from the request, so nobody chooses which library they attach a track
         // to. The same thing `track_override` does.
         let library_id: String = row.try_get("library_id")?;
+        // Read here rather than in a second query: it is what the event carries,
+        // and it has to be the value this transaction saw.
+        let full_hash: String = row.try_get("full_hash")?;
 
         let previous: Option<String> =
             sqlx::query_scalar("SELECT canvas_hash FROM track_canvas WHERE track_id=?")
@@ -344,17 +337,72 @@ impl DomainServices {
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        self.announce_canvas_change(
+            &mut tx,
+            &library_id,
+            track_id,
+            &full_hash,
+            origin_device_id,
+            now,
+        )
+        .await?;
         tx.commit().await?;
         Ok(previous)
     }
 
+    /// Tells the library feed that a track changed, in the same transaction.
+    ///
+    /// RFC-009 decision 7: the blob itself is content-addressed, and the bytes
+    /// behind a hash never change, so there is no event for it. Only the
+    /// **link** is a change, and a link is part of the track — so it travels in
+    /// the track's own `upsert`, by the same path a tag correction takes.
+    ///
+    /// The payload does not grow either. It carries `full_hash` because nothing
+    /// else does: a track keeps its id while its bytes move, and the event is
+    /// the only witness. A canvas link is not in that position — it is read off
+    /// the track, which the client refetches on receiving this anyway. Adding a
+    /// field would make the payload a partial projection of the track, a second
+    /// model to keep in agreement with the first.
+    async fn announce_canvas_change(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        library_id: &str,
+        track_id: Uuid,
+        full_hash: &str,
+        origin_device_id: Option<Uuid>,
+        now: i64,
+    ) -> Result<(), ServiceError> {
+        crate::catalog::record_library_event(
+            tx,
+            crate::catalog::LibraryChange {
+                library_id: parse_uuid(library_id.to_owned())?,
+                entity_type: "track",
+                entity_id: track_id,
+                action: "upsert",
+                payload: serde_json::json!({ "full_hash": full_hash }),
+                changed_at: now,
+                // So the client that just placed the canvas does not read it
+                // back off the feed as something it has to go and fetch.
+                origin_device_id,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Removes the loop a track carries.
-    pub async fn remove_canvas(&self, user_id: Uuid, track_id: Uuid) -> Result<(), ServiceError> {
+    pub async fn remove_canvas(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+        origin_device_id: Option<Uuid>,
+    ) -> Result<(), ServiceError> {
         let removed = {
+            let now = now_ms();
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.pool().begin().await?;
             let row = sqlx::query(
-                "SELECT m.role FROM track t \
+                "SELECT t.library_id, t.full_hash, m.role FROM track t \
                  JOIN library_member m ON m.library_id=t.library_id \
                  WHERE t.id=? AND m.user_id=?",
             )
@@ -368,6 +416,8 @@ impl DomainServices {
             if !role.may_upload() {
                 return Err(ServiceError::Forbidden);
             }
+            let library_id: String = row.try_get("library_id")?;
+            let full_hash: String = row.try_get("full_hash")?;
             // Deliberately not gated on `accepts_uploads`. Closing a library to
             // new files must not strand what it already holds, and taking
             // something away never spends the operator's disk.
@@ -377,8 +427,21 @@ impl DomainServices {
             .bind(track_id.to_string())
             .fetch_optional(&mut *tx)
             .await?;
+            // Announced only when something was actually taken away. A removal
+            // that found nothing changed nothing, and an event for it would
+            // send every client to refetch a track that is as it was.
+            let hash = hash.ok_or(ServiceError::NotFound)?;
+            self.announce_canvas_change(
+                &mut tx,
+                &library_id,
+                track_id,
+                &full_hash,
+                origin_device_id,
+                now,
+            )
+            .await?;
             tx.commit().await?;
-            hash.ok_or(ServiceError::NotFound)?
+            hash
         };
         self.release_canvas_blob(&removed).await;
         Ok(())
