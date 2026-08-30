@@ -3,7 +3,10 @@
 - **Statut** : Proposed
 - **Implémentée par** : [#145](https://github.com/InstaZDLL/waveflow-server/pull/145)
   (le flux et son filigrane), [#152](https://github.com/InstaZDLL/waveflow-server/pull/152)
-  (l'appareil d'origine). Le champ *Statut* ci-dessus ne bascule jamais dans ce
+  (l'appareil d'origine), [#159](https://github.com/InstaZDLL/waveflow-server/pull/159)
+  (les événements d'album, décision 6),
+  [#166](https://github.com/InstaZDLL/waveflow-server/pull/166) (la rétention,
+  décision 7). Le champ *Statut* ci-dessus ne bascule jamais dans ce
   projet : c'est cette ligne qui dit ce qui tourne, et elle se vérifie — une PR
   se lit, un mot de statut ne s'audite pas.
 - **Date** : 2026-08-25
