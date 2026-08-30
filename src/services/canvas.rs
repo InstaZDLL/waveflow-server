@@ -805,14 +805,6 @@ impl DomainServices {
             .ok_or(ServiceError::Invalid)?;
 
         // A canvas without a video stream is not a canvas, whatever it is.
-        //
-        // An *audio* stream, on the other hand, is deliberately not inspected.
-        // RFC-009 decision 9: the server stores and serves what it is given,
-        // sound costs it neither disk nor bandwidth, and many encoders write an
-        // empty audio track nobody asked for — refusing those would reject
-        // ordinary files for a reason the operator cannot see by looking at the
-        // video. Muting is one attribute on the client's `<video>`; the server
-        // could only mute by re-encoding, which decision 8 refuses.
         let has_video = probed
             .get("streams")
             .and_then(serde_json::Value::as_array)
@@ -824,6 +816,12 @@ impl DomainServices {
         if !has_video {
             return Err(ServiceError::Invalid);
         }
+        // Reported rather than refused. RFC-009 decision 9: a canvas loops over a
+        // track that is already playing and the desktop's `<video>` is muted in
+        // its markup, so nobody can hear this — and keeping it would spend the
+        // ceiling on bytes that buy nothing. `identify_and_place` remuxes the
+        // stream out before the file reaches the store; this only says whether
+        // there is one to take out.
         let has_audio = probed
             .get("streams")
             .and_then(serde_json::Value::as_array)
