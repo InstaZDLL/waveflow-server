@@ -1644,3 +1644,117 @@ async fn a_row_that_never_came_from_a_scan_is_swept_only_if_it_predates_it() {
     .unwrap();
     assert_eq!(deletes, 1);
 }
+
+/// RFC-007 left open whether an album needs an event of its own; the desktop
+/// named the case that says it does, and this is the shape of the answer.
+#[tokio::test]
+async fn an_album_that_is_merely_retagged_announces_itself_once() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    let owner = state
+        .db
+        .create_account("album-feed", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("album-feed-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Album feed",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    // Three tracks of one album and one of another. What the feed must not do
+    // is announce the first album three times.
+    // `existing` is what a rescan carries: the apply matches a file to the row
+    // it already has, and passing `None` a second time would try to insert a
+    // second track at a path the schema makes unique.
+    let apply =
+        |index: usize, album: &'static str, year: Option<i64>, existing: Option<uuid::Uuid>| {
+            let db = state.db.clone();
+            async move {
+                let scan = db
+                    .create_scan_job(library, Some(owner), "manual")
+                    .await
+                    .unwrap();
+                db.start_scan_job(scan, 1, false).await.unwrap();
+                let mut input = catalog_input(index, "Nova Kern");
+                input.title = format!("Track {index}");
+                input.album = Some(album.into());
+                input.album_artist = Some("Nova Kern".into());
+                input.year = year;
+                db.apply_catalog_track(library, scan, &input, existing, false)
+                    .await
+                    .unwrap();
+                db.finish_scan_job(scan, 0).await.unwrap();
+            }
+        };
+    for index in 0..3 {
+        apply(index, "One", Some(2000), None).await;
+    }
+    apply(3, "Two", Some(2000), None).await;
+    let first = state
+        .db
+        .list_tracks_for_user(owner, library)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|track| track.title == "Track 0")
+        .expect("the first track")
+        .id;
+
+    let albums_on_feed = |after: i64| {
+        let services = state.services.clone();
+        async move {
+            services
+                .library_changes(owner, library, after, 500)
+                .await
+                .unwrap()
+                .events
+                .into_iter()
+                .filter(|event| event.entity_type == "album")
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let albums = albums_on_feed(0).await;
+    assert_eq!(
+        albums.len(),
+        2,
+        "one event per album, not one per track: {albums:?}"
+    );
+    assert!(albums.iter().all(|event| event.action == "upsert"));
+    let cursor = state
+        .services
+        .library_changes(owner, library, 0, 500)
+        .await
+        .unwrap()
+        .events
+        .last()
+        .unwrap()
+        .cursor;
+
+    // Applying the same tags again writes nothing, so it announces nothing. An
+    // album event per rescan would make the feed a scan log and cost the client
+    // the refetch this event exists to spare it.
+    apply(0, "One", Some(2000), Some(first)).await;
+    assert!(
+        albums_on_feed(cursor).await.is_empty(),
+        "an unchanged album is not a change"
+    );
+
+    // And the case the desktop named: the album is retagged without gaining or
+    // losing a track, so `song_count` does not move and an incremental walk
+    // keyed on it would skip the album entirely.
+    apply(0, "One", Some(2001), Some(first)).await;
+    let announced = albums_on_feed(cursor).await;
+    assert_eq!(announced.len(), 1, "the retag is announced: {announced:?}");
+    assert_eq!(announced[0].action, "upsert");
+}
