@@ -233,12 +233,34 @@ impl DomainServices {
         // A cursor beyond what the feed has written would let a client mark
         // itself caught up with events that do not exist yet, and then be
         // silently behind when they arrive.
-        let latest: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(cursor), 0) FROM library_event WHERE library_id=?",
+        //
+        // Scoped by membership as well, and that is the project's rule rather
+        // than a leak being closed: today both paths out of this function
+        // answer 422, so a caller cannot tell "beyond the feed" from "not your
+        // library" whichever way this reads. But tenancy lives in the query
+        // here, never in a check the query trusts — `library_changes` keeps a
+        // redundant membership predicate for the same reason, so that removing
+        // one guard cannot quietly widen another.
+        // The maximum is a *subquery* rather than an aggregate over the join,
+        // and that is not style. `SELECT MAX(...) FROM ... WHERE <no match>`
+        // returns one row holding NULL, so `COALESCE(..., 0)` would hand back
+        // `Some(0)` for a library the caller cannot see and the predicate above
+        // would decide nothing. Non-aggregate over `library_member`, zero
+        // matching rows means zero rows returned, which is the answer wanted.
+        let latest: Option<i64> = sqlx::query_scalar(
+            "SELECT COALESCE( \
+               (SELECT MAX(e.cursor) FROM library_event e WHERE e.library_id=m.library_id), 0) \
+             FROM library_member m JOIN device d ON d.user_id=m.user_id \
+             WHERE m.library_id=? AND m.user_id=? AND d.id=? AND d.revoked_at IS NULL",
         )
         .bind(library_id.to_string())
-        .fetch_one(&mut *tx)
+        .bind(user_id.to_string())
+        .bind(device_id.to_string())
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some(latest) = latest else {
+            return Ok(false);
+        };
         if cursor > latest {
             return Ok(false);
         }
