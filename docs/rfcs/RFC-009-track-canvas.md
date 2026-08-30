@@ -431,6 +431,42 @@ FFmpeg peuvent encore muxer les mêmes paquets différemment, si bien qu'une mis
 à jour du serveur peut donner un second blob au même fichier source. Cela coûte
 un doublon, jamais une réponse fausse.
 
+## Décision 10 — qui ramasse les octets qu'une panne a laissés
+
+La décision 6 dit quand un blob cesse d'être référencé et par quelle
+transaction ; elle laissait ouvert *qui* ramasse ce qu'une panne a laissé
+derrière. Un balayeur, dans la forme de celui du RFC-008 : une passe au
+démarrage, puis une par jour. Les orphelins sont faits par des pannes et non par
+l'usage, donc c'est une réparation et pas de l'entretien — sur un serveur qui
+n'a pas planté, la passe ne trouve rien et coûte une lecture de répertoire.
+
+**Trois sortes de fichiers, et une seule est supprimée sans réserve.**
+
+Un blob que plus aucune ligne `canvas` ne nomme part — mais sous le verrou de
+son empreinte, et le compte est relu à l'intérieur. Sans ce verrou, ce balayeur
+serait la cause du dommage qu'il existe pour réparer : une pose écrit son
+fichier, et entre cette écriture et sa ligne le balayeur voit des octets que
+rien ne nomme et les prend, laissant la pose commettre une ligne dont le fichier
+a disparu.
+
+Un fichier de travail — `<uuid>.part`, `<uuid>.silent` — part s'il est plus
+vieux qu'une heure. Ces noms n'appartiennent qu'à l'appel qui les a écrits :
+aucune ligne ne les mentionne et il n'existe pas de verrou à prendre pour eux,
+donc l'âge tient lieu des deux. Une heure est très au-delà de ce qu'une pose
+vivante peut encore être en train de faire.
+
+**Et tout le reste est compté, jamais supprimé.** Le magasin vit sous le `data/`
+de l'opérateur. Un balayeur qui efface ce qu'il ne sait pas nommer est un
+balayeur que personne ne devrait lancer : un fichier n'est candidat que s'il est
+`<64 hex>.<format>` pour un format de la liste blanche, ou l'un des deux noms de
+travail que ce module écrit.
+
+**La ligne sans fichier est signalée et jamais réparée.** C'est la panne que la
+décision 6 appelle irrécupérable — un lien mort que le client voit — et la
+« réparation » consisterait à supprimer le canvas de quelqu'un. Répondre à un
+lien mort en le rendant absent est une plus mauvaise réponse que de dire la
+vérité à l'opérateur.
+
 ## Ce que cette RFC change ailleurs
 
 **La charge du ticket de flux grandit d'un octet**, et les tickets frappés avant
@@ -460,12 +496,11 @@ exactement comme `artwork_dir`.
 
 ## Ce qui reste ouvert
 
-- **Le balayage du magasin.** La décision 6 dit quand un blob cesse d'être
-  référencé et par quelle transaction, et elle nomme les deux sources d'octets
-  orphelins — la panne entre le commit et l'effacement, la cascade le jour où
-  une suppression de piste ou de bibliothèque existera. Elle ne dit pas *qui*
-  les ramasse, ni à quelle cadence. `artwork_dir` a exactement la même propriété
-  et n'est balayé par rien aujourd'hui, ce qui est un constat et pas une excuse.
+- **Le balayage de `artwork_dir`.** La décision 10 ramasse les octets du
+  magasin de canvas ; la pochette a exactement la même propriété depuis le
+  début et reste sans balayeur. C'est le même travail sur un autre magasin,
+  avec des références réparties sur trois colonnes au lieu d'une — donc pas la
+  même prudence, et pas le même jour.
 - **Le partage d'un même blob entre bibliothèques.** La décision 5 en fixe le
   prix — chacune le compte — sans trancher ce que la frontière signifie
   vraiment : une bibliothèque devrait-elle seulement pouvoir *apprendre*
