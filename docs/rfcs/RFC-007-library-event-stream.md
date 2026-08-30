@@ -1,6 +1,11 @@
 # RFC-007 — Flux d'événements de bibliothèque
 
 - **Statut** : Proposed
+- **Implémentée par** : [#145](https://github.com/InstaZDLL/waveflow-server/pull/145)
+  (le flux et son filigrane), [#152](https://github.com/InstaZDLL/waveflow-server/pull/152)
+  (l'appareil d'origine). Le champ *Statut* ci-dessus ne bascule jamais dans ce
+  projet : c'est cette ligne qui dit ce qui tourne, et elle se vérifie — une PR
+  se lit, un mot de statut ne s'audite pas.
 - **Date** : 2026-08-25
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),

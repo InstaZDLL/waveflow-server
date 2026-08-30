@@ -1,6 +1,9 @@
 # RFC-004 — Réconciliation locale ↔ serveur
 
 - **Statut** : Proposed
+- **Côté serveur** : rien à implémenter. La décision 1 le dit elle-même — le
+  premier incrément M5 ne modifie ni le catalogue serveur ni `/api/v2`. Cette
+  RFC vit ici comme référence du contrat que le desktop consomme.
 - **Date** : 2026-08-17
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),

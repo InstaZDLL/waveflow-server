@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The accepted design is [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md). **Read it before adding a module or a public route.** [`AGENTS.md`](AGENTS.md) holds the short form of the same rules plus the milestone sequence; this file is the deeper reference.
 
+**An RFC's `Statut` field never flips.** Every RFC under `docs/rfcs/` says `Proposed` whether it shipped a year ago or not at all, so the header is not evidence about the code — a `Statut` line has misled a reader into holding shipped work as pending. What each one carries instead is an **`Implémentée par`** line naming the pull requests, which can actually be checked. And when it matters, read the code rather than either: the routes registered in `src/lib.rs` and the dated files under `migrations-v2/` are the only account of what exists.
+
 Layout:
 
 - `/` — the server crate (`waveflow-server`).

@@ -1,6 +1,12 @@
 # RFC-009 — Le canvas d'une piste
 
 - **Statut** : Proposed
+- **Implémentée par** : [#155](https://github.com/InstaZDLL/waveflow-server/pull/155)
+  (le discriminant du ticket), [#156](https://github.com/InstaZDLL/waveflow-server/pull/156)
+  (le magasin et le modèle), [#157](https://github.com/InstaZDLL/waveflow-server/pull/157)
+  (les six routes), [#158](https://github.com/InstaZDLL/waveflow-server/pull/158)
+  (le drapeau propre). Le champ *Statut* ci-dessus ne bascule jamais dans ce
+  projet : c'est cette ligne qui dit ce qui tourne.
 - **Date** : 2026-08-28
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
