@@ -1160,14 +1160,29 @@ mod tests {
             "the sweep took a blob whose lock was held: it never waited"
         );
 
-        sqlx::query(
-            "INSERT INTO canvas (hash, format, byte_size, created_at) VALUES (?, 'mp4', 10, ?)",
-        )
-        .bind(&hash)
-        .bind(now_ms())
-        .execute(services.db.pool())
-        .await
-        .expect("the placement commits");
+        // Under the writer gate, because a placement writes this row under it:
+        // `link_canvas` takes it and then opens the transaction holding this
+        // exact statement. A test standing in for a placement that skipped the
+        // barrier would be standing in for something the server never does —
+        // and this one is about concurrency, which is where that stops being
+        // cosmetic.
+        //
+        // Nested inside the blob's lock and released first, which is the order
+        // the real path holds them in: `place_canvas` takes the lock, and the
+        // gate is taken and dropped within it. The sweep waiting on the lock
+        // takes no gate of its own — `discard_orphan_blob` only reads — so
+        // there is nothing here to deadlock against.
+        {
+            let _writer = services.db.writer_guard().await;
+            sqlx::query(
+                "INSERT INTO canvas (hash, format, byte_size, created_at) VALUES (?, 'mp4', 10, ?)",
+            )
+            .bind(&hash)
+            .bind(now_ms())
+            .execute(services.db.pool())
+            .await
+            .expect("the placement commits");
+        }
         drop(held);
 
         let swept = sweeper
