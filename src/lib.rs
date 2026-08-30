@@ -127,6 +127,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::scan_status,
         api::scan_events,
         api::library_events,
+        api::library_events_ack,
         api::negotiate_uploads,
         api::upload_session,
         api::upload_chunk,
@@ -265,6 +266,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         sync::SyncPage,
         media::StreamTicketResponse,
         media::CanvasResponse,
+        api::LibraryEventAckRequest,
         scanner::ScanProgress
     )),
     modifiers(&SecurityAddon),
