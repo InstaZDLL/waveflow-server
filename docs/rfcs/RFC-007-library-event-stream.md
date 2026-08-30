@@ -168,8 +168,7 @@ l'état bibliothèque, cet instantané n'est pas une route à écrire : c'est le
 catalogue lui-même, que `/api/v2/libraries/{id}/tracks` et les routes de
 parcours servent déjà.
 
-Les valeurs exactes — âge, nombre d'événements conservés par bibliothèque — sont
-laissées ouvertes ; c'est un réglage, pas une décision de forme.
+Les valeurs exactes sont fixées par la décision 7.
 
 ## Décision 5 — ce que le flux ne transporte pas
 
@@ -234,12 +233,76 @@ partout dans ce serveur et **écrit nulle part**. Une photo d'artiste ne peut pa
 changer parce qu'il n'y en a jamais. La question se rouvrira le jour où quelque
 chose l'écrira, et ce jour-là ce sera cette ligne qu'il faudra relire.
 
+## Décision 7 — deux bornes, parce qu'une seule se trompe toujours
+
+> **Décidée le 2026-08-30, pas encore construite.** Rien ne purge aujourd'hui ;
+> `library.events_purged_through` existe et vaut 0. Cette décision dit ce que la
+> purge fera, et la ligne *Implémentée par* de cet en-tête dira quand.
+
+**Un âge et un plancher, tenus ensemble.** Ni l'un ni l'autre ne suffit, et les
+deux échouent dans des directions opposées.
+
+L'âge seul laisse une bibliothèque bavarde faire enfler la table sans limite —
+un rescan de cinquante mille pistes écrit cinquante mille lignes, et trente
+jours de rescans quotidiens en font un million et demi. Le compte seul coupe la
+tête d'une bibliothèque tranquille : dix mille événements peuvent couvrir deux
+ans chez un opérateur qui n'ajoute rien, et les rogner à date fixe ne gêne
+personne, mais les rogner à quantité fixe efface un historique que rien
+n'obligeait à effacer.
+
+Donc : **on garde ce qui a moins de trente jours, et jamais moins de dix mille
+événements par bibliothèque**, la seconde règle l'emportant sur la première.
+
+Trente jours parce que la borne à battre est la plus longue absence
+plausible d'un client — des vacances, un portable rangé pour un mois — au-delà
+de laquelle relire le catalogue n'est plus une punition. Dix mille parce qu'un
+rescan complet d'une grande bibliothèque le dépasse à lui seul : après un
+rescan, un client absent *doit* repartir de l'instantané, et c'est correct
+puisque le rescan a pu tout déplacer.
+
+`WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS` et
+`WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN`, réglables comme le reste.
+
+**Et le filigrane avance dans la transaction qui coupe.** `library_event` et
+`library.events_purged_through` disent la même chose de deux endroits ; les
+écrire séparément laisse une fenêtre où le filigrane annonce moins que ce qui a
+disparu, et un client qui lit dedans reçoit un rattrapage qui a l'air complet en
+sautant le trou. C'est exactement la panne que la décision 4 refuse.
+
+## Décision 8 — l'acquittement, et ce qu'il ne décide pas
+
+> **Décidée le 2026-08-30, pas encore construite.**
+
+Une table `library_event_ack`, clé primaire `(library_id, device_id)`, portant
+le curseur et sa date. C'est `sync_ack` moins sa colonne de compte : là-bas la
+clé est `(user_id, device_id)` parce que le journal est *par compte* ; ici le
+flux est *par bibliothèque*, et le compte se relit de l'appareil —
+`device.user_id` — puis se vérifie contre `library_member` comme toute autre
+lecture de ce serveur.
+
+Pas `(compte, appareil, bibliothèque)` : le compte y serait une troisième
+colonne dérivable des deux autres, donc une seconde vérité à tenir d'accord avec
+`device.user_id`. Les deux clés étrangères cascadent, si bien qu'un appareil
+révoqué ou une bibliothèque supprimée n'y laissent pas de ligne.
+
+**Ce que l'acquittement ne décide pas, et c'est le point** : il ne retient pas
+la purge. Un appareil qui ne revient jamais épinglerait le flux pour toujours,
+et une bibliothèque partagée n'aurait plus de rétention du tout dès qu'un seul
+téléphone a été jeté. L'acquittement *informe* — il dit à l'opérateur ce qu'une
+purge va coûter à qui — et la décision 7 *décide*. Les mélanger ferait d'une
+donnée que le serveur ne contrôle pas la borne d'une table qu'il doit contrôler.
+
 ## Ce qui reste ouvert
 
-- Les valeurs de rétention.
+Plus rien de cette RFC n'est ouvert. Les trois questions qu'elle portait ont
+été tranchées le 2026-08-30 :
+
+- ~~Les valeurs de rétention.~~ Décision 7.
 - ~~Si des événements `album` et `artist` sont nécessaires ou seulement
-  dérivables des événements `track` par le client.~~ **Tranché le 2026-08-30**,
-  et différemment pour les deux — voir la décision 6.
-- La forme exacte de l'acquittement. Le journal utilisateur acquitte par
-  `(compte, appareil)` ; l'équivalent ici est `(appareil, bibliothèque)`, mais
-  la table qui le porte reste à décider.
+  dérivables des événements `track` par le client.~~ Décision 6, et différemment
+  pour les deux.
+- ~~La forme exacte de l'acquittement.~~ Décision 8.
+
+Les décisions 7 et 8 sont **décidées et pas encore construites**. La ligne
+*Implémentée par* de l'en-tête ne les nommera que lorsqu'elles le seront ; c'est
+elle qui dit ce qui tourne, pas cette section.
