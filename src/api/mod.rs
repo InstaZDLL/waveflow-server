@@ -103,6 +103,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
+        .route(
+            "/api/v2/libraries/{library_id}/events/ack",
+            put(library_events_ack),
+        )
         // Its own body ceiling, and only its own. Raising the router's would
         // hand every route on the server a surface none of them asked for.
         .route(
