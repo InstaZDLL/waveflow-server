@@ -498,6 +498,15 @@ async fn the_quota_counts_distinct_blobs_and_refuses_the_one_that_would_cross_it
     let fixture = fixture(&config, &state, "canvas-quota", 3).await;
     let first = canvas_bytes(temp.path(), "first.mp4", "1", "black");
     let second = canvas_bytes(temp.path(), "second.mp4", "1", "white");
+    // The boundary this test is about, stated rather than assumed. The second
+    // blob has to be the one that crosses the quota: small enough to pass the
+    // per-canvas ceiling, large enough that adding it to the first does not
+    // fit. Both fixtures are generated, so their sizes are not ours to know.
+    assert!(second.len() as i64 <= first_size * 2, "under the ceiling");
+    assert!(
+        first_size + second.len() as i64 > first_size + first_size / 2,
+        "the second canvas must be what crosses the quota"
+    );
 
     let placed = state
         .services
