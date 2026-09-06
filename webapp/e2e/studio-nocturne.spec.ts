@@ -51,6 +51,36 @@ const track = {
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
 
+const song = (
+  index: number,
+  title: string,
+  rating: number,
+  starred: boolean,
+) => ({
+  id: `song-${index}`,
+  library_id: "library-1",
+  album_id: "album-2",
+  title,
+  album: "Vespertine",
+  artist: "Björk",
+  artist_id: "artist-1",
+  artwork_hash: null,
+  duration_ms: 300_000,
+  track: index,
+  disc: 1,
+  starred_at: starred ? 1 : null,
+  user_rating: rating,
+});
+
+const albumDetail = {
+  ...albums[1],
+  songs: [
+    song(1, "Hidden Place", 5, true),
+    song(2, "Cocoon", 0, false),
+    song(3, "Undo", 2, false),
+  ],
+};
+
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
     {
@@ -72,7 +102,11 @@ async function mockAuthenticatedApi(page: Page) {
       return;
     }
     if (url.pathname === "/api/v2/albums/album-2") {
-      await route.fulfill({ json: { ...albums[1], songs: [track] } });
+      await route.fulfill({ json: albumDetail });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/ratings/")) {
+      await route.fulfill({ status: 204, body: "" });
       return;
     }
     if (url.pathname === "/api/v2/albums") {
@@ -237,4 +271,40 @@ test("keeps each card's actions guarded while its own fetch is out", async ({
 
   releaseSlow();
   await expect(slowPlay).toBeEnabled();
+});
+
+/**
+ * The song table carries the controls the albums grid does not — a five-star
+ * rating and a favourite — so the accessibility sweep has to reach a page that
+ * shows one. Until this test the sweep only ever loaded the grid.
+ */
+test("rates a track and stays free of WCAG A or AA violations", async ({
+  page,
+}) => {
+  const rated: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/v2/ratings/")) {
+      rated.push(`${request.method()} ${url.pathname}`);
+    }
+  });
+
+  await page.goto("/albums/album-2");
+  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
+
+  // The rating is a radio group, so the stored value is a checked radio rather
+  // than a class on a span.
+  const hidden = page.getByRole("group", { name: "Rating: Hidden Place" });
+  await expect(hidden.getByRole("radio", { name: "5 stars" })).toBeChecked();
+  const cocoon = page.getByRole("group", { name: "Rating: Cocoon" });
+  await expect(cocoon.getByRole("radio", { checked: true })).toHaveCount(0);
+
+  await cocoon.getByRole("radio", { name: "4 stars" }).check();
+  await expect(cocoon.getByRole("radio", { name: "4 stars" })).toBeChecked();
+  expect(rated).toEqual(["PUT /api/v2/ratings/track/song-2"]);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });

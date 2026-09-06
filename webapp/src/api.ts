@@ -447,6 +447,105 @@ export const setFavorite = (kind: string, id: string, on: boolean) =>
     method: on ? "PUT" : "DELETE",
   });
 
+/** The three things a star, a rating or a bookmark can hang off. */
+export type EntityKind = "track" | "album" | "artist";
+
+export type Rating = {
+  entity_type: string;
+  entity_id: string;
+  rating: number;
+  updated_at: number;
+};
+
+export const listRatings = () => call<Rating[]>("/api/v2/ratings");
+
+/** 1 to 5 stars; 0 clears the rating, which is the server's own convention. */
+export const setRating = (kind: EntityKind, id: string, rating: number) =>
+  call<void>(`/api/v2/ratings/${kind}/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ rating }),
+  });
+
+export type LyricsLine = { start?: number; value: string };
+
+export type StructuredLyrics = {
+  displayArtist: string | null;
+  displayTitle: string;
+  lang: string;
+  synced: boolean;
+  line: LyricsLine[];
+};
+
+export type LyricsList = {
+  track_id: string;
+  structured_lyrics: StructuredLyrics[];
+};
+
+export const getLyrics = (trackId: string) =>
+  call<LyricsList>(`/api/v2/tracks/${trackId}/lyrics`);
+
+export type Bookmark = {
+  position_ms: number;
+  comment: string | null;
+  created_at: number;
+  updated_at: number;
+  song: Song;
+};
+
+export const listBookmarks = () => call<Bookmark[]>("/api/v2/bookmarks");
+
+/**
+ * One bookmark per account and track, so this replaces rather than adds — the
+ * route is `PUT` for that reason, and sending the same position twice leaves
+ * the same single bookmark.
+ */
+export const setBookmark = (
+  trackId: string,
+  positionMs: number,
+  comment?: string,
+) =>
+  call<void>(`/api/v2/bookmarks/${trackId}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      position_ms: Math.max(0, Math.round(positionMs)),
+      comment: comment ?? null,
+    }),
+  });
+
+export const deleteBookmark = (trackId: string) =>
+  call<void>(`/api/v2/bookmarks/${trackId}`, { method: "DELETE" });
+
+export type Genre = {
+  name: string;
+  song_count: number;
+  album_count: number;
+};
+
+export const listGenres = () => call<Genre[]>("/api/v2/genres");
+
+export const listGenreSongs = (genre: string) =>
+  collect<Song>("/api/v2/songs", { genre });
+
+/**
+ * `GET /history` answers plays, not songs — `track_id`, `submission` and
+ * `played_at` — so a screen wanting titles resolves them itself. The default
+ * limit is the server's 200; the cap is `MAX_SYNC_LIMIT`.
+ */
+export type Play = {
+  track_id: string;
+  submission: boolean;
+  played_at: number;
+};
+
+export const listHistory = (limit = 100) =>
+  call<Play[]>(`/api/v2/history?limit=${limit}`);
+
+export const listRandomSongs = (limit = 100, genre?: string) => {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (genre) query.set("genre", genre);
+  return call<Song[]>(`/api/v2/songs/random?${query}`);
+};
+
 export const scrobble = (trackId: string, submission: boolean) =>
   call<void>("/api/v2/scrobbles", {
     method: "POST",

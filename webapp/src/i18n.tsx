@@ -182,6 +182,8 @@ const en = {
   "browse.noMatch": "Nothing matches that filter.",
   "card.play": "Play",
   "card.queue": "Add to queue",
+  "rating.label": "Rating",
+  "rating.stars": { one: "{count} star", other: "{count} stars" },
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -361,6 +363,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "browse.noMatch": "Aucun résultat pour ce filtre.",
   "card.play": "Lire",
   "card.queue": "Mettre en file",
+  "rating.label": "Note",
+  "rating.stars": { one: "{count} étoile", other: "{count} étoiles" },
 };
 
 export type Locale = "en" | "fr";
