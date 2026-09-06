@@ -32,6 +32,25 @@ const albums = [
   },
 ];
 
+const track = {
+  id: "song-1",
+  library_id: "library-1",
+  album_id: "album-1",
+  title: "Army of Me",
+  album: "Post",
+  artist: "Björk",
+  artist_id: "artist-1",
+  artwork_hash: null,
+  duration_ms: 234_000,
+  track: 1,
+  disc: 1,
+  starred_at: null,
+  user_rating: null,
+};
+
+/** Resolved by default; one test replaces it to stall `album-1`. */
+let slowAlbum: Promise<void> = Promise.resolve();
+
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
     {
@@ -44,6 +63,16 @@ async function mockAuthenticatedApi(page: Page) {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/v2/web/auth/refresh") {
       await route.fulfill({ json: session });
+      return;
+    }
+    if (url.pathname === "/api/v2/albums/album-1") {
+      // Held open by the concurrency test; instant for everyone else.
+      await slowAlbum;
+      await route.fulfill({ json: { ...albums[0], songs: [track] } });
+      return;
+    }
+    if (url.pathname === "/api/v2/albums/album-2") {
+      await route.fulfill({ json: { ...albums[1], songs: [track] } });
       return;
     }
     if (url.pathname === "/api/v2/albums") {
@@ -60,6 +89,7 @@ async function mockAuthenticatedApi(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
 
@@ -166,4 +196,45 @@ test("sorts through the server and filters in the browser", async ({
   // A filter matching nothing says so instead of showing an empty grid.
   await page.getByLabel("Filter by title or artist").fill("zzz");
   await expect(page.getByText("Nothing matches that filter.")).toBeVisible();
+});
+
+/**
+ * The card actions guard themselves while their album's tracks are being
+ * fetched. The guard was one album id, which meant two cards in flight shared
+ * a single slot: pressing the second card cleared the first one's guard
+ * outright, and its buttons came back to life with its own request still out.
+ *
+ * That mattered because one of the two actions appends. A second press on "add
+ * to queue" while the first was unanswered queued the album twice.
+ */
+test("keeps each card's actions guarded while its own fetch is out", async ({
+  page,
+}) => {
+  let releaseSlow = () => {};
+  slowAlbum = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+
+  const slowPlay = page.getByRole("button", { name: "Play: Post" });
+  const fastQueue = page.getByRole("button", {
+    name: "Add to queue: Vespertine",
+  });
+
+  await page.locator(".grid li").first().hover();
+  await slowPlay.click();
+  await expect(slowPlay).toBeDisabled();
+
+  // The second album answers at once while the first is still held open.
+  await page.locator(".grid li").nth(1).hover();
+  await fastQueue.click();
+  await expect(fastQueue).toBeEnabled();
+
+  // The first album has not answered, so its actions must still be refused.
+  await expect(slowPlay).toBeDisabled();
+
+  releaseSlow();
+  await expect(slowPlay).toBeEnabled();
 });
