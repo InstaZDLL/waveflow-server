@@ -427,7 +427,19 @@ function StarRating({
   );
 }
 
-export function SongTable({ songs }: { songs: Song[] }) {
+/**
+ * A track's number belongs to its sleeve, so it is only meaningful where the
+ * sleeve is on screen. Everywhere else — favourites, a playlist, a genre, a
+ * history, a draw, a search — the number that means something is the row's
+ * place in the list being shown, which is why that is the default.
+ */
+export function SongTable({
+  songs,
+  numbering = "position",
+}: {
+  songs: Song[];
+  numbering?: "track" | "position";
+}) {
   const player = usePlayer();
   const { t } = useI18n();
   const [stars, setStars] = useState<Record<string, boolean>>({});
@@ -462,7 +474,11 @@ export function SongTable({ songs }: { songs: Song[] }) {
             const active = player.current?.id === song.id;
             return (
               <tr key={song.id} className={active ? "active" : undefined}>
-                <td className="index">{song.track ?? position + 1}</td>
+                <td className="index">
+                  {numbering === "track"
+                    ? (song.track ?? position + 1)
+                    : position + 1}
+                </td>
                 <td>
                   <button
                     type="button"
@@ -1519,7 +1535,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           </p>
         </div>
       </header>
-      <SongTable songs={value.songs} />
+      <SongTable songs={value.songs} numbering="track" />
     </section>
   );
 }
