@@ -29,6 +29,8 @@ type PlayerState = {
   playing: boolean;
   error: boolean;
   play: (queue: Song[], index: number) => void;
+  /** Appends to the end of the queue without disturbing what is playing. */
+  enqueue: (songs: Song[]) => void;
   remove: (index: number) => void;
   clear: () => void;
   toggle: () => void;
@@ -460,6 +462,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playing,
       error: playbackError,
       play,
+      // Appending to an empty queue selects the first song but does not start
+      // it: `autoplay` stays false, so the source effect loads the track and
+      // leaves it paused. "Add to queue" that began playing would be a
+      // different button.
+      enqueue: (songs: Song[]) => {
+        if (!songs.length) return;
+        localMutation.current = true;
+        setQueue((current) => [...current, ...songs]);
+      },
       remove: (at: number) => {
         localMutation.current = true;
         if (at === indexRef.current) {

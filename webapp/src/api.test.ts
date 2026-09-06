@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hasSession,
   isAllowedRedirect,
+  listAlbums,
   listLibraries,
   login,
   safeInternalPath,
@@ -108,5 +109,68 @@ describe("session refresh failures", () => {
 
     await expect(listLibraries()).rejects.toMatchObject({ status: 401 });
     expect(hasSession()).toBe(false);
+  });
+});
+
+/**
+ * `collect` grew a parameter bag so the albums page could ask the server for an
+ * order instead of sorting a page of the catalogue in the browser. Paging is
+ * the part worth pinning: the order has to travel on *every* request, not only
+ * the first, or the second page comes back sorted differently from the first.
+ */
+describe("listAlbums", () => {
+  const album = (id: number) => ({ id: `album-${id}`, title: `Album ${id}` });
+
+  /** Answers `pages` in turn and records every URL it was asked for. */
+  function stubPages(pages: unknown[][]) {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        urls.push(url);
+        const page = pages[urls.length - 1] ?? [];
+        return Promise.resolve(
+          new Response(JSON.stringify(page), { status: 200 }),
+        );
+      }),
+    );
+    return urls;
+  }
+
+  it("carries the order onto every page, not just the first", async () => {
+    const full = Array.from({ length: 500 }, (_, index) => album(index));
+    const urls = stubPages([full, [album(500)]]);
+
+    const albums = await listAlbums("newest");
+
+    expect(urls).toHaveLength(2);
+    for (const url of urls) {
+      expect(new URLSearchParams(url.split("?")[1]).get("sort")).toBe("newest");
+    }
+    expect(albums).toHaveLength(501);
+    // Order survives the concatenation: the server sorted, the client appended.
+    expect(albums[0]?.id).toBe("album-0");
+    expect(albums[500]?.id).toBe("album-500");
+  });
+
+  it("offsets each page by the page size", async () => {
+    const full = Array.from({ length: 500 }, (_, index) => album(index));
+    const urls = stubPages([full, []]);
+
+    await listAlbums("newest");
+
+    const offsets = urls.map((url) =>
+      new URLSearchParams(url.split("?")[1]).get("offset"),
+    );
+    expect(offsets).toEqual(["0", "500"]);
+  });
+
+  it("sends no order when none is chosen, leaving the server default", async () => {
+    const urls = stubPages([[album(1)]]);
+
+    await listAlbums();
+
+    expect(urls).toHaveLength(1);
+    expect(new URLSearchParams(urls[0]?.split("?")[1]).has("sort")).toBe(false);
   });
 });

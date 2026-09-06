@@ -47,7 +47,12 @@ async function mockAuthenticatedApi(page: Page) {
       return;
     }
     if (url.pathname === "/api/v2/albums") {
-      await route.fulfill({ json: albums });
+      // Answering the order lets a test tell a refetch from a local re-sort.
+      const sorted =
+        url.searchParams.get("sort") === "newest"
+          ? [...albums].reverse()
+          : albums;
+      await route.fulfill({ json: sorted });
       return;
     }
     await route.fulfill({ status: 404, json: { error: "not found" } });
@@ -119,4 +124,46 @@ test("has no automated WCAG A or AA violations", async ({ page }) => {
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+});
+
+/**
+ * The browse controls are the whole of lot A that has behaviour rather than
+ * appearance. Sorting has to reach the server — it is `AlbumOrder` there, and
+ * four of its values filter as well as order — while filtering must not, since
+ * the client already holds the list.
+ */
+test("sorts through the server and filters in the browser", async ({
+  page,
+}) => {
+  const requested: Array<string | null> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v2/albums") {
+      requested.push(url.searchParams.get("sort"));
+    }
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+
+  const titles = page.locator(".grid strong");
+  await expect(titles).toHaveText(["Post", "Vespertine"]);
+  // The page names its order on the first load rather than relying on the
+  // server default, so the menu and the request cannot disagree.
+  expect(requested).toEqual(["alphabeticalByName"]);
+
+  await page.getByLabel("Sort").selectOption("newest");
+  await expect(titles).toHaveText(["Vespertine", "Post"]);
+  expect(requested).toEqual(["alphabeticalByName", "newest"]);
+
+  // Filtering narrows what is already loaded: no further request is made, and
+  // the header count reports the subset against the whole.
+  await page.getByLabel("Filter by title or artist").fill("vesper");
+  await expect(titles).toHaveText(["Vespertine"]);
+  await expect(page.getByText("1 of 2 shown")).toBeVisible();
+  expect(requested).toEqual(["alphabeticalByName", "newest"]);
+
+  // A filter matching nothing says so instead of showing an empty grid.
+  await page.getByLabel("Filter by title or artist").fill("zzz");
+  await expect(page.getByText("Nothing matches that filter.")).toBeVisible();
 });
