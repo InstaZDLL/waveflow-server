@@ -276,6 +276,21 @@ de risque.
 historique, aléatoire, sélecteur de bibliothèque. Onze routes qui existent, un
 écran chacune ou presque. C'est ce qui ferme l'écart Navidrome.
 
+> **État au 2026-09-06.** Six des sept sont branchés : notes cinq étoiles sur le
+> tableau de pistes, genres (liste et page par genre), écoutes récentes,
+> aléatoire, paroles et positions enregistrées dans une vue « en écoute ».
+> **Le sélecteur de bibliothèque est laissé de côté volontairement** — c'est la
+> première des questions ouvertes ci-dessous, et la trancher en passant
+> reviendrait à décider la navigation du client web sans le dire.
+>
+> Trois choses apprises en branchant. `GET /songs?genre=` prend le genre en
+> forme d'affichage et le canonicalise avant de comparer, donc « Hip-Hop » et
+> « hip hop » sont un seul genre côté serveur. `GET /history` répond des
+> **écoutes** et non des pistes — `track_id`, `submission`, `played_at` — donc
+> un écran qui veut des titres les résout lui-même. Et le favori, jusque-là
+> rendu par une étoile, est devenu un cœur : cinq étoiles de note à côté d'une
+> étoile de favori auraient fait un seul contrôle de deux questions.
+
 **Lot C — le lecteur et l'exploitation.** Volume, aléatoire, répétition, file
 accessible, retour vers l'album. Puis côté administration : progression de scan
 en direct, en écoute maintenant, membres, jetons.
@@ -298,14 +313,17 @@ n'est pas sur ce chemin critique.
 - **Le sélecteur de bibliothèque** est le seul point où Navidrome est devant sur
   une fonction que WaveFlow possède. Reste à décider si la navigation web est
   cadrée par une bibliothèque à la fois, ou agrégée avec une bibliothèque comme
-  filtre.
+  filtre. **C'est le seul point du lot B qui n'a pas été branché**, et c'est
+  pour cette raison : le reste du lot ne demandait qu'un `fetch`, celui-ci
+  demande une décision sur ce qu'est une session de navigation.
 - **Ce qu'on montre d'une correction de tags** quand elle diverge du fichier :
   la valeur corrigée seule, ou les deux avec leur provenance.
 - **Le sort du serif.** Système ou abandon, mais pas le statu quo.
-- **Le vide de la barre latérale**, entre la navigation en haut et les réglages
-  en bas. La question n'est pas comment le combler mais avec quoi : tout candidat
-  honnête est du lot B — genres, écoutes récentes, bibliothèque courante — et le
-  choix engage la navigation, pas seulement l'espace.
+- ~~**Le vide de la barre latérale.**~~ **Refermé par le lot B**, sans avoir été
+  traité pour lui-même : les quatre entrées de navigation ajoutées — genres, en
+  écoute, aléatoire, écoutes récentes — occupent l'espace que le lot A avait
+  laissé vide. C'était le bon ordre : le vide voulait du contenu, et le contenu
+  a fini par exister.
 - **Les langues.** Deux aujourd'hui, trente-quatre chez Navidrome. La question
   n'est pas d'y arriver mais de savoir si l'infrastructure de `i18n.tsx` tient
   au-delà d'une poignée.
