@@ -28,6 +28,14 @@
   --shadow: 0 1.5rem 4rem color-mix(in srgb, var(--bg) 76%, transparent);
   --sidebar-width: 15.5rem;
 
+  /* The two faces of the interface, named once. The serif is not the login
+     screen's ornament it was taken for: it carries every page title, the
+     brand, the letter standing in for a missing cover, and the 404. It was
+     spelled four different ways to say that, which is what kept it looking
+     like an accident. */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-body: "Avenir Next", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+
   color-scheme: dark;
   font-synthesis: none;
 }
@@ -74,11 +82,7 @@ body {
     radial-gradient(circle at 78% -12%, var(--accent-soft), transparent 35rem),
     var(--bg);
   color: var(--text);
-  font:
-    500 0.94rem / 1.55 "Avenir Next",
-    "Segoe UI Variable Text",
-    "Segoe UI",
-    sans-serif;
+  font: 500 0.94rem / 1.55 var(--font-body);
   text-rendering: optimizelegibility;
 }
 
@@ -206,7 +210,7 @@ p {
 h1,
 h2,
 h3 {
-  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.035em;
 }
@@ -277,7 +281,7 @@ h3 {
   gap: 0.7rem;
   min-height: 2.6rem;
   padding-inline: 0.45rem;
-  font-family: "Iowan Old Style", Georgia, serif;
+  font-family: var(--font-display);
   font-size: 1.2rem;
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -286,7 +290,7 @@ h3 {
 .brand small {
   margin-left: auto;
   color: var(--muted);
-  font-family: "Avenir Next", sans-serif;
+  font-family: var(--font-body);
   font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -429,7 +433,7 @@ h3 {
   right: -0.4rem;
   bottom: -2rem;
   color: var(--accent-soft);
-  font-family: "Iowan Old Style", Georgia, serif;
+  font-family: var(--font-display);
   font-size: 12rem;
   font-weight: 700;
   line-height: 1;
@@ -818,7 +822,7 @@ main {
 }
 
 .cover-fallback span {
-  font-family: "Iowan Old Style", Georgia, serif;
+  font-family: var(--font-display);
   font-size: clamp(2rem, 5vw, 4.5rem);
   font-weight: 600;
   opacity: 0.75;
