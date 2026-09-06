@@ -43,6 +43,7 @@ import {
   safeInternalPath,
   search,
   setFavorite,
+  setRating,
   setSubsonicCredential,
   setUserDisabled,
   setupRequired,
@@ -372,10 +373,53 @@ export function AlbumsPage() {
   );
 }
 
+const RATING_STARS = [1, 2, 3, 4, 5];
+
+/**
+ * Five stars, where clicking the star already set clears the rating — the
+ * server spells that `rating: 0`, and without it a rating could be changed but
+ * never taken back.
+ *
+ * The radio group is the accessible shape for "exactly one of five", and it
+ * gives arrow-key selection for free. Each group needs a `name` unique to the
+ * row, or every rating on a page would belong to one group.
+ */
+function StarRating({
+  label,
+  value,
+  name,
+  onRate,
+}: {
+  label: string;
+  value: number;
+  name: string;
+  onRate: (rating: number) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <fieldset className="rating" aria-label={label}>
+      {RATING_STARS.map((star) => (
+        <label key={star} className={star <= value ? "on" : undefined}>
+          <input
+            type="radio"
+            name={name}
+            checked={star === value}
+            aria-label={t("rating.stars", { count: star })}
+            onChange={() => onRate(star)}
+            onClick={() => star === value && onRate(0)}
+          />
+          <span aria-hidden="true">★</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
 export function SongTable({ songs }: { songs: Song[] }) {
   const player = usePlayer();
   const { t } = useI18n();
   const [stars, setStars] = useState<Record<string, boolean>>({});
+  const [ratings, setRatings] = useState<Record<string, number>>({});
 
   async function toggleStar(song: Song) {
     const on = !(stars[song.id] ?? song.starred_at !== null);
@@ -384,6 +428,16 @@ export function SongTable({ songs }: { songs: Song[] }) {
       await setFavorite("track", song.id, on);
     } catch {
       setStars((previous) => ({ ...previous, [song.id]: !on }));
+    }
+  }
+
+  async function rate(song: Song, rating: number) {
+    const previous = ratings[song.id] ?? song.user_rating ?? 0;
+    setRatings((current) => ({ ...current, [song.id]: rating }));
+    try {
+      await setRating("track", song.id, rating);
+    } catch {
+      setRatings((current) => ({ ...current, [song.id]: previous }));
     }
   }
 
@@ -416,18 +470,26 @@ export function SongTable({ songs }: { songs: Song[] }) {
                 </td>
                 <td className="muted">{song.artist}</td>
                 <td className="muted">{formatDuration(song.duration_ms)}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="star"
-                    onClick={() => void toggleStar(song)}
-                    aria-label={`${
-                      starred ? t("favourites.remove") : t("favourites.add")
-                    }: ${song.title}`}
-                    aria-pressed={starred}
-                  >
-                    {starred ? "★" : "☆"}
-                  </button>
+                <td className="song-marks">
+                  <div>
+                    <StarRating
+                      label={`${t("rating.label")}: ${song.title}`}
+                      name={`rating-${song.id}`}
+                      value={ratings[song.id] ?? song.user_rating ?? 0}
+                      onRate={(rating) => void rate(song, rating)}
+                    />
+                    <button
+                      type="button"
+                      className="star"
+                      onClick={() => void toggleStar(song)}
+                      aria-label={`${
+                        starred ? t("favourites.remove") : t("favourites.add")
+                      }: ${song.title}`}
+                      aria-pressed={starred}
+                    >
+                      <Icon name="heart" size={16} filled={starred} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             );

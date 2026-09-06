@@ -88,14 +88,23 @@ const paths: Record<IconName, ReactNode> = {
   ),
 };
 
-export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
+export function Icon({
+  name,
+  size = 20,
+  filled = false,
+}: {
+  name: IconName;
+  size?: number;
+  /** Fills the glyph instead of outlining it, for on/off pairs like a heart. */
+  filled?: boolean;
+}) {
   return (
     <svg
       aria-hidden="true"
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={filled ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth="1.7"
       strokeLinecap="round"
