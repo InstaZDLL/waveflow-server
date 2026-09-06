@@ -533,12 +533,21 @@ exactement comme `artwork_dir`.
 
 ## Ce qui reste ouvert
 
-Aucune question de forme ne reste ouverte : la décision 11 ferme la dernière.
-Ce qui suit est du travail en attente, pas un arbitrage.
+Plus rien. Aucune question de forme n'était ouverte — la décision 11 ferme la
+dernière — et le seul travail qui restait en attente a été livré.
 
-- **Le balayage de `artwork_dir`.** La décision 10 ramasse les octets du
-  magasin de canvas ; la pochette a exactement la même propriété depuis le
-  début et reste sans balayeur. Le même travail sur un autre magasin, avec des
-  références réparties sur trois colonnes au lieu d'une — donc pas la même
-  prudence, et pas le même jour que du code qui supprime des fichiers.
+- ~~**Le balayage de `artwork_dir`.**~~ Livré par
+  [#169](https://github.com/InstaZDLL/waveflow-server/pull/169), dans
+  `src/services/artwork.rs`. Ce n'était pas `sweep_canvas_store` avec un autre
+  répertoire, contrairement à ce que cette entrée supposait : la pochette est
+  écrite par `waveflow_core::scanner::extract_cover`, depuis une tâche bloquante
+  d'une caisse qui n'a jamais entendu parler de `DomainServices`. Il n'y a aucun
+  verrou à prendre, et le verrou d'écriture n'en tient pas lieu — les
+  commentaires de `DomainServices` interdisent l'entrée-sortie fichier sous ce
+  verrou global. L'âge tient donc lieu de verrou, comme il le fait déjà pour les
+  fichiers de travail du canvas. Le magasin porte par ailleurs des vignettes
+  `<hash>_1x.jpg` et `<hash>_2x.jpg` que rien dans la base ne nomme.
+
+C'est la ligne *Implémentée par* de l'en-tête qu'il faut lire, pas cette
+section : elle nomme des PR, et une PR se vérifie.
 
