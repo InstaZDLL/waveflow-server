@@ -22,11 +22,19 @@ l'intention d'avoir.
 
 La deuxième observation est de forme et se déduit de la première. L'interface
 paraît générique moins par ses couleurs que par sa **vacuité** : une grille, une
-barre latérale, un lecteur, et rien d'autre à l'écran. Aucun en-tête de page,
-aucun tri, aucun filtre, aucun survol. Navidrome ne paraît pas plus riche parce
-qu'il est mieux dessiné — il paraît plus riche parce qu'il met du tri, du
-filtre, du survol-lecture et de la gestion de file dans les mêmes centimètres
-carrés.
+barre latérale, un lecteur, et peu d'autre à l'écran. Navidrome ne paraît pas
+plus riche parce qu'il est mieux dessiné — il paraît plus riche parce qu'il met
+du tri, du filtre, du survol-lecture et de la gestion de file dans les mêmes
+centimètres carrés.
+
+> **Rectifié le 2026-09-06, en écrivant le lot A.** Ce relevé a d'abord écrit
+> « aucun en-tête de page, aucun tri, aucun filtre, aucun survol ». Deux des
+> quatre étaient faux, et ils l'étaient déjà quand la phrase a été écrite :
+> `PageHeader` existe depuis `e7c8b64` et sert sur huit pages, et
+> `.grid a:hover .cover` soulevait déjà la pochette. Ce qui manquait était plus
+> précis que « l'en-tête » et « le survol » : les **contrôles** dans l'en-tête,
+> et les **actions** dans le survol. Un inventaire fait en lecture seule voit ce
+> qui est absent de la capture, pas ce qui est absent du code.
 
 Une troisième chose mérite d'être dite d'emblée, parce qu'elle change le coût de
 tout le reste : **il n'y a aucune bibliothèque d'interface.** Ni Tailwind, ni
@@ -180,15 +188,27 @@ soit une page a un en-tête et des contrôles, soit elle n'en a pas.
 
 ### Les gestes, du plus rentable au moins
 
-**Un en-tête par page.** Titre, compte d'éléments, et les contrôles qui vont
-avec — tri, filtre, densité d'affichage. Aujourd'hui la grille démarre à ras
-bord et il n'existe qu'un seul ordre, sans moyen d'en changer. C'est le geste
-qui ferme le plus d'écart avec Navidrome, et il ne dépend d'aucune route
-nouvelle.
+**Des contrôles dans l'en-tête de page.** L'en-tête existe et porte déjà le
+titre et le compte d'éléments ; ce qui lui manque est le tri et le filtre. Il
+n'existait qu'un seul ordre, sans moyen d'en changer, alors que
+`GET /api/v2/albums` accepte `sort` depuis toujours — le vocabulaire d'
+`AlbumOrder`, partagé avec le `type` de Subsonic. C'est le geste qui ferme le
+plus d'écart avec Navidrome, et il ne dépend d'aucune route nouvelle.
 
-**Des affordances sur les pochettes.** Un survol qui offre « lire » et « mettre
-en file ». Actuellement il faut entrer dans un album pour lancer quoi que ce
-soit.
+Une réserve sur ce vocabulaire, trouvée en le branchant : `random` est
+`ORDER BY RANDOM()` sous un `LIMIT`, donc chaque page est un tirage indépendant
+et une liste paginée répéterait et omettrait des albums. Il n'a pas sa place
+dans un menu de tri ; l'aléatoire du lot B est `GET /songs/random`, qui est autre
+chose. Et quatre des ordres **filtrent** autant qu'ils ordonnent : `frequent`,
+`recent` et `starred` ne répondent que pour les albums qui ont un compte de
+lecture, une dernière écoute ou une étoile, `byYear` que pour ceux qui portent
+une année. Le compte affiché doit donc se lire sur la réponse.
+
+**Des affordances sur les pochettes.** Le survol existe — il soulève la pochette
+— mais il n'offre rien : il faut entrer dans un album pour lancer quoi que ce
+soit. Il lui manque « lire » et « mettre en file ». Deux contraintes s'y
+attachent : les boutons ne peuvent pas vivre dans l'ancre, où ils ne seraient ni
+valides ni utilisables au clavier, et le lecteur n'avait pas de `enqueue`.
 
 **Un lecteur qui mérite sa barre.** Il porte précédent, pause, suivant, un
 scrubber et deux durées. Il lui manque le volume, l'aléatoire, la répétition,
@@ -215,10 +235,13 @@ emboîtés dont les fonds diffèrent de trois pour cent. C'est le signal
 **La composition en largeur.** L'écran de connexion a été dessiné autour de
 1280 px puis centré ; au-delà il flotte dans un vide qui ne travaille pas.
 
-**La langue de l'écran de connexion.** Les libellés sont en anglais alors que
-l'application tourne en français, parce que le sélecteur de langue vit *après*
-la session. Il faut lire `navigator.language` avant qu'un compte existe. Ce
-n'est pas du goût, c'est un défaut.
+~~**La langue de l'écran de connexion.**~~ **Retiré le 2026-09-06 : le défaut
+n'existe pas.** `I18nProvider` lit déjà `navigator.language` quand rien n'est
+stocké (`i18n.tsx:376`), et il enveloppe `RouterProvider`, donc l'écran de
+connexion en bénéficie comme le reste. L'anglais observé pendant le relevé
+venait du navigateur de la session ou d'un `waveflow.locale` déjà écrit — pas
+d'un sélecteur qui vivrait « après la session ». Rien à corriger ici ; la vraie
+question sur les langues est plus bas, et elle porte sur leur nombre.
 
 **Le vide de la barre latérale**, entre la navigation ancrée en haut et les
 réglages ancrés en bas.
@@ -234,10 +257,20 @@ règles WCAG A/AA via `@axe-core` — tient parce que la surface est petite.
 
 Quatre lots, ordonnés pour que chacun soit publiable seul.
 
-**Lot A — la densité.** En-têtes de page avec tri et filtre, `line-clamp`,
-survol-lecture, selects stylés, langue au premier chargement, le vide de la
-barre latérale. Zéro route nouvelle. C'est le lot qui change le plus la
-perception pour le moins de risque.
+**Lot A — la densité.** Contrôles de tri et de filtre dans l'en-tête,
+`line-clamp`, actions de survol, selects stylés, le vide de la barre latérale.
+Zéro route nouvelle. C'est le lot qui change le plus la perception pour le moins
+de risque.
+
+> **État au 2026-09-06.** Tout le lot est écrit sauf le dernier point. Le tri
+> passe par le serveur, le filtre reste dans le navigateur — `collect` tient
+> déjà toute la liste, et un aller-retour par frappe n'achèterait rien. Le
+> `enqueue` que le survol réclamait a été ajouté au lecteur au passage.
+> **Le vide de la barre latérale n'a pas été traité** : tout ce qui le
+> remplirait est soit du contenu à inventer, soit du lot B (genres, écoutes
+> récentes). Il rejoint les questions ouvertes plus bas plutôt que d'être
+> tranché en passant. La langue au premier chargement a disparu de la liste :
+> voir le geste rayé, elle était déjà faite.
 
 **Lot B — le branchement du confort.** Étoiles, paroles, reprise, genres,
 historique, aléatoire, sélecteur de bibliothèque. Onze routes qui existent, un
@@ -269,6 +302,10 @@ n'est pas sur ce chemin critique.
 - **Ce qu'on montre d'une correction de tags** quand elle diverge du fichier :
   la valeur corrigée seule, ou les deux avec leur provenance.
 - **Le sort du serif.** Système ou abandon, mais pas le statu quo.
+- **Le vide de la barre latérale**, entre la navigation en haut et les réglages
+  en bas. La question n'est pas comment le combler mais avec quoi : tout candidat
+  honnête est du lot B — genres, écoutes récentes, bibliothèque courante — et le
+  choix engage la navigation, pas seulement l'espace.
 - **Les langues.** Deux aujourd'hui, trente-quatre chez Navidrome. La question
   n'est pas d'y arriver mais de savoir si l'infrastructure de `i18n.tsx` tient
   au-delà d'une poignée.
