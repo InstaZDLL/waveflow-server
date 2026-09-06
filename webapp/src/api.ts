@@ -288,17 +288,49 @@ function cookieValue(name: string): string | null {
 }
 
 /** Walks the paged endpoint to completion; the server caps a page at 500. */
-async function collect<T>(path: string): Promise<T[]> {
+async function collect<T>(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<T[]> {
   const pageSize = 500;
   const all: T[] = [];
   for (let offset = 0; ; offset += pageSize) {
-    const page = await call<T[]>(`${path}?limit=${pageSize}&offset=${offset}`);
+    const query = new URLSearchParams({
+      ...params,
+      limit: String(pageSize),
+      offset: String(offset),
+    });
+    const page = await call<T[]>(`${path}?${query}`);
     all.push(...page);
     if (page.length < pageSize) return all;
   }
 }
 
-export const listAlbums = () => collect<Album>("/api/v2/albums");
+/**
+ * The orders `GET /api/v2/albums` accepts, spelled as the server does — the
+ * vocabulary is `AlbumOrder` in `src/services/mod.rs`, shared with the Subsonic
+ * `type` parameter.
+ *
+ * Four of these also *filter*: `frequent`, `recent` and `starred` answer only
+ * the albums that have a play count, a last play or a star, and `byYear` only
+ * those carrying a year. The header count is read off the response for that
+ * reason, rather than assumed to be the size of the catalogue.
+ *
+ * `random` is deliberately absent. It is `ORDER BY RANDOM()` under a `LIMIT`,
+ * so each page of `collect` is an independent draw and the assembled list would
+ * both repeat and omit albums past the first page.
+ */
+export type AlbumSort =
+  | "alphabeticalByName"
+  | "alphabeticalByArtist"
+  | "newest"
+  | "recent"
+  | "frequent"
+  | "starred"
+  | "byYear";
+
+export const listAlbums = (sort?: AlbumSort) =>
+  collect<Album>("/api/v2/albums", sort ? { sort } : {});
 export const getAlbum = (id: string) =>
   call<AlbumDetail>(`/api/v2/albums/${id}`);
 export const listArtists = () => collect<Artist>("/api/v2/artists");
