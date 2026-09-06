@@ -81,6 +81,16 @@ const albumDetail = {
   ],
 };
 
+const genres = [
+  { name: "Art Pop", song_count: 412, album_count: 31 },
+  { name: "Shoegaze", song_count: 233, album_count: 18 },
+];
+
+const genreSongs = [
+  song(1, "Hidden Place", 5, true),
+  song(2, "Cocoon", 0, false),
+];
+
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
     {
@@ -99,6 +109,16 @@ async function mockAuthenticatedApi(page: Page) {
       // Held open by the concurrency test; instant for everyone else.
       await slowAlbum;
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
+      return;
+    }
+    if (url.pathname === "/api/v2/genres") {
+      await route.fulfill({ json: genres });
+      return;
+    }
+    if (url.pathname === "/api/v2/songs") {
+      await route.fulfill({
+        json: url.searchParams.get("genre") ? genreSongs : [],
+      });
       return;
     }
     if (url.pathname === "/api/v2/albums/album-2") {
@@ -304,6 +324,41 @@ test("rates a track and stays free of WCAG A or AA violations", async ({
   expect(rated).toEqual(["PUT /api/v2/ratings/track/song-2"]);
 
   const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+/**
+ * Genres were a route the server answered and the client never called. The
+ * navigation is the part worth pinning: the genre name travels into the query,
+ * and it is a display string — "Hip-Hop" and "hip hop" are one genre to the
+ * server, which canonicalises before matching.
+ */
+test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
+  const asked: Array<string | null> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v2/songs") {
+      asked.push(url.searchParams.get("genre"));
+    }
+  });
+
+  await page.goto("/genres");
+  await expect(page.getByRole("heading", { name: "Genres" })).toBeVisible();
+  await expect(page.getByText("412 tracks · 31 albums")).toBeVisible();
+
+  let results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByRole("link", { name: "Art Pop" }).click();
+  await expect(page.getByRole("heading", { name: "Art Pop" })).toBeVisible();
+  await expect(page.locator(".songs tbody tr")).toHaveCount(2);
+  expect(asked).toEqual(["Art Pop"]);
+
+  results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);

@@ -4,6 +4,10 @@ export type IconName =
   | "albums"
   | "artists"
   | "search"
+  | "genres"
+  | "random"
+  | "history"
+  | "lyrics"
   | "heart"
   | "playlists"
   | "queue"
@@ -34,6 +38,45 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <circle cx="11" cy="11" r="6.5" />
       <path d="m16 16 4.5 4.5" />
+    </>
+  ),
+  // A disc with a tag through it: a genre is a label on a record, not a folder.
+  genres: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M15.5 5.6 13.2 9.9" />
+    </>
+  ),
+  // The crossing arrows every player uses for shuffle.
+  random: (
+    <>
+      <path d="M3 6h3.5l3 5m0 2 3 5H16" />
+      <path d="M3 18h3.5l3-5" />
+      <path d="m13 6 3 5" />
+      <path d="M14 4.5 16.5 6 14 7.5" />
+      <path d="M14 14.5 16.5 16 14 17.5" />
+      <path d="M16 11h5" />
+      <path d="M19 16h2" />
+    </>
+  ),
+  // A clock turning back, which is what a listening history is.
+  history: (
+    <>
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+      <path d="M3.2 4.5v3.7h3.7" />
+      <path d="M12 7.6V12l3 1.8" />
+    </>
+  ),
+  // A quoted line over a staff: words carried by the music.
+  lyrics: (
+    <>
+      <path d="M4 6h10" />
+      <path d="M4 10h7" />
+      <path d="M4 14h9" />
+      <path d="M4 18h5" />
+      <path d="M17 17.2V9l3.5-1.1v8.1" />
+      <circle cx="15.6" cy="17.4" r="1.6" />
     </>
   ),
   heart: (
