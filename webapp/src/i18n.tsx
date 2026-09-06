@@ -164,6 +164,24 @@ const en = {
   "appearance.themes.crimson": "Crimson",
   "appearance.themes.ocean": "Ocean",
   "appearance.themes.neon": "Neon",
+  "browse.sort": "Sort",
+  "browse.sortAlphabeticalByName": "By title",
+  "browse.sortAlphabeticalByArtist": "By artist",
+  "browse.sortNewest": "Recently added",
+  "browse.sortRecent": "Recently played",
+  "browse.sortFrequent": "Most played",
+  "browse.sortStarred": "Favourites first",
+  "browse.sortByYear": "By year",
+  "browse.filterAlbums": "Filter by title or artist",
+  "browse.filterArtists": "Filter by name",
+  "browse.filterPlaceholder": "Filter…",
+  "browse.matches": {
+    one: "{count} of {total} shown",
+    other: "{count} of {total} shown",
+  },
+  "browse.noMatch": "Nothing matches that filter.",
+  "card.play": "Play",
+  "card.queue": "Add to queue",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -325,6 +343,24 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "appearance.themes.crimson": "Cramoisi",
   "appearance.themes.ocean": "Océan",
   "appearance.themes.neon": "Néon",
+  "browse.sort": "Trier",
+  "browse.sortAlphabeticalByName": "Par titre",
+  "browse.sortAlphabeticalByArtist": "Par artiste",
+  "browse.sortNewest": "Ajoutés récemment",
+  "browse.sortRecent": "Écoutés récemment",
+  "browse.sortFrequent": "Les plus écoutés",
+  "browse.sortStarred": "Favoris d’abord",
+  "browse.sortByYear": "Par année",
+  "browse.filterAlbums": "Filtrer par titre ou artiste",
+  "browse.filterArtists": "Filtrer par nom",
+  "browse.filterPlaceholder": "Filtrer…",
+  "browse.matches": {
+    one: "{count} sur {total} affiché",
+    other: "{count} sur {total} affichés",
+  },
+  "browse.noMatch": "Aucun résultat pour ce filtre.",
+  "card.play": "Lire",
+  "card.queue": "Mettre en file",
 };
 
 export type Locale = "en" | "fr";

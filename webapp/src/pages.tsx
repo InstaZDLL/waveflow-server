@@ -1,9 +1,16 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   type Album,
   type AlbumDetail,
+  type AlbumSort,
   type Artist,
   type ArtistDetail,
   addLibrary,
@@ -43,7 +50,8 @@ import {
   type User,
 } from "./api";
 import { Artwork } from "./artwork";
-import { useI18n } from "./i18n";
+import { type TranslationKey, useI18n } from "./i18n";
+import { Icon } from "./icons";
 import { usePlayer } from "./player";
 
 const SKELETON_KEYS = [
@@ -201,7 +209,25 @@ export function LoginPage() {
 }
 
 function AlbumGrid({ albums }: { albums: Album[] }) {
+  const player = usePlayer();
   const { t } = useI18n();
+  // The grid holds album summaries, not their tracks, so both actions have to
+  // fetch the sleeve first. `pending` disables only the pair being fetched, and
+  // a failed fetch leaves the queue alone rather than half-filling it.
+  const [pending, setPending] = useState<string | null>(null);
+
+  async function withSongs(album: Album, use: (songs: Song[]) => void) {
+    setPending(album.id);
+    try {
+      const detail = await getAlbum(album.id);
+      if (detail.songs.length) use(detail.songs);
+    } catch {
+      // Nothing to report here: the album stays reachable through its link.
+    } finally {
+      setPending(null);
+    }
+  }
+
   if (albums.length === 0)
     return <p className="muted">{t("common.noAlbums")}</p>;
   return (
@@ -216,23 +242,123 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
               {album.year ? ` · ${album.year}` : ""}
             </span>
           </Link>
+          <div className="card-actions">
+            <button
+              type="button"
+              className="card-action"
+              disabled={pending === album.id}
+              aria-label={`${t("card.play")}: ${album.title}`}
+              onClick={() =>
+                void withSongs(album, (songs) => player.play(songs, 0))
+              }
+            >
+              <Icon name="play" size={16} />
+            </button>
+            <button
+              type="button"
+              className="card-action"
+              disabled={pending === album.id}
+              aria-label={`${t("card.queue")}: ${album.title}`}
+              onClick={() => void withSongs(album, player.enqueue)}
+            >
+              <Icon name="queue" size={16} />
+            </button>
+          </div>
         </li>
       ))}
     </ul>
   );
 }
 
+/**
+ * The orders offered on the albums page, in menu order. Four of them narrow the
+ * catalogue as well as reordering it — the server answers `frequent`, `recent`
+ * and `starred` only for albums that have a play count, a last play or a star,
+ * and `byYear` only for those carrying a year — which is why the count in the
+ * header is read off the response.
+ */
+const ALBUM_SORTS: Array<{ value: AlbumSort; labelKey: TranslationKey }> = [
+  { value: "alphabeticalByName", labelKey: "browse.sortAlphabeticalByName" },
+  {
+    value: "alphabeticalByArtist",
+    labelKey: "browse.sortAlphabeticalByArtist",
+  },
+  { value: "newest", labelKey: "browse.sortNewest" },
+  { value: "recent", labelKey: "browse.sortRecent" },
+  { value: "frequent", labelKey: "browse.sortFrequent" },
+  { value: "starred", labelKey: "browse.sortStarred" },
+  { value: "byYear", labelKey: "browse.sortByYear" },
+];
+
 export function AlbumsPage() {
   const { t } = useI18n();
-  const { value, error } = useAsync(listAlbums, []);
-  if (!value) return <Loading error={error} />;
+  const [sort, setSort] = useState<AlbumSort>("alphabeticalByName");
+  const [filter, setFilter] = useState("");
+  const { value, error } = useAsync(() => listAlbums(sort), [sort]);
+  const needle = normalizeFilter(filter);
+  const shown = useMemo(
+    () =>
+      !value || !needle
+        ? (value ?? [])
+        : value.filter(
+            (album) =>
+              matches(album.title, needle) || matches(album.artist, needle),
+          ),
+    [value, needle],
+  );
+
+  const controls = (
+    <>
+      <label className="control">
+        <span>{t("browse.sort")}</span>
+        <select
+          value={sort}
+          aria-label={t("browse.sort")}
+          onChange={(event) => setSort(event.target.value as AlbumSort)}
+        >
+          {ALBUM_SORTS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.labelKey)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <FilterField
+        label={t("browse.filterAlbums")}
+        value={filter}
+        onChange={setFilter}
+      />
+    </>
+  );
+
+  if (!value) {
+    return (
+      <section>
+        {/* No detail line: the count it would carry is exactly what is still
+            missing, and `Loading` already says whether this is a wait or a
+            failure. */}
+        <PageHeader title={t("nav.albums")}>{controls}</PageHeader>
+        <Loading error={error} />
+      </section>
+    );
+  }
   return (
     <section>
       <PageHeader
         title={t("nav.albums")}
-        detail={t("albums.detail", { count: value.length })}
-      />
-      <AlbumGrid albums={value} />
+        detail={
+          needle
+            ? t("browse.matches", { count: shown.length, total: value.length })
+            : t("albums.detail", { count: value.length })
+        }
+      >
+        {controls}
+      </PageHeader>
+      {needle && shown.length === 0 ? (
+        <EmptyState message={t("browse.noMatch")} />
+      ) : (
+        <AlbumGrid albums={shown} />
+      )}
     </section>
   );
 }
@@ -832,13 +958,71 @@ export function AdminPage() {
   );
 }
 
-function PageHeader({ title, detail }: { title: string; detail: string }) {
+function PageHeader({
+  title,
+  detail,
+  children,
+}: {
+  title: string;
+  /** Omitted while the count it would state is not known yet. */
+  detail?: string;
+  children?: ReactNode;
+}) {
   return (
     <header className="page-header">
-      <h2>{title}</h2>
-      <p className="muted">{detail}</p>
+      <div className="page-heading">
+        <h2>{title}</h2>
+        {detail ? <p className="muted">{detail}</p> : null}
+      </div>
+      {children ? <div className="page-controls">{children}</div> : null}
     </header>
   );
+}
+
+/**
+ * Text filter shared by the browse pages. It narrows what is already loaded
+ * rather than asking the server: `collect` has the whole list in memory, and a
+ * per-keystroke round trip would buy nothing.
+ */
+function FilterField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <label className="control">
+      <span>{label}</span>
+      <input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={t("browse.filterPlaceholder")}
+        aria-label={label}
+      />
+    </label>
+  );
+}
+
+/** Drops case and diacritics, so "bjork" reaches "Björk". */
+function fold(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+}
+
+/** The filter as the comparison sees it. Empty means no filter is applied. */
+function normalizeFilter(value: string) {
+  return fold(value).trim();
+}
+
+function matches(haystack: string | null, needle: string) {
+  return haystack ? fold(haystack).includes(needle) : false;
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -881,7 +1065,18 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
 export function ArtistsPage() {
   const { t } = useI18n();
+  const [filter, setFilter] = useState("");
   const { value, error } = useAsync<Artist[]>(listArtists, []);
+  const needle = normalizeFilter(filter);
+  // `/api/v2/artists` takes no `sort`, unlike `/albums`: the one order the
+  // server offers is alphabetical, so this page filters and does not sort.
+  const shown = useMemo(
+    () =>
+      !value || !needle
+        ? (value ?? [])
+        : value.filter((artist) => matches(artist.name, needle)),
+    [value, needle],
+  );
   if (!value) return <Loading error={error} />;
   if (value.length === 0)
     return <p className="muted">{t("common.noArtists")}</p>;
@@ -889,10 +1084,23 @@ export function ArtistsPage() {
     <section>
       <PageHeader
         title={t("nav.artists")}
-        detail={t("artists.detail", { count: value.length })}
-      />
+        detail={
+          needle
+            ? t("browse.matches", { count: shown.length, total: value.length })
+            : t("artists.detail", { count: value.length })
+        }
+      >
+        <FilterField
+          label={t("browse.filterArtists")}
+          value={filter}
+          onChange={setFilter}
+        />
+      </PageHeader>
+      {needle && shown.length === 0 ? (
+        <EmptyState message={t("browse.noMatch")} />
+      ) : null}
       <ul className="list artist-list">
-        {value.map((artist) => (
+        {shown.map((artist) => (
           <li key={artist.id}>
             <Link to="/artists/$artistId" params={{ artistId: artist.id }}>
               <Artwork

@@ -151,6 +151,51 @@ input::placeholder {
   color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
+/* The native select was the most visible unfinished edge of an interface that
+   is otherwise styled by hand. The element itself stays — it carries keyboard
+   handling and screen-reader semantics a custom listbox would have to rebuild,
+   and rebuilding them is how the accessibility gate starts failing. Only its
+   chrome is replaced: the platform arrow goes, and a chevron drawn in CSS
+   takes its place, inheriting the theme through `currentColor`. */
+select {
+  padding-right: 2.1rem;
+  appearance: none;
+}
+
+/* The chevron shares the select's grid cell instead of being offset from the
+   label's edge, so it stays centred whatever height the select is given. Both
+   are placed explicitly: an auto-placed select would be pushed into a third row
+   by the pseudo-element already sitting in the second. */
+.control select,
+.theme-picker select,
+.language-picker select {
+  grid-area: 2 / 1;
+}
+
+.control:has(select)::after,
+.theme-picker::after,
+.language-picker::after {
+  z-index: 1;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  margin-right: 0.85rem;
+  margin-bottom: 0.12rem;
+  color: var(--muted);
+  content: "";
+  grid-area: 2 / 1;
+  pointer-events: none;
+  place-self: center end;
+  rotate: 45deg;
+}
+
+.control:has(select):hover::after,
+.theme-picker:hover::after,
+.language-picker:hover::after {
+  color: var(--text);
+}
+
 h1,
 h2,
 h3,
@@ -590,9 +635,63 @@ main {
   line-height: 1;
 }
 
+.page-heading {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
 .page-header p {
   max-width: 28rem;
-  text-align: right;
+}
+
+.page-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.control {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.control > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.control select,
+.control input {
+  min-height: 2.4rem;
+  padding-block: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.control input {
+  width: min(14rem, 40vw);
+}
+
+@media (width <= 52rem) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-controls {
+    align-items: stretch;
+  }
+
+  .control input {
+    width: 100%;
+  }
 }
 
 .grid {
@@ -610,20 +709,90 @@ main {
   min-width: 0;
 }
 
-.grid strong,
 .grid span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Two lines rather than one: single-line truncation cut nearly every title in
+   a real catalogue, and the second line costs a fixed 2.4em whether it is used
+   or not, so the covers below stay on a common baseline. */
 .grid strong {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 2.4em;
   margin-top: 0.38rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: 0.9rem;
+  line-height: 1.2;
 }
 
 .grid span {
   font-size: 0.76rem;
+}
+
+/* The card is a positioning context for its actions; the link stays the whole
+   card, and the buttons sit above it rather than inside it — a button nested in
+   an anchor is neither valid nor operable by keyboard. */
+.grid li {
+  position: relative;
+}
+
+.card-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.35rem;
+  opacity: 0;
+  transition:
+    opacity 160ms ease,
+    translate 240ms ease;
+}
+
+.card-action {
+  display: grid;
+  min-height: 2.1rem;
+  width: 2.1rem;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(0.5rem);
+  place-items: center;
+}
+
+.card-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.grid li:hover .card-actions,
+.grid li:focus-within .card-actions {
+  opacity: 1;
+}
+
+/* Travel with the cover so the buttons stay on it, not beside it. Keyboard
+   focus reveals them without the lift, which is what the cover does too. */
+.grid li:hover .card-actions {
+  translate: 0 -0.28rem;
+}
+
+/* Pointer-only reveal hides the actions from touch, where there is no hover to
+   reveal them with. */
+@media (hover: none) {
+  .card-actions {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-actions {
+    transition: none;
+  }
 }
 
 .cover {
@@ -662,7 +831,7 @@ main {
   box-shadow: var(--shadow);
 }
 
-.grid a:hover .cover {
+.grid li:hover .cover {
   transform: translateY(-0.28rem);
   box-shadow: var(--shadow);
 }
