@@ -67,7 +67,8 @@ export function usePlayer(): PlayerState {
   return player;
 }
 
-function usePlayerProgress(): PlayerProgress {
+/** Position and duration in seconds, ticking as the element plays. */
+export function usePlayerProgress(): PlayerProgress {
   const progress = useContext(PlayerProgressContext);
   if (!progress) throw new Error("usePlayerProgress requires PlayerProvider");
   return progress;

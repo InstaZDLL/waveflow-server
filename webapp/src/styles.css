@@ -1571,3 +1571,109 @@ button.danger {
     transition-duration: 0.01ms;
   }
 }
+
+/* Genres are a two-column list like artists: a name is short, and one column
+   of them wastes the width the grid pages use. */
+.genre-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 2rem;
+}
+
+.genre-list a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genre-list a:hover strong {
+  color: var(--accent);
+}
+
+/* Cover on the left, words on the right, stacking under the fold. */
+.playing {
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  margin-bottom: 2.4rem;
+}
+
+.playing-detail {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.playing-detail h2 {
+  margin: 0.35rem 0 0.2rem;
+  font-size: clamp(1.6rem, 3vw, 2.6rem);
+  line-height: 1.1;
+}
+
+.lyrics {
+  margin-top: 1.8rem;
+}
+
+.lyrics h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.8rem;
+  font-size: 1rem;
+}
+
+.lyrics h3 small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.lyrics ol {
+  max-height: 26rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.lyrics li {
+  padding: 0.16rem 0;
+  color: var(--muted);
+  line-height: 1.5;
+  transition: color 180ms ease;
+}
+
+/* The line a synced sheet is on. An unsynced sheet never sets it, so the
+   whole text stays evenly weighted rather than pretending to follow. */
+.lyrics li.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.bookmark-list li {
+  gap: 1rem;
+}
+
+.bookmark-list .link {
+  display: grid;
+  min-width: 0;
+}
+
+.bookmark-list .link small {
+  font-size: 0.72rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyrics li {
+    transition: none;
+  }
+}
+
+@media (width <= 52rem) {
+  .genre-list {
+    grid-template-columns: 1fr;
+  }
+
+  .playing {
+    flex-direction: column;
+  }
+}
