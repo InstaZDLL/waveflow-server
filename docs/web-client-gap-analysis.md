@@ -223,10 +223,21 @@ entièrement stylée à la main. C'est le bord non fini le plus visible de
 l'interface.
 
 **La typographie, décidée une fois.** Le serif d'affichage est le seul geste qui
-ne soit pas générique, et il est orphelin : il sert sur l'écran de connexion,
-que personne ne regarde, et nulle part ensuite. Deux issues cohérentes — en
-faire un système, en le portant sur les titres de page ; ou l'abandonner. La
-seule mauvaise décision est de le laisser où il est.
+ne soit pas générique.
+
+> **Rectifié le 2026-09-06.** « Il est orphelin : il sert sur l'écran de
+> connexion et nulle part ensuite » est faux, et c'est la cinquième affirmation
+> de ce document à ne pas résister à la lecture du code. Le serif porte
+> `h1, h2, h3` — donc **tous les titres de page** —, la marque de la barre
+> latérale, la lettre qui remplace une pochette absente et le code de la page
+> 404. Il était déjà un système ; ce qui le faisait passer pour un accident,
+> c'est qu'il était déclaré **quatre fois, en deux orthographes** — trois des
+> quatre omettaient « Palatino Linotype », donc le repli n'était pas le même
+> selon l'écran regardé.
+>
+> Décision de l'opérateur : en faire un système. Concrètement il ne restait
+> qu'à le nommer, `--font-display` et `--font-body` en tête de `styles.css`,
+> une seule pile chacun. **Cette question est close.**
 
 **La carte dans la carte**, sur la connexion : deux rectangles arrondis
 emboîtés dont les fonds diffèrent de trois pour cent. C'est le signal
@@ -318,7 +329,9 @@ n'est pas sur ce chemin critique.
   demande une décision sur ce qu'est une session de navigation.
 - **Ce qu'on montre d'une correction de tags** quand elle diverge du fichier :
   la valeur corrigée seule, ou les deux avec leur provenance.
-- **Le sort du serif.** Système ou abandon, mais pas le statu quo.
+- ~~**Le sort du serif.**~~ **Tranché le 2026-09-06 : système.** Et la question
+  reposait sur une prémisse fausse — voir le geste rectifié plus haut. Il ne
+  restait qu'à nommer les deux piles au lieu de les répéter.
 - ~~**Le vide de la barre latérale.**~~ **Refermé par le lot B**, sans avoir été
   traité pour lui-même : les quatre entrées de navigation ajoutées — genres, en
   écoute, aléatoire, écoutes récentes — occupent l'espace que le lot A avait
