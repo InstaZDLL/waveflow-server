@@ -212,19 +212,28 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
   const player = usePlayer();
   const { t } = useI18n();
   // The grid holds album summaries, not their tracks, so both actions have to
-  // fetch the sleeve first. `pending` disables only the pair being fetched, and
-  // a failed fetch leaves the queue alone rather than half-filling it.
-  const [pending, setPending] = useState<string | null>(null);
+  // fetch the sleeve first. A failed fetch leaves the queue alone rather than
+  // half-filling it.
+  //
+  // A set and not one id: two albums can be in flight at once, and a single
+  // slot let whichever answered first clear the other one's guard. The second
+  // album's buttons came back to life while its own request was still out, so
+  // a second press on "add to queue" queued the album twice.
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
 
   async function withSongs(album: Album, use: (songs: Song[]) => void) {
-    setPending(album.id);
+    setPending((current) => new Set(current).add(album.id));
     try {
       const detail = await getAlbum(album.id);
       if (detail.songs.length) use(detail.songs);
     } catch {
       // Nothing to report here: the album stays reachable through its link.
     } finally {
-      setPending(null);
+      setPending((current) => {
+        const next = new Set(current);
+        next.delete(album.id);
+        return next;
+      });
     }
   }
 
@@ -246,7 +255,7 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
             <button
               type="button"
               className="card-action"
-              disabled={pending === album.id}
+              disabled={pending.has(album.id)}
               aria-label={`${t("card.play")}: ${album.title}`}
               onClick={() =>
                 void withSongs(album, (songs) => player.play(songs, 0))
@@ -257,7 +266,7 @@ function AlbumGrid({ albums }: { albums: Album[] }) {
             <button
               type="button"
               className="card-action"
-              disabled={pending === album.id}
+              disabled={pending.has(album.id)}
               aria-label={`${t("card.queue")}: ${album.title}`}
               onClick={() => void withSongs(album, player.enqueue)}
             >
