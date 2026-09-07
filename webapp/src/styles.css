@@ -1813,3 +1813,57 @@ button.danger {
     flex-direction: column;
   }
 }
+
+/* The scan panel sits above the grid: while one runs, it is the thing the
+   operator came for. */
+.scan-panel {
+  margin-bottom: 1.4rem;
+}
+
+.scan-progress {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.scan-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.86rem;
+}
+
+.scan-progress progress {
+  width: 100%;
+  height: 0.4rem;
+  border: 0;
+  border-radius: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.scan-tally {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+/* A path is long and moves fast; it stays on one line and truncates rather
+   than reflowing the panel on every file. */
+.scan-path {
+  overflow: hidden;
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.admin-panel .resource-list li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.admin-panel .resource-list small {
+  font-size: 0.72rem;
+}

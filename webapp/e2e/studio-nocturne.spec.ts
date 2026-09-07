@@ -126,6 +126,62 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
       return;
     }
+    if (url.pathname === "/api/v2/scans/scan-1/events") {
+      // Two frames, deliberately split so the client has to hold a partial
+      // one between reads — which is what a real stream does.
+      const job = (processed: number, status: string) =>
+        JSON.stringify({
+          id: "scan-1",
+          library_id: "library-1",
+          status,
+          total_files: 10,
+          processed_files: processed,
+          added: processed,
+          updated: 0,
+          moved: 0,
+          skipped: 0,
+          unavailable: 0,
+          errors: 0,
+          current_path: `/music/track-${processed}.flac`,
+          message: null,
+        });
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body:
+          `event: snapshot\ndata: ${job(3, "running")}\n\n` +
+          `: keep-alive\n\n` +
+          `event: progress\ndata: ${job(10, "completed")}\n\n`,
+      });
+      return;
+    }
+    if (url.pathname.endsWith("/scans")) {
+      await route.fulfill({ json: { scan_id: "scan-1" } });
+      return;
+    }
+    if (url.pathname === "/api/v2/admin/users") {
+      await route.fulfill({
+        json: [
+          {
+            id: "user-1",
+            username: "listener",
+            role: "admin",
+            disabled: false,
+            has_subsonic_credential: false,
+            folder_ids: ["library-1"],
+          },
+        ],
+      });
+      return;
+    }
+    if (url.pathname.endsWith("/tokens")) {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (url.pathname === "/api/v2/now-playing") {
+      await route.fulfill({ json: [] });
+      return;
+    }
     if (url.pathname === "/api/v2/libraries") {
       await route.fulfill({ json: libraries });
       return;
@@ -569,4 +625,31 @@ test("keeps the catalogue unasked until the active library is known", async ({
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   await expect(page.getByText("Post", { exact: true })).toBeVisible();
   expect(scopes).toEqual(["library-1"]);
+});
+
+/**
+ * Live scan progress. The stream is read with `fetch` and not `EventSource`,
+ * because the route authenticates on a bearer token and `EventSource` sends no
+ * headers — the same wall `<audio src>` hits. That puts the framing on the
+ * client, so this covers a stream that arrives in pieces with a keep-alive
+ * comment in the middle of it.
+ */
+test("follows a scan while it runs", async ({ page }) => {
+  await page.goto("/admin");
+  await expect(
+    page.getByRole("heading", { name: "Administration" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Scan now" }).first().click();
+
+  const panel = page.locator(".scan-panel");
+  await expect(panel).toBeVisible();
+  // The snapshot lands first, then the progress frame replaces it whole.
+  await expect(panel.getByText("10 of 10 files")).toBeVisible();
+  await expect(panel.getByText("Finished")).toBeVisible();
+  await expect(
+    panel.getByText("10 added · 0 updated · 0 moved · 0 unchanged · 0 errors"),
+  ).toBeVisible();
+  // A finished scan stops showing the file it is on.
+  await expect(panel.locator(".scan-path")).toHaveCount(0);
 });

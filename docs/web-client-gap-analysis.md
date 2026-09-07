@@ -138,13 +138,23 @@ concevoir, rien à migrer, rien à faire relire côté domaine.
 7. **En écoute maintenant**, dans l'administration : qui écoute quoi, sur quel
    appareil.
 8. **Progression de scan en direct.** L'écran d'administration lance un scan et
-   ne dit plus rien ensuite. Le flux SSE existe.
+   ne dit plus rien ensuite. Le flux SSE existe — mais **pas pour
+   `EventSource`** : la route passe par `authenticated()`, qui lit l'en-tête
+   `Authorization`, et `EventSource` n'en envoie aucun. C'est le mur que les
+   tickets de flux contournent pour `<audio src>` ; ici le passage est `fetch`,
+   dont le corps de réponse se lit au fil de l'eau, ce qui met le découpage des
+   trames à la charge du client.
 9. **Sélecteur de bibliothèque.** Le client liste les bibliothèques dans
    l'administration mais ne cadre jamais la navigation dessus, alors que
    `GET /libraries/{id}/tracks` et les paramètres `library_id` de `/genres`,
    `/songs` et `/songs/random` sont faits pour ça. C'est le seul écart où
    Navidrome est franchement devant sur une fonction que WaveFlow possède.
 10. **Membres d'une bibliothèque** : ajouter, changer de rôle, retirer.
+    **Rectifié le 2026-09-07 : ce point n'est pas qu'un branchement.** Il existe
+    `PUT` et `DELETE` sur `/libraries/{id}/members/{user}`, mais **aucune route
+    ne liste les membres d'une bibliothèque**. Un écran ne pourrait donc pas
+    montrer qui a accès, seulement accorder et retirer à l'aveugle. Il faut un
+    `GET /api/v2/libraries/{id}/members` avant de le dessiner.
 11. **Jetons d'API**, pour qu'un compte puisse en créer sans passer par la CLI.
 
 ### Trois branchements pour les surfaces récentes
