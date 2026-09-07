@@ -14,6 +14,10 @@ export type IconName =
   | "shares"
   | "admin"
   | "logout"
+  | "repeat"
+  | "repeatOne"
+  | "volume"
+  | "muted"
   | "previous"
   | "play"
   | "pause"
@@ -111,6 +115,39 @@ const paths: Record<IconName, ReactNode> = {
   logout: (
     <>
       <path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10" />
+    </>
+  ),
+  // A loop. `repeatOne` is the same loop with a 1 in it, so the two modes read
+  // as the same idea at two strengths rather than two unrelated glyphs.
+  repeat: (
+    <>
+      <path d="M4 9V8a3 3 0 0 1 3-3h10.5" />
+      <path d="m15.5 2.6 2.7 2.4-2.7 2.4" />
+      <path d="M20 15v1a3 3 0 0 1-3 3H6.5" />
+      <path d="m8.5 21.4-2.7-2.4 2.7-2.4" />
+    </>
+  ),
+  repeatOne: (
+    <>
+      <path d="M4 9V8a3 3 0 0 1 3-3h10.5" />
+      <path d="m15.5 2.6 2.7 2.4-2.7 2.4" />
+      <path d="M20 15v1a3 3 0 0 1-3 3H6.5" />
+      <path d="m8.5 21.4-2.7-2.4 2.7-2.4" />
+      <path d="M11.4 10.4 12.8 9.6V14.4" />
+    </>
+  ),
+  volume: (
+    <>
+      <path d="M11 4.6 6.5 8.4H3.4v7.2h3.1L11 19.4Z" />
+      <path d="M15 9.2a4 4 0 0 1 0 5.6" />
+      <path d="M17.8 6.4a8 8 0 0 1 0 11.2" />
+    </>
+  ),
+  muted: (
+    <>
+      <path d="M11 4.6 6.5 8.4H3.4v7.2h3.1L11 19.4Z" />
+      <path d="m15.4 9.6 5 4.8" />
+      <path d="m20.4 9.6-5 4.8" />
     </>
   ),
   previous: (

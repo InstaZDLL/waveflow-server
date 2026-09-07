@@ -121,6 +121,18 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
       return;
     }
+    if (url.pathname === "/api/v2/queue") {
+      await route.fulfill({
+        json: {
+          current: "song-1",
+          position_ms: 0,
+          changed_by: null,
+          updated_at: 1,
+          songs: albumDetail.songs,
+        },
+      });
+      return;
+    }
     if (url.pathname === "/api/v2/history") {
       await route.fulfill({ json: history });
       return;
@@ -402,10 +414,12 @@ test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
 test("resolves a bounded number of tracks from a long history", async ({
   page,
 }) => {
+  // The track itself and nothing under it: `/tracks/{id}/stream-ticket` shares
+  // the prefix, and the restored queue asks for those as soon as it loads.
   const asked: string[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.startsWith("/api/v2/tracks/")) asked.push(path);
+    if (/^\/api\/v2\/tracks\/[^/]+$/.test(path)) asked.push(path);
   });
 
   await page.goto("/history");
@@ -418,4 +432,55 @@ test("resolves a bounded number of tracks from a long history", async ({
   // The newest plays are the ones kept, not an arbitrary fifty.
   expect(asked[0]).toBe("/api/v2/tracks/t0");
   expect(asked.at(-1)).toBe("/api/v2/tracks/t49");
+});
+
+/**
+ * The player bar's modes. `shuffledOrder`, `advance` and `retreat` are unit
+ * tested; this is the wiring — that the buttons reach them, and that repeat
+ * says which of its three states is on rather than only naming the action. A
+ * screen reader hearing "repeat" alone could not tell.
+ *
+ * No audio is served: the bar renders from the restored queue, which is enough
+ * to press its controls.
+ */
+test("carries shuffle and the three repeat states in the player bar", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  const shuffle = page.getByRole("button", { name: "Shuffle" });
+
+  if (testInfo.project.name === "mobile") {
+    // Deliberate: a narrow bar keeps the transport and drops the modes. The
+    // layout that came before dropped previous and next instead and kept only
+    // play, which is the worse trade on a phone.
+    await expect(shuffle).toBeHidden();
+    await expect(page.getByRole("button", { name: "Repeat: off" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Next" })).toBeVisible();
+    return;
+  }
+
+  await expect(shuffle).toBeVisible();
+  await expect(shuffle).toHaveAttribute("aria-pressed", "false");
+  await shuffle.click();
+  await expect(shuffle).toHaveAttribute("aria-pressed", "true");
+  await shuffle.click();
+  await expect(shuffle).toHaveAttribute("aria-pressed", "false");
+
+  // Off → whole queue → this track → off.
+  const repeat = page.getByRole("button", { name: "Repeat: off" });
+  await repeat.click();
+  await expect(
+    page.getByRole("button", { name: "Repeat: the whole queue" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Repeat: the whole queue" }).click();
+  await expect(
+    page.getByRole("button", { name: "Repeat: this track" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Repeat: this track" }).click();
+  await expect(page.getByRole("button", { name: "Repeat: off" })).toBeVisible();
+
+  // The cover is the way back to the album that is playing.
+  await expect(
+    page.getByRole("link", { name: "Open the album: Vespertine" }),
+  ).toHaveAttribute("href", "/albums/album-2");
 });

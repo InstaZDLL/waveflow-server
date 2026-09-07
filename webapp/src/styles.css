@@ -1261,7 +1261,9 @@ button.danger {
   bottom: 1rem;
   left: calc(var(--sidebar-width) + 1rem);
   display: grid;
-  grid-template-columns: 3.8rem minmax(9rem, 0.7fr) auto minmax(14rem, 1.3fr);
+  grid-template-columns:
+    3.8rem minmax(8rem, 0.6fr) auto minmax(11rem, 1.1fr)
+    auto;
   align-items: center;
   gap: 1rem;
   min-height: 5.1rem;
@@ -1323,7 +1325,93 @@ button.danger {
   background: transparent;
 }
 
-.player-controls button:nth-child(2) {
+/* Transport is always available; shuffle and repeat are modes, so they read as
+   off until they are on. Addressed by class and not by position: the transport
+   buttons were `nth-child` until a mode button was inserted ahead of them and
+   the filled play styling landed on "previous". */
+.player-controls button.mode {
+  color: var(--muted);
+}
+
+.player-controls button.mode.on {
+  color: var(--accent);
+}
+
+/* The cover doubles as the way back to the album. */
+.player > a {
+  display: grid;
+  border-radius: 0.65rem;
+}
+
+.player > a:hover .player-cover {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.player-aside {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.player-aside button {
+  display: grid;
+  width: 2.1rem;
+  min-height: 2.1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+}
+
+.player-aside button:hover,
+.player-aside button[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.volume {
+  width: 4.5rem;
+  min-height: 1rem;
+  padding: 0;
+  border: 0;
+  accent-color: var(--accent);
+  background: none;
+}
+
+.player-aside .nav-action {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.1rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.5rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.player-aside .nav-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Below the wide layout the aside would crowd the scrubber out; the queue is
+   still one tap away in the mobile navigation, and the level belongs to the
+   device's own keys there. */
+@media (width <= 62rem) {
+  .player-aside {
+    display: none;
+  }
+
+  /* Drop the column with it, or the bar keeps a gap where it was. */
+  .player {
+    grid-template-columns: 3.8rem minmax(8rem, 0.6fr) auto minmax(11rem, 1.1fr);
+  }
+}
+
+.player-controls button.primary {
   width: 3rem;
   min-height: 3rem;
   background: var(--text);
@@ -1446,12 +1534,12 @@ button.danger {
   .player-progress span {
     display: none;
   }
-  .player-controls button:first-child,
-  .player-controls button:last-child {
+  /* Narrow: the modes and the skip buttons give way to the transport. */
+  .player-controls button.mode {
     display: none;
   }
 
-  .player-controls button:nth-child(2) {
+  .player-controls button.primary {
     width: 2.75rem;
     min-height: 2.75rem;
   }
