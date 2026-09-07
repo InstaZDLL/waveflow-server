@@ -220,6 +220,9 @@ const en = {
   "player.mute": "Mute",
   "player.unmute": "Unmute",
   "player.openAlbum": "Open the album",
+  "library.active": "Library",
+  "search.everyLibrary":
+    "Search covers every library you can see, not only the active one.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -437,6 +440,9 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "player.mute": "Couper le son",
   "player.unmute": "Rétablir le son",
   "player.openAlbum": "Ouvrir l’album",
+  "library.active": "Bibliothèque",
+  "search.everyLibrary":
+    "La recherche porte sur toutes vos bibliothèques, pas seulement l’active.",
 };
 
 export type Locale = "en" | "fr";

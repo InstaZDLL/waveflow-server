@@ -172,13 +172,15 @@ select {
    by the pseudo-element already sitting in the second. */
 .control select,
 .theme-picker select,
-.language-picker select {
+.language-picker select,
+.library-picker select {
   grid-area: 2 / 1;
 }
 
 .control:has(select)::after,
 .theme-picker::after,
-.language-picker::after {
+.language-picker::after,
+.library-picker::after {
   z-index: 1;
   width: 0.4rem;
   height: 0.4rem;
@@ -196,7 +198,8 @@ select {
 
 .control:has(select):hover::after,
 .theme-picker:hover::after,
-.language-picker:hover::after {
+.language-picker:hover::after,
+.library-picker:hover::after {
   color: var(--text);
 }
 
@@ -378,6 +381,35 @@ h3 {
 .theme-picker {
   display: grid;
   gap: 0.25rem;
+}
+
+/* Sits under the brand, above the navigation, because it frames everything
+   below it rather than being one setting among the others at the foot. */
+.library-picker {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.9rem 0 0.4rem;
+  padding-inline: 0.45rem;
+}
+
+.library-picker > span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.library-picker select {
+  width: 100%;
+  min-height: 2.35rem;
+  padding-block: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.scope-note {
+  margin: -1rem 0 1.6rem;
+  font-size: 0.78rem;
 }
 
 .language-picker {
@@ -1460,10 +1492,22 @@ button.danger {
     backdrop-filter: blur(1.4rem);
   }
 
+  .mobile-header .library-picker span,
   .mobile-header .theme-picker span,
   .mobile-header .language-picker span,
   .mobile-header .brand small {
     display: none;
+  }
+
+  /* The sidebar is out of reach here, so the scope moves into the header
+     rather than becoming unreachable on a phone. */
+  .mobile-header .library-picker {
+    margin: 0;
+    padding: 0;
+  }
+
+  .mobile-header .library-picker select {
+    width: 7rem;
   }
   .mobile-header .theme-picker select {
     width: 6.5rem;

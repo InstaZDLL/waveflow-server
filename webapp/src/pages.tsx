@@ -65,6 +65,7 @@ import {
 import { Artwork } from "./artwork";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
+import { useScopeId } from "./library-scope";
 import { usePlayer, usePlayerProgress } from "./player";
 
 const SKELETON_KEYS = [
@@ -316,7 +317,11 @@ export function AlbumsPage() {
   const { t } = useI18n();
   const [sort, setSort] = useState<AlbumSort>("alphabeticalByName");
   const [filter, setFilter] = useState("");
-  const { value, error } = useAsync(() => listAlbums(sort), [sort]);
+  const scope = useScopeId();
+  const { value, error } = useAsync(
+    () => listAlbums(sort, scope),
+    [sort, scope],
+  );
   const needle = normalizeFilter(filter);
   const shown = useMemo(
     () =>
@@ -904,7 +909,8 @@ function PlaySetActions({ songs }: { songs: Song[] }) {
 export function GenresPage() {
   const { t } = useI18n();
   const [filter, setFilter] = useState("");
-  const { value, error } = useAsync<Genre[]>(listGenres, []);
+  const scope = useScopeId();
+  const { value, error } = useAsync<Genre[]>(() => listGenres(scope), [scope]);
   const needle = normalizeFilter(filter);
   const shown = useMemo(
     () =>
@@ -957,9 +963,10 @@ export function GenrePage({ genre }: { genre: string }) {
   const player = usePlayer();
   const { t } = useI18n();
   const [drawing, setDrawing] = useState(false);
+  const scope = useScopeId();
   const { value, error } = useAsync<Song[]>(
-    () => listGenreSongs(genre),
-    [genre],
+    () => listGenreSongs(genre, scope),
+    [genre, scope],
   );
 
   /**
@@ -971,7 +978,7 @@ export function GenrePage({ genre }: { genre: string }) {
   async function drawRandom() {
     setDrawing(true);
     try {
-      const songs = await listRandomSongs(100, genre);
+      const songs = await listRandomSongs(100, genre, scope);
       if (songs.length) player.play(songs, 0);
     } catch {
       // The listing below is still playable; nothing to recover from.
@@ -1065,7 +1072,11 @@ export function HistoryPage() {
 export function RandomPage() {
   const { t } = useI18n();
   const [draw, setDraw] = useState(0);
-  const { value, error } = useAsync<Song[]>(() => listRandomSongs(100), [draw]);
+  const scope = useScopeId();
+  const { value, error } = useAsync<Song[]>(
+    () => listRandomSongs(100, undefined, scope),
+    [draw, scope],
+  );
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -1554,7 +1565,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 export function ArtistsPage() {
   const { t } = useI18n();
   const [filter, setFilter] = useState("");
-  const { value, error } = useAsync<Artist[]>(listArtists, []);
+  const scope = useScopeId();
+  const { value, error } = useAsync<Artist[]>(
+    () => listArtists(scope),
+    [scope],
+  );
   const needle = normalizeFilter(filter);
   // `/api/v2/artists` takes no `sort`, unlike `/albums`: the one order the
   // server offers is alphabetical, so this page filters and does not sort.
@@ -1648,6 +1663,9 @@ export function SearchPage() {
   return (
     <section>
       <PageHeader title={t("nav.search")} detail={t("search.detail")} />
+      {/* Said rather than hidden: `/api/v2/search` takes no `library_id`, so
+          this is the one screen the active library does not scope. */}
+      <p className="muted scope-note">{t("search.everyLibrary")}</p>
       <form
         className="search"
         onSubmit={(event) => {

@@ -20,6 +20,11 @@ import {
 } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import {
+  LibraryPicker,
+  LibraryScopeProvider,
+  useLibraryScope,
+} from "./library-scope";
+import {
   AdminPage,
   AlbumPage,
   AlbumsPage,
@@ -128,61 +133,75 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   );
 }
 
+/**
+ * Holds the catalogue back until the active library is known. One round trip,
+ * and it buys the guarantee that no screen renders the whole catalogue before
+ * narrowing to one library — which is what the unscoped first request did.
+ */
+function ScopedOutlet() {
+  const { ready } = useLibraryScope();
+  return ready ? <Outlet /> : null;
+}
+
 function Shell() {
   const navigate = useNavigate();
   const user = currentUser();
   const { t } = useI18n();
   return (
-    <PlayerProvider>
-      <a className="skip-link" href="#main-content">
-        {t("nav.skip")}
-      </a>
-      <div className="shell">
-        <aside className="sidebar">
-          <Brand />
-          <Navigation />
-          <div className="sidebar-footer">
+    <LibraryScopeProvider>
+      <PlayerProvider>
+        <a className="skip-link" href="#main-content">
+          {t("nav.skip")}
+        </a>
+        <div className="shell">
+          <aside className="sidebar">
+            <Brand />
+            <LibraryPicker />
+            <Navigation />
+            <div className="sidebar-footer">
+              <ThemePicker />
+              <LanguagePicker />
+              <div className="account-chip">
+                <span aria-hidden="true">
+                  {user?.username.slice(0, 1).toUpperCase()}
+                </span>
+                <div>
+                  <strong>{user?.username}</strong>
+                  <small>{user?.role}</small>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="nav-action"
+                onClick={async () => {
+                  try {
+                    await logout();
+                  } catch {
+                    // logout always clears local session state in its finally
+                    // block; an unavailable server must not trap the user here.
+                  }
+                  await navigate({ to: "/login" });
+                }}
+              >
+                <Icon name="logout" />
+                {t("nav.signOut")}
+              </button>
+            </div>
+          </aside>
+          <header className="mobile-header">
+            <Brand />
+            <LibraryPicker />
             <ThemePicker />
             <LanguagePicker />
-            <div className="account-chip">
-              <span aria-hidden="true">
-                {user?.username.slice(0, 1).toUpperCase()}
-              </span>
-              <div>
-                <strong>{user?.username}</strong>
-                <small>{user?.role}</small>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="nav-action"
-              onClick={async () => {
-                try {
-                  await logout();
-                } catch {
-                  // logout always clears local session state in its finally
-                  // block; an unavailable server must not trap the user here.
-                }
-                await navigate({ to: "/login" });
-              }}
-            >
-              <Icon name="logout" />
-              {t("nav.signOut")}
-            </button>
-          </div>
-        </aside>
-        <header className="mobile-header">
-          <Brand />
-          <ThemePicker />
-          <LanguagePicker />
-        </header>
-        <main id="main-content" tabIndex={-1}>
-          <Outlet />
-        </main>
-        <Navigation mobile />
-        <PlayerBar />
-      </div>
-    </PlayerProvider>
+          </header>
+          <main id="main-content" tabIndex={-1}>
+            <ScopedOutlet />
+          </main>
+          <Navigation mobile />
+          <PlayerBar />
+        </div>
+      </PlayerProvider>
+    </LibraryScopeProvider>
   );
 }
 

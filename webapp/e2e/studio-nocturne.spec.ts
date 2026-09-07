@@ -58,6 +58,11 @@ const history = Array.from({ length: 120 }, (_, index) => ({
   played_at: 1_000_000 - index,
 }));
 
+/** Replaced by the scoping test; one library elsewhere, so no picker appears. */
+let libraries: Array<{ id: string; name: string }> = [
+  { id: "library-1", name: "Ma musique" },
+];
+
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
 
@@ -121,6 +126,10 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
       return;
     }
+    if (url.pathname === "/api/v2/libraries") {
+      await route.fulfill({ json: libraries });
+      return;
+    }
     if (url.pathname === "/api/v2/queue") {
       await route.fulfill({
         json: {
@@ -174,6 +183,7 @@ async function mockAuthenticatedApi(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  libraries = [{ id: "library-1", name: "Ma musique" }];
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -483,4 +493,80 @@ test("carries shuffle and the three repeat states in the player bar", async ({
   await expect(
     page.getByRole("link", { name: "Open the album: Vespertine" }),
   ).toHaveAttribute("href", "/albums/album-2");
+});
+
+/**
+ * The web client works inside one library at a time — decided 2026-09-07, and
+ * the contract is that changing library changes the catalogue's scope rather
+ * than merging catalogues. What is worth pinning is that the scope actually
+ * travels: a picker that changed nothing on the wire would look right and be
+ * wrong.
+ */
+test("scopes the catalogue to the active library, and hides the picker when there is one", async ({
+  page,
+}, testInfo) => {
+  const scopes: Array<string | null> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v2/albums") {
+      scopes.push(url.searchParams.get("library_id"));
+    }
+  });
+
+  libraries = [
+    { id: "library-1", name: "Ma musique" },
+    { id: "library-2", name: "Les enfants" },
+  ];
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+
+  // The picker exists in the sidebar and in the mobile header; only one of the
+  // two is on screen, so the locator has to say which — as the appearance test
+  // above already does for theme and language.
+  const chrome =
+    testInfo.project.name === "mobile"
+      ? page.locator(".mobile-header")
+      : page.locator(".sidebar");
+  const picker = chrome.getByLabel("Library");
+  await expect(picker).toBeVisible();
+  // The first library leads until one has been chosen.
+  await expect.poll(() => scopes.at(-1)).toBe("library-1");
+
+  await picker.selectOption("library-2");
+  await expect.poll(() => scopes.at(-1)).toBe("library-2");
+
+  // Remembered across a reload rather than reset to the first.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect.poll(() => scopes.at(-1)).toBe("library-2");
+});
+
+test("shows no library picker when the account has only one", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  // A select with a single option is a control that does nothing.
+  await expect(page.getByLabel("Library")).toHaveCount(0);
+});
+
+test("keeps the catalogue unasked until the active library is known", async ({
+  page,
+}) => {
+  // The first render used to fire an unscoped request and then a scoped one,
+  // so for a moment the screen showed every library's albums — the exact thing
+  // the single-library scope exists to prevent.
+  const scopes: Array<string | null> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v2/albums") {
+      scopes.push(url.searchParams.get("library_id"));
+    }
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(scopes).toEqual(["library-1"]);
 });

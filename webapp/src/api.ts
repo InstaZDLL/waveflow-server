@@ -329,11 +329,25 @@ export type AlbumSort =
   | "starred"
   | "byYear";
 
-export const listAlbums = (sort?: AlbumSort) =>
-  collect<Album>("/api/v2/albums", sort ? { sort } : {});
+/**
+ * Catalogue calls take the active library. `/api/v2/search` is the one that
+ * cannot: it has no `library_id`, and giving it one would mean rewriting three
+ * FTS queries in a service the frozen Subsonic façade shares. The search screen
+ * says so rather than pretending to be scoped.
+ */
+function scoped(
+  libraryId: string | undefined,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  return libraryId ? { ...extra, library_id: libraryId } : extra;
+}
+
+export const listAlbums = (sort?: AlbumSort, libraryId?: string) =>
+  collect<Album>("/api/v2/albums", scoped(libraryId, sort ? { sort } : {}));
 export const getAlbum = (id: string) =>
   call<AlbumDetail>(`/api/v2/albums/${id}`);
-export const listArtists = () => collect<Artist>("/api/v2/artists");
+export const listArtists = (libraryId?: string) =>
+  collect<Artist>("/api/v2/artists", scoped(libraryId));
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 export const search = (query: string) =>
@@ -521,10 +535,11 @@ export type Genre = {
   album_count: number;
 };
 
-export const listGenres = () => call<Genre[]>("/api/v2/genres");
+export const listGenres = (libraryId?: string) =>
+  call<Genre[]>(`/api/v2/genres?${new URLSearchParams(scoped(libraryId))}`);
 
-export const listGenreSongs = (genre: string) =>
-  collect<Song>("/api/v2/songs", { genre });
+export const listGenreSongs = (genre: string, libraryId?: string) =>
+  collect<Song>("/api/v2/songs", scoped(libraryId, { genre }));
 
 /**
  * `GET /history` answers plays, not songs — `track_id`, `submission` and
@@ -540,8 +555,14 @@ export type Play = {
 export const listHistory = (limit = 100) =>
   call<Play[]>(`/api/v2/history?limit=${limit}`);
 
-export const listRandomSongs = (limit = 100, genre?: string) => {
-  const query = new URLSearchParams({ limit: String(limit) });
+export const listRandomSongs = (
+  limit = 100,
+  genre?: string,
+  libraryId?: string,
+) => {
+  const query = new URLSearchParams(
+    scoped(libraryId, { limit: String(limit) }),
+  );
   if (genre) query.set("genre", genre);
   return call<Song[]>(`/api/v2/songs/random?${query}`);
 };
