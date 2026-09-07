@@ -11,6 +11,7 @@ import {
   type Album,
   type AlbumDetail,
   type AlbumSort,
+  type ApiToken,
   type Artist,
   type ArtistDetail,
   addLibrary,
@@ -18,6 +19,7 @@ import {
   authorize,
   type Bookmark,
   bootstrapAdmin,
+  createApiToken,
   createPlaylist,
   createShare,
   createUser,
@@ -35,6 +37,7 @@ import {
   type LyricsLine,
   type LyricsList,
   listAlbums,
+  listApiTokens,
   listArtists,
   listBookmarks,
   listFavorites,
@@ -42,12 +45,16 @@ import {
   listGenres,
   listHistory,
   listLibraries,
+  listNowPlaying,
   listPlaylists,
   listRandomSongs,
   listShares,
   listUsers,
   login,
+  type NowPlaying,
   type Playlist,
+  revokeApiToken,
+  type ScanJob,
   type SearchResult,
   type Share,
   type Song,
@@ -61,6 +68,7 @@ import {
   setupRequired,
   startScan,
   type User,
+  watchScan,
 } from "./api";
 import { Artwork } from "./artwork";
 import { type TranslationKey, useI18n } from "./i18n";
@@ -1277,6 +1285,198 @@ export function PlayingPage() {
   );
 }
 
+/**
+ * The statuses `scan_job.status` holds. Looked up rather than cast: an unknown
+ * key makes `translate` read a property of `undefined` and takes the page down,
+ * so a status this table does not know is shown as it came.
+ */
+const SCAN_STATUS: Record<string, TranslationKey> = {
+  queued: "scan.queued",
+  running: "scan.running",
+  completed: "scan.completed",
+  failed: "scan.failed",
+};
+
+/**
+ * A scan while it runs. The admin screen used to start one and say nothing
+ * more; the progress stream has been there all along.
+ */
+function ScanProgress({ scanId }: { scanId: string }) {
+  const { t } = useI18n();
+  const [job, setJob] = useState<ScanJob | null>(null);
+
+  useEffect(() => {
+    setJob(null);
+    // The snapshot arrives on the stream itself, so there is nothing to fetch
+    // first; a stream that cannot open leaves the panel on its last reading.
+    return watchScan(scanId, setJob);
+  }, [scanId]);
+
+  if (!job) return <p className="muted">{t("scan.connecting")}</p>;
+  const done = job.status !== "running" && job.status !== "queued";
+  const share = job.total_files > 0 ? job.processed_files / job.total_files : 0;
+  return (
+    <div className="scan-progress">
+      <div className="scan-line">
+        <strong>
+          {SCAN_STATUS[job.status] ? t(SCAN_STATUS[job.status]) : job.status}
+        </strong>
+        <span className="muted">
+          {t("scan.counted", {
+            processed: job.processed_files,
+            total: job.total_files,
+          })}
+        </span>
+      </div>
+      <progress
+        max={job.total_files || 1}
+        value={job.processed_files}
+        aria-label={t("scan.progress")}
+      >
+        {Math.round(share * 100)}%
+      </progress>
+      <p className="muted scan-tally">
+        {t("scan.tally", {
+          added: job.added,
+          updated: job.updated,
+          moved: job.moved,
+          skipped: job.skipped,
+          errors: job.errors,
+        })}
+      </p>
+      {/* The path is the only thing here that moves fast enough to read as
+          liveness, and it is what tells a long scan from a stuck one. */}
+      {!done && job.current_path ? (
+        <p className="muted scan-path">{job.current_path}</p>
+      ) : null}
+      {job.message ? <p className="error">{job.message}</p> : null}
+    </div>
+  );
+}
+
+/** Who is listening to what, right now, across the accounts one can see. */
+function NowPlayingPanel() {
+  const { t } = useI18n();
+  const [tick, setTick] = useState(0);
+  const { value } = useAsync<NowPlaying[]>(listNowPlaying, [tick]);
+
+  // No stream exists for this one, so it is polled. Thirty seconds is slower
+  // than a track changes and fast enough for an operator glancing at it.
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <article className="admin-panel">
+      <h3>{t("admin.nowPlaying")}</h3>
+      {value?.length ? (
+        <ul className="list resource-list">
+          {value.map((entry) => (
+            <li key={`${entry.username}-${entry.song.id}`}>
+              <div>
+                <strong>{entry.song.title}</strong>
+                <small className="muted">
+                  {entry.song.artist ?? t("common.unknownArtist")}
+                </small>
+              </div>
+              <span className="muted">{entry.username}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{t("admin.nobodyListening")}</p>
+      )}
+    </article>
+  );
+}
+
+/** API tokens for one account, so a client can be authorised without the CLI. */
+function ApiTokensPanel({ username }: { username: string }) {
+  const { t } = useI18n();
+  const [revision, setRevision] = useState(0);
+  const [name, setName] = useState("");
+  const [secret, setSecret] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const { value } = useAsync<ApiToken[]>(
+    () => listApiTokens(username),
+    [username, revision],
+  );
+
+  async function issue(event: FormEvent) {
+    event.preventDefault();
+    setFailed(false);
+    try {
+      const created = await createApiToken(username, name);
+      setName("");
+      // Shown once and never again: only its SHA-256 hash is stored.
+      setSecret(created.secret);
+      setRevision((n) => n + 1);
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  async function revoke(id: string) {
+    setFailed(false);
+    try {
+      await revokeApiToken(username, id);
+      setRevision((n) => n + 1);
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  const live = (value ?? []).filter((token) => token.revoked_at === null);
+  return (
+    <article className="admin-panel">
+      <h3>{t("admin.tokens", { username })}</h3>
+      <form className="inline-form" onSubmit={(event) => void issue(event)}>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={t("admin.tokenName")}
+          aria-label={t("admin.tokenName")}
+          required
+        />
+        <button type="submit">{t("admin.tokenCreate")}</button>
+      </form>
+      {failed ? <p className="error">{t("admin.tokenError")}</p> : null}
+      {secret ? (
+        <p className="notice">
+          {t("admin.tokenOnce")} <code className="secret-output">{secret}</code>
+        </p>
+      ) : null}
+      {live.length ? (
+        <ul className="list resource-list">
+          {live.map((token) => (
+            <li key={token.id}>
+              <div>
+                <strong>{token.name}</strong>
+                <small className="muted">
+                  {token.last_used_at
+                    ? t("admin.tokenUsed")
+                    : t("admin.tokenUnused")}
+                </small>
+              </div>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void revoke(token.id)}
+                aria-label={`${t("admin.tokenRevoke")}: ${token.name}`}
+              >
+                {t("admin.tokenRevoke")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{t("admin.tokenNone")}</p>
+      )}
+    </article>
+  );
+}
+
 export function AdminPage() {
   const signedInUser = currentUser();
   const { t } = useI18n();
@@ -1289,6 +1489,9 @@ export function AdminPage() {
   const [password, setPassword] = useState("");
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
+  // The scan whose progress is on screen — whichever was started last from
+  // here. Starting another replaces it rather than stacking panels.
+  const [watchedScan, setWatchedScan] = useState<string | null>(null);
   const { value, error } = useAsync(
     () => Promise.all([listLibraries(), listUsers()]),
     [revision],
@@ -1306,6 +1509,7 @@ export function AdminPage() {
       setLibraryName("");
       setLibraryPath("");
       setNotice(t("admin.initialScan", { id: result.scan_id }));
+      setWatchedScan(result.scan_id);
       setRevision((value) => value + 1);
     } catch {
       setAdminError(t("admin.libraryError"));
@@ -1348,6 +1552,7 @@ export function AdminPage() {
     try {
       const result = await startScan(libraryId);
       setNotice(t("admin.scanQueued", { id: result.scan_id }));
+      setWatchedScan(result.scan_id);
     } catch {
       setAdminError(t("admin.scanError"));
     }
@@ -1358,6 +1563,12 @@ export function AdminPage() {
       <PageHeader title={t("admin.title")} detail={t("admin.detail")} />
       {notice ? <p className="notice">{notice}</p> : null}
       {adminError ? <p className="error">{adminError}</p> : null}
+      {watchedScan ? (
+        <article className="admin-panel scan-panel">
+          <h3>{t("admin.scanning")}</h3>
+          <ScanProgress scanId={watchedScan} />
+        </article>
+      ) : null}
       <div className="admin-grid">
         <article className="admin-panel">
           <h3>{t("admin.libraries")}</h3>
@@ -1450,9 +1661,11 @@ export function AdminPage() {
               </button>
             </header>
             <CredentialForm user={user} />
+            <ApiTokensPanel username={user.username} />
           </article>
         ))}
       </div>
+      <NowPlayingPanel />
     </section>
   );
 }

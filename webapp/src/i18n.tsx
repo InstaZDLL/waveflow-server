@@ -223,6 +223,27 @@ const en = {
   "library.active": "Library",
   "search.everyLibrary":
     "Search covers every library you can see, not only the active one.",
+  "scan.connecting": "Waiting for the first reading…",
+  "scan.queued": "Queued",
+  "scan.running": "Scanning",
+  "scan.completed": "Finished",
+  "scan.failed": "Failed",
+  "scan.progress": "Scan progress",
+  "scan.counted": "{processed} of {total} files",
+  "scan.tally":
+    "{added} added · {updated} updated · {moved} moved · {skipped} unchanged · {errors} errors",
+  "admin.scanning": "Scan in progress",
+  "admin.nowPlaying": "Playing now",
+  "admin.nobodyListening": "Nobody is listening right now.",
+  "admin.tokens": "API tokens for {username}",
+  "admin.tokenName": "What is it for?",
+  "admin.tokenCreate": "Issue",
+  "admin.tokenOnce": "Copy it now. It is shown once and never again:",
+  "admin.tokenError": "The token could not be issued.",
+  "admin.tokenRevoke": "Revoke",
+  "admin.tokenUsed": "already used",
+  "admin.tokenUnused": "never used",
+  "admin.tokenNone": "No token on this account.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -443,6 +464,27 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "library.active": "Bibliothèque",
   "search.everyLibrary":
     "La recherche porte sur toutes vos bibliothèques, pas seulement l’active.",
+  "scan.connecting": "En attente du premier relevé…",
+  "scan.queued": "En attente",
+  "scan.running": "Analyse en cours",
+  "scan.completed": "Terminé",
+  "scan.failed": "Échec",
+  "scan.progress": "Progression de l’analyse",
+  "scan.counted": "{processed} fichiers sur {total}",
+  "scan.tally":
+    "{added} ajoutés · {updated} mis à jour · {moved} déplacés · {skipped} inchangés · {errors} erreurs",
+  "admin.scanning": "Analyse en cours",
+  "admin.nowPlaying": "Écoutes en cours",
+  "admin.nobodyListening": "Personne n’écoute en ce moment.",
+  "admin.tokens": "Jetons d’API de {username}",
+  "admin.tokenName": "À quoi sert-il ?",
+  "admin.tokenCreate": "Émettre",
+  "admin.tokenOnce": "Copiez-le maintenant. Il n’est montré qu’une fois :",
+  "admin.tokenError": "Le jeton n’a pas pu être émis.",
+  "admin.tokenRevoke": "Révoquer",
+  "admin.tokenUsed": "déjà utilisé",
+  "admin.tokenUnused": "jamais utilisé",
+  "admin.tokenNone": "Aucun jeton sur ce compte.",
 };
 
 export type Locale = "en" | "fr";
