@@ -430,6 +430,146 @@ export const addLibrary = (
     method: "POST",
     body: JSON.stringify({ name, path, visibility }),
   });
+export type ScanJob = {
+  id: string;
+  library_id: string;
+  status: string;
+  total_files: number;
+  processed_files: number;
+  added: number;
+  updated: number;
+  moved: number;
+  skipped: number;
+  unavailable: number;
+  errors: number;
+  current_path: string | null;
+  message: string | null;
+};
+
+export const getScan = (scanId: string) =>
+  call<ScanJob>(`/api/v2/scans/${scanId}`);
+
+/**
+ * Scan progress, read as it happens.
+ *
+ * `EventSource` cannot do this. The route authenticates on a bearer token —
+ * `authenticated()` reads the `Authorization` header and there is no cookie
+ * fallback — and `EventSource` sends no headers at all. That is the same wall
+ * `<audio src>` hits, which stream tickets exist to get around; here the way
+ * through is `fetch`, whose response body can be read as it arrives.
+ *
+ * Returns a function that stops the read. The server sends a `snapshot` event
+ * first and then a `progress` event per step, and both carry a whole
+ * `ScanJob`, so a caller only ever has to replace what it holds.
+ */
+export function watchScan(
+  scanId: string,
+  onJob: (job: ScanJob) => void,
+): () => void {
+  const controller = new AbortController();
+  void (async () => {
+    try {
+      const headers = new Headers({ accept: "text/event-stream" });
+      if (session) {
+        headers.set("authorization", `Bearer ${session.access_token}`);
+      }
+      const response = await fetch(`/api/v2/scans/${scanId}/events`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const drained = drainEventStream(
+          buffer + decoder.decode(value, { stream: true }),
+        );
+        buffer = drained.rest;
+        for (const payload of drained.data) {
+          try {
+            onJob(JSON.parse(payload) as ScanJob);
+          } catch {
+            // A frame that is not a job is a keep-alive or a comment.
+          }
+        }
+      }
+    } catch {
+      // Aborting is the ordinary way this ends, and a dropped stream leaves
+      // the last known progress on screen rather than an error.
+    }
+  })();
+  return () => controller.abort();
+}
+
+/**
+ * Splits an accumulated `text/event-stream` buffer into the `data:` payloads of
+ * its complete frames, and hands back whatever was left mid-frame.
+ *
+ * A read never lands on a frame boundary, so the tail has to survive until the
+ * next chunk arrives; dropping it loses an event, and returning it as complete
+ * feeds half a JSON object to the parser. Multi-line `data:` is concatenated,
+ * which is what the specification says and what a long path would produce.
+ */
+export function drainEventStream(buffer: string): {
+  data: string[];
+  rest: string;
+} {
+  const data: string[] = [];
+  let rest = buffer;
+  let split = rest.indexOf("\n\n");
+  while (split !== -1) {
+    const frame = rest.slice(0, split);
+    rest = rest.slice(split + 2);
+    const payload = frame
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("");
+    if (payload) data.push(payload);
+    split = rest.indexOf("\n\n");
+  }
+  return { data, rest };
+}
+
+export type NowPlaying = {
+  username: string;
+  song: Song;
+  started_at: number;
+};
+
+export const listNowPlaying = () => call<NowPlaying[]>("/api/v2/now-playing");
+
+export type ApiToken = {
+  id: string;
+  name: string;
+  scopes: string[];
+  expires_at: number | null;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+};
+
+export const listApiTokens = (username: string) =>
+  call<ApiToken[]>(
+    `/api/v2/admin/users/${encodeURIComponent(username)}/tokens`,
+  );
+
+/** The secret comes back once and is never recoverable: only its hash is kept. */
+export const createApiToken = (username: string, name: string) =>
+  call<ApiToken & { secret: string }>(
+    `/api/v2/admin/users/${encodeURIComponent(username)}/tokens`,
+    { method: "POST", body: JSON.stringify({ name, scopes: [] }) },
+  );
+
+export const revokeApiToken = (username: string, tokenId: string) =>
+  call<void>(
+    `/api/v2/admin/users/${encodeURIComponent(username)}/tokens/${tokenId}`,
+    { method: "DELETE" },
+  );
+
 export const startScan = (libraryId: string) =>
   call<{ scan_id: string }>(`/api/v2/libraries/${libraryId}/scans`, {
     method: "POST",
