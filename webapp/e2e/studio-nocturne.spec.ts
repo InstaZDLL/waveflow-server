@@ -48,6 +48,16 @@ const track = {
   user_rating: null,
 };
 
+/**
+ * 120 distinct plays, newest first. More than the screen resolves, which is the
+ * point: each distinct track costs its own request.
+ */
+const history = Array.from({ length: 120 }, (_, index) => ({
+  track_id: `t${index}`,
+  submission: true,
+  played_at: 1_000_000 - index,
+}));
+
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
 
@@ -109,6 +119,15 @@ async function mockAuthenticatedApi(page: Page) {
       // Held open by the concurrency test; instant for everyone else.
       await slowAlbum;
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
+      return;
+    }
+    if (url.pathname === "/api/v2/history") {
+      await route.fulfill({ json: history });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/tracks/")) {
+      const id = url.pathname.split("/")[4];
+      await route.fulfill({ json: { ...song(1, `Track ${id}`, 0, false), id } });
       return;
     }
     if (url.pathname === "/api/v2/genres") {
@@ -282,8 +301,17 @@ test("keeps each card's actions guarded while its own fetch is out", async ({
   await expect(slowPlay).toBeDisabled();
 
   // The second album answers at once while the first is still held open.
+  // Synchronising on the response and not on the button is the point: the
+  // button is enabled before the click too, so `toBeEnabled` can resolve on
+  // its first poll, before React has even applied the disabling update — and
+  // the assertion below would then run at a moment when nothing has happened,
+  // which is exactly when the single-slot guard still looks correct.
+  const answered = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/v2/albums/album-2",
+  );
   await page.locator(".grid li").nth(1).hover();
   await fastQueue.click();
+  await answered;
   await expect(fastQueue).toBeEnabled();
 
   // The first album has not answered, so its actions must still be refused.
@@ -362,4 +390,32 @@ test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+});
+
+/**
+ * `GET /history` answers plays and not songs, so every distinct track on this
+ * screen is a request of its own, and they all leave together. Without a cap a
+ * long history meant a hundred-odd round trips for a list nobody reads to the
+ * bottom of. The window stays wide — 200 plays asked for — and only what is
+ * resolved is bounded.
+ */
+test("resolves a bounded number of tracks from a long history", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/v2/tracks/")) asked.push(path);
+  });
+
+  await page.goto("/history");
+  await expect(
+    page.getByRole("heading", { name: "Recently played" }),
+  ).toBeVisible();
+
+  await expect(page.locator(".songs tbody tr")).toHaveCount(50);
+  expect(asked).toHaveLength(50);
+  // The newest plays are the ones kept, not an arbitrary fifty.
+  expect(asked[0]).toBe("/api/v2/tracks/t0");
+  expect(asked.at(-1)).toBe("/api/v2/tracks/t49");
 });
