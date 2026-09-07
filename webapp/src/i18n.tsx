@@ -212,6 +212,14 @@ const en = {
   "bookmarks.detail": "One per track. Saving again moves it.",
   "bookmarks.save": "Save this position",
   "bookmarks.forget": "Forget",
+  "player.shuffle": "Shuffle",
+  "player.repeatOff": "Repeat: off",
+  "player.repeatAll": "Repeat: the whole queue",
+  "player.repeatOne": "Repeat: this track",
+  "player.volume": "Volume",
+  "player.mute": "Mute",
+  "player.unmute": "Unmute",
+  "player.openAlbum": "Open the album",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -421,6 +429,14 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "bookmarks.detail": "Une par piste. Enregistrer à nouveau la déplace.",
   "bookmarks.save": "Enregistrer cette position",
   "bookmarks.forget": "Oublier",
+  "player.shuffle": "Lecture aléatoire",
+  "player.repeatOff": "Répétition : aucune",
+  "player.repeatAll": "Répétition : toute la file",
+  "player.repeatOne": "Répétition : cette piste",
+  "player.volume": "Volume",
+  "player.mute": "Couper le son",
+  "player.unmute": "Rétablir le son",
+  "player.openAlbum": "Ouvrir l’album",
 };
 
 export type Locale = "en" | "fr";
