@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
   createContext,
   type ReactNode,
@@ -8,7 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-
 import {
   artworkUrl,
   formatDuration,
@@ -18,9 +18,90 @@ import {
   scrobble,
   streamUrl,
 } from "./api";
+
 import { Artwork } from "./artwork";
 import { useI18n } from "./i18n";
 import { Icon } from "./icons";
+
+const VOLUME_KEY = "waveflow.volume";
+
+/**
+ * The last level this browser was left at. Per-viewer and per-device on
+ * purpose: how loud a laptop should be is not a property of the account.
+ */
+function readStoredVolume(): number {
+  try {
+    const saved = Number(localStorage.getItem(VOLUME_KEY));
+    if (Number.isFinite(saved) && saved >= 0 && saved <= 1) return saved;
+  } catch {
+    // Private windows and blocked site data both land here; full volume is a
+    // safe answer and the session still works without persistence.
+  }
+  return 1;
+}
+
+export type RepeatMode = "off" | "all" | "one";
+
+/**
+ * The order playback walks, as positions into the queue.
+ *
+ * Shuffling is a *reading order* and not a rearrangement of the queue: the
+ * queue page keeps showing what was queued, in the order it was queued, and
+ * turning shuffle off resumes the line where it left it. Shuffling the array
+ * itself would lose that, and would make "add to queue" land somewhere the
+ * listener did not choose.
+ *
+ * The current position leads, so enabling shuffle never interrupts what is
+ * playing.
+ */
+export function shuffledOrder(
+  length: number,
+  current: number,
+  random: () => number = Math.random,
+): number[] {
+  const rest = Array.from({ length }, (_, index) => index).filter(
+    (index) => index !== current,
+  );
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [rest[i], rest[j]] = [rest[j] as number, rest[i] as number];
+  }
+  return current >= 0 && current < length ? [current, ...rest] : rest;
+}
+
+/**
+ * Where playback goes after `current`, or `null` to stop there.
+ *
+ * `automatic` says whether the track ended by itself or the listener pressed
+ * next, and it is the whole of what separates them: `repeat: "one"` replays a
+ * track that ended, but pressing next under it still moves on. A next button
+ * that did nothing would look broken.
+ */
+export function advance(
+  order: number[],
+  current: number,
+  repeat: RepeatMode,
+  automatic: boolean,
+): number | null {
+  if (repeat === "one" && automatic) return current;
+  const at = order.indexOf(current);
+  if (at === -1) return null;
+  const following = order[at + 1];
+  if (following !== undefined) return following;
+  return repeat === "all" ? (order[0] ?? null) : null;
+}
+
+/** Where "previous" goes. Wraps only when the whole queue repeats. */
+export function retreat(
+  order: number[],
+  current: number,
+  repeat: RepeatMode,
+): number | null {
+  const at = order.indexOf(current);
+  if (at === -1) return null;
+  if (at > 0) return order[at - 1] ?? null;
+  return repeat === "all" ? (order[order.length - 1] ?? null) : null;
+}
 
 type PlayerState = {
   queue: Song[];
@@ -31,6 +112,15 @@ type PlayerState = {
   play: (queue: Song[], index: number) => void;
   /** Appends to the end of the queue without disturbing what is playing. */
   enqueue: (songs: Song[]) => void;
+  shuffle: boolean;
+  toggleShuffle: () => void;
+  repeat: RepeatMode;
+  cycleRepeat: () => void;
+  /** 0 to 1. Muting keeps the level, so unmuting returns to it. */
+  volume: number;
+  setVolume: (volume: number) => void;
+  muted: boolean;
+  toggleMute: () => void;
   remove: (index: number) => void;
   clear: () => void;
   toggle: () => void;
@@ -83,6 +173,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackError, setPlaybackError] = useState(false);
+  const [shuffle, setShuffle] = useState(false);
+  const [repeat, setRepeat] = useState<RepeatMode>("off");
+  // The reading order, as queue positions. Identity while shuffle is off, so
+  // the linear path costs nothing to express.
+  const [order, setOrder] = useState<number[]>([]);
+  const orderRef = useRef<number[]>([]);
+  const repeatRef = useRef<RepeatMode>("off");
+  const [volume, setVolumeState] = useState(() => readStoredVolume());
+  const [muted, setMuted] = useState(false);
   // A completed listen is reported once per track, when playback passes half
   // of it — the same threshold the Subsonic clients use for a submission.
   const submitted = useRef<string | null>(null);
@@ -105,6 +204,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const preloader = useRef<HTMLAudioElement | null>(null);
 
   const current = queue[index] ?? null;
+  orderRef.current =
+    order.length === queue.length
+      ? order
+      : Array.from({ length: queue.length }, (_, position) => position);
+  repeatRef.current = repeat;
   queueLength.current = queue.length;
   queueRef.current = queue;
   indexRef.current = index;
@@ -165,9 +269,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onEnd = () => {
       localMutation.current = true;
       setIndex((value) => {
-        const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
-        autoplay.current = next !== value;
-        return next;
+        const target = advance(
+          orderRef.current,
+          value,
+          repeatRef.current,
+          true,
+        );
+        // Nothing follows: stay on the last track rather than stepping past it,
+        // because an out-of-range index empties `current` and the player bar
+        // vanishes mid-listen.
+        if (target === null) return value;
+        // Repeat-one lands on the same index, which changes no state and so
+        // would not restart the element. Rewind and play it again by hand.
+        if (target === value) {
+          element.currentTime = 0;
+          submitted.current = null;
+          void element.play().catch(() => undefined);
+          return value;
+        }
+        autoplay.current = true;
+        return target;
       });
     };
     const onPlay = () => {
@@ -335,6 +456,65 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (element && !element.paused) element.pause();
   }, []);
 
+  // The element is the authority on level; state mirrors it for the control.
+  useEffect(() => {
+    const element = audio.current;
+    if (!element) return;
+    element.volume = volume;
+    element.muted = muted;
+  }, [volume, muted]);
+
+  const setVolume = useCallback((next: number) => {
+    const bounded = Math.max(0, Math.min(1, next));
+    setVolumeState(bounded);
+    // Touching the slider is how someone unmutes without hunting for the
+    // button, so raising the level clears the mute.
+    if (bounded > 0) setMuted(false);
+    try {
+      localStorage.setItem(VOLUME_KEY, String(bounded));
+    } catch {
+      // The level still applies for this session without persistence.
+    }
+  }, []);
+
+  const toggleMute = useCallback(() => setMuted((value) => !value), []);
+
+  const toggleShuffle = useCallback(() => {
+    setShuffle((on) => {
+      const next = !on;
+      setOrder(
+        next
+          ? shuffledOrder(queueRef.current.length, indexRef.current)
+          : Array.from(
+              { length: queueRef.current.length },
+              (_, position) => position,
+            ),
+      );
+      return next;
+    });
+  }, []);
+
+  const cycleRepeat = useCallback(
+    () =>
+      setRepeat((mode) =>
+        mode === "off" ? "all" : mode === "all" ? "one" : "off",
+      ),
+    [],
+  );
+
+  // A queue that changed length invalidates the reading order. Redrawing it
+  // rather than patching it keeps "shuffled" meaning a permutation of what is
+  // actually queued, whatever was added or removed.
+  useEffect(() => {
+    setOrder((current) =>
+      current.length === queue.length
+        ? current
+        : shuffle
+          ? shuffledOrder(queue.length, indexRef.current)
+          : Array.from({ length: queue.length }, (_, position) => position),
+    );
+  }, [queue.length, shuffle]);
+
   const toggle = useCallback(() => {
     if (audio.current?.paused) startPlayback();
     else pausePlayback();
@@ -343,18 +523,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const next = useCallback(() => {
     localMutation.current = true;
     setIndex((value) => {
-      const next = Math.min(value + 1, Math.max(queueLength.current - 1, 0));
-      autoplay.current = next !== value;
-      return next;
+      // Pressed, not ended: `repeat: "one"` must not trap the button here.
+      const target = advance(orderRef.current, value, repeatRef.current, false);
+      if (target === null) return value;
+      autoplay.current = target !== value;
+      return target;
     });
   }, []);
 
   const previous = useCallback(() => {
     localMutation.current = true;
     setIndex((value) => {
-      const previous = Math.max(value - 1, 0);
-      autoplay.current = previous !== value;
-      return previous;
+      const target = retreat(orderRef.current, value, repeatRef.current);
+      if (target === null) return value;
+      autoplay.current = target !== value;
+      return target;
     });
   }, []);
 
@@ -506,6 +689,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       next,
       previous,
       seek,
+      shuffle,
+      toggleShuffle,
+      repeat,
+      cycleRepeat,
+      volume,
+      setVolume,
+      muted,
+      toggleMute,
     }),
     [
       queue,
@@ -519,6 +710,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       previous,
       persistQueue,
       seek,
+      shuffle,
+      toggleShuffle,
+      repeat,
+      cycleRepeat,
+      volume,
+      setVolume,
+      muted,
+      toggleMute,
     ],
   );
 
@@ -546,19 +745,50 @@ export function PlayerBar() {
     player.seek(value);
     setScrubbing(null);
   };
+  const cover = (
+    <Artwork
+      artworkId={player.current.artwork_hash}
+      title={player.current.title}
+      className="player-cover"
+    />
+  );
+  const repeatLabel =
+    player.repeat === "off"
+      ? t("player.repeatOff")
+      : player.repeat === "all"
+        ? t("player.repeatAll")
+        : t("player.repeatOne");
   return (
     <footer className="player">
-      <Artwork
-        artworkId={player.current.artwork_hash}
-        title={player.current.title}
-        className="player-cover"
-      />
+      {/* The cover is the way back to what is playing. Without it the only
+          route to the album of the current track is to remember its name and
+          search for it. */}
+      {player.current.album_id ? (
+        <Link
+          to="/albums/$albumId"
+          params={{ albumId: player.current.album_id }}
+          aria-label={`${t("player.openAlbum")}: ${player.current.album ?? player.current.title}`}
+        >
+          {cover}
+        </Link>
+      ) : (
+        cover
+      )}
       <div className="player-track">
         <strong>{player.current.title}</strong>
         <span>{player.current.artist ?? t("common.unknownArtist")}</span>
         {player.error ? <small role="alert">{t("player.error")}</small> : null}
       </div>
       <div className="player-controls">
+        <button
+          type="button"
+          className={player.shuffle ? "mode on" : "mode"}
+          onClick={player.toggleShuffle}
+          aria-label={t("player.shuffle")}
+          aria-pressed={player.shuffle}
+        >
+          <Icon name="random" size={18} />
+        </button>
         <button
           type="button"
           onClick={player.previous}
@@ -568,6 +798,7 @@ export function PlayerBar() {
         </button>
         <button
           type="button"
+          className="primary"
           onClick={player.toggle}
           aria-label={player.playing ? t("player.pause") : t("player.play")}
         >
@@ -579,6 +810,20 @@ export function PlayerBar() {
           aria-label={t("player.next")}
         >
           <Icon name="next" />
+        </button>
+        {/* Three states on one button, so its label carries the current one
+            rather than the action — a screen reader hearing "repeat" alone
+            could not tell which of the three is on. */}
+        <button
+          type="button"
+          className={player.repeat === "off" ? "mode" : "mode on"}
+          onClick={player.cycleRepeat}
+          aria-label={repeatLabel}
+        >
+          <Icon
+            name={player.repeat === "one" ? "repeatOne" : "repeat"}
+            size={18}
+          />
         </button>
       </div>
       <div className="player-progress">
@@ -596,6 +841,30 @@ export function PlayerBar() {
           aria-label={t("player.seek")}
         />
         <span>{formatDuration(progress.duration * 1000)}</span>
+      </div>
+      <div className="player-aside">
+        <button
+          type="button"
+          onClick={player.toggleMute}
+          aria-label={player.muted ? t("player.unmute") : t("player.mute")}
+          aria-pressed={player.muted}
+        >
+          <Icon name={player.muted ? "muted" : "volume"} size={18} />
+        </button>
+        <input
+          type="range"
+          className="volume"
+          min={0}
+          max={1}
+          step={0.01}
+          value={player.muted ? 0 : player.volume}
+          onChange={(event) => player.setVolume(Number(event.target.value))}
+          aria-label={t("player.volume")}
+        />
+        <Link className="nav-action" to="/queue">
+          <Icon name="queue" size={18} />
+          <span>{t("nav.queue")}</span>
+        </Link>
       </div>
     </footer>
   );
