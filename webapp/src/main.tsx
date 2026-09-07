@@ -27,10 +27,15 @@ import {
   ArtistsPage,
   AuthorizePage,
   FavoritesPage,
+  GenrePage,
+  GenresPage,
+  HistoryPage,
   LoginPage,
   NotFoundPage,
+  PlayingPage,
   PlaylistsPage,
   QueuePage,
+  RandomPage,
   SearchPage,
   SharesPage,
 } from "./pages";
@@ -42,8 +47,12 @@ const navigation: Array<{
   to:
     | "/"
     | "/artists"
+    | "/genres"
     | "/search"
     | "/favourites"
+    | "/history"
+    | "/random"
+    | "/playing"
     | "/playlists"
     | "/queue"
     | "/shares"
@@ -55,7 +64,11 @@ const navigation: Array<{
 }> = [
   { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
   { to: "/artists", labelKey: "nav.artists", icon: "artists" },
+  { to: "/genres", labelKey: "nav.genres", icon: "genres" },
   { to: "/search", labelKey: "nav.search", icon: "search", primary: true },
+  { to: "/playing", labelKey: "nav.playing", icon: "lyrics", primary: true },
+  { to: "/random", labelKey: "nav.random", icon: "random" },
+  { to: "/history", labelKey: "nav.history", icon: "history" },
   {
     to: "/favourites",
     labelKey: "nav.favourites",
@@ -241,6 +254,39 @@ const authorizeRoute = createRoute({
   component: AuthorizePage,
 });
 
+const genresRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/genres",
+  component: GenresPage,
+});
+
+const genreRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/genres/$genre",
+  component: function GenreRoute() {
+    const { genre } = genreRoute.useParams();
+    return <GenrePage genre={genre} />;
+  },
+});
+
+const historyRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/history",
+  component: HistoryPage,
+});
+
+const randomRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/random",
+  component: RandomPage,
+});
+
+const playingRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/playing",
+  component: PlayingPage,
+});
+
 const searchRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/search",
@@ -287,6 +333,11 @@ const routeTree = rootRoute.addChildren([
     albumRoute,
     artistsRoute,
     artistRoute,
+    genresRoute,
+    genreRoute,
+    historyRoute,
+    randomRoute,
+    playingRoute,
     searchRoute,
     favoritesRoute,
     playlistsRoute,

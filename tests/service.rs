@@ -207,6 +207,17 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
         .unwrap()
         .starts_with("text/html"));
 
+    // A route parameter carrying an encoded slash still resolves to the shell.
+    // Genres are the case that raises it — "Rock/Pop" is one tag, and the
+    // client routes it as /genres/Rock%2FPop — so a link to one, shared or
+    // reloaded, must not decode into a two-segment path that matches nothing.
+    let encoded = get("/genres/Rock%2FPop").await;
+    assert_eq!(encoded.status(), StatusCode::OK);
+    assert!(encoded.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
     // An unknown API path stays a JSON 404 instead of silently returning HTML.
     let missing_api = get("/api/v2/does-not-exist").await;
     assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
