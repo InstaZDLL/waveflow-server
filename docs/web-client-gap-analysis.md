@@ -290,9 +290,10 @@ historique, aléatoire, sélecteur de bibliothèque. Onze routes qui existent, u
 > **État au 2026-09-06.** Six des sept sont branchés : notes cinq étoiles sur le
 > tableau de pistes, genres (liste et page par genre), écoutes récentes,
 > aléatoire, paroles et positions enregistrées dans une vue « en écoute ».
-> **Le sélecteur de bibliothèque est laissé de côté volontairement** — c'est la
-> première des questions ouvertes ci-dessous, et la trancher en passant
-> reviendrait à décider la navigation du client web sans le dire.
+> **Le sélecteur de bibliothèque était laissé de côté volontairement** — c'était
+> la première des questions ouvertes ci-dessous. **Tranchée le 2026-09-07 : une
+> bibliothèque active à la fois.** Il reste donc à écrire, et il rejoint le
+> lot C plutôt que de rouvrir le lot B.
 >
 > Trois choses apprises en branchant. `GET /songs?genre=` prend le genre en
 > forme d'affichage et le canonicalise avant de comparer, donc « Hip-Hop » et
@@ -304,13 +305,123 @@ historique, aléatoire, sélecteur de bibliothèque. Onze routes qui existent, u
 
 **Lot C — le lecteur et l'exploitation.** Volume, aléatoire, répétition, file
 accessible, retour vers l'album. Puis côté administration : progression de scan
-en direct, en écoute maintenant, membres, jetons.
+en direct, en écoute maintenant, membres, jetons. **Plus le sélecteur de
+bibliothèque**, reliquat du lot B, désormais décidé et donc écrivable : une
+bibliothèque active, masquée s'il n'y en a qu'une, mémorisée d'une visite à
+l'autre.
 
 **Lot D — les surfaces récentes.** Correction de tags, puis téléversement, puis
-canvas. Dans cet ordre : la correction est un formulaire, le téléversement est
-une machine, le canvas suppose que le lecteur du lot C existe.
+canvas. Dans cet ordre : le téléversement est une machine, et le canvas suppose
+que le lecteur du lot C existe.
+
+> **Rectifié le 2026-09-07.** Cette ligne disait « la correction est un
+> formulaire ». Elle ne l'est pas : `GET /tracks/{id}` n'expose aucune
+> provenance et `PATCH /tracks/{id}` efface les corrections qu'on ne lui renvoie
+> pas, ce qu'un client ne peut pas faire puisqu'il ne peut pas les lire. Le
+> premier item du lot D demande donc **du serveur avant de l'écran** : la route
+> de lecture `/tracks/{id}/overrides` et la correction du `PATCH` existant en
+> patch partiel, décrites plus haut. C'est la sixième affirmation de ce document
+> corrigée en la mettant en œuvre, et la seule dont l'enjeu était une perte de
+> données silencieuse.
 
 Le scrobbling externe ne rentre dans aucun lot. Il demande une RFC.
+
+## Le contrat des corrections de tags
+
+> Décidé le 2026-09-07, avant le lot D. Ceci n'est pas une règle d'écran : les
+> trois notions ci-dessous vont se retrouver dans l'API, la recherche, le tri,
+> les albums, les artistes et peut-être la synchronisation.
+
+### Trois valeurs, et une seule sort du catalogue
+
+```
+source     = ce que contient le fichier          (colonnes de `track`)
+override   = la correction WaveFlow, ou absente  (ligne de `track_override`)
+effective  = override ?? source
+```
+
+Le serveur travaille déjà ainsi et le dit : la migration
+`20260826010000_track_override.sql` écrit « *every column is nullable and NULL
+means "no correction here, use what the file said"* », et `song_select!` fait
+`COALESCE(ovr.title, t.title)`. **Tout le catalogue consomme `effective`.**
+L'écran ordinaire affiche donc `Around the World` et rien d'autre — pas de
+double ligne, pas de mention de provenance dans une grille.
+
+Le vocabulaire compte : ce n'est pas un *tag modifié*, puisque le fichier n'est
+pas touché. C'est un **override**, une **valeur WaveFlow**, une **correction**.
+
+### Ce qui manque pour construire l'éditeur
+
+Deux défauts, trouvés en préparant le lot D, et le second est le grave.
+
+**La provenance n'est exposée nulle part.** `GET /api/v2/tracks/{id}` rend un
+`SongItem`, donc la valeur effective, et rien ne dit si un titre vient du
+fichier ou d'une correction. Un éditeur ne peut pas montrer ce qu'il propose de
+rétablir.
+
+**`PATCH /api/v2/tracks/{id}` remplace le jeu entier.** Un champ omis n'est pas
+« laissé tel quel » : il est *effacé*, et un corps vide supprime la ligne. Comme
+le client ne peut pas lire les corrections existantes, corriger le seul titre
+efface silencieusement les autres. Ce n'est pas une gêne d'ergonomie, c'est une
+perte de données sans message.
+
+### La forme retenue
+
+Une route de lecture nouvelle, et la route d'écriture existante corrigée.
+
+```
+GET   /api/v2/tracks/{id}            → SongItem, valeur effective, inchangé
+GET   /api/v2/tracks/{id}/overrides  → { source: {…}, overrides: {…} }
+PATCH /api/v2/tracks/{id}            → patch partiel à trois états
+```
+
+`overrides` doit être la **ligne réelle**, pas une seconde projection
+`COALESCE` : c'est précisément la différence que l'éditeur affiche. `effective`
+n'a pas à y figurer, le client tient déjà le `SongItem`.
+
+Le patch a trois états, et c'est là tout l'intérêt :
+
+| Le corps porte | Effet |
+| --- | --- |
+| rien pour ce champ | la correction ne bouge pas |
+| une valeur | crée ou remplace la correction |
+| `null` | supprime la correction ; `effective` redevient la valeur du fichier |
+
+« Rétablir la valeur du fichier » est donc `{"title": null}`, et non un verbe
+séparé.
+
+**Pourquoi corriger la route plutôt que d'en ajouter une seconde.** Un
+`PATCH /tracks/{id}/overrides` à côté d'un `PATCH /tracks/{id}` laisserait ce
+dépôt avec **deux API d'écriture pour la même chose, pour toujours**, au seul
+motif que la première avait une mauvaise sémantique — décidée avant même que la
+bêta sorte, et corrigeable tant qu'elle n'est pas gelée. La lecture est un
+besoin nouveau et mérite sa route ; l'écriture n'en est pas un.
+
+**Pourquoi pas les autres formes de provenance.** `?with_source=true` donnerait
+deux formes de réponse à une même route pour un besoin qui n'existe que dans
+l'éditeur. Des champs `source_*` sur `SongItem` alourdiraient le type central du
+catalogue pour une information rarement lue — et `SongItem` alimente
+`song_node()` de la façade Subsonic, gelée pour `v2.0-beta`.
+
+### Deux prérequis avant d'écrire une ligne
+
+**Auditer le client desktop.** Il vit dans
+[`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow), hors de ce dépôt,
+et c'est le seul consommateur possible de la sémantique actuelle : le client web
+n'a que deux `PATCH`, sur les playlists et sur les comptes, et rien dans `docs/`
+ne déclare `/api/v2` gelé — le gel couvre la façade Subsonic et les contrats de
+synchronisation de RFC-003, dont cette route ne fait pas partie. S'il dépend du
+remplacement intégral, il se migre en même temps ou le contrat se versionne.
+Changer la sémantique sans avoir regardé serait échanger une perte de données
+silencieuse contre une autre.
+
+**`Option<T>` ne sait pas dire les trois états.** `TrackMetadataPatch` déclare
+`pub title: Option<String>` en serde nu, et un champ **absent** et un champ
+**`null`** s'y désérialisent tous deux en `None` : le tri-état n'est pas
+exprimable dans cette forme. Il faut `Option<Option<T>>` avec un
+`deserialize_with` qui distingue les deux. À défaut, on écrit le contrat, on
+teste « absent ne touche à rien », et `null` se comporte à l'identique sans
+qu'un test le remarque.
 
 ## Rappel de périmètre
 
@@ -321,14 +432,28 @@ n'est pas sur ce chemin critique.
 
 ## Ce qui reste ouvert
 
-- **Le sélecteur de bibliothèque** est le seul point où Navidrome est devant sur
-  une fonction que WaveFlow possède. Reste à décider si la navigation web est
-  cadrée par une bibliothèque à la fois, ou agrégée avec une bibliothèque comme
-  filtre. **C'est le seul point du lot B qui n'a pas été branché**, et c'est
-  pour cette raison : le reste du lot ne demandait qu'un `fetch`, celui-ci
-  demande une décision sur ce qu'est une session de navigation.
-- **Ce qu'on montre d'une correction de tags** quand elle diverge du fichier :
-  la valeur corrigée seule, ou les deux avec leur provenance.
+- ~~**Le sélecteur de bibliothèque.**~~ **Tranché le 2026-09-07 : une
+  bibliothèque active à la fois.** Le contrat, en une phrase : *l'interface web
+  travaille toujours dans une bibliothèque ; en changer change le périmètre du
+  catalogue, cela ne fusionne pas les catalogues.* Pas d'option « toutes les
+  bibliothèques » en v2.
+
+  Ce n'est pas l'écran du filtre qui coûtait, c'est la sémantique derrière :
+  deux bibliothèques portant le même disque posent aussitôt quatre questions —
+  un album affiché deux fois, ou un album à deux provenances, ou deux éditions,
+  et laquelle fournit la pochette, l'année, les tags. C'est le problème
+  d'identité que `src/pid.rs` résout pour les fichiers, reposé à l'étage de la
+  présentation. Le client desktop peut unifier ses sources ; l'interface du
+  serveur est la vue d'**un** catalogue serveur, et n'a pas à reproduire le
+  modèle de présentation du client.
+
+  Deux détails à respecter : masquer le sélecteur quand une seule bibliothèque
+  est accessible, et mémoriser la dernière choisie.
+
+- ~~**Ce qu'on montre d'une correction de tags.**~~ **Tranché le 2026-09-07 :
+  valeur effective partout, provenance dans le seul éditeur.** Voir le contrat
+  ci-dessous — la question s'est révélée être une évolution d'API et non une
+  règle d'interface.
 - ~~**Le sort du serif.**~~ **Tranché le 2026-09-06 : système.** Et la question
   reposait sur une prémisse fausse — voir le geste rectifié plus haut. Il ne
   restait qu'à nommer les deux piles au lieu de les répéter.
@@ -337,6 +462,19 @@ n'est pas sur ce chemin critique.
   écoute, aléatoire, écoutes récentes — occupent l'espace que le lot A avait
   laissé vide. C'était le bon ordre : le vide voulait du contenu, et le contenu
   a fini par exister.
-- **Les langues.** Deux aujourd'hui, trente-quatre chez Navidrome. La question
-  n'est pas d'y arriver mais de savoir si l'infrastructure de `i18n.tsx` tient
-  au-delà d'une poignée.
+- **CodeQL sur `tests/**`.** **Tranché le 2026-09-07 : on garde l'analyse.**
+  Le workflow porte déjà un `config:` en ligne, mais la configuration CodeQL ne
+  croise pas chemin et règle : on peut ignorer `tests/**` pour *toutes* les
+  règles, ou filtrer une règle sur *tous* les chemins — l'intersection « cette
+  règle, dans les tests seulement » n'est pas exprimable. Couper `tests/**`
+  ferait perdre le signal sur les aides de test, les fixtures et le code de
+  montage réutilisable, ce qui est bien plus large que le faux positif visé. On
+  écarte donc les occurrences connues à la main. Si cela devenait trente
+  alertes par semaine, la question se rouvrirait.
+- ~~**Les langues.**~~ **Tranché le 2026-09-07 : rien maintenant.** Deux langues
+  × 171 clés ne justifient pas une refonte. La règle est posée d'avance :
+  **l'ajout d'une troisième langue déclenche la conversion des dictionnaires en
+  modules chargés à la demande**, la langue active plus l'anglais en repli.
+  Optimiser aujourd'hui pour trente-quatre langues qui n'existent pas serait
+  prématuré ; continuer avec un `Record` statique le jour où elles existent
+  serait une faute.
