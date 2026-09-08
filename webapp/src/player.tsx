@@ -29,9 +29,14 @@ const VOLUME_KEY = "waveflow.volume";
  * The last level this browser was left at. Per-viewer and per-device on
  * purpose: how loud a laptop should be is not a property of the account.
  */
-function readStoredVolume(): number {
+export function readStoredVolume(): number {
   try {
-    const saved = Number(localStorage.getItem(VOLUME_KEY));
+    // `Number(null)` is 0, and so is `Number("")`. Converting before checking
+    // that anything was stored started every fresh browser silent, at a level
+    // nobody had chosen and with the mute button reporting nothing was muted.
+    const raw = localStorage.getItem(VOLUME_KEY);
+    if (raw === null || raw.trim() === "") return 1;
+    const saved = Number(raw);
     if (Number.isFinite(saved) && saved >= 0 && saved <= 1) return saved;
   } catch {
     // Private windows and blocked site data both land here; full volume is a
@@ -267,29 +272,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Stop on the last track rather than stepping past it: an out-of-range
     // index empties `current` and the player bar vanishes mid-listen.
     const onEnd = () => {
+      // Decided out here rather than inside a `setIndex` updater: React may
+      // call an updater more than once, and this one rewound and restarted the
+      // element, which would then have happened twice.
+      const from = indexRef.current;
+      const target = advance(orderRef.current, from, repeatRef.current, true);
+      // Nothing follows: stay on the last track rather than stepping past it,
+      // because an out-of-range index empties `current` and the player bar
+      // vanishes mid-listen.
+      if (target === null) return;
       localMutation.current = true;
-      setIndex((value) => {
-        const target = advance(
-          orderRef.current,
-          value,
-          repeatRef.current,
-          true,
-        );
-        // Nothing follows: stay on the last track rather than stepping past it,
-        // because an out-of-range index empties `current` and the player bar
-        // vanishes mid-listen.
-        if (target === null) return value;
+      if (target === from) {
         // Repeat-one lands on the same index, which changes no state and so
         // would not restart the element. Rewind and play it again by hand.
-        if (target === value) {
-          element.currentTime = 0;
-          submitted.current = null;
-          void element.play().catch(() => undefined);
-          return value;
-        }
-        autoplay.current = true;
-        return target;
-      });
+        element.currentTime = 0;
+        submitted.current = null;
+        void element.play().catch(() => undefined);
+        return;
+      }
+      autoplay.current = true;
+      setIndex(target);
     };
     const onPlay = () => {
       suppressedPauseEvents.current = 0;
@@ -479,20 +481,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const toggleMute = useCallback(() => setMuted((value) => !value), []);
 
-  const toggleShuffle = useCallback(() => {
-    setShuffle((on) => {
-      const next = !on;
-      setOrder(
-        next
-          ? shuffledOrder(queueRef.current.length, indexRef.current)
-          : Array.from(
-              { length: queueRef.current.length },
-              (_, position) => position,
-            ),
-      );
-      return next;
-    });
-  }, []);
+  const toggleShuffle = useCallback(() => setShuffle((on) => !on), []);
 
   const cycleRepeat = useCallback(
     () =>
@@ -502,17 +491,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // A queue that changed length invalidates the reading order. Redrawing it
-  // rather than patching it keeps "shuffled" meaning a permutation of what is
-  // actually queued, whatever was added or removed.
+  // The reading order is owned here, in one place: a queue that changed length
+  // invalidates it, and so does switching the mode. Redrawing rather than
+  // patching keeps "shuffled" meaning a permutation of what is actually
+  // queued, whatever was added or removed.
+  //
+  // `toggleShuffle` used to set the order from inside `setShuffle`'s updater,
+  // which is a side effect in a place React is free to run twice. Deriving it
+  // from the mode instead makes the toggle a plain state change.
   useEffect(() => {
-    setOrder((current) =>
-      current.length === queue.length
+    setOrder((current) => {
+      const linear = Array.from(
+        { length: queue.length },
+        (_, position) => position,
+      );
+      if (!shuffle) return linear;
+      // Keep a shuffle that is still a permutation of this queue, so adding a
+      // favourite mid-listen does not reshuffle everything under the listener.
+      return current.length === queue.length && current.some((n, i) => n !== i)
         ? current
-        : shuffle
-          ? shuffledOrder(queue.length, indexRef.current)
-          : Array.from({ length: queue.length }, (_, position) => position),
-    );
+        : shuffledOrder(queue.length, indexRef.current);
+    });
   }, [queue.length, shuffle]);
 
   const toggle = useCallback(() => {

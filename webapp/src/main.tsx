@@ -43,6 +43,7 @@ import {
   RandomPage,
   SearchPage,
   SharesPage,
+  Waiting,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
@@ -140,7 +141,9 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
  */
 function ScopedOutlet() {
   const { ready } = useLibraryScope();
-  return ready ? <Outlet /> : null;
+  // Announced rather than blank: a screen reader on an empty `main` has
+  // nothing to say, and the wait is a round trip the visitor did not ask for.
+  return ready ? <Outlet /> : <Waiting />;
 }
 
 function Shell() {
