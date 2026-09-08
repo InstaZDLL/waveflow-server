@@ -1847,7 +1847,15 @@ button.danger {
 }
 
 /* A path is long and moves fast; it stays on one line and truncates rather
-   than reflowing the panel on every file. */
+   than reflowing the panel on every file. `direction: rtl` is what keeps the
+   ellipsis at the *start*, so the file name — the part that says where the
+   scan is — stays readable.
+   `unicode-bidi: plaintext` is what makes that safe: an RTL paragraph
+   reorders neutral characters, and a path is mostly neutrals. Without it the
+   separators and a trailing extension drift, so `/music/a.flac` could be shown
+   with its slashes in the wrong places. Plaintext takes the direction from the
+   first strong character in the string instead, which for a path is its first
+   letter. */
 .scan-path {
   overflow: hidden;
   margin: 0;
@@ -1857,6 +1865,7 @@ button.danger {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
+  unicode-bidi: plaintext;
 }
 
 .admin-panel .resource-list li > div {
@@ -1866,4 +1875,46 @@ button.danger {
 
 .admin-panel .resource-list small {
   font-size: 0.72rem;
+}
+
+/* The token list is closed until asked for. Its heading is the control that
+   opens it, so the button has to read as the heading it sits in. */
+.token-panel h3 {
+  margin: 0;
+}
+
+.token-panel h3 button {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.token-panel h3 button::before {
+  color: var(--muted);
+  content: "▸";
+  font-size: 0.7rem;
+  transition: rotate 160ms ease;
+}
+
+.token-panel h3 button[aria-expanded="true"]::before {
+  rotate: 90deg;
+}
+
+.token-panel h3 button:hover {
+  background: none;
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .token-panel h3 button::before {
+    transition: none;
+  }
 }

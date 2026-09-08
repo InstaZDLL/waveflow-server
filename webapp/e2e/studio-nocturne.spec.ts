@@ -58,10 +58,23 @@ const history = Array.from({ length: 120 }, (_, index) => ({
   played_at: 1_000_000 - index,
 }));
 
+/**
+ * The whole `Library` shape, not just what the picker reads. A fixture that
+ * only carries the fields one screen happens to use is how the admin page went
+ * down on an absent `folder_ids`: the next screen to touch it reads a field
+ * nobody remembered to mock.
+ */
+const library = (id: string, name: string) => ({
+  id,
+  name,
+  visibility: "private" as const,
+  role: "owner" as const,
+  last_scan_started_at: null,
+  last_scan_completed_at: null,
+});
+
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
-let libraries: Array<{ id: string; name: string }> = [
-  { id: "library-1", name: "Ma musique" },
-];
+let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
 
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
@@ -239,7 +252,7 @@ async function mockAuthenticatedApi(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  libraries = [{ id: "library-1", name: "Ma musique" }];
+  libraries = [library("library-1", "Ma musique")];
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -570,8 +583,8 @@ test("scopes the catalogue to the active library, and hides the picker when ther
   });
 
   libraries = [
-    { id: "library-1", name: "Ma musique" },
-    { id: "library-2", name: "Les enfants" },
+    library("library-1", "Ma musique"),
+    library("library-2", "Les enfants"),
   ];
 
   await page.goto("/");
@@ -652,4 +665,34 @@ test("follows a scan while it runs", async ({ page }) => {
   ).toBeVisible();
   // A finished scan stops showing the file it is on.
   await expect(panel.locator(".scan-path")).toHaveCount(0);
+});
+
+/**
+ * API tokens are rendered once per account, so loading them on mount meant one
+ * request per account every time the admin screen opened — for a list almost
+ * nobody opens. They wait for the panel to be opened.
+ */
+test("asks for a account's tokens only when its panel is opened", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/tokens")) asked.push(path);
+  });
+
+  await page.goto("/admin");
+  await expect(
+    page.getByRole("heading", { name: "Administration" }),
+  ).toBeVisible();
+  const disclosure = page.getByRole("button", {
+    name: "API tokens for listener",
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(asked).toEqual([]);
+
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("No token on this account.")).toBeVisible();
+  expect(asked).toEqual(["/api/v2/admin/users/listener/tokens"]);
 });

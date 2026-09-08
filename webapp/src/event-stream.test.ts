@@ -26,11 +26,13 @@ describe("drainEventStream", () => {
     expect(second.rest).toBe("");
   });
 
-  it("joins a payload spread over several data lines", () => {
-    // The specification concatenates them, and a long `current_path` is how
-    // this shows up in practice.
+  it("joins consecutive data lines with the line feed the spec calls for", () => {
+    // The specification separates them with a newline rather than dropping it.
+    // JSON reads the break as whitespace so a split payload still parses, but
+    // concatenating outright would corrupt a payload that is not JSON.
     const drained = drainEventStream('data: {"path":\ndata: "/a/b"}\n\n');
-    expect(drained.data).toEqual(['{"path":"/a/b"}']);
+    expect(drained.data).toEqual(['{"path":\n"/a/b"}']);
+    expect(JSON.parse(drained.data[0] as string)).toEqual({ path: "/a/b" });
   });
 
   it("ignores keep-alive comments and fields that are not data", () => {

@@ -111,6 +111,19 @@ function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
   return { value, error };
 }
 
+/**
+ * A wait with nothing shaped to promise. The skeleton below stands in for a
+ * grid of covers, which would be a lie on a page that has none.
+ */
+export function Waiting() {
+  const { t } = useI18n();
+  return (
+    <p className="muted" role="status" aria-busy="true">
+      {t("common.loading")}
+    </p>
+  );
+}
+
 function Loading({ error }: { error: string | null }) {
   const { t } = useI18n();
   if (error) {
@@ -1359,6 +1372,14 @@ function NowPlayingPanel() {
   const { t } = useI18n();
   const [tick, setTick] = useState(0);
   const { value } = useAsync<NowPlaying[]>(listNowPlaying, [tick]);
+  // `useAsync` clears its value at the start of every run, so each poll blanked
+  // the panel and flashed "nobody is listening" before the answer arrived.
+  // Holding the last reading means a refresh is invisible, which is what a
+  // refresh should be.
+  const [entries, setEntries] = useState<NowPlaying[] | null>(null);
+  useEffect(() => {
+    if (value) setEntries(value);
+  }, [value]);
 
   // No stream exists for this one, so it is polled. Thirty seconds is slower
   // than a track changes and fast enough for an operator glancing at it.
@@ -1370,9 +1391,9 @@ function NowPlayingPanel() {
   return (
     <article className="admin-panel">
       <h3>{t("admin.nowPlaying")}</h3>
-      {value?.length ? (
+      {entries?.length ? (
         <ul className="list resource-list">
-          {value.map((entry) => (
+          {entries.map((entry) => (
             <li key={`${entry.username}-${entry.song.id}`}>
               <div>
                 <strong>{entry.song.title}</strong>
@@ -1398,9 +1419,13 @@ function ApiTokensPanel({ username }: { username: string }) {
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const { value } = useAsync<ApiToken[]>(
-    () => listApiTokens(username),
-    [username, revision],
+  // Closed until asked for. The panel is rendered once per account, so loading
+  // on mount meant one request per account every time the admin screen opened
+  // — for a list almost nobody opens.
+  const [open, setOpen] = useState(false);
+  const { value } = useAsync<ApiToken[] | null>(
+    () => (open ? listApiTokens(username) : Promise.resolve(null)),
+    [username, revision, open],
   );
 
   async function issue(event: FormEvent) {
@@ -1429,50 +1454,67 @@ function ApiTokensPanel({ username }: { username: string }) {
 
   const live = (value ?? []).filter((token) => token.revoked_at === null);
   return (
-    <article className="admin-panel">
-      <h3>{t("admin.tokens", { username })}</h3>
-      <form className="inline-form" onSubmit={(event) => void issue(event)}>
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder={t("admin.tokenName")}
-          aria-label={t("admin.tokenName")}
-          required
-        />
-        <button type="submit">{t("admin.tokenCreate")}</button>
-      </form>
-      {failed ? <p className="error">{t("admin.tokenError")}</p> : null}
-      {secret ? (
-        <p className="notice">
-          {t("admin.tokenOnce")} <code className="secret-output">{secret}</code>
-        </p>
+    // A disclosure button rather than `<details>`: `onToggle` is a non-bubbling
+    // event that did not reach React here, so the panel opened on screen while
+    // the state gating the request stayed false — and controlling `<details>`
+    // by cancelling the summary's click takes its keyboard handling with it.
+    <article className="admin-panel token-panel">
+      <h3>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {t("admin.tokens", { username })}
+        </button>
+      </h3>
+      {open ? (
+        <>
+          <form className="inline-form" onSubmit={(event) => void issue(event)}>
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={t("admin.tokenName")}
+              aria-label={t("admin.tokenName")}
+              required
+            />
+            <button type="submit">{t("admin.tokenCreate")}</button>
+          </form>
+          {failed ? <p className="error">{t("admin.tokenError")}</p> : null}
+          {secret ? (
+            <p className="notice">
+              {t("admin.tokenOnce")}{" "}
+              <code className="secret-output">{secret}</code>
+            </p>
+          ) : null}
+          {live.length ? (
+            <ul className="list resource-list">
+              {live.map((token) => (
+                <li key={token.id}>
+                  <div>
+                    <strong>{token.name}</strong>
+                    <small className="muted">
+                      {token.last_used_at
+                        ? t("admin.tokenUsed")
+                        : t("admin.tokenUnused")}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void revoke(token.id)}
+                    aria-label={`${t("admin.tokenRevoke")}: ${token.name}`}
+                  >
+                    {t("admin.tokenRevoke")}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">{t("admin.tokenNone")}</p>
+          )}
+        </>
       ) : null}
-      {live.length ? (
-        <ul className="list resource-list">
-          {live.map((token) => (
-            <li key={token.id}>
-              <div>
-                <strong>{token.name}</strong>
-                <small className="muted">
-                  {token.last_used_at
-                    ? t("admin.tokenUsed")
-                    : t("admin.tokenUnused")}
-                </small>
-              </div>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => void revoke(token.id)}
-                aria-label={`${t("admin.tokenRevoke")}: ${token.name}`}
-              >
-                {t("admin.tokenRevoke")}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted">{t("admin.tokenNone")}</p>
-      )}
     </article>
   );
 }
