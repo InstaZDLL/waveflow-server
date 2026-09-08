@@ -465,19 +465,33 @@ export const getScan = (scanId: string) =>
 export function watchScan(
   scanId: string,
   onJob: (job: ScanJob) => void,
+  onFailure?: () => void,
 ): () => void {
   const controller = new AbortController();
   void (async () => {
     try {
-      const headers = new Headers({ accept: "text/event-stream" });
-      if (session) {
-        headers.set("authorization", `Bearer ${session.access_token}`);
+      const open = async () => {
+        const headers = new Headers({ accept: "text/event-stream" });
+        if (session) {
+          headers.set("authorization", `Bearer ${session.access_token}`);
+        }
+        return fetch(`/api/v2/scans/${scanId}/events`, {
+          headers,
+          signal: controller.signal,
+        });
+      };
+      // This route is opened by hand rather than through `call`, so it has to
+      // repeat what `call` does about an expired access token. Without it an
+      // admin who left the tab open watched "waiting for the first reading"
+      // for as long as the scan took, and then for ever.
+      let response = await open();
+      if (response.status === 401 && (await refresh())) {
+        response = await open();
       }
-      const response = await fetch(`/api/v2/scans/${scanId}/events`, {
-        headers,
-        signal: controller.signal,
-      });
-      if (!response.ok || !response.body) return;
+      if (!response.ok || !response.body) {
+        onFailure?.();
+        return;
+      }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -527,7 +541,11 @@ export function drainEventStream(buffer: string): {
       .split("\n")
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
-      .join("");
+      // Newline, not empty: the specification joins consecutive `data:` lines
+      // with a line feed, and a payload split across them is reassembled with
+      // it. JSON treats the break as whitespace, so the parse is unaffected —
+      // but silently dropping it would corrupt any payload that is not JSON.
+      .join("\n");
     if (payload) data.push(payload);
     split = rest.indexOf("\n\n");
   }
