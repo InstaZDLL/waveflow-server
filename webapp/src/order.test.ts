@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { advance, retreat, shuffledOrder } from "./player";
+import {
+  advance,
+  extendOrder,
+  orderForQueue,
+  retreat,
+  shuffledOrder,
+} from "./player";
 
 /**
  * The three ways a queue can be walked. These decide what plays next, so an
@@ -82,5 +88,57 @@ describe("shuffledOrder", () => {
     // -1 is what an empty selection reads as; it must not lead the order.
     expect(shuffledOrder(3, -1, () => 0).sort()).toEqual([0, 1, 2]);
     expect(shuffledOrder(0, 0)).toEqual([]);
+  });
+});
+
+describe("orderForQueue", () => {
+  const linear = [0, 1, 2, 3, 4];
+
+  it("is the queue's own order when shuffle is off", () => {
+    expect(orderForQueue(5, 2, false, [4, 1, 0, 3, 2], false)).toEqual(linear);
+  });
+
+  it("draws afresh for a different queue of the same length", () => {
+    // The defect this exists for: replacing one five-track album with another
+    // left the previous draw standing. `advance` walks that draw, so a start
+    // that fell at its end returned null and playback stopped after one track.
+    const stale = [2, 0, 3, 1, 4];
+    expect(advance(stale, 4, "off", true)).toBeNull();
+
+    const fresh = orderForQueue(5, 4, true, stale, false, () => 0);
+    expect(fresh[0]).toBe(4);
+    expect(advance(fresh, 4, "off", true)).not.toBeNull();
+    // Every position of the new queue is reachable, none invented.
+    expect([...fresh].sort((a, b) => a - b)).toEqual(linear);
+  });
+
+  it("keeps the draw under way when the same queue grows", () => {
+    const under = [2, 0, 3, 1, 4];
+    // Adding a track mid-listen must not reshuffle what is left to hear.
+    expect(orderForQueue(7, 2, true, under, true)).toEqual([
+      2, 0, 3, 1, 4, 5, 6,
+    ]);
+  });
+
+  it("drops positions a shortened queue no longer has", () => {
+    expect(orderForQueue(3, 2, true, [2, 0, 3, 1, 4], true)).toEqual([2, 0, 1]);
+  });
+
+  it("draws for a queue that had no order yet", () => {
+    expect(orderForQueue(3, 0, true, [], true, () => 0).sort()).toEqual([
+      0, 1, 2,
+    ]);
+  });
+});
+
+describe("extendOrder", () => {
+  it("keeps what survives and appends what is new, in queue order", () => {
+    expect(extendOrder([3, 1, 0, 2], 6)).toEqual([3, 1, 0, 2, 4, 5]);
+  });
+
+  it("is a permutation of the new length whatever it was given", () => {
+    expect([...extendOrder([9, 1], 4)].sort((a, b) => a - b)).toEqual([
+      0, 1, 2, 3,
+    ]);
   });
 });

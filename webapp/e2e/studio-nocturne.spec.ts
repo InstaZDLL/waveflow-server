@@ -76,6 +76,10 @@ const library = (id: string, name: string) => ({
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
 let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
 
+/** Flipped by the two tests that check a failure is shown as one. */
+let tokensFail = false;
+let scanFails = false;
+
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
 
@@ -139,6 +143,10 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
       return;
     }
+    if (url.pathname === "/api/v2/scans/scan-1/events" && scanFails) {
+      await route.fulfill({ status: 503, body: "" });
+      return;
+    }
     if (url.pathname === "/api/v2/scans/scan-1/events") {
       // Two frames, deliberately split so the client has to hold a partial
       // one between reads — which is what a real stream does.
@@ -188,6 +196,10 @@ async function mockAuthenticatedApi(page: Page) {
       return;
     }
     if (url.pathname.endsWith("/tokens")) {
+      if (tokensFail) {
+        await route.fulfill({ status: 500, json: { error: "boom" } });
+        return;
+      }
       await route.fulfill({ json: [] });
       return;
     }
@@ -253,6 +265,8 @@ async function mockAuthenticatedApi(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
+  tokensFail = false;
+  scanFails = false;
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -695,4 +709,42 @@ test("asks for a account's tokens only when its panel is opened", async ({
   await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("No token on this account.")).toBeVisible();
   expect(asked).toEqual(["/api/v2/admin/users/listener/tokens"]);
+});
+
+/**
+ * Both of these were failures wearing the clothes of an ordinary state: a
+ * token list that could not be fetched read as "no token on this account", and
+ * a progress stream that could not open left the panel waiting for a first
+ * reading that was never coming. That is the kind of defect nobody reports,
+ * because the screen looks like it is working.
+ */
+test("says a token list failed instead of calling it empty", async ({
+  page,
+}) => {
+  tokensFail = true;
+  await page.goto("/admin");
+  await page
+    .getByRole("button", { name: "API tokens for listener" })
+    .click();
+
+  // Scoped to the panel: the player bar raises an alert of its own here, its
+  // stream being mocked away.
+  await expect(page.locator(".token-panel").getByRole("alert")).toHaveText(
+    "We could not load this view",
+  );
+  await expect(page.getByText("No token on this account.")).toHaveCount(0);
+});
+
+test("says the progress stream was lost instead of waiting for ever", async ({
+  page,
+}) => {
+  scanFails = true;
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Scan now" }).first().click();
+
+  const panel = page.locator(".scan-panel");
+  await expect(panel.getByRole("alert")).toContainText(
+    "The progress stream could not be opened",
+  );
+  await expect(panel.getByText("Waiting for the first reading")).toHaveCount(0);
 });
