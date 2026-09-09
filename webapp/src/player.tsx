@@ -112,26 +112,83 @@ export function extendOrder(previous: number[], length: number): number[] {
 }
 
 /**
+ * Whether the queue an order was drawn for is still the queue being played,
+ * and where its entries went.
+ *
+ * `false` means a different queue and a fresh draw. An array is the mapping
+ * `followQueue` needs — `moved[before]` is where that entry sits now, or -1.
+ *
+ * Compared by entry identity, not by length or by prefix. Length alone let one
+ * five-track album inherit another's draw; a prefix test refused every removal,
+ * including one from the middle, and reshuffled the rest of the listening under
+ * the listener.
+ */
+export function continuationOf<T>(
+  drawn: { entries: readonly T[]; shuffle: boolean } | null,
+  entries: readonly T[],
+  shuffle: boolean,
+): boolean | number[] {
+  if (drawn === null || drawn.shuffle !== shuffle) return false;
+  const moved = drawn.entries.map((entry) => entries.indexOf(entry));
+  return moved.some((position) => position >= 0) ? moved : false;
+}
+
+/**
+ * Re-points a reading order at a queue whose entries have moved.
+ *
+ * `moved[before]` is where the entry that was at `before` sits now, or -1 if it
+ * is gone. Removing a track from the middle shifts everything after it down by
+ * one, so an order made of positions stops meaning what it meant — following
+ * the numbers alone would keep playing, but not the songs that were chosen.
+ */
+export function followQueue(
+  previous: number[],
+  moved: readonly number[],
+  length: number,
+): number[] {
+  const kept: number[] = [];
+  const seen = new Set<number>();
+  for (const before of previous) {
+    const now = moved[before];
+    if (now === undefined || now < 0 || now >= length || seen.has(now))
+      continue;
+    kept.push(now);
+    seen.add(now);
+  }
+  for (let position = 0; position < length; position++) {
+    if (!seen.has(position)) kept.push(position);
+  }
+  return kept;
+}
+
+/**
  * The reading order a queue should have, given the one it had before.
  *
- * `continues` says whether this is the same listening session — the same queue,
- * grown or shortened — rather than a different queue altogether. It cannot be
- * inferred from the length: replacing a five-track album with another
- * five-track album left the previous draw in place, and if the new starting
- * position happened to sit at the end of that draw, playback stopped after one
- * track.
+ * `continues` says whether this is the same listening session rather than a
+ * different queue altogether. It cannot be inferred from the length: replacing
+ * a five-track album with another five-track album left the previous draw in
+ * place, and a starting position that fell at the end of that draw stopped
+ * playback after one track.
+ *
+ * `true` means the entries kept their positions — an append, or a truncation
+ * from the end. An array says where each of them went, which is what a removal
+ * from the middle needs.
  */
 export function orderForQueue(
   length: number,
   at: number,
   shuffle: boolean,
   previous: number[],
-  continues: boolean,
+  continues: boolean | readonly number[],
   random: () => number = Math.random,
 ): number[] {
   if (!shuffle) return Array.from({ length }, (_, position) => position);
-  if (continues && previous.length > 0) return extendOrder(previous, length);
-  return shuffledOrder(length, at, random);
+  if (continues === false || previous.length === 0) {
+    return shuffledOrder(length, at, random);
+  }
+  return continues === true
+    ? extendOrder(previous, length)
+    : followQueue(previous, continues, length);
 }
 
 /** Where "previous" goes. Wraps only when the whole queue repeats. */
@@ -546,11 +603,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // a single track.
   useEffect(() => {
     const drawn = drawnFor.current;
-    const continues =
-      drawn.queue !== null &&
-      drawn.shuffle === shuffle &&
-      queue.length >= drawn.queue.length &&
-      drawn.queue.every((song, position) => queue[position] === song);
+    const continues = continuationOf(
+      drawn.queue === null
+        ? null
+        : { entries: drawn.queue, shuffle: drawn.shuffle },
+      queue,
+      shuffle,
+    );
     drawnFor.current = { queue, shuffle };
     setOrder((current) =>
       orderForQueue(

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   advance,
+  continuationOf,
   extendOrder,
+  followQueue,
   orderForQueue,
   retreat,
   shuffledOrder,
@@ -140,5 +142,94 @@ describe("extendOrder", () => {
     expect([...extendOrder([9, 1], 4)].sort((a, b) => a - b)).toEqual([
       0, 1, 2, 3,
     ]);
+  });
+});
+
+/**
+ * Removing a track from the middle of a queue shifts everything after it down
+ * by one, so an order made of positions stops meaning what it meant. Following
+ * the numbers alone keeps playing — it just plays the wrong songs, quietly.
+ */
+describe("followQueue", () => {
+  it("re-points the order at where the songs went", () => {
+    // Queue [a, b, c, d, e] with b removed: c, d and e each shift down one.
+    const moved = [0, -1, 1, 2, 3];
+    // Was: e, b, a, d, c. b is gone; the rest keep their relative order.
+    expect(followQueue([4, 1, 0, 3, 2], moved, 4)).toEqual([3, 0, 2, 1]);
+  });
+
+  it("appends positions the previous order never knew", () => {
+    expect(followQueue([1, 0], [0, 1], 4)).toEqual([1, 0, 2, 3]);
+  });
+
+  it("is a permutation of the new queue whatever it is handed", () => {
+    const order = followQueue([9, 2, 0], [3, -1, 1], 4);
+    expect([...order].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("has nothing to follow when every entry is gone", () => {
+    expect(followQueue([0, 1], [-1, -1], 2)).toEqual([0, 1]);
+  });
+});
+
+describe("orderForQueue, following a queue that lost a track", () => {
+  it("keeps the draw when the removal is described", () => {
+    // The wiring could not reach this before: it required the new queue to
+    // begin with the whole of the old one, so any removal forced a reshuffle
+    // and the rest of the listening was redrawn under the listener.
+    const moved = [0, -1, 1, 2, 3];
+    expect(orderForQueue(4, 0, true, [4, 1, 0, 3, 2], moved)).toEqual([
+      3, 0, 2, 1,
+    ]);
+  });
+
+  it("still draws afresh when nothing carried over", () => {
+    const order = orderForQueue(3, 1, true, [2, 0, 1], false, () => 0);
+    expect(order[0]).toBe(1);
+  });
+});
+
+/**
+ * The decision the player used to make inline, where no test could reach it —
+ * which is how a branch of `orderForQueue` came to be covered by a unit test
+ * while the wiring could never take it.
+ */
+describe("continuationOf", () => {
+  const a = "a";
+  const b = "b";
+  const c = "c";
+  const d = "d";
+
+  it("is a fresh draw when there was no order yet", () => {
+    expect(continuationOf(null, [a, b], true)).toBe(false);
+  });
+
+  it("is a fresh draw when the mode changed", () => {
+    const drawn = { entries: [a, b], shuffle: false };
+    expect(continuationOf(drawn, [a, b], true)).toBe(false);
+  });
+
+  it("is a fresh draw for a different queue of the same length", () => {
+    // The defect that started this: length alone let one five-track album
+    // inherit the draw made for another.
+    const drawn = { entries: [a, b], shuffle: true };
+    expect(continuationOf(drawn, [c, d], true)).toBe(false);
+  });
+
+  it("follows a removal from the middle", () => {
+    // A prefix test refused this outright, so removing a track reshuffled
+    // everything that was left to hear.
+    const drawn = { entries: [a, b, c], shuffle: true };
+    expect(continuationOf(drawn, [a, c], true)).toEqual([0, -1, 1]);
+  });
+
+  it("follows an append", () => {
+    const drawn = { entries: [a, b], shuffle: true };
+    expect(continuationOf(drawn, [a, b, c], true)).toEqual([0, 1]);
+  });
+
+  it("follows a reordering", () => {
+    const drawn = { entries: [a, b, c], shuffle: true };
+    expect(continuationOf(drawn, [c, a, b], true)).toEqual([1, 2, 0]);
   });
 });
