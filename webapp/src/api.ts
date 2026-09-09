@@ -511,8 +511,11 @@ export function watchScan(
         }
       }
     } catch {
-      // Aborting is the ordinary way this ends, and a dropped stream leaves
-      // the last known progress on screen rather than an error.
+      // Aborting is the ordinary way this ends — the panel is going away, and
+      // there is nobody left to tell. Anything else is the stream failing, and
+      // a network error is the likeliest way it does: without this the panel
+      // waited on a first reading that no longer had a chance of arriving.
+      if (!controller.signal.aborted) onFailure?.();
     }
   })();
   return () => controller.abort();
