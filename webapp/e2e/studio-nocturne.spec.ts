@@ -79,6 +79,8 @@ let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma mus
 /** Flipped by the two tests that check a failure is shown as one. */
 let tokensFail = false;
 let scanFails = false;
+/** The stream never answers at all, which is what a lost network looks like. */
+let scanDrops = false;
 
 /** Resolved by default; one test replaces it to stall `album-1`. */
 let slowAlbum: Promise<void> = Promise.resolve();
@@ -141,6 +143,10 @@ async function mockAuthenticatedApi(page: Page) {
       // Held open by the concurrency test; instant for everyone else.
       await slowAlbum;
       await route.fulfill({ json: { ...albums[0], songs: [track] } });
+      return;
+    }
+    if (url.pathname === "/api/v2/scans/scan-1/events" && scanDrops) {
+      await route.abort("connectionfailed");
       return;
     }
     if (url.pathname === "/api/v2/scans/scan-1/events" && scanFails) {
@@ -267,6 +273,7 @@ test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
   tokensFail = false;
   scanFails = false;
+  scanDrops = false;
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -747,4 +754,21 @@ test("says the progress stream was lost instead of waiting for ever", async ({
     "The progress stream could not be opened",
   );
   await expect(panel.getByText("Waiting for the first reading")).toHaveCount(0);
+});
+
+/**
+ * A refused status is the tidy failure. The likelier one is the request never
+ * completing at all, and that arrives as a rejected `fetch` rather than a
+ * response — which the stream reader used to swallow whole, leaving the panel
+ * waiting on a reading that had no chance of coming.
+ */
+test("says so when the progress stream never connects", async ({ page }) => {
+  scanDrops = true;
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Scan now" }).first().click();
+
+  const panel = page.locator(".scan-panel");
+  await expect(panel.getByRole("alert")).toContainText(
+    "The progress stream could not be opened",
+  );
 });
