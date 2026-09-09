@@ -96,6 +96,44 @@ export function advance(
   return repeat === "all" ? (order[0] ?? null) : null;
 }
 
+/**
+ * Keeps the draw already under way while the queue grows or loses entries:
+ * positions that survive stay where they were, and anything new joins the end
+ * in the order it was queued. Adding a track mid-listen should not reshuffle
+ * what is left to hear.
+ */
+export function extendOrder(previous: number[], length: number): number[] {
+  const kept = previous.filter((position) => position < length);
+  const seen = new Set(kept);
+  for (let position = 0; position < length; position++) {
+    if (!seen.has(position)) kept.push(position);
+  }
+  return kept;
+}
+
+/**
+ * The reading order a queue should have, given the one it had before.
+ *
+ * `continues` says whether this is the same listening session — the same queue,
+ * grown or shortened — rather than a different queue altogether. It cannot be
+ * inferred from the length: replacing a five-track album with another
+ * five-track album left the previous draw in place, and if the new starting
+ * position happened to sit at the end of that draw, playback stopped after one
+ * track.
+ */
+export function orderForQueue(
+  length: number,
+  at: number,
+  shuffle: boolean,
+  previous: number[],
+  continues: boolean,
+  random: () => number = Math.random,
+): number[] {
+  if (!shuffle) return Array.from({ length }, (_, position) => position);
+  if (continues && previous.length > 0) return extendOrder(previous, length);
+  return shuffledOrder(length, at, random);
+}
+
 /** Where "previous" goes. Wraps only when the whole queue repeats. */
 export function retreat(
   order: number[],
@@ -184,6 +222,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // the linear path costs nothing to express.
   const [order, setOrder] = useState<number[]>([]);
   const orderRef = useRef<number[]>([]);
+  // What the current order was drawn for. Compared by array identity and by
+  // mode, because neither the queue's length nor its contents alone say
+  // whether this is the same listening session.
+  const drawnFor = useRef<{ queue: Song[] | null; shuffle: boolean }>({
+    queue: null,
+    shuffle: false,
+  });
   const repeatRef = useRef<RepeatMode>("off");
   const [volume, setVolumeState] = useState(() => readStoredVolume());
   const [muted, setMuted] = useState(false);
@@ -491,28 +536,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // The reading order is owned here, in one place: a queue that changed length
-  // invalidates it, and so does switching the mode. Redrawing rather than
-  // patching keeps "shuffled" meaning a permutation of what is actually
-  // queued, whatever was added or removed.
+  // The reading order is owned here, in one place, and derived from the queue
+  // and the mode rather than set from a toggle's updater — which is a side
+  // effect in a place React is free to run twice.
   //
-  // `toggleShuffle` used to set the order from inside `setShuffle`'s updater,
-  // which is a side effect in a place React is free to run twice. Deriving it
-  // from the mode instead makes the toggle a plain state change.
+  // The queue is compared by identity and by prefix, not by length: replacing
+  // one five-track album with another left the previous draw standing, and a
+  // starting position that fell at the end of that draw stopped playback after
+  // a single track.
   useEffect(() => {
-    setOrder((current) => {
-      const linear = Array.from(
-        { length: queue.length },
-        (_, position) => position,
-      );
-      if (!shuffle) return linear;
-      // Keep a shuffle that is still a permutation of this queue, so adding a
-      // favourite mid-listen does not reshuffle everything under the listener.
-      return current.length === queue.length && current.some((n, i) => n !== i)
-        ? current
-        : shuffledOrder(queue.length, indexRef.current);
-    });
-  }, [queue.length, shuffle]);
+    const drawn = drawnFor.current;
+    const continues =
+      drawn.queue !== null &&
+      drawn.shuffle === shuffle &&
+      queue.length >= drawn.queue.length &&
+      drawn.queue.every((song, position) => queue[position] === song);
+    drawnFor.current = { queue, shuffle };
+    setOrder((current) =>
+      orderForQueue(
+        queue.length,
+        indexRef.current,
+        shuffle,
+        current,
+        continues,
+      ),
+    );
+  }, [queue, shuffle]);
 
   const toggle = useCallback(() => {
     if (audio.current?.paused) startPlayback();

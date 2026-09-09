@@ -244,6 +244,8 @@ const en = {
   "admin.tokenUsed": "already used",
   "admin.tokenUnused": "never used",
   "admin.tokenNone": "No token on this account.",
+  "scan.lost":
+    "The progress stream could not be opened. The scan itself is unaffected.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -485,6 +487,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.tokenUsed": "déjà utilisé",
   "admin.tokenUnused": "jamais utilisé",
   "admin.tokenNone": "Aucun jeton sur ce compte.",
+  "scan.lost":
+    "Le flux de progression n’a pas pu s’ouvrir. L’analyse elle-même se poursuit.",
 };
 
 export type Locale = "en" | "fr";

@@ -1317,14 +1317,25 @@ const SCAN_STATUS: Record<string, TranslationKey> = {
 function ScanProgress({ scanId }: { scanId: string }) {
   const { t } = useI18n();
   const [job, setJob] = useState<ScanJob | null>(null);
+  const [lost, setLost] = useState(false);
 
   useEffect(() => {
     setJob(null);
+    setLost(false);
     // The snapshot arrives on the stream itself, so there is nothing to fetch
     // first; a stream that cannot open leaves the panel on its last reading.
-    return watchScan(scanId, setJob);
+    return watchScan(scanId, setJob, () => setLost(true));
   }, [scanId]);
 
+  // A stream that cannot open has to say so: without this the panel waited on
+  // a first reading that was never coming, for as long as the page stayed up.
+  if (!job && lost) {
+    return (
+      <p className="error" role="alert">
+        {t("scan.lost")}
+      </p>
+    );
+  }
   if (!job) return <p className="muted">{t("scan.connecting")}</p>;
   const done = job.status !== "running" && job.status !== "queued";
   const share = job.total_files > 0 ? job.processed_files / job.total_files : 0;
@@ -1423,7 +1434,7 @@ function ApiTokensPanel({ username }: { username: string }) {
   // on mount meant one request per account every time the admin screen opened
   // — for a list almost nobody opens.
   const [open, setOpen] = useState(false);
-  const { value } = useAsync<ApiToken[] | null>(
+  const { value, error } = useAsync<ApiToken[] | null>(
     () => (open ? listApiTokens(username) : Promise.resolve(null)),
     [username, revision, open],
   );
@@ -1510,6 +1521,13 @@ function ApiTokensPanel({ username }: { username: string }) {
                 </li>
               ))}
             </ul>
+          ) : error ? (
+            // A list that could not be fetched is not an empty list. Saying
+            // "no token on this account" here would be a claim about the
+            // account, made out of a failed request.
+            <p className="error" role="alert">
+              {t("common.loadError")}
+            </p>
           ) : (
             <p className="muted">{t("admin.tokenNone")}</p>
           )}
