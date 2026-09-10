@@ -1095,6 +1095,11 @@ async fn the_library_feed_reports_what_a_scan_changed() {
 
     let (status, page) = feed(owner_token.clone(), 0, 500).await;
     assert_eq!(status, StatusCode::OK);
+    // Nothing has been cut, so the client's margin is the whole feed. Reported
+    // rather than left to be discovered: without it the first sign of trouble
+    // is the refusal itself, and by then the resync has to happen right now
+    // instead of at a moment the client would have chosen.
+    assert_eq!(page["purged_through"], 0);
     let events = page["events"].as_array().unwrap();
     assert_eq!(events.len(), 2, "one upsert per track the scan applied");
     for event in events {
@@ -1212,6 +1217,19 @@ async fn the_library_feed_reports_what_a_scan_changed() {
     let (status, _) = feed(owner_token.clone(), 2, 500).await;
     assert_eq!(status, StatusCode::CONFLICT);
     // Standing exactly at the cut is not standing before it.
-    let (status, _) = feed(owner_token, 3, 500).await;
+    let (status, page) = feed(owner_token, 3, 500).await;
     assert_eq!(status, StatusCode::OK);
+    // And the page says where the cut is, while it is still being served
+    // rather than after it is refused. This client asked from 3 and the cut is
+    // at 3, so it holds no slack at all — one more purge and it is sent to the
+    // snapshot — and it can read that off the page it just received.
+    assert_eq!(page["purged_through"], 3);
+    // The margin is measured against the cursor the client held, not against
+    // `next_cursor`: that one is the end of the page just served, so it says
+    // what the margin becomes once this page is processed.
+    assert_eq!(3 - page["purged_through"].as_i64().unwrap(), 0);
+    assert!(
+        page["next_cursor"].as_i64().unwrap() > 3,
+        "the page advanced it"
+    );
 }

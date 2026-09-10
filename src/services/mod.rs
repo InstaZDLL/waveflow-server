@@ -514,6 +514,25 @@ pub struct LibraryEventPage {
     pub events: Vec<LibraryEvent>,
     pub next_cursor: i64,
     pub has_more: bool,
+    /// The highest cursor retention has already cut away. Everything at or
+    /// below it is gone; a cursor strictly below it is refused, and the only
+    /// way back is the snapshot.
+    ///
+    /// Reported so a client can see the edge before it reaches it. Without it
+    /// the first sign of trouble was the refusal itself, which is the worst
+    /// moment to pay for a resync.
+    ///
+    /// The margin is the client's **own** cursor minus this, not
+    /// `next_cursor` minus this: `next_cursor` is the end of the page just
+    /// served, so it describes the margin the client will have once it has
+    /// processed the page rather than the one it holds now. Either way it can
+    /// spend that slack deliberately — on a network it likes, while nobody is
+    /// watching — instead of at whatever moment the server says no.
+    ///
+    /// It is what was *purged*, not what survives. A feed whose oldest row sits
+    /// at a high cursor has lost nothing, it merely started late, and a floor
+    /// derived from surviving rows cannot tell those two apart.
+    pub purged_through: i64,
 }
 
 /// Everything one account has starred, across the three entity kinds.
