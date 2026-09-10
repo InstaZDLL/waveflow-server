@@ -43,6 +43,7 @@ type LibraryScope = {
 
 const LibraryScopeContext = createContext<LibraryScope | null>(null);
 
+/** Read the last selected library without requiring storage to be available. */
 function readStored(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEY);
@@ -51,6 +52,7 @@ function readStored(): string | null {
   }
 }
 
+/** Load and provide the account's active library selection. */
 export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => readStored());
@@ -109,6 +111,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Access the active library and the libraries available to the account. */
 export function useLibraryScope(): LibraryScope {
   const value = useContext(LibraryScopeContext);
   if (!value) throw new Error("useLibraryScope requires LibraryScopeProvider");
@@ -120,6 +123,7 @@ export function useScopeId(): string | undefined {
   return useLibraryScope().active?.id;
 }
 
+/** Render the active-library selector when the account has multiple choices. */
 export function LibraryPicker() {
   const { libraries, active, setActive } = useLibraryScope();
   const { t } = useI18n();

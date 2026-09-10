@@ -146,6 +146,7 @@ function ScopedOutlet() {
   return ready ? <Outlet /> : <Waiting />;
 }
 
+/** Compose the authenticated desktop and mobile application chrome. */
 function Shell() {
   const navigate = useNavigate();
   const user = currentUser();
