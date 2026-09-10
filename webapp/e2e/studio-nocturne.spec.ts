@@ -242,7 +242,7 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: genres });
       return;
     }
-    if (url.pathname === "/api/v2/songs") {
+    if (url.pathname === "/api/v2/songs/by-genre") {
       await route.fulfill({
         json: url.searchParams.get("genre") ? genreSongs : [],
       });
@@ -479,7 +479,7 @@ test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
   const asked: Array<string | null> = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/api/v2/songs") {
+    if (url.pathname === "/api/v2/songs/by-genre") {
       asked.push(url.searchParams.get("genre"));
     }
   });
