@@ -1237,12 +1237,15 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
         .unwrap();
     assert_eq!(invalid_page.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-    for method in ["GET", "POST"] {
-        let uri = if method == "GET" {
-            format!("/api/v2/libraries/{library_id}/tracks")
-        } else {
-            format!("/api/v2/libraries/{library_id}/scans")
-        };
+    for (method, path) in [
+        ("GET", "tracks"),
+        ("POST", "scans"),
+        // Membership answers 404 for the same reason the others do: telling a
+        // stranger who the members are would first tell them the library is
+        // there.
+        ("GET", "members"),
+    ] {
+        let uri = format!("/api/v2/libraries/{library_id}/{path}");
         let request = Request::builder()
             .method(method)
             .uri(uri)
@@ -1252,6 +1255,97 @@ async fn catalog_and_scan_routes_blur_foreign_libraries() {
         let response = router.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+}
+
+/// Who may see a library, and in what standing.
+///
+/// `PUT` and `DELETE` on `/libraries/{id}/members/{user}` have existed since M4
+/// with nothing to read them back, so an interface could grant and revoke
+/// without ever showing who already had access — and no client can work that
+/// out for itself, since an account's own membership says nothing about anyone
+/// else's.
+///
+/// The refusal side lives in `catalog_and_scan_routes_blur_foreign_libraries`,
+/// beside the other routes that answer 404 rather than confirm a library
+/// exists. This is the half that says what the route returns when it does.
+#[tokio::test]
+async fn the_members_route_names_who_may_see_a_library() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("member-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let guest = state
+        .db
+        .create_account("member-guest", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("member-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Member library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO library_member (library_id, user_id, role, created_at) \
+         VALUES (?, ?, 'listener', ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(guest.to_string())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let token = login_token(&router, "member-guest", password).await;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/libraries/{library_id}/members"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let listed = json_body(response).await;
+    let listed = listed.as_array().expect("a list");
+    assert_eq!(listed.len(), 2, "the owner and the listener");
+    // Ordered by username, so the answer does not depend on insertion order.
+    assert_eq!(listed[0]["username"], "member-guest");
+    assert_eq!(listed[0]["role"], "listener");
+    assert_eq!(listed[1]["username"], "member-owner");
+    assert_eq!(listed[1]["role"], "owner");
+    // A listener sees the list: the route is about who may read the library,
+    // and every member may ask. Restricting it to owners would leave a
+    // listener unable to tell whether a library is shared at all.
+    assert_eq!(listed[0]["user_id"], guest.to_string());
+
+    // A library nobody has answers the same 404 as one the caller cannot see,
+    // so the two cannot be told apart from outside.
+    let missing = router
+        .oneshot(
+            Request::get("/api/v2/libraries/00000000-0000-4000-8000-000000000000/members")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 /// A correction outlives the scan that would have erased it.
@@ -1338,6 +1432,37 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     // across an edit.
     assert_eq!(corrected["full_hash"], scanned_hash);
 
+    // The track answers the effective value and says nothing about where it
+    // came from, so an editor cannot tell a corrected field from a scanned one
+    // — nor offer to restore what it cannot read. That is what the overrides
+    // route is for, and it is the read half of correcting a tag.
+    let overrides = {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/tracks/{track_id}/overrides"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        json_body(response).await
+    };
+    // The scanned column is untouched by the correction: the projection merges
+    // the two with COALESCE rather than writing over the file's value.
+    assert_eq!(overrides["source"]["title"], "Mispelled Titel");
+    assert_eq!(overrides["overrides"]["title"], "Misspelled Title");
+    assert_eq!(overrides["overrides"]["year"], 1998);
+    // A field nobody corrected is null, which is what its column holds.
+    assert!(overrides["overrides"]["comment"].is_null());
+    assert!(overrides["overrides"]["artists"].is_null());
+    // Artists and genres are deliberately absent from `source`: correcting
+    // either rewrites `track_participant` and the display string, so once a
+    // correction exists the file's own credits are no longer in the database.
+    assert!(overrides["source"].get("artists").is_none());
+
     // The headline. A scan applies `title=excluded.title` over the track row,
     // so a correction stored there would be gone by now.
     //
@@ -1418,7 +1543,11 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     .await
     .unwrap();
     let listener_token = login_token(&router, "tag-listener", password).await;
-    let (status, _) = patch(listener_token, serde_json::json!({ "title": "Nope" })).await;
+    let (status, _) = patch(
+        listener_token.clone(),
+        serde_json::json!({ "title": "Nope" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // And a manager may, which is the half of the rule the refusal above cannot

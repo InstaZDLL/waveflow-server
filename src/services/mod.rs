@@ -535,6 +535,71 @@ pub struct LibraryEventPage {
     pub purged_through: i64,
 }
 
+/// What a track's tags say, and what a correction says instead.
+///
+/// The editor's view of [`TrackMetadataPatch`]: every field it can write, with
+/// the file's own value beside the correction standing over it. The catalogue
+/// never shows this — it answers `effective`, which is `override ?? source` —
+/// and nothing else needs it. It exists because an editor cannot offer to
+/// restore a value it cannot read, and because a client that means to change
+/// one correction has to know the others in order not to drop them.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TrackOverrides {
+    /// What the file said, for the fields where the database still knows.
+    pub source: TrackSourceTags,
+    /// The correction, field by field. `null` means no correction on that
+    /// field, which is what the row's nullable columns mean.
+    pub overrides: TrackOverrideValues,
+}
+
+/// The file's own values, as the last scan read them.
+///
+/// **Artists and genres are absent, and cannot be added here.** They are more
+/// than columns: a correction to either is *materialised* into
+/// `track_participant`, `track_genre` and the `*_display` strings, because
+/// those rows feed every projection and the search index. Applying it
+/// overwrites what the scan read, so once a correction exists the file's own
+/// credits are no longer in the database — only in the file. The seven fields
+/// below survive because the projection merges them with `COALESCE` instead,
+/// leaving the scanned column untouched.
+///
+/// Restoring a corrected list therefore re-reads the file, which
+/// `set_track_metadata` already does. What cannot be done cheaply is *showing*
+/// it beforehand, so an editor offers the reset without previewing its result.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TrackSourceTags {
+    pub title: String,
+    pub sort_title: Option<String>,
+    pub year: Option<i64>,
+    pub track_number: Option<i64>,
+    pub disc_number: Option<i64>,
+    pub musicbrainz_recording_id: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// The `track_override` row as it stands, not a projection of it.
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct TrackOverrideValues {
+    pub title: Option<String>,
+    pub sort_title: Option<String>,
+    pub year: Option<i64>,
+    pub track_number: Option<i64>,
+    pub disc_number: Option<i64>,
+    pub musicbrainz_recording_id: Option<String>,
+    pub comment: Option<String>,
+    pub artists: Option<Vec<String>>,
+    pub genres: Option<Vec<String>>,
+}
+
+/// One account's standing in a library.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LibraryMember {
+    pub user_id: Uuid,
+    pub username: String,
+    pub role: String,
+    pub created_at: i64,
+}
+
 /// Everything one account has starred, across the three entity kinds.
 #[derive(Debug, Clone)]
 pub struct StarredCatalog {

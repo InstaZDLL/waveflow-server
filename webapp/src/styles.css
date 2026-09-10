@@ -1918,3 +1918,21 @@ button.danger {
     transition: none;
   }
 }
+
+/* The membership panel is a row of the library list rather than a column of
+   its own: it belongs to one library, and there is one of them per library. */
+.member-row {
+  display: block;
+  padding: 0;
+  border: 0;
+}
+
+.member-row .admin-panel {
+  padding: 0.6rem 0;
+  border: 0;
+  background: none;
+}
+
+.member-row .control {
+  min-width: 8rem;
+}

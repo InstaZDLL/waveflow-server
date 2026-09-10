@@ -77,6 +77,7 @@ const library = (id: string, name: string) => ({
 let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
 
 /** Flipped by the two tests that check a failure is shown as one. */
+let membersFail = false;
 let tokensFail = false;
 let scanFails = false;
 /** The stream never answers at all, which is what a lost network looks like. */
@@ -201,6 +202,29 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (url.pathname.endsWith("/members") && membersFail) {
+      await route.fulfill({ status: 500, json: { error: "boom" } });
+      return;
+    }
+    if (url.pathname.endsWith("/members")) {
+      await route.fulfill({
+        json: [
+          {
+            user_id: "user-1",
+            username: "listener",
+            role: "owner",
+            created_at: 1,
+          },
+          {
+            user_id: "user-2",
+            username: "guest",
+            role: "listener",
+            created_at: 2,
+          },
+        ],
+      });
+      return;
+    }
     if (url.pathname.endsWith("/tokens")) {
       if (tokensFail) {
         await route.fulfill({ status: 500, json: { error: "boom" } });
@@ -271,6 +295,7 @@ async function mockAuthenticatedApi(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
+  membersFail = false;
   tokensFail = false;
   scanFails = false;
   scanDrops = false;
@@ -771,4 +796,84 @@ test("says so when the progress stream never connects", async ({ page }) => {
   await expect(panel.getByRole("alert")).toContainText(
     "The progress stream could not be opened",
   );
+});
+
+/**
+ * Library membership could be written since M4 and never read, so an interface
+ * could grant and revoke without ever showing who already had access. The list
+ * is behind a disclosure for the same reason the tokens are: the panel renders
+ * once per library, and loading on mount would ask for every membership list
+ * every time the admin screen opened.
+ */
+test("lists who may see a library, once its panel is opened", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/members")) asked.push(path);
+  });
+
+  // Two libraries, because one cannot tell the two layouts apart: with a single
+  // library, "list then panel" and "list, then every panel" produce the same
+  // rows. The defect only shows from the second library on.
+  libraries = [
+    library("library-1", "Ma musique"),
+    library("library-2", "Les enfants"),
+  ];
+
+  await page.goto("/admin");
+  const disclosure = page
+    .getByRole("button", { name: "Who may see this library" })
+    .first();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(asked).toEqual([]);
+
+  // Each library's membership sits directly under that library, not after the
+  // whole list: two render passes put the third library's members four rows
+  // below it, which reads as belonging to whatever is above them.
+  const rows = page.locator(".admin-panel .resource-list > li");
+  await expect(rows.nth(0)).toContainText("Ma musique");
+  await expect(rows.nth(1)).toContainText("Who may see this library");
+  await expect(rows.nth(2)).toContainText("Les enfants");
+  await expect(rows.nth(3)).toContainText("Who may see this library");
+
+  await disclosure.click();
+  await expect(page.getByText("guest")).toBeVisible();
+  expect(asked).toEqual(["/api/v2/libraries/library-1/members"]);
+
+  // The owner is shown and offers no role control: the route refuses `owner`
+  // outright, so a select here would be offering a refusal.
+  await expect(page.getByText("owner, and stays one")).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Role: listener" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Role: guest" }),
+  ).toHaveValue("listener");
+});
+
+/**
+ * A membership list that could not be read is not an empty one. Standing an
+ * empty array in for "not known yet" made every account on the server look like
+ * a non-member, so the panel offered access to people who already had it —
+ * printed underneath the notice saying the list could not be read.
+ */
+test("offers no membership to grant while the list is unknown", async ({
+  page,
+}) => {
+  membersFail = true;
+  await page.goto("/admin");
+  await page
+    .getByRole("button", { name: "Who may see this library" })
+    .first()
+    .click();
+
+  const panel = page.locator(".member-row .admin-panel").first();
+  await expect(panel.getByRole("alert")).toHaveText(
+    "We could not load this view",
+  );
+  // The grant control is built from the list, so without one there is nothing
+  // to build it from.
+  await expect(panel.getByLabel("Give access to")).toHaveCount(0);
 });

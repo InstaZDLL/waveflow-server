@@ -350,6 +350,22 @@ override   = la correction WaveFlow, ou absente  (ligne de `track_override`)
 effective  = override ?? source
 ```
 
+> **Rectifié le 2026-09-10, en écrivant la route de lecture.** Ce schéma vaut
+> pour **sept** des neuf champs, pas pour les neuf. Les artistes et les genres
+> ne sont pas des colonnes : une correction sur l'un ou l'autre est
+> **matérialisée** dans `track_participant`, `track_genre` et les chaînes
+> `*_display` — `apply_track_override_lists` fait `DELETE FROM
+> track_participant` puis réinsère —, parce que ces lignes alimentent toutes
+> les projections et l'index de recherche. **Une fois la correction posée, la
+> valeur du fichier n'est donc plus en base**, seulement dans le fichier. Les
+> sept champs scalaires survivent parce que la projection les fusionne par
+> `COALESCE` au lieu de les écraser.
+>
+> Conséquence pour l'éditeur : il montre la provenance des sept, et propose sur
+> les deux autres un rétablissement **sans aperçu**. Rétablir relit le fichier,
+> ce que `set_track_metadata` fait déjà ; ce qui n'est pas faisable à bon
+> marché, c'est de l'afficher d'avance.
+
 Le serveur travaille déjà ainsi et le dit : la migration
 `20260826010000_track_override.sql` écrit « *every column is nullable and NULL
 means "no correction here, use what the file said"* », et `song_select!` fait
@@ -381,9 +397,13 @@ Une route de lecture nouvelle, et la route d'écriture existante corrigée.
 
 ```
 GET   /api/v2/tracks/{id}            → SongItem, valeur effective, inchangé
-GET   /api/v2/tracks/{id}/overrides  → { source: {…}, overrides: {…} }
-PATCH /api/v2/tracks/{id}            → patch partiel à trois états
+GET   /api/v2/tracks/{id}/overrides  → { source: {…}, overrides: {…} }   ✅ écrite
+PATCH /api/v2/tracks/{id}            → patch partiel à trois états        ⏳ bloquée
 ```
+
+La route de lecture est écrite : elle n'a aucun consommateur à ménager et le
+prérequis d'audit ne portait que sur le **changement de sémantique**. Le
+`PATCH` attend toujours l'audit du client desktop.
 
 `overrides` doit être la **ligne réelle**, pas une seconde projection
 `COALESCE` : c'est précisément la différence que l'éditeur affiche. `effective`
