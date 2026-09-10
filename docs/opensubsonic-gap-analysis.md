@@ -161,7 +161,7 @@ des dettes nommées plutôt que des défauts.
    un `getMusicDirectory` sur cet identifiant ne renverra pas la piste.
 4. **Deux inexactitudes de surface** : `getLicense` expire en dur au
    2099-12-31, et `search_catalog` n'annote pas son 400 sur `q` manquant alors
-   que `/api/v2/songs` vient de le faire.
+   que `/api/v2/songs/by-genre` vient de le faire.
 
 Un point de cadrage plutôt qu'un défaut : le prochain tag reposera sur **quatre**
 clients rejoués, pas cinq. Le document le dit lui-même et n'essaie pas de faire
