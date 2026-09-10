@@ -97,26 +97,13 @@ export function advance(
 }
 
 /**
- * Keeps the draw already under way while the queue grows or loses entries:
- * positions that survive stay where they were, and anything new joins the end
- * in the order it was queued. Adding a track mid-listen should not reshuffle
- * what is left to hear.
- */
-export function extendOrder(previous: number[], length: number): number[] {
-  const kept = previous.filter((position) => position < length);
-  const seen = new Set(kept);
-  for (let position = 0; position < length; position++) {
-    if (!seen.has(position)) kept.push(position);
-  }
-  return kept;
-}
-
-/**
  * Whether the queue an order was drawn for is still the queue being played,
  * and where its entries went.
  *
- * `false` means a different queue and a fresh draw. An array is the mapping
- * `followQueue` needs — `moved[before]` is where that entry sits now, or -1.
+ * `false` means a different queue and a fresh draw. Anything else is the
+ * mapping `followQueue` needs — `moved[before]` is where that entry sits now,
+ * or -1 if it is gone. An append and a truncation are the identity mapping,
+ * with the entries that went away pointing past the end.
  *
  * Compared by entry identity, not by length or by prefix. Length alone let one
  * five-track album inherit another's draw; a prefix test refused every removal,
@@ -127,7 +114,7 @@ export function continuationOf<T>(
   drawn: { entries: readonly T[]; shuffle: boolean } | null,
   entries: readonly T[],
   shuffle: boolean,
-): boolean | number[] {
+): false | number[] {
   if (drawn === null || drawn.shuffle !== shuffle) return false;
   const moved = drawn.entries.map((entry) => entries.indexOf(entry));
   return moved.some((position) => position >= 0) ? moved : false;
@@ -170,25 +157,24 @@ export function followQueue(
  * place, and a starting position that fell at the end of that draw stopped
  * playback after one track.
  *
- * `true` means the entries kept their positions — an append, or a truncation
- * from the end. An array says where each of them went, which is what a removal
- * from the middle needs.
+ * `continues` is `false` for a different queue, or the mapping saying where the
+ * previous queue's entries went. There is no separate "kept their positions"
+ * case: an append and a truncation are the identity mapping, and `followQueue`
+ * reads them the same way it reads a removal from the middle.
  */
 export function orderForQueue(
   length: number,
   at: number,
   shuffle: boolean,
   previous: number[],
-  continues: boolean | readonly number[],
+  continues: false | readonly number[],
   random: () => number = Math.random,
 ): number[] {
   if (!shuffle) return Array.from({ length }, (_, position) => position);
   if (continues === false || previous.length === 0) {
     return shuffledOrder(length, at, random);
   }
-  return continues === true
-    ? extendOrder(previous, length)
-    : followQueue(previous, continues, length);
+  return followQueue(previous, continues, length);
 }
 
 /** Where "previous" goes. Wraps only when the whole queue repeats. */

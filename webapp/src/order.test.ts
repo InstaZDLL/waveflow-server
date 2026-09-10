@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   advance,
   continuationOf,
-  extendOrder,
   followQueue,
   orderForQueue,
   retreat,
@@ -116,31 +115,24 @@ describe("orderForQueue", () => {
 
   it("keeps the draw under way when the same queue grows", () => {
     const under = [2, 0, 3, 1, 4];
-    // Adding a track mid-listen must not reshuffle what is left to hear.
-    expect(orderForQueue(7, 2, true, under, true)).toEqual([
+    // An append is the identity mapping: the five entries stayed where they
+    // were. Adding a track mid-listen must not reshuffle what is left to hear.
+    expect(orderForQueue(7, 2, true, under, [0, 1, 2, 3, 4])).toEqual([
       2, 0, 3, 1, 4, 5, 6,
     ]);
   });
 
   it("drops positions a shortened queue no longer has", () => {
-    expect(orderForQueue(3, 2, true, [2, 0, 3, 1, 4], true)).toEqual([2, 0, 1]);
+    // A truncation is the identity mapping too, with the entries that went
+    // away pointing past the end.
+    expect(orderForQueue(3, 2, true, [2, 0, 3, 1, 4], [0, 1, 2, 3, 4])).toEqual(
+      [2, 0, 1],
+    );
   });
 
   it("draws for a queue that had no order yet", () => {
-    expect(orderForQueue(3, 0, true, [], true, () => 0).sort()).toEqual([
+    expect(orderForQueue(3, 0, true, [], [], () => 0).sort()).toEqual([
       0, 1, 2,
-    ]);
-  });
-});
-
-describe("extendOrder", () => {
-  it("keeps what survives and appends what is new, in queue order", () => {
-    expect(extendOrder([3, 1, 0, 2], 6)).toEqual([3, 1, 0, 2, 4, 5]);
-  });
-
-  it("is a permutation of the new length whatever it was given", () => {
-    expect([...extendOrder([9, 1], 4)].sort((a, b) => a - b)).toEqual([
-      0, 1, 2, 3,
     ]);
   });
 });
@@ -160,6 +152,19 @@ describe("followQueue", () => {
 
   it("appends positions the previous order never knew", () => {
     expect(followQueue([1, 0], [0, 1], 4)).toEqual([1, 0, 2, 3]);
+    // Which is the whole of what a growing queue needs, and why there is no
+    // separate path for one: an append is this mapping.
+    expect(followQueue([3, 1, 0, 2], [0, 1, 2, 3], 6)).toEqual([
+      3, 1, 0, 2, 4, 5,
+    ]);
+  });
+
+  it("keeps its result a permutation whatever it is handed", () => {
+    // Positions past the new end, and a previous order that names one that
+    // never existed, both have to leave a usable order behind.
+    expect([...followQueue([9, 1], [0, 1], 4)].sort((a, b) => a - b)).toEqual([
+      0, 1, 2, 3,
+    ]);
   });
 
   it("is a permutation of the new queue whatever it is handed", () => {
