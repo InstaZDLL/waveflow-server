@@ -808,12 +808,29 @@ test("lists who may see a library, once its panel is opened", async ({
     if (path.endsWith("/members")) asked.push(path);
   });
 
+  // Two libraries, because one cannot tell the two layouts apart: with a single
+  // library, "list then panel" and "list, then every panel" produce the same
+  // rows. The defect only shows from the second library on.
+  libraries = [
+    library("library-1", "Ma musique"),
+    library("library-2", "Les enfants"),
+  ];
+
   await page.goto("/admin");
-  const disclosure = page.getByRole("button", {
-    name: "Who may see this library",
-  });
+  const disclosure = page
+    .getByRole("button", { name: "Who may see this library" })
+    .first();
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
   expect(asked).toEqual([]);
+
+  // Each library's membership sits directly under that library, not after the
+  // whole list: two render passes put the third library's members four rows
+  // below it, which reads as belonging to whatever is above them.
+  const rows = page.locator(".admin-panel .resource-list > li");
+  await expect(rows.nth(0)).toContainText("Ma musique");
+  await expect(rows.nth(1)).toContainText("Who may see this library");
+  await expect(rows.nth(2)).toContainText("Les enfants");
+  await expect(rows.nth(3)).toContainText("Who may see this library");
 
   await disclosure.click();
   await expect(page.getByText("guest")).toBeVisible();
