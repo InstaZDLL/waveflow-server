@@ -201,6 +201,25 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (url.pathname.endsWith("/members")) {
+      await route.fulfill({
+        json: [
+          {
+            user_id: "user-1",
+            username: "listener",
+            role: "owner",
+            created_at: 1,
+          },
+          {
+            user_id: "user-2",
+            username: "guest",
+            role: "listener",
+            created_at: 2,
+          },
+        ],
+      });
+      return;
+    }
     if (url.pathname.endsWith("/tokens")) {
       if (tokensFail) {
         await route.fulfill({ status: 500, json: { error: "boom" } });
@@ -771,4 +790,42 @@ test("says so when the progress stream never connects", async ({ page }) => {
   await expect(panel.getByRole("alert")).toContainText(
     "The progress stream could not be opened",
   );
+});
+
+/**
+ * Library membership could be written since M4 and never read, so an interface
+ * could grant and revoke without ever showing who already had access. The list
+ * is behind a disclosure for the same reason the tokens are: the panel renders
+ * once per library, and loading on mount would ask for every membership list
+ * every time the admin screen opened.
+ */
+test("lists who may see a library, once its panel is opened", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/members")) asked.push(path);
+  });
+
+  await page.goto("/admin");
+  const disclosure = page.getByRole("button", {
+    name: "Who may see this library",
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(asked).toEqual([]);
+
+  await disclosure.click();
+  await expect(page.getByText("guest")).toBeVisible();
+  expect(asked).toEqual(["/api/v2/libraries/library-1/members"]);
+
+  // The owner is shown and offers no role control: the route refuses `owner`
+  // outright, so a select here would be offering a refusal.
+  await expect(page.getByText("owner, and stays one")).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Role: listener" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Role: guest" }),
+  ).toHaveValue("listener");
 });
