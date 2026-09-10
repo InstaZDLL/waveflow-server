@@ -250,6 +250,7 @@ export function usePlayerProgress(): PlayerProgress {
   return progress;
 }
 
+/** Own the shared audio element, queue, playback modes, and transport state. */
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -828,6 +829,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Render the persistent controls for the currently selected track. */
 export function PlayerBar() {
   const player = usePlayer();
   const progress = usePlayerProgress();
