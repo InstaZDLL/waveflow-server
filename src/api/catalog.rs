@@ -211,7 +211,12 @@ pub async fn list_random_songs(
 
 /// The native form of `getSongsByGenre`. `genre` is required: answering an
 /// unfiltered catalogue would drop the filter in silence.
-#[utoipa::path(get, path = "/api/v2/songs", tag = "catalog", params(("genre" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 400, description = "genre is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+///
+/// Served at `/songs/by-genre` and not `/songs`, so the path says what the
+/// handler does. Under `/songs` it read as the general listing and answered
+/// 400 to anyone who took it for one; the general listing is
+/// `/libraries/{id}/tracks`, which pages and searches.
+#[utoipa::path(get, path = "/api/v2/songs/by-genre", tag = "catalog", params(("genre" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 400, description = "genre is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_songs_by_genre(
     State(state): State<AppState>,
     Query(query): Query<GenreSongQuery>,

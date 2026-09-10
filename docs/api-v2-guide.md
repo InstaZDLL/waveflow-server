@@ -196,7 +196,7 @@ curl https://music.example.com/api/v2/artists/ARTIST_UUID \
   -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
-`GET /api/v2/songs` takes a required `genre` and pages through it; `GET
+`GET /api/v2/songs/by-genre` takes a required `genre` and pages through it; `GET
 /api/v2/songs/random` draws a selection in SQL, with optional `genre`,
 `from_year` and `to_year`. Both match the genre on its canonical name like
 every other genre filter, and both are the native form of a Subsonic method
@@ -425,9 +425,22 @@ a client's position in its own user journal.
     }
   ],
   "next_cursor": 41,
-  "has_more": false
+  "has_more": false,
+  "purged_through": 0
 }
 ```
+
+`purged_through` is the highest cursor retention has already cut away. A cursor
+strictly below it is refused with **409**, and the only way back from there is
+the snapshot — so subtract it from the cursor you hold to know how much slack
+you have, and spend that slack deliberately. Resyncing on a network you like,
+while the application is idle, is a different experience from resyncing at the
+moment the server refuses you.
+
+It is what was *purged*, not what survives: a feed whose oldest surviving row
+sits at a high cursor has lost nothing, it merely started late. Measure against
+the cursor **you** hold, not against `next_cursor` — that one is the end of the
+page just served, so it tells you the margin you will have after applying it.
 
 A track `upsert` carries the file's `full_hash`, and it is the only place on the
 wire that does. **A file retagged outside the API keeps its track id while its
