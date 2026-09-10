@@ -42,6 +42,32 @@ pub async fn list_tracks(
     Ok(Json(tracks))
 }
 
+/// What the file says and what a correction says instead.
+///
+/// Separate from `GET /api/v2/tracks/{track_id}`, which answers the effective
+/// value and should keep doing so: the catalogue has no use for provenance,
+/// and putting it on `SongItem` would weigh down the type every listing
+/// returns — a type the frozen Subsonic façade also builds from.
+///
+/// It is the read half of correcting a tag. The write half, `PATCH
+/// /api/v2/tracks/{track_id}`, still replaces the whole set, so a client that
+/// means to change one field has to send back the others; until that is fixed
+/// this route is what lets it know what they are.
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}/overrides", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::TrackOverrides), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_track_overrides(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::TrackOverrides>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .track_overrides(user.id, track_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
 #[utoipa::path(get, path = "/api/v2/tracks/{track_id}", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::SongItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn get_track(
     State(state): State<AppState>,

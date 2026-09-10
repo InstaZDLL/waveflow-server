@@ -96,6 +96,10 @@ pub fn router(state: AppState) -> Router {
             get(list_libraries).post(create_library),
         )
         .route(
+            "/api/v2/libraries/{library_id}/members",
+            get(list_library_members),
+        )
+        .route(
             "/api/v2/libraries/{library_id}/members/{user_id}",
             put(set_library_member).delete(remove_library_member),
         )
@@ -127,6 +131,10 @@ pub fn router(state: AppState) -> Router {
             get(get_track).patch(update_track),
         )
         .route("/api/v2/tracks/{track_id}/lyrics", get(get_track_lyrics))
+        .route(
+            "/api/v2/tracks/{track_id}/overrides",
+            get(get_track_overrides),
+        )
         .route("/api/v2/albums", get(list_albums))
         .route("/api/v2/genres", get(list_genres))
         .route("/api/v2/albums/{album_id}", get(get_album))

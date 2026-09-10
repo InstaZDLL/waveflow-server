@@ -341,4 +341,63 @@ impl DomainServices {
             .pop()
             .ok_or(ServiceError::NotFound)
     }
+
+    /// What the file says and what the correction says, side by side.
+    ///
+    /// Read in one snapshot: a page that showed a source from before a write
+    /// and an override from after it would describe a track that never
+    /// existed. Tenancy is in the join, so a track in a library the caller is
+    /// not a member of is missing rather than forbidden.
+    ///
+    /// `LEFT JOIN`, because most tracks carry no correction at all and an
+    /// absent row is an answer — every field `null` — rather than a 404.
+    pub async fn track_overrides(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+    ) -> Result<TrackOverrides, ServiceError> {
+        let row = sqlx::query(
+            "SELECT t.title, t.sort_title, t.year, t.track_number, t.disc_number,                     t.musicbrainz_recording_id, t.comment,                     ovr.title AS o_title, ovr.sort_title AS o_sort_title,                     ovr.year AS o_year, ovr.track_number AS o_track_number,                     ovr.disc_number AS o_disc_number,                     ovr.musicbrainz_recording_id AS o_musicbrainz_recording_id,                     ovr.comment AS o_comment, ovr.artists AS o_artists,                     ovr.genres AS o_genres              FROM track t              JOIN library_member m ON m.library_id=t.library_id              LEFT JOIN track_override ovr ON ovr.track_id=t.id              WHERE t.id=? AND m.user_id=?",
+        )
+        .bind(track_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(ServiceError::NotFound)?;
+
+        // Stored as JSON rather than the `;`-joined form the tag columns use,
+        // because an override is a list someone typed on purpose. A row that
+        // will not parse is reported as no correction rather than taking the
+        // request down: the editor then shows the file's credits, which is the
+        // safe reading of a value nobody can interpret.
+        let list = |column: &str| -> Option<Vec<String>> {
+            row.try_get::<Option<String>, _>(column)
+                .ok()
+                .flatten()
+                .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        };
+
+        Ok(TrackOverrides {
+            source: TrackSourceTags {
+                title: row.try_get("title")?,
+                sort_title: row.try_get("sort_title")?,
+                year: row.try_get("year")?,
+                track_number: row.try_get("track_number")?,
+                disc_number: row.try_get("disc_number")?,
+                musicbrainz_recording_id: row.try_get("musicbrainz_recording_id")?,
+                comment: row.try_get("comment")?,
+            },
+            overrides: TrackOverrideValues {
+                title: row.try_get("o_title")?,
+                sort_title: row.try_get("o_sort_title")?,
+                year: row.try_get("o_year")?,
+                track_number: row.try_get("o_track_number")?,
+                disc_number: row.try_get("o_disc_number")?,
+                musicbrainz_recording_id: row.try_get("o_musicbrainz_recording_id")?,
+                comment: row.try_get("o_comment")?,
+                artists: list("o_artists"),
+                genres: list("o_genres"),
+            },
+        })
+    }
 }
