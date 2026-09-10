@@ -804,7 +804,8 @@ async fn genre_matching_is_canonical_on_every_surface() {
         }
     };
     // Any spelling reaches the same three tracks, natively too.
-    let by_genre = json_body(native("/api/v2/songs?genre=hip%20hop&limit=50".into()).await).await;
+    let by_genre =
+        json_body(native("/api/v2/songs/by-genre?genre=hip%20hop&limit=50".into()).await).await;
     assert_eq!(by_genre.as_array().expect("a list").len(), 3);
     let random =
         json_body(native("/api/v2/songs/random?genre=HIP%20%20HOP&limit=50".into()).await).await;
@@ -817,13 +818,20 @@ async fn genre_matching_is_canonical_on_every_surface() {
     )
     .await;
     assert!(narrowed.as_array().expect("a list").is_empty());
-    let unused = json_body(native("/api/v2/songs?genre=Polka".into()).await).await;
+    let unused = json_body(native("/api/v2/songs/by-genre?genre=Polka".into()).await).await;
     assert!(unused.as_array().expect("a list").is_empty());
     // The genre is what the request is about, so its absence is a malformed
     // request and not an unfiltered catalogue.
     assert_eq!(
-        native("/api/v2/songs".into()).await.status(),
+        native("/api/v2/songs/by-genre".into()).await.status(),
         StatusCode::BAD_REQUEST
+    );
+    // And `/songs` is nobody's route: it read as the general listing while
+    // answering 400, which is what sent a reader looking for a bug. The
+    // general listing is `/libraries/{id}/tracks`.
+    assert_eq!(
+        native("/api/v2/songs".into()).await.status(),
+        StatusCode::NOT_FOUND
     );
     // Search pages each kind on its own offset.
     let paged =
