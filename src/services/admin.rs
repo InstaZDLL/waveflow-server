@@ -5,6 +5,54 @@
 use super::*;
 
 impl DomainServices {
+    /// Who may see a library, and in what standing.
+    ///
+    /// The write side has existed since M4 — `PUT` and `DELETE` on
+    /// `/libraries/{id}/members/{user}` — with nothing to read it back, so a
+    /// screen could grant and revoke without ever showing who already had
+    /// access. That is not a listing anyone can build client-side: an account's
+    /// own membership tells it nothing about anyone else's.
+    ///
+    /// Restricted to members, and by membership in the join rather than by a
+    /// check ahead of it: a library the caller is not in is missing, and never
+    /// confirmed to exist by a different answer.
+    pub async fn library_members(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+    ) -> Result<Vec<LibraryMember>, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT m.user_id, a.username, m.role, m.created_at \
+             FROM library_member m \
+             JOIN account a ON a.id=m.user_id \
+             WHERE m.library_id=? AND EXISTS ( \
+               SELECT 1 FROM library_member self \
+               WHERE self.library_id=m.library_id AND self.user_id=?) \
+             ORDER BY a.username COLLATE NOCASE",
+        )
+        .bind(library_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        // An empty answer would be indistinguishable from a library the caller
+        // cannot see, and every library has at least its owner — so nothing
+        // here means nothing to see.
+        if rows.is_empty() {
+            return Err(ServiceError::NotFound);
+        }
+        rows.into_iter()
+            .map(|row| {
+                Ok(LibraryMember {
+                    user_id: parse_uuid(row.try_get("user_id")?)?,
+                    username: row.try_get("username")?,
+                    role: row.try_get("role")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect::<Result<Vec<_>, sqlx::Error>>()
+            .map_err(ServiceError::from)
+    }
+
     pub async fn users(&self, actor_id: Uuid) -> Result<Vec<UserItem>, ServiceError> {
         self.require_admin(actor_id).await?;
         let mut users = sqlx::query("SELECT a.id, a.username, a.role, a.disabled, c.user_id IS NOT NULL AS has_credential FROM account a LEFT JOIN subsonic_credential c ON c.user_id=a.id ORDER BY a.username COLLATE NOCASE")

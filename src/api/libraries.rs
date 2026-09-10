@@ -262,6 +262,26 @@ pub async fn library_events_ack(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Who may see a library, and in what standing.
+///
+/// `PUT` and `DELETE` on `/libraries/{library_id}/members/{user_id}` have
+/// existed since M4 with nothing to read them back, so an interface could grant
+/// and revoke without showing who already had access.
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/members", tag = "administration", params(("library_id" = Uuid, Path)), responses((status = 200, body = [crate::services::LibraryMember]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn list_library_members(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::LibraryMember>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .library_members(user.id, library_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
 /// What a device says it has read.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 pub struct LibraryEventAckRequest {

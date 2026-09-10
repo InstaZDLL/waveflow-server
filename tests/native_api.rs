@@ -1338,6 +1338,37 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     // across an edit.
     assert_eq!(corrected["full_hash"], scanned_hash);
 
+    // The track answers the effective value and says nothing about where it
+    // came from, so an editor cannot tell a corrected field from a scanned one
+    // — nor offer to restore what it cannot read. That is what the overrides
+    // route is for, and it is the read half of correcting a tag.
+    let overrides = {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/tracks/{track_id}/overrides"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        json_body(response).await
+    };
+    // The scanned column is untouched by the correction: the projection merges
+    // the two with COALESCE rather than writing over the file's value.
+    assert_eq!(overrides["source"]["title"], "Mispelled Titel");
+    assert_eq!(overrides["overrides"]["title"], "Misspelled Title");
+    assert_eq!(overrides["overrides"]["year"], 1998);
+    // A field nobody corrected is null, which is what its column holds.
+    assert!(overrides["overrides"]["comment"].is_null());
+    assert!(overrides["overrides"]["artists"].is_null());
+    // Artists and genres are deliberately absent from `source`: correcting
+    // either rewrites `track_participant` and the display string, so once a
+    // correction exists the file's own credits are no longer in the database.
+    assert!(overrides["source"].get("artists").is_none());
+
     // The headline. A scan applies `title=excluded.title` over the track row,
     // so a correction stored there would be gone by now.
     //
@@ -1418,7 +1449,60 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     .await
     .unwrap();
     let listener_token = login_token(&router, "tag-listener", password).await;
-    let (status, _) = patch(listener_token, serde_json::json!({ "title": "Nope" })).await;
+    let (status, _) = patch(
+        listener_token.clone(),
+        serde_json::json!({ "title": "Nope" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Who may see this library, which until now could be written and never
+    // read: an interface could grant and revoke without showing who already
+    // had access, and no client can work that out for itself — an account's own
+    // membership says nothing about anyone else's.
+    let members = |token: String, library: String| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::get(format!("/api/v2/libraries/{library}/members"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (response.status(), json_body(response).await)
+        }
+    };
+    let (status, listed) = members(listener_token.clone(), library_id.to_string()).await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = listed.as_array().expect("a list");
+    assert_eq!(listed.len(), 2, "the owner and the listener");
+    // Ordered by username, so the answer does not depend on insertion order.
+    assert_eq!(listed[0]["username"], "tag-listener");
+    assert_eq!(listed[0]["role"], "listener");
+    assert_eq!(listed[1]["username"], "tagger");
+    assert_eq!(listed[1]["role"], "owner");
+
+    // A library the caller is not in is missing, not forbidden. Answering
+    // anything else would confirm that it exists.
+    let stranger = state
+        .db
+        .create_account("tag-stranger", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    assert_ne!(stranger, listener, "a distinct account");
+    let stranger_token = login_token(&router, "tag-stranger", password).await;
+    let (status, _) = members(stranger_token, library_id.to_string()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // And a library nobody has is the same answer, so the two cannot be told
+    // apart from outside.
+    let (status, _) = members(
+        listener_token,
+        "00000000-0000-4000-8000-000000000000".into(),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // And a manager may, which is the half of the rule the refusal above cannot
