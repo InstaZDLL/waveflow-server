@@ -334,6 +334,7 @@ const ALBUM_SORTS: Array<{ value: AlbumSort; labelKey: TranslationKey }> = [
   { value: "byYear", labelKey: "browse.sortByYear" },
 ];
 
+/** Render the album catalogue for the active library. */
 export function AlbumsPage() {
   const { t } = useI18n();
   const [sort, setSort] = useState<AlbumSort>("alphabeticalByName");

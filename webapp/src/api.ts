@@ -342,10 +342,12 @@ function scoped(
   return libraryId ? { ...extra, library_id: libraryId } : extra;
 }
 
+/** List albums in the active library, using the requested catalogue order. */
 export const listAlbums = (sort?: AlbumSort, libraryId?: string) =>
   collect<Album>("/api/v2/albums", scoped(libraryId, sort ? { sort } : {}));
 export const getAlbum = (id: string) =>
   call<AlbumDetail>(`/api/v2/albums/${id}`);
+/** List artists in the active library. */
 export const listArtists = (libraryId?: string) =>
   collect<Artist>("/api/v2/artists", scoped(libraryId));
 export const getArtist = (id: string) =>
@@ -446,6 +448,7 @@ export type ScanJob = {
   message: string | null;
 };
 
+/** Fetch the latest snapshot of a scan job. */
 export const getScan = (scanId: string) =>
   call<ScanJob>(`/api/v2/scans/${scanId}`);
 
@@ -561,6 +564,7 @@ export type NowPlaying = {
   started_at: number;
 };
 
+/** List the playback sessions currently reported by the server. */
 export const listNowPlaying = () => call<NowPlaying[]>("/api/v2/now-playing");
 
 export type ApiToken = {
@@ -573,6 +577,7 @@ export type ApiToken = {
   revoked_at: number | null;
 };
 
+/** List every API token issued to an account. */
 export const listApiTokens = (username: string) =>
   call<ApiToken[]>(
     `/api/v2/admin/users/${encodeURIComponent(username)}/tokens`,
@@ -585,6 +590,7 @@ export const createApiToken = (username: string, name: string) =>
     { method: "POST", body: JSON.stringify({ name, scopes: [] }) },
   );
 
+/** Revoke an API token belonging to an account. */
 export const revokeApiToken = (username: string, tokenId: string) =>
   call<void>(
     `/api/v2/admin/users/${encodeURIComponent(username)}/tokens/${tokenId}`,
@@ -696,9 +702,11 @@ export type Genre = {
   album_count: number;
 };
 
+/** List genre summaries in the active library. */
 export const listGenres = (libraryId?: string) =>
   call<Genre[]>(`/api/v2/genres?${new URLSearchParams(scoped(libraryId))}`);
 
+/** List songs for a genre in the active library. */
 export const listGenreSongs = (genre: string, libraryId?: string) =>
   collect<Song>("/api/v2/songs", scoped(libraryId, { genre }));
 
@@ -716,6 +724,7 @@ export type Play = {
 export const listHistory = (limit = 100) =>
   call<Play[]>(`/api/v2/history?limit=${limit}`);
 
+/** Request a random selection of songs, optionally scoped by genre and library. */
 export const listRandomSongs = (
   limit = 100,
   genre?: string,
