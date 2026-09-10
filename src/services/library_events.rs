@@ -406,6 +406,10 @@ impl DomainServices {
             events,
             next_cursor,
             has_more,
+            // Read in the same snapshot as the rows above, so the margin a
+            // client computes from it cannot describe a different moment than
+            // the page it came with.
+            purged_through: watermark,
         })
     }
 }
