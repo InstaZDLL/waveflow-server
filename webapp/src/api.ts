@@ -342,12 +342,12 @@ function scoped(
   return libraryId ? { ...extra, library_id: libraryId } : extra;
 }
 
-/** List albums in the active library, using the requested catalogue order. */
+/** Albums in the requested order, scoped to `libraryId` when one is given. */
 export const listAlbums = (sort?: AlbumSort, libraryId?: string) =>
   collect<Album>("/api/v2/albums", scoped(libraryId, sort ? { sort } : {}));
 export const getAlbum = (id: string) =>
   call<AlbumDetail>(`/api/v2/albums/${id}`);
-/** List artists in the active library. */
+/** Artists, scoped to `libraryId` when one is given. */
 export const listArtists = (libraryId?: string) =>
   collect<Artist>("/api/v2/artists", scoped(libraryId));
 export const getArtist = (id: string) =>
@@ -578,6 +578,38 @@ export type ApiToken = {
 };
 
 /** List every API token issued to an account. */
+export type LibraryMember = {
+  user_id: string;
+  username: string;
+  role: "owner" | "manager" | "listener";
+  created_at: number;
+};
+
+/**
+ * Who may see a library. The write side has existed since M4 with nothing to
+ * read it back, so a screen could grant and revoke without showing who already
+ * had access — and no client can work that out for itself, since an account's
+ * own membership says nothing about anyone else's.
+ */
+export const listLibraryMembers = (libraryId: string) =>
+  call<LibraryMember[]>(`/api/v2/libraries/${libraryId}/members`);
+
+/** `owner` cannot be granted: the route refuses it. */
+export const setLibraryMember = (
+  libraryId: string,
+  userId: string,
+  role: "manager" | "listener",
+) =>
+  call<void>(`/api/v2/libraries/${libraryId}/members/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify({ role }),
+  });
+
+export const removeLibraryMember = (libraryId: string, userId: string) =>
+  call<void>(`/api/v2/libraries/${libraryId}/members/${userId}`, {
+    method: "DELETE",
+  });
+
 export const listApiTokens = (username: string) =>
   call<ApiToken[]>(
     `/api/v2/admin/users/${encodeURIComponent(username)}/tokens`,
@@ -702,11 +734,11 @@ export type Genre = {
   album_count: number;
 };
 
-/** List genre summaries in the active library. */
+/** Genre summaries, scoped to `libraryId` when one is given. */
 export const listGenres = (libraryId?: string) =>
   call<Genre[]>(`/api/v2/genres?${new URLSearchParams(scoped(libraryId))}`);
 
-/** List songs for a genre in the active library. */
+/** Songs of one genre, scoped to `libraryId` when one is given. */
 export const listGenreSongs = (genre: string, libraryId?: string) =>
   collect<Song>("/api/v2/songs/by-genre", scoped(libraryId, { genre }));
 

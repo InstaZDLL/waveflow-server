@@ -34,6 +34,7 @@ import {
   getLyrics,
   getTrack,
   isAllowedRedirect,
+  type LibraryMember,
   type LyricsLine,
   type LyricsList,
   listAlbums,
@@ -45,6 +46,7 @@ import {
   listGenres,
   listHistory,
   listLibraries,
+  listLibraryMembers,
   listNowPlaying,
   listPlaylists,
   listRandomSongs,
@@ -53,6 +55,7 @@ import {
   login,
   type NowPlaying,
   type Playlist,
+  removeLibraryMember,
   revokeApiToken,
   type ScanJob,
   type SearchResult,
@@ -62,6 +65,7 @@ import {
   search,
   setBookmark,
   setFavorite,
+  setLibraryMember,
   setRating,
   setSubsonicCredential,
   setUserDisabled,
@@ -1538,6 +1542,142 @@ function ApiTokensPanel({ username }: { username: string }) {
   );
 }
 
+/**
+ * Who may see one library, and in what standing.
+ *
+ * Its own disclosure per library, for the reason the token panel has one: the
+ * admin screen renders it once per library, and loading on mount would ask for
+ * every membership list every time the page opened.
+ *
+ * The owner is shown and cannot be changed from here — the route refuses
+ * `owner` outright, so offering it would be offering a refusal.
+ */
+function LibraryMembersPanel({
+  libraryId,
+  users,
+}: {
+  libraryId: string;
+  users: User[];
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const { value, error } = useAsync<LibraryMember[] | null>(
+    () => (open ? listLibraryMembers(libraryId) : Promise.resolve(null)),
+    [libraryId, revision, open],
+  );
+
+  async function grant(userId: string, role: "manager" | "listener") {
+    setFailed(false);
+    try {
+      await setLibraryMember(libraryId, userId, role);
+      setRevision((n) => n + 1);
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  async function revoke(userId: string) {
+    setFailed(false);
+    try {
+      await removeLibraryMember(libraryId, userId);
+      setRevision((n) => n + 1);
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  const members = value ?? [];
+  const outside = users.filter(
+    (user) => !members.some((member) => member.user_id === user.id),
+  );
+  return (
+    <article className="admin-panel token-panel">
+      <h3>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {t("admin.members")}
+        </button>
+      </h3>
+      {open ? (
+        <>
+          {failed ? <p className="error">{t("admin.memberError")}</p> : null}
+          {error ? (
+            <p className="error" role="alert">
+              {t("common.loadError")}
+            </p>
+          ) : (
+            <ul className="list resource-list">
+              {members.map((member) => (
+                <li key={member.user_id}>
+                  <div>
+                    <strong>{member.username}</strong>
+                    <small className="muted">{member.role}</small>
+                  </div>
+                  {member.role === "owner" ? (
+                    <span className="muted">{t("admin.memberOwner")}</span>
+                  ) : (
+                    <div className="actions">
+                      <label className="control">
+                        <span>{t("admin.memberRole")}</span>
+                        <select
+                          value={member.role}
+                          aria-label={`${t("admin.memberRole")}: ${member.username}`}
+                          onChange={(event) =>
+                            void grant(
+                              member.user_id,
+                              event.target.value as "manager" | "listener",
+                            )
+                          }
+                        >
+                          <option value="listener">listener</option>
+                          <option value="manager">manager</option>
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => void revoke(member.user_id)}
+                        aria-label={`${t("admin.memberRemove")}: ${member.username}`}
+                      >
+                        {t("admin.memberRemove")}
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {outside.length ? (
+            <label className="control">
+              <span>{t("admin.memberAdd")}</span>
+              <select
+                value=""
+                aria-label={t("admin.memberAdd")}
+                onChange={(event) =>
+                  event.target.value &&
+                  void grant(event.target.value, "listener")
+                }
+              >
+                <option value="">{t("admin.memberChoose")}</option>
+                {outside.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </>
+      ) : null}
+    </article>
+  );
+}
+
 export function AdminPage() {
   const signedInUser = currentUser();
   const { t } = useI18n();
@@ -1666,6 +1806,11 @@ export function AdminPage() {
                 >
                   {t("admin.scan")}
                 </button>
+              </li>
+            ))}
+            {libraries.map((library) => (
+              <li key={`${library.id}-members`} className="member-row">
+                <LibraryMembersPanel libraryId={library.id} users={users} />
               </li>
             ))}
           </ul>

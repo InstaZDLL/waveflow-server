@@ -246,6 +246,13 @@ const en = {
   "admin.tokenNone": "No token on this account.",
   "scan.lost":
     "The progress stream could not be opened. The scan itself is unaffected.",
+  "admin.members": "Who may see this library",
+  "admin.memberRole": "Role",
+  "admin.memberRemove": "Remove",
+  "admin.memberOwner": "owner, and stays one",
+  "admin.memberAdd": "Give access to",
+  "admin.memberChoose": "Choose an account…",
+  "admin.memberError": "That membership could not be changed.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -489,6 +496,13 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.tokenNone": "Aucun jeton sur ce compte.",
   "scan.lost":
     "Le flux de progression n’a pas pu s’ouvrir. L’analyse elle-même se poursuit.",
+  "admin.members": "Qui peut voir cette bibliothèque",
+  "admin.memberRole": "Rôle",
+  "admin.memberRemove": "Retirer",
+  "admin.memberOwner": "propriétaire, et le reste",
+  "admin.memberAdd": "Donner accès à",
+  "admin.memberChoose": "Choisir un compte…",
+  "admin.memberError": "Cette appartenance n’a pas pu être modifiée.",
 };
 
 export type Locale = "en" | "fr";
