@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type FormEvent,
+  Fragment,
   type ReactNode,
   useEffect,
   useMemo,
@@ -1794,24 +1795,27 @@ export function AdminPage() {
             </button>
           </form>
           <ul className="resource-list compact">
+            {/* One pass, so each library's membership sits under that library.
+                Two passes listed every library and then every panel, which put
+                the third library's members four rows below it. */}
             {libraries.map((library) => (
-              <li key={library.id}>
-                <div>
-                  <strong>{library.name}</strong>
-                  <span className="muted">{library.visibility}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void scanLibrary(library.id)}
-                >
-                  {t("admin.scan")}
-                </button>
-              </li>
-            ))}
-            {libraries.map((library) => (
-              <li key={`${library.id}-members`} className="member-row">
-                <LibraryMembersPanel libraryId={library.id} users={users} />
-              </li>
+              <Fragment key={library.id}>
+                <li>
+                  <div>
+                    <strong>{library.name}</strong>
+                    <span className="muted">{library.visibility}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void scanLibrary(library.id)}
+                  >
+                    {t("admin.scan")}
+                  </button>
+                </li>
+                <li className="member-row">
+                  <LibraryMembersPanel libraryId={library.id} users={users} />
+                </li>
+              </Fragment>
             ))}
           </ul>
         </article>
