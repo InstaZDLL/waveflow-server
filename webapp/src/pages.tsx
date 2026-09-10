@@ -1589,10 +1589,19 @@ function LibraryMembersPanel({
     }
   }
 
-  const members = value ?? [];
-  const outside = users.filter(
-    (user) => !members.some((member) => member.user_id === user.id),
-  );
+  // `value ?? []` conflated three states, and two of them are not an empty
+  // list. An empty list is not even reachable: every library has at least its
+  // owner, and the service answers 404 rather than nothing. So `null` means
+  // "not known yet" — either in flight or failed — and standing in an empty
+  // array for it made `outside` every account on the server, offering access
+  // to people who already had it, under the error saying the list could not be
+  // read.
+  const members = value;
+  const outside = members
+    ? users.filter(
+        (user) => !members.some((member) => member.user_id === user.id),
+      )
+    : [];
   return (
     <article className="admin-panel token-panel">
       <h3>
@@ -1611,6 +1620,8 @@ function LibraryMembersPanel({
             <p className="error" role="alert">
               {t("common.loadError")}
             </p>
+          ) : !members ? (
+            <Waiting />
           ) : (
             <ul className="list resource-list">
               {members.map((member) => (

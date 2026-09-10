@@ -77,6 +77,7 @@ const library = (id: string, name: string) => ({
 let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
 
 /** Flipped by the two tests that check a failure is shown as one. */
+let membersFail = false;
 let tokensFail = false;
 let scanFails = false;
 /** The stream never answers at all, which is what a lost network looks like. */
@@ -201,6 +202,10 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (url.pathname.endsWith("/members") && membersFail) {
+      await route.fulfill({ status: 500, json: { error: "boom" } });
+      return;
+    }
     if (url.pathname.endsWith("/members")) {
       await route.fulfill({
         json: [
@@ -290,6 +295,7 @@ async function mockAuthenticatedApi(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
+  membersFail = false;
   tokensFail = false;
   scanFails = false;
   scanDrops = false;
@@ -845,4 +851,29 @@ test("lists who may see a library, once its panel is opened", async ({
   await expect(
     page.getByRole("combobox", { name: "Role: guest" }),
   ).toHaveValue("listener");
+});
+
+/**
+ * A membership list that could not be read is not an empty one. Standing an
+ * empty array in for "not known yet" made every account on the server look like
+ * a non-member, so the panel offered access to people who already had it —
+ * printed underneath the notice saying the list could not be read.
+ */
+test("offers no membership to grant while the list is unknown", async ({
+  page,
+}) => {
+  membersFail = true;
+  await page.goto("/admin");
+  await page
+    .getByRole("button", { name: "Who may see this library" })
+    .first()
+    .click();
+
+  const panel = page.locator(".member-row .admin-panel").first();
+  await expect(panel.getByRole("alert")).toHaveText(
+    "We could not load this view",
+  );
+  // The grant control is built from the list, so without one there is nothing
+  // to build it from.
+  await expect(panel.getByLabel("Give access to")).toHaveCount(0);
 });
