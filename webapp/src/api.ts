@@ -708,7 +708,7 @@ export const listGenres = (libraryId?: string) =>
 
 /** List songs for a genre in the active library. */
 export const listGenreSongs = (genre: string, libraryId?: string) =>
-  collect<Song>("/api/v2/songs", scoped(libraryId, { genre }));
+  collect<Song>("/api/v2/songs/by-genre", scoped(libraryId, { genre }));
 
 /**
  * `GET /history` answers plays, not songs — `track_id`, `submission` and
