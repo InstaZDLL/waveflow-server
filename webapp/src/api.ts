@@ -120,6 +120,11 @@ export type Library = {
    * member's. The role says who may upload; this says whether anyone can.
    */
   accepts_uploads: boolean;
+  /**
+   * Whether the library takes canvases: a door of its own, not the upload one.
+   * A library closed to files may be open to loops, and the reverse.
+   */
+  accepts_canvas: boolean;
 };
 
 export type User = {
@@ -505,6 +510,65 @@ export async function putUploadChunk(
 
 export const commitUpload = (id: string) =>
   call<CommittedUpload>(`/api/v2/uploads/${id}/commit`, { method: "POST" });
+
+/** A loop as the store holds it, named by its content. */
+export type CanvasBlob = {
+  /** Where the bytes are, immutable under this URL. */
+  url: string;
+  hash: string;
+  /** What the server read the container as, never what the file was called. */
+  format: "mp4" | "webm";
+  byte_size: number;
+};
+
+/**
+ * Attaches a loop to a track, replacing whatever it carried. The file goes
+ * whole, in one request: the route has its own body ceiling and a canvas weighs
+ * a few hundred kilobytes, which is why none of the upload machinery applies.
+ * Not through `call`, which labels every body as JSON.
+ */
+export async function placeCanvas(
+  trackId: string,
+  file: Blob,
+  retry = true,
+): Promise<CanvasBlob> {
+  const path = `/api/v2/tracks/${trackId}/canvas`;
+  const headers = new Headers({
+    "content-type": file.type || "application/octet-stream",
+  });
+  if (session) headers.set("authorization", `Bearer ${session.access_token}`);
+  const response = await fetch(path, { method: "PUT", headers, body: file });
+  if (response.status === 401 && retry && (await refresh())) {
+    return placeCanvas(trackId, file, false);
+  }
+  if (!response.ok) throw new ApiError(response.status, `PUT ${path}`);
+  return parse<CanvasBlob>(response);
+}
+
+export const removeCanvas = (trackId: string) =>
+  call<void>(`/api/v2/tracks/${trackId}/canvas`, { method: "DELETE" });
+
+/**
+ * A URL a `<video>` can play for the loop a track carries, or `null` when it
+ * carries none.
+ *
+ * Minting the ticket checks the link, so it is also how to ask: a track without
+ * a canvas answers 404, and so does one the account cannot see — the server
+ * does not tell those apart, and neither can this. Any other failure is thrown,
+ * because a server that could not answer has not said there is no canvas.
+ */
+export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
+  try {
+    const ticket = await call<{ url: string; expires_at: number }>(
+      `/api/v2/tracks/${trackId}/canvas-ticket`,
+      { method: "POST" },
+    );
+    return { url: ticket.url, expiresAt: ticket.expires_at };
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 404) return null;
+    throw cause;
+  }
+}
 
 async function loadArtworkUrl(
   id: string,

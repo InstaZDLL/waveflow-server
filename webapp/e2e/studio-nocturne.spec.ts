@@ -74,6 +74,7 @@ const library = (id: string, name: string) => ({
   last_scan_started_at: null,
   last_scan_completed_at: null,
   accepts_uploads: false as boolean,
+  accepts_canvas: false as boolean,
 });
 
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
@@ -202,6 +203,20 @@ let uploadSession = freshUploadSession();
  * acknowledgement lost — the session advances and the client is told 409.
  */
 let loseAcknowledgementOf: number | null = null;
+
+/** The loop the mock holds for each track, as bytes. Absent is none. */
+let canvases = new Map<string, number[]>();
+/** Every placement and removal the mock received, in order. */
+let canvasWrites: Array<{ method: string; track: string; bytes?: number[] }> =
+  [];
+/** Set by a test to refuse the next placement with this status. */
+let refuseCanvasWith: number | null = null;
+/**
+ * Held by the playing page test, so a loop's bytes arrive only once it has
+ * looked at the element: they are not a video, and the browser drops the
+ * element the moment it finds that out.
+ */
+let canvasStreamGate: Promise<void> = Promise.resolve();
 
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
@@ -381,6 +396,85 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (
+      url.pathname.startsWith("/api/v2/tracks/") &&
+      url.pathname.endsWith("/lyrics")
+    ) {
+      // A track without words. The playing page asks for them, and the
+      // catch-all below would answer with a track, which is not a list of
+      // lyrics — no test visited that page before the canvas put a loop on it.
+      await route.fulfill({
+        json: { track_id: url.pathname.split("/")[4], structured_lyrics: [] },
+      });
+      return;
+    }
+    const parts = url.pathname.split("/");
+    if (
+      parts.length === 6 &&
+      parts[3] === "tracks" &&
+      (parts[5] === "canvas" || parts[5] === "canvas-ticket")
+    ) {
+      const trackId = parts[4] as string;
+      const method = route.request().method();
+      if (parts[5] === "canvas-ticket") {
+        // What the server does: minting checks the link, so a track without
+        // a canvas answers 404 to the ticket itself.
+        if (canvases.has(trackId)) {
+          await route.fulfill({
+            json: {
+              url: `/api/v2/canvas-stream/ticket-${trackId}`,
+              expires_at: Date.now() + 3_600_000,
+            },
+          });
+        } else {
+          await route.fulfill({ status: 404, json: { error: "not found" } });
+        }
+        return;
+      }
+      if (method === "PUT") {
+        const body = route.request().postDataBuffer() ?? Buffer.alloc(0);
+        const bytes = [...body];
+        canvasWrites.push({ method, track: trackId, bytes });
+        if (refuseCanvasWith !== null) {
+          const status = refuseCanvasWith;
+          refuseCanvasWith = null;
+          await route.fulfill({ status, json: { error: "refused" } });
+          return;
+        }
+        canvases.set(trackId, bytes);
+        await route.fulfill({
+          json: {
+            url: "/api/v2/canvas/loop",
+            hash: "loop",
+            format: "webm",
+            byte_size: bytes.length,
+          },
+        });
+        return;
+      }
+      if (method === "DELETE") {
+        canvasWrites.push({ method, track: trackId });
+        if (!canvases.delete(trackId)) {
+          await route.fulfill({ status: 404, json: { error: "not found" } });
+          return;
+        }
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+    }
+    if (url.pathname.startsWith("/api/v2/canvas-stream/")) {
+      await canvasStreamGate;
+      // The element that asked may be gone by the time the gate opens, and a
+      // request it abandoned can no longer be answered.
+      await route
+        .fulfill({
+          status: 200,
+          headers: { "content-type": "video/webm" },
+          body: "not a video",
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (url.pathname === "/api/v2/tracks/song-9/overrides") {
       await route.fulfill({ json: correctable.tracked });
       return;
@@ -447,6 +541,10 @@ test.beforeEach(async ({ page }) => {
   uploadCommits = [];
   uploadSession = freshUploadSession();
   loseAcknowledgementOf = null;
+  canvases = new Map();
+  canvasWrites = [];
+  refuseCanvasWith = null;
+  canvasStreamGate = Promise.resolve();
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -1237,4 +1335,125 @@ test("offers the upload only where the library takes files and the role may add 
       "Only an owner or a manager of this library can add files to it.",
     ),
   ).toBeVisible();
+});
+
+/**
+ * RFC-009 from the editor: a loop sent as the file's own bytes, read back
+ * through its ticket rather than assumed from the answer, refused in words,
+ * and taken away.
+ */
+test("places, replaces and removes a track's canvas", async ({ page }) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_canvas: true }];
+  await page.goto("/tracks/song-9/edit");
+  await expect(page.getByText("This track has no canvas.")).toBeVisible();
+
+  const loop = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02]);
+  await page.getByLabel("Choose a loop").setInputFiles({
+    name: "loop.webm",
+    mimeType: "video/webm",
+    buffer: loop,
+  });
+  await expect(page.getByText("Canvas saved.")).toBeVisible();
+  const preview = page.getByLabel("Canvas preview");
+  await expect(preview).toHaveAttribute(
+    "src",
+    "/api/v2/canvas-stream/ticket-song-9",
+  );
+
+  // Refused: said in words, and the loop that was there is still there.
+  refuseCanvasWith = 422;
+  await page.getByLabel("Replace the loop").setInputFiles({
+    name: "episode.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from([9, 9, 9]),
+  });
+  await expect(
+    page.getByText(
+      "The server refused this file: it takes a short mp4 or webm loop with a picture.",
+    ),
+  ).toBeVisible();
+  await expect(preview).toHaveAttribute(
+    "src",
+    "/api/v2/canvas-stream/ticket-song-9",
+  );
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Remove the canvas" }).click();
+  await expect(page.getByText("Canvas removed.")).toBeVisible();
+  await expect(page.getByText("This track has no canvas.")).toBeVisible();
+  expect(canvasWrites).toEqual([
+    { method: "PUT", track: "song-9", bytes: [...loop] },
+    { method: "PUT", track: "song-9", bytes: [9, 9, 9] },
+    { method: "DELETE", track: "song-9" },
+  ]);
+});
+
+/**
+ * A library its operator has not opened to loops offers no new canvas, and
+ * still lets go of the one a track carries: the server does not gate removal on
+ * the flag, and the screen must not strand what the server would release.
+ */
+test("offers removal but no new canvas where the library takes none", async ({
+  page,
+}) => {
+  canvases.set("song-9", [1, 2, 3]);
+  await page.goto("/tracks/song-9/edit");
+  // The notice waits for the list of libraries. Until it answers the picker is
+  // offered, so its absence below is only an answer once this is on screen.
+  await expect(
+    page.getByText(
+      "This library does not take canvases. Its operator decides that on the server.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Canvas preview")).toBeAttached();
+  await expect(
+    page.getByRole("button", { name: "Remove the canvas" }),
+  ).toBeVisible();
+  await expect(page.locator(".canvas-panel input[type=file]")).toHaveCount(0);
+});
+
+/**
+ * The loop over the cover, rendered as the desktop renders it: muted, looping
+ * and hidden from assistive technology, with the cover underneath keeping its
+ * name. It steps aside when motion is reduced, and when the browser cannot play
+ * it — the cover shows then, never an empty frame.
+ */
+test("plays a track's canvas over its cover, and steps aside for it", async ({
+  page,
+}) => {
+  canvases.set("song-1", [1, 2, 3]);
+  let release = () => {};
+  canvasStreamGate = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  await page.goto("/playing");
+  const stage = page.locator(".canvas-stage");
+  const video = stage.locator("video");
+  await expect(video).toHaveAttribute(
+    "src",
+    "/api/v2/canvas-stream/ticket-song-1",
+  );
+  await expect(video).toHaveAttribute("aria-hidden", "true");
+  await expect(video).toHaveJSProperty("muted", true);
+  await expect(video).toHaveJSProperty("loop", true);
+  await expect(stage.locator(".cover")).toBeVisible();
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(video).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(video).toHaveCount(1);
+
+  // Bytes that are not a video: the browser gives up on them, and the cover is
+  // what is left rather than a frame with nothing in it.
+  release();
+  await expect(video).toHaveCount(0);
+  await expect(stage.locator(".cover")).toBeVisible();
 });
