@@ -1963,3 +1963,44 @@ async fn a_client_can_tell_its_own_upload_from_a_discovery() {
         );
     }
 }
+
+/// Whether a library takes files is on the list of libraries, and it follows
+/// the operator's switch.
+///
+/// A client that could not read it would offer an upload in every library and
+/// learn `library_closed` only after hashing the whole file.
+#[tokio::test]
+async fn the_library_list_says_whether_a_library_takes_files() {
+    let (_temp, config, state) = upload_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "flag-reader").await;
+    let listed = || {
+        let router = waveflow_server::app(&config, state.clone());
+        let token = fixture.token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v2/libraries")
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
+        }
+    };
+
+    assert_eq!(
+        listed().await[0]["accepts_uploads"],
+        false,
+        "a library is closed until the operator opens it"
+    );
+    state
+        .db
+        .set_library_accepts_uploads(fixture.owner, fixture.library, true, now_ms())
+        .await
+        .unwrap();
+    assert_eq!(listed().await[0]["accepts_uploads"], true);
+}
