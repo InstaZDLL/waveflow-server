@@ -17,6 +17,7 @@ import {
   type CorrectionField,
   draftFrom,
   type FieldDraft,
+  isMultilineField,
   isNumericField,
   LIST_FIELDS,
   type ListField,
@@ -233,14 +234,25 @@ function ScalarInput({
         <label htmlFor={id}>{label}</label>
         {corrected ? <CorrectedBadge /> : null}
       </div>
-      <input
-        id={id}
-        inputMode={isNumericField(field) ? "numeric" : undefined}
-        value={draft.restore ? String(fileValue ?? "") : draft.value}
-        disabled={draft.restore}
-        aria-describedby={corrected ? provenanceId : undefined}
-        onChange={(event) => onChange({ value: event.target.value })}
-      />
+      {isMultilineField(field) ? (
+        <textarea
+          id={id}
+          rows={3}
+          value={draft.restore ? String(fileValue ?? "") : draft.value}
+          disabled={draft.restore}
+          aria-describedby={corrected ? provenanceId : undefined}
+          onChange={(event) => onChange({ value: event.target.value })}
+        />
+      ) : (
+        <input
+          id={id}
+          inputMode={isNumericField(field) ? "numeric" : undefined}
+          value={draft.restore ? String(fileValue ?? "") : draft.value}
+          disabled={draft.restore}
+          aria-describedby={corrected ? provenanceId : undefined}
+          onChange={(event) => onChange({ value: event.target.value })}
+        />
+      )}
       {corrected ? (
         <p id={provenanceId} className="muted correction-provenance">
           <span>
