@@ -1363,3 +1363,48 @@ fn set_age(path: &std::path::Path, age: std::time::Duration) {
     let file = std::fs::File::options().write(true).open(path).unwrap();
     file.set_modified(when).unwrap();
 }
+
+/// Whether a library takes canvases is on the list of libraries, apart from
+/// whether it takes files, and it follows the operator's switch.
+///
+/// Two doors, and the list has to show both. A client that could read only
+/// `accepts_uploads` would hide the canvas in exactly the library RFC-009 split
+/// the flag for — one that refuses audio and takes loops — and a client that
+/// could read neither would offer a canvas everywhere, to learn the answer only
+/// after sending the whole file.
+#[tokio::test]
+async fn the_library_list_says_whether_a_library_takes_canvases() {
+    let (_temp, config, state) = canvas_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "canvas-flag-reader", 1).await;
+    let listed = || {
+        let router = waveflow_server::app(&config, state.clone());
+        let token = fixture.token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v2/libraries")
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
+        }
+    };
+
+    let open = listed().await;
+    assert_eq!(open[0]["accepts_canvas"], true, "the fixture opened it");
+    assert_eq!(
+        open[0]["accepts_uploads"], false,
+        "and left the other door shut, which the list must not confuse with it"
+    );
+    state
+        .db
+        .set_library_accepts_canvas(fixture.owner, fixture.library, false, now_ms())
+        .await
+        .unwrap();
+    assert_eq!(listed().await[0]["accepts_canvas"], false);
+}
