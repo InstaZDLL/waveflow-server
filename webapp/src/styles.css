@@ -1492,6 +1492,14 @@ button.danger {
     backdrop-filter: blur(1.4rem);
   }
 
+  /* What a phone hides: every label whose control is already legible
+     without it, and the two the layout has no room for. One rule rather
+     than three spread through the blocks below, with its selectors running
+     from the least specific to the most: the same declaration for each, so
+     the order cannot change what any element gets, and none of them sits
+     behind a selector that already outranks it. */
+  .player-progress span,
+  .mobile-navigation a span,
   .mobile-header .library-picker span,
   .mobile-header .theme-picker span,
   .mobile-header .language-picker span,
@@ -1545,10 +1553,6 @@ button.danger {
     color: var(--muted);
   }
 
-  .mobile-navigation a span {
-    display: none;
-  }
-
   .mobile-navigation a[data-status="active"] {
     background: var(--accent-soft);
     color: var(--accent);
@@ -1575,9 +1579,6 @@ button.danger {
     display: block;
   }
 
-  .player-progress span {
-    display: none;
-  }
   /* Narrow: the modes and the skip buttons give way to the transport. */
   .player-controls button.mode {
     display: none;

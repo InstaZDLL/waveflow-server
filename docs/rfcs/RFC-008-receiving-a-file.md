@@ -457,10 +457,35 @@ surprise à l'implémentation.
 
 ## Ce qui reste ouvert
 
-- Les valeurs : plafond par fichier, quota par bibliothèque, taille de fragment,
-  taille d'un lot de négociation, sessions simultanées par compte, expiration
-  d'une session.
-- Le nettoyage des zones de travail abandonnées : à l'expiration, au démarrage,
-  ou les deux.
-- Le partage d'un même blob entre bibliothèques, qui demande d'abord de décider
-  ce que ces frontières signifient.
+Une seule question, et les deux autres ont été tranchées en implémentant. C'est
+la ligne *Implémentée par* de l'en-tête qu'il faut lire, pas cette section :
+elle nomme des PR, et une PR se vérifie.
+
+- ~~**Les valeurs** : plafond par fichier, quota par bibliothèque, taille de
+  fragment, taille d'un lot de négociation, sessions simultanées par compte,
+  expiration d'une session.~~ Choisies en implémentant, livrées par la
+  [#149](https://github.com/InstaZDLL/waveflow-server/pull/149) et portées par
+  `UploadLimits` dans `src/config.rs`, chacune derrière sa variable
+  d'environnement : **1 Gio** par fichier, **50 Gio** de quota par bibliothèque,
+  des fragments de **4 Mio**, des lots de **200** offres, **4** sessions
+  simultanées par compte, une expiration à **24 h**. `validate_uploads` les
+  recoupe au démarrage plutôt que de laisser un réglage en contredire un autre —
+  un fragment ne peut pas dépasser le plafond d'un fichier, ni ce plafond le
+  quota.
+- ~~**Le nettoyage des zones de travail abandonnées** : à l'expiration, au
+  démarrage, ou les deux.~~ Les deux, et un troisième moment que la question
+  n'avait pas vu : `spawn_upload_sweeper` (`src/services/uploads.rs`, livré par
+  la [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)) passe au
+  démarrage puis une fois par durée de vie de session, et **chaque négociation
+  balaie avant de compter un quota** — c'est là que le nettoyage compte
+  vraiment, puisque c'est la négociation qui décide. Un fichier abandonné vit
+  donc au plus deux fois la durée promise à sa session. Chaque session est
+  balayée sous son propre verrou, et le fichier part avant sa ligne : l'ordre
+  inverse laisse l'orphelin que ce balayage existe pour ramasser.
+- **Le partage d'un même blob entre bibliothèques**, qui demande d'abord de
+  décider ce que ces frontières signifient. Toujours ouvert, et personne ne l'a
+  demandé. La [RFC-009](RFC-009-track-canvas.md) a depuis tracé la même ligne
+  pour le canvas, dans sa décision 11 : les octets se partagent, l'existence de
+  l'empreinte non, et chaque bibliothèque paie la sienne. Cela dit ce qu'un
+  magasin adressé par contenu peut faire sans rien trancher de ce qu'une
+  bibliothèque a le droit d'apprendre d'une autre, qui reste la question.
