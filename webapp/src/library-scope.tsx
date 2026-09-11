@@ -127,6 +127,18 @@ export function mayCorrectTracks(library: Library | undefined): boolean {
   return library?.role === "owner" || library?.role === "manager";
 }
 
+/**
+ * Whether the account may add files to a library: a role that may upload, in a
+ * library its operator has opened to files. Both, because they answer two
+ * questions — who may, and whether anyone can. The server decides regardless.
+ */
+export function mayUploadTo(library: Library | null | undefined): boolean {
+  return (
+    (library?.role === "owner" || library?.role === "manager") &&
+    library.accepts_uploads === true
+  );
+}
+
 /** The active library's id, or `undefined` to mean "do not scope the call". */
 export function useScopeId(): string | undefined {
   return useLibraryScope().active?.id;
