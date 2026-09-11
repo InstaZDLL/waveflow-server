@@ -222,6 +222,42 @@ const en = {
   "nav.history": "Recently played",
   "nav.random": "Random",
   "nav.playing": "Now playing",
+  "nav.upload": "Upload",
+  "upload.title": "Upload to {library}",
+  "upload.detail":
+    "Each file is fingerprinted in your browser first, so a file the library already holds is never sent again, and an interrupted transfer picks up where it stopped.",
+  "upload.pick": "Choose audio files",
+  "upload.formats": "Formats the library can index: {extensions}",
+  "upload.noLibrary": "Choose a library first.",
+  "upload.notAllowed":
+    "Only an owner or a manager of this library can add files to it.",
+  "upload.closed":
+    "This library does not take files. Its operator decides that on the server.",
+  "upload.waiting": "Waiting",
+  "upload.hashing": "Fingerprinting…",
+  "upload.negotiating": "Asking the server…",
+  "upload.uploading": "Sending…",
+  "upload.committing": "Adding to the library…",
+  "upload.done": "Added to the library",
+  "upload.present": "Already in the library",
+  "upload.refused": "Refused: {reason}",
+  "upload.failed": "Failed: {reason}",
+  "upload.progress": "Progress: {name}",
+  "upload.reason.unsupportedFormat":
+    "not an audio format the library can index",
+  "upload.reason.tooLarge": "larger than the server accepts",
+  "upload.reason.quotaExceeded": "the library has no room left",
+  "upload.reason.libraryClosed": "the library does not take files",
+  "upload.reason.tooManySessions":
+    "too many transfers already open — try again shortly",
+  "upload.reason.refusedFile":
+    "what arrived did not match the file, or is not audio the library can read",
+  "upload.reason.unavailable":
+    "the server could not take it just now — try again",
+  "upload.reason.network": "the connection was lost",
+  "upload.reason.notAllowed": "you may no longer add files to this library",
+  "upload.reason.error": "something went wrong",
+  "upload.reason.hashing": "this browser could not fingerprint the file",
   "browse.filterGenres": "Filter by genre",
   "genres.detail": { one: "{count} genre", other: "{count} genres" },
   "genres.empty": "No genre is tagged in this library yet.",
@@ -507,6 +543,43 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.history": "Écoutes récentes",
   "nav.random": "Aléatoire",
   "nav.playing": "En écoute",
+  "nav.upload": "Téléverser",
+  "upload.title": "Téléverser dans {library}",
+  "upload.detail":
+    "Chaque fichier est d’abord identifié dans votre navigateur : un fichier que la bibliothèque possède déjà n’est jamais renvoyé, et un transfert interrompu reprend là où il s’était arrêté.",
+  "upload.pick": "Choisir des fichiers audio",
+  "upload.formats": "Formats que la bibliothèque sait indexer : {extensions}",
+  "upload.noLibrary": "Choisissez d’abord une bibliothèque.",
+  "upload.notAllowed":
+    "Seul un propriétaire ou un gestionnaire de cette bibliothèque peut y ajouter des fichiers.",
+  "upload.closed":
+    "Cette bibliothèque n’accepte pas de fichiers. C’est son opérateur qui en décide, sur le serveur.",
+  "upload.waiting": "En attente",
+  "upload.hashing": "Identification…",
+  "upload.negotiating": "Question au serveur…",
+  "upload.uploading": "Envoi…",
+  "upload.committing": "Ajout à la bibliothèque…",
+  "upload.done": "Ajouté à la bibliothèque",
+  "upload.present": "Déjà dans la bibliothèque",
+  "upload.refused": "Refusé : {reason}",
+  "upload.failed": "Échec : {reason}",
+  "upload.progress": "Progression : {name}",
+  "upload.reason.unsupportedFormat":
+    "format audio que la bibliothèque ne sait pas indexer",
+  "upload.reason.tooLarge": "plus gros que ce que le serveur accepte",
+  "upload.reason.quotaExceeded": "la bibliothèque n’a plus de place",
+  "upload.reason.libraryClosed": "la bibliothèque n’accepte pas de fichiers",
+  "upload.reason.tooManySessions":
+    "trop de transferts déjà ouverts — réessayez dans un instant",
+  "upload.reason.refusedFile":
+    "ce qui est arrivé ne correspond pas au fichier, ou n’est pas un audio que la bibliothèque sait lire",
+  "upload.reason.unavailable":
+    "le serveur n’a pas pu le prendre pour l’instant — réessayez",
+  "upload.reason.network": "la connexion a été perdue",
+  "upload.reason.notAllowed":
+    "vous ne pouvez plus ajouter de fichiers à cette bibliothèque",
+  "upload.reason.error": "quelque chose s’est mal passé",
+  "upload.reason.hashing": "ce navigateur n’a pas pu identifier le fichier",
   "browse.filterGenres": "Filtrer par genre",
   "genres.detail": { one: "{count} genre", other: "{count} genres" },
   "genres.empty": "Aucun genre n’est encore étiqueté dans cette bibliothèque.",
