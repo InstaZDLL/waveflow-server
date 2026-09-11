@@ -118,6 +118,15 @@ export function useLibraryScope(): LibraryScope {
   return value;
 }
 
+/**
+ * Whether the account may correct track tags in a library: its owner or a
+ * manager, the pair `may_write_metadata` names on the server. The server decides
+ * regardless; this only keeps a screen from offering a refusal.
+ */
+export function mayCorrectTracks(library: Library | undefined): boolean {
+  return library?.role === "owner" || library?.role === "manager";
+}
+
 /** The active library's id, or `undefined` to mean "do not scope the call". */
 export function useScopeId(): string | undefined {
   return useLibraryScope().active?.id;
