@@ -349,6 +349,15 @@ Valid formats are `raw`, `mp3` and `opus`. Byte ranges apply to originals and
 completed cached transcodes. A live transcode uses temporal `offset_ms` and a
 chunked response; it does not implement arbitrary output-byte ranges.
 
+Seeking a live transcode through `offset_ms` abandons the stream that was
+filling the cache, and the stream that replaces it is not the whole track. The
+seek therefore also has the server transcode the whole track into its cache
+behind it, at the lowest priority there is: only when a transcode slot is free
+beyond the one it takes, and never against the account's own limit. The next
+play of the track is then a cached file with byte ranges. A server too busy to
+spare the slot skips it and a later seek asks again; a server configured with a
+single transcode slot never has one to spare.
+
 ### Correcting a track's tags
 
 `PATCH /api/v2/tracks/{track_id}` writes corrections that survive a rescan
