@@ -257,6 +257,7 @@ const en = {
   "upload.reason.network": "the connection was lost",
   "upload.reason.notAllowed": "you may no longer add files to this library",
   "upload.reason.error": "something went wrong",
+  "upload.reason.hashing": "this browser could not fingerprint the file",
   "browse.filterGenres": "Filter by genre",
   "genres.detail": { one: "{count} genre", other: "{count} genres" },
   "genres.empty": "No genre is tagged in this library yet.",
@@ -578,6 +579,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "upload.reason.notAllowed":
     "vous ne pouvez plus ajouter de fichiers à cette bibliothèque",
   "upload.reason.error": "quelque chose s’est mal passé",
+  "upload.reason.hashing": "ce navigateur n’a pas pu identifier le fichier",
   "browse.filterGenres": "Filtrer par genre",
   "genres.detail": { one: "{count} genre", other: "{count} genres" },
   "genres.empty": "Aucun genre n’est encore étiqueté dans cette bibliothèque.",
