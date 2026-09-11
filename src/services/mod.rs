@@ -350,30 +350,73 @@ pub struct CatalogSnapshot {
     pub songs: Vec<SongItem>,
 }
 
-/// The complete set of corrections a track carries.
+/// Corrections to a track's tags, field by field.
 ///
-/// Wholesale rather than incremental: the body is every override the track
-/// should have afterwards, and a field left out is not overridden. A tag editor
-/// sends its whole form, so clearing a correction is saying nothing about that
-/// field rather than sending a null that means something special. An empty or
-/// blank string is read the same way — no correction — because a track with no
-/// title is not a correction anyone wants to store.
+/// A real partial patch, in three states: **a field left out leaves that
+/// correction as it is**, `null` removes it, and a value sets it. A blank string
+/// reads as `null`, because a track with no title is not a correction anyone
+/// wants to store. The two lists follow the same three states, with one
+/// difference: `[]` is a value, since saying a track credits nobody is a
+/// correction rather than the absence of one.
+///
+/// It was wholesale until #177 — the body was every correction the track should
+/// carry afterwards — and that silently dropped whatever a client did not
+/// mention, including corrections another client had made. The only client that
+/// sent this patch always spelled every field out, `null` included, so the
+/// change leaves its requests meaning what they meant.
+///
+/// `Option<Option<T>>` is what makes the three states expressible. Under plain
+/// serde an absent field and a `null` one both deserialise to `None`, and the
+/// difference between them is the whole contract: the outer `None` is absent,
+/// `Some(None)` is `null`, `Some(Some(value))` is a value.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 pub struct TrackMetadataPatch {
-    pub title: Option<String>,
-    pub sort_title: Option<String>,
-    pub year: Option<i64>,
-    pub track_number: Option<i64>,
-    pub disc_number: Option<i64>,
-    pub musicbrainz_recording_id: Option<String>,
-    pub comment: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub title: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub sort_title: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<i64>, nullable)]
+    pub year: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<i64>, nullable)]
+    pub track_number: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<i64>, nullable)]
+    pub disc_number: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub musicbrainz_recording_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub comment: Option<Option<String>>,
     /// The track's artists, in order, and its genres. Explicit lists rather
     /// than the `;`-joined string a file carries: that form exists because a
     /// tagger writes names however it likes and the mapper has to guess where
     /// one ends, which is not a guess worth reintroducing on a list someone
     /// typed on purpose.
-    pub artists: Option<Vec<String>>,
-    pub genres: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<Vec<String>>, nullable)]
+    pub artists: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<Vec<String>>, nullable)]
+    pub genres: Option<Option<Vec<String>>>,
+}
+
+/// Tells a field that is in the body from one that is not.
+///
+/// Serde calls this only for a field present in the body — `#[serde(default)]`
+/// supplies the outer `None` when it is absent — so wrapping whatever the field
+/// holds in `Some` is exactly the distinction: `Some(None)` for `null`,
+/// `Some(Some(value))` for a value.
+fn present<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// One file a client is offering, before any of its bytes have moved.
@@ -541,8 +584,9 @@ pub struct LibraryEventPage {
 /// the file's own value beside the correction standing over it. The catalogue
 /// never shows this — it answers `effective`, which is `override ?? source` —
 /// and nothing else needs it. It exists because an editor cannot offer to
-/// restore a value it cannot read, and because a client that means to change
-/// one correction has to know the others in order not to drop them.
+/// restore a value it cannot read, nor show which fields are corrected. It no
+/// longer has to guard a write: [`TrackMetadataPatch`] leaves alone what it
+/// does not mention.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TrackOverrides {
     /// What the file said, for the fields where the database still knows.

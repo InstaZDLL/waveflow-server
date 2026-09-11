@@ -28,8 +28,31 @@ fn clean(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// A patch field resolved against the correction the track already carries.
+///
+/// The three states of [`TrackMetadataPatch`] collapse here and nowhere else:
+/// absent keeps what is stored, anything present — a value or `null` —
+/// replaces it.
+fn merge<T>(requested: Option<Option<T>>, stored: Option<T>) -> Option<T> {
+    match requested {
+        None => stored,
+        Some(value) => value,
+    }
+}
+
+/// Whether a patch field sets a value outside what is allowed. A field left out
+/// or removed has nothing to check: what is already stored was checked when it
+/// was written.
+fn out_of_bounds(value: Option<Option<i64>>, allowed: impl Fn(i64) -> bool) -> bool {
+    matches!(value, Some(Some(value)) if !allowed(value))
+}
+
 impl DomainServices {
-    /// Replaces the corrections carried by one track.
+    /// Corrects some of a track's tags, leaving the rest as they are.
+    ///
+    /// A field the patch leaves out keeps whatever correction it had, `null`
+    /// removes one, and a value sets one. [`TrackMetadataPatch`] says why that
+    /// is three states rather than two.
     ///
     /// The file is never touched. `full_hash` therefore cannot move, which is
     /// what keeps a client's content-based link valid across an edit — the one
@@ -49,32 +72,24 @@ impl DomainServices {
         // request: nothing about them can change under a concurrent write, so
         // refusing a malformed patch should not queue behind a scan for the
         // right to be told so.
-        let title = clean(patch.title);
-        let sort_title = clean(patch.sort_title);
-        let musicbrainz_recording_id = clean(patch.musicbrainz_recording_id);
-        let comment = clean(patch.comment);
-        if patch.year.is_some_and(|year| !(1..=9999).contains(&year))
-            || patch.track_number.is_some_and(|number| number < 0)
-            || patch.disc_number.is_some_and(|number| number < 0)
+        if out_of_bounds(patch.year, |year| (1..=9999).contains(&year))
+            || out_of_bounds(patch.track_number, |number| number >= 0)
+            || out_of_bounds(patch.disc_number, |number| number >= 0)
         {
             return Err(ServiceError::Invalid);
         }
-        // A list of blanks is no list. An empty list survives, because saying
-        // a track credits nobody is a correction rather than the absence of one.
-        let lists = crate::catalog::TrackOverrideLists {
-            title: title.clone(),
-            artists: patch.artists.map(clean_all),
-            genres: patch.genres.map(clean_all),
-        };
-        let empty = title.is_none()
-            && sort_title.is_none()
-            && musicbrainz_recording_id.is_none()
-            && comment.is_none()
-            && patch.year.is_none()
-            && patch.track_number.is_none()
-            && patch.disc_number.is_none()
-            && lists.artists.is_none()
-            && lists.genres.is_none();
+        // Only what the request itself says is settled here. What it resolves
+        // to depends on the stored correction, which a concurrent write can
+        // change, so that is decided under the gate below. A blank string
+        // removes rather than sets. A list of blanks is an empty list, and an
+        // empty list survives: saying a track credits nobody is a correction
+        // rather than the absence of one.
+        let requested_title = patch.title.map(clean);
+        let requested_sort_title = patch.sort_title.map(clean);
+        let requested_musicbrainz_recording_id = patch.musicbrainz_recording_id.map(clean);
+        let requested_comment = patch.comment.map(clean);
+        let requested_artists = patch.artists.map(|list| list.map(clean_all));
+        let requested_genres = patch.genres.map(|list| list.map(clean_all));
 
         // Removing a list correction needs the file, because the rows it wrote
         // replaced what the tags said and the catalogue no longer holds the
@@ -88,8 +103,8 @@ impl DomainServices {
         // retry rather than a wrong answer.
         // Per field, not for the pair. A patch that keeps one correction and
         // drops the other still drops one, and treating the two together left
-        // the dropped list corrected — the same hole the wholesale case had,
-        // one field at a time.
+        // the dropped list corrected — the hole a single check over both lists
+        // had, one field at a time.
         let restored = {
             let hint = sqlx::query(
                 "SELECT t.relative_path, l.root_path, m.role, \
@@ -115,9 +130,13 @@ impl DomainServices {
                     let role =
                         crate::database::LibraryRole::from_str(hint.try_get::<&str, _>("role")?)
                             .map_err(|_| ServiceError::Invalid)?;
+                    // Only an explicit `null` drops a list. A list the patch
+                    // leaves out keeps its correction, so there is nothing to
+                    // restore and no reason to read the file.
                     let dropped = (hint.try_get::<i64, _>("had_artists")? != 0
-                        && lists.artists.is_none())
-                        || (hint.try_get::<i64, _>("had_genres")? != 0 && lists.genres.is_none());
+                        && matches!(requested_artists, Some(None)))
+                        || (hint.try_get::<i64, _>("had_genres")? != 0
+                            && matches!(requested_genres, Some(None)));
                     if !role.may_write_metadata() || !dropped {
                         None
                     } else {
@@ -152,12 +171,14 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         let row = sqlx::query(
             "SELECT t.library_id, t.title, t.full_hash, t.last_seen_scan_id, m.role, \
-                    (SELECT ovr.artists IS NOT NULL FROM track_override ovr \
-                       WHERE ovr.track_id=t.id) AS had_artists, \
-                    (SELECT ovr.genres IS NOT NULL FROM track_override ovr \
-                       WHERE ovr.track_id=t.id) AS had_genres \
+                    ovr.title AS o_title, ovr.sort_title AS o_sort_title, \
+                    ovr.year AS o_year, ovr.track_number AS o_track_number, \
+                    ovr.disc_number AS o_disc_number, \
+                    ovr.musicbrainz_recording_id AS o_musicbrainz_recording_id, \
+                    ovr.comment AS o_comment \
              FROM track t \
              JOIN library_member m ON m.library_id=t.library_id \
+             LEFT JOIN track_override ovr ON ovr.track_id=t.id \
              WHERE t.id=? AND m.user_id=?",
         )
         .bind(track_id.to_string())
@@ -169,11 +190,6 @@ impl DomainServices {
         let scanned_title: String = row.try_get("title")?;
         let full_hash: String = row.try_get("full_hash")?;
         let last_seen_scan_id: Option<String> = row.try_get("last_seen_scan_id")?;
-        // The authority, and it decides per field like the hint above.
-        let dropped_a_list = (row.try_get::<Option<i64>, _>("had_artists")?.unwrap_or(0) != 0
-            && lists.artists.is_none())
-            || (row.try_get::<Option<i64>, _>("had_genres")?.unwrap_or(0) != 0
-                && lists.genres.is_none());
         let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_write_metadata() {
@@ -181,6 +197,41 @@ impl DomainServices {
             // that would otherwise confirm what a caller may not reach.
             return Err(ServiceError::Forbidden);
         }
+
+        // What the track carries afterwards: every field the patch mentions,
+        // over the stored correction for the rest. Merged here, under the gate
+        // and in this transaction, because merging against a correction another
+        // writer has since replaced would write the old one back.
+        //
+        // The lists through the helper the scan reads them with, which refuses
+        // a stored list it cannot decode instead of reading it as none. Read as
+        // none, a patch that never mentioned it would erase it by writing the
+        // merge back.
+        let stored_lists = crate::catalog::track_override_lists(&mut tx, track_id).await?;
+        let title = merge(requested_title, row.try_get("o_title")?);
+        let sort_title = merge(requested_sort_title, row.try_get("o_sort_title")?);
+        let year = merge(patch.year, row.try_get("o_year")?);
+        let track_number = merge(patch.track_number, row.try_get("o_track_number")?);
+        let disc_number = merge(patch.disc_number, row.try_get("o_disc_number")?);
+        let musicbrainz_recording_id = merge(
+            requested_musicbrainz_recording_id,
+            row.try_get("o_musicbrainz_recording_id")?,
+        );
+        let comment = merge(requested_comment, row.try_get("o_comment")?);
+        let artists = merge(requested_artists.clone(), stored_lists.artists.clone());
+        let genres = merge(requested_genres.clone(), stored_lists.genres.clone());
+        // The authority, per field like the hint above.
+        let dropped_a_list = (stored_lists.artists.is_some() && artists.is_none())
+            || (stored_lists.genres.is_some() && genres.is_none());
+        let empty = title.is_none()
+            && sort_title.is_none()
+            && year.is_none()
+            && track_number.is_none()
+            && disc_number.is_none()
+            && musicbrainz_recording_id.is_none()
+            && comment.is_none()
+            && artists.is_none()
+            && genres.is_none();
         if empty {
             // No corrections left is no row: an override that holds nothing but
             // NULLs would answer the same as its absence while still claiming
@@ -206,13 +257,13 @@ impl DomainServices {
             .bind(library_id.to_string())
             .bind(title.as_deref())
             .bind(sort_title.as_deref())
-            .bind(patch.year)
-            .bind(patch.track_number)
-            .bind(patch.disc_number)
+            .bind(year)
+            .bind(track_number)
+            .bind(disc_number)
             .bind(musicbrainz_recording_id.as_deref())
             .bind(comment.as_deref())
-            .bind(encode_list(lists.artists.as_deref())?)
-            .bind(encode_list(lists.genres.as_deref())?)
+            .bind(encode_list(artists.as_deref())?)
+            .bind(encode_list(genres.as_deref())?)
             .bind(now)
             .execute(&mut *tx)
             .await?;
@@ -223,7 +274,8 @@ impl DomainServices {
         // the scan's own apply — with the correction already deleted above, so
         // it derives from the tags rather than from what it is undoing. In the
         // same transaction, so the removal and the restoration cannot come
-        // apart.
+        // apart. A list correction the patch kept is still in the row written
+        // above, and the apply reads it back over the file.
         if dropped_a_list {
             let Some(input) = restored else {
                 // The hint and the transaction disagreed, which means the
@@ -260,13 +312,15 @@ impl DomainServices {
                 .ok_or(ServiceError::NotFound);
         }
 
-        // The rows an explicit list implies, written through the same helper the
-        // scan consults — so a rescan derives what this call just wrote rather
-        // than something merely similar.
-        let effective = if empty {
-            crate::catalog::TrackOverrideLists::default()
-        } else {
-            lists.clone()
+        // The rows a list implies, written through the same helper the scan
+        // consults — so a rescan derives what this call just wrote rather than
+        // something merely similar. Only for a list this patch set: one it left
+        // out already has its rows, and rewriting them identically would still
+        // delete and reinsert every credit.
+        let effective = crate::catalog::TrackOverrideLists {
+            title: title.clone(),
+            artists: requested_artists.flatten(),
+            genres: requested_genres.flatten(),
         };
         crate::catalog::apply_track_override_lists(
             &mut tx,

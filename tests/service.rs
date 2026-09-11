@@ -97,6 +97,34 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         assert!(document["paths"][path].is_object(), "missing {path}");
     }
 
+    // A track correction has three states per field — absent, `null`, a value —
+    // and only the schema can tell a generated client that `null` is one of
+    // them. A required field would forbid the absent state; a type without
+    // `null` would forbid the removal. Either loses #177 in translation.
+    let correction = &document["components"]["schemas"]["TrackMetadataPatch"];
+    assert!(
+        correction.get("required").is_none(),
+        "no field of a partial patch may be required"
+    );
+    for field in [
+        "title",
+        "sort_title",
+        "year",
+        "track_number",
+        "disc_number",
+        "musicbrainz_recording_id",
+        "comment",
+        "artists",
+        "genres",
+    ] {
+        assert!(
+            correction["properties"][field]["type"]
+                .as_array()
+                .is_some_and(|types| types.iter().any(|kind| kind == "null")),
+            "{field} must admit null"
+        );
+    }
+
     // A client generated from this document alone must authenticate correctly
     // and keep replay safety. Neither is inferable from the paths.
     assert_eq!(
