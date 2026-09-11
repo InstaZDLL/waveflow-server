@@ -9,6 +9,7 @@ import {
   type SongCredits,
   type TrackOverrides,
 } from "./api";
+import { CanvasPanel } from "./canvas-panel";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Loading, PageHeader, useAsync } from "./pages";
 import {
@@ -178,6 +179,7 @@ function CorrectionForm({ initial }: { initial: Loaded }) {
           ) : null}
         </div>
       </form>
+      <CanvasPanel song={song} />
     </section>
   );
 }

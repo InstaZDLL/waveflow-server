@@ -76,6 +76,7 @@ import {
   watchScan,
 } from "./api";
 import { Artwork } from "./artwork";
+import { CanvasStage } from "./canvas";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
@@ -1262,11 +1263,13 @@ export function PlayingPage() {
 
       {current ? (
         <div className="playing">
-          <Artwork
-            artworkId={current.artwork_hash}
-            title={current.title}
-            className="cover large"
-          />
+          <CanvasStage trackId={current.id}>
+            <Artwork
+              artworkId={current.artwork_hash}
+              title={current.title}
+              className="cover large"
+            />
+          </CanvasStage>
           <div className="playing-detail">
             <span className="eyebrow">
               {current.album ?? t("common.album")}

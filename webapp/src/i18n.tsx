@@ -68,6 +68,28 @@ const en = {
   "correction.stale":
     "Saved, but the corrections could not be read back. Reload the page before saving again.",
   "correction.back": "Back to {album}",
+  "canvas.title": "Canvas",
+  "canvas.detail":
+    "A short loop played without sound over the cover, on the Now playing page. The server takes mp4 or webm.",
+  "canvas.loading": "Looking for a canvas…",
+  "canvas.none": "This track has no canvas.",
+  "canvas.unreadable": "Whether this track has a canvas could not be read.",
+  "canvas.preview": "Canvas preview",
+  "canvas.choose": "Choose a loop",
+  "canvas.replace": "Replace the loop",
+  "canvas.remove": "Remove the canvas",
+  "canvas.closed":
+    "This library does not take canvases. Its operator decides that on the server.",
+  "canvas.saving": "Sending…",
+  "canvas.placed": "Canvas saved.",
+  "canvas.removed": "Canvas removed.",
+  "canvas.refused":
+    "The server refused this file: it takes a short mp4 or webm loop with a picture.",
+  "canvas.tooLarge": "This file is larger than the server takes for a canvas.",
+  "canvas.quota": "This library has no room left for canvases.",
+  "canvas.notAllowed":
+    "The server did not change this canvas: the track or its loop is gone, or the account may no longer change it.",
+  "canvas.error": "The canvas could not be changed.",
   "login.heroEyebrow": "Your music, on your terms",
   "login.heroTitle": "After dark, the library comes alive.",
   "login.heroDetail": "Private streaming, one catalogue, every screen.",
@@ -390,6 +412,29 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "correction.stale":
     "Enregistré, mais les corrections n’ont pas pu être relues. Rechargez la page avant d’enregistrer à nouveau.",
   "correction.back": "Retour à {album}",
+  "canvas.title": "Canvas",
+  "canvas.detail":
+    "Une courte boucle jouée sans le son par-dessus la pochette, sur la page En écoute. Le serveur prend le mp4 ou le webm.",
+  "canvas.loading": "Recherche d’un canvas…",
+  "canvas.none": "Cette piste n’a pas de canvas.",
+  "canvas.unreadable": "Impossible de savoir si cette piste a un canvas.",
+  "canvas.preview": "Aperçu du canvas",
+  "canvas.choose": "Choisir une boucle",
+  "canvas.replace": "Remplacer la boucle",
+  "canvas.remove": "Retirer le canvas",
+  "canvas.closed":
+    "Cette bibliothèque n’accepte pas de canvas. C’est son opérateur qui en décide, sur le serveur.",
+  "canvas.saving": "Envoi…",
+  "canvas.placed": "Canvas enregistré.",
+  "canvas.removed": "Canvas retiré.",
+  "canvas.refused":
+    "Le serveur a refusé ce fichier : il prend une courte boucle mp4 ou webm, avec une image.",
+  "canvas.tooLarge":
+    "Ce fichier dépasse la taille que le serveur accepte pour un canvas.",
+  "canvas.quota": "Cette bibliothèque n’a plus de place pour les canvas.",
+  "canvas.notAllowed":
+    "Le serveur n’a pas modifié ce canvas : la piste ou sa boucle a disparu, ou le compte n’en a plus le droit.",
+  "canvas.error": "Le canvas n’a pas pu être modifié.",
   "login.heroEyebrow": "Votre musique, selon vos règles",
   "login.heroTitle": "La nuit tombe, la bibliothèque s’éveille.",
   "login.heroDetail": "Streaming privé, un catalogue, tous vos écrans.",

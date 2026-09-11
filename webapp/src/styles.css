@@ -2085,3 +2085,64 @@ button.danger {
     gap: 0.35rem;
   }
 }
+
+/* The canvas. On the playing page the loop lies over the cover, which keeps
+   the image's name and shows through until the loop can play; in the editor it
+   is a preview, shown whole rather than cropped to a square. */
+.canvas-stage {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.canvas-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 1.1rem;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+
+.canvas-video.ready {
+  opacity: 1;
+}
+
+.canvas-panel {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 2.6rem;
+  padding-top: 1.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.canvas-panel h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.canvas-panel > p {
+  margin: 0;
+}
+
+.canvas-preview {
+  width: min(100%, 14rem);
+  max-height: 22rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--panel);
+  object-fit: contain;
+}
+
+.canvas-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.canvas-actions p {
+  margin: 0;
+}
