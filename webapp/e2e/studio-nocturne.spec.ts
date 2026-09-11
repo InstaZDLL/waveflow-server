@@ -1,4 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { expect, type Page, test } from "@playwright/test";
 
 const session = {
@@ -71,6 +73,7 @@ const library = (id: string, name: string) => ({
   role: "owner" as "owner" | "manager" | "listener",
   last_scan_started_at: null,
   last_scan_completed_at: null,
+  accepts_uploads: false as boolean,
 });
 
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
@@ -177,6 +180,28 @@ let correctable = correctableTrack();
 
 /** Every correction body sent, in order. */
 let corrections: unknown[] = [];
+
+type Offer = { full_hash: string; size_bytes: number; extension: string };
+
+const freshUploadSession = () => ({
+  session_id: "upload-1",
+  next_chunk: 0,
+  received_bytes: 0,
+  chunk_bytes: 8,
+  expires_at: 0,
+});
+
+/** What the upload mock received, in order. */
+let uploadOffers: Offer[] = [];
+let uploadChunks: Array<{ index: number; bytes: number[] }> = [];
+let uploadCommits: string[] = [];
+/** The one session the mock holds, advanced by each fragment it writes. */
+let uploadSession = freshUploadSession();
+/**
+ * Set by the resume test: the fragment at this index is written, and its
+ * acknowledgement lost — the session advances and the client is told 409.
+ */
+let loseAcknowledgementOf: number | null = null;
 
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
@@ -309,6 +334,53 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: history });
       return;
     }
+    if (url.pathname === "/api/v2/libraries/library-1/uploads") {
+      const { offers } = route.request().postDataJSON() as { offers: Offer[] };
+      uploadOffers.push(...offers);
+      await route.fulfill({
+        json: {
+          verdicts: offers.map((offer) => ({
+            full_hash: offer.full_hash,
+            decision: "accepted",
+            session: uploadSession,
+          })),
+        },
+      });
+      return;
+    }
+    if (url.pathname === "/api/v2/uploads/upload-1") {
+      await route.fulfill({ json: uploadSession });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/uploads/upload-1/chunks/")) {
+      const index = Number(url.pathname.split("/").pop());
+      if (index !== uploadSession.next_chunk) {
+        await route.fulfill({ status: 409, json: { code: "conflict" } });
+        return;
+      }
+      const body = route.request().postDataBuffer() ?? Buffer.alloc(0);
+      uploadChunks.push({ index, bytes: [...body] });
+      uploadSession = {
+        ...uploadSession,
+        next_chunk: index + 1,
+        received_bytes: uploadSession.received_bytes + body.length,
+      };
+      if (index === loseAcknowledgementOf) {
+        loseAcknowledgementOf = null;
+        await route.fulfill({ status: 409, json: { code: "conflict" } });
+        return;
+      }
+      await route.fulfill({ json: uploadSession });
+      return;
+    }
+    if (url.pathname === "/api/v2/uploads/upload-1/commit") {
+      uploadCommits.push("upload-1");
+      await route.fulfill({
+        status: 201,
+        json: { track_id: "song-uploaded", full_hash: uploadOffers[0]?.full_hash },
+      });
+      return;
+    }
     if (url.pathname === "/api/v2/tracks/song-9/overrides") {
       await route.fulfill({ json: correctable.tracked });
       return;
@@ -370,6 +442,11 @@ test.beforeEach(async ({ page }) => {
   scanDrops = false;
   corrections = [];
   correctable = correctableTrack();
+  uploadOffers = [];
+  uploadChunks = [];
+  uploadCommits = [];
+  uploadSession = freshUploadSession();
+  loseAcknowledgementOf = null;
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -1029,4 +1106,111 @@ test("offers a tag correction only to an owner or a manager", async ({
     page.getByRole("group", { name: "Rating: Hidden Place" }),
   ).toBeAttached();
   await expect(links).toHaveCount(0);
+});
+
+/**
+ * A file goes through the three steps RFC-008 describes, and the wire carries
+ * what the server checks: the whole file's BLAKE3 as the offer, fragments of
+ * exactly the advertised size in order, and one commit.
+ *
+ * The acknowledgement of the second fragment is lost on purpose. The client
+ * must read the session back and carry on from where the server stands: not
+ * send the written fragment again, and not skip the next one.
+ */
+test("uploads a file in fragments, resuming from the server's account", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  loseAcknowledgementOf = 1;
+  const bytes = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
+
+  await page.goto("/upload");
+  await expect(
+    page.getByRole("heading", { name: "Upload to Ma musique" }),
+  ).toBeVisible();
+  await page.getByLabel("Choose audio files").setInputFiles({
+    name: "Army of Me.flac",
+    mimeType: "audio/flac",
+    buffer: bytes,
+  });
+  await expect(page.getByText("Added to the library")).toBeVisible();
+
+  // The browser's digest is the one the server recomputes, computed here by an
+  // independent call rather than read back from the page.
+  expect(uploadOffers).toEqual([
+    { full_hash: bytesToHex(blake3(bytes)), size_bytes: 20, extension: "flac" },
+  ]);
+  expect(uploadChunks.map(({ index, bytes: sent }) => [index, sent.length])).toEqual([
+    [0, 8],
+    [1, 8],
+    [2, 4],
+  ]);
+  expect(uploadChunks.flatMap(({ bytes: sent }) => sent)).toEqual([...bytes]);
+  expect(uploadCommits).toEqual(["upload-1"]);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+/**
+ * An extension the scanner does not index is refused on the spot. Hashing it
+ * first would spend the time of a full read to be told `unsupported_format`.
+ */
+test("refuses a file the library cannot index, before hashing it", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.goto("/upload");
+  await page.getByLabel("Choose audio files").setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("not audio"),
+  });
+  await expect(
+    page.getByText("Refused: not an audio format the library can index"),
+  ).toBeVisible();
+  expect(uploadOffers).toEqual([]);
+});
+
+/**
+ * Two locks, and the link needs both: a role that may upload, and a library
+ * its operator has opened. The page behind it says which one is missing when
+ * reached directly.
+ */
+test("offers the upload only where the library takes files and the role may add them", async ({
+  page,
+}) => {
+  // Counted in the DOM, not by role: a role query skips hidden elements, and
+  // the sidebar is hidden on a phone — the count would be 0 there whether the
+  // link exists or not, which makes the zero below prove nothing.
+  const link = page.locator('.primary-navigation a[href="/upload"]');
+
+  // The fixture's default: an owner, in a library closed to files.
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(link).toHaveCount(0);
+
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(link).toHaveCount(1);
+
+  libraries = [
+    {
+      ...library("library-1", "Ma musique"),
+      accepts_uploads: true,
+      role: "listener",
+    },
+  ];
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(link).toHaveCount(0);
+  await page.goto("/upload");
+  await expect(
+    page.getByText(
+      "Only an owner or a manager of this library can add files to it.",
+    ),
+  ).toBeVisible();
 });
