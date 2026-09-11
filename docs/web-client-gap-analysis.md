@@ -343,6 +343,17 @@ que le lecteur du lot C existe.
 > depuis l'état que le serveur relit, jamais depuis une supposition du client.
 > Reste le canvas.
 
+> **Canvas livré le 2026-09-11, et le lot D est clos.** Un propriétaire ou un
+> gestionnaire pose, remplace et retire la boucle d'une piste depuis son
+> éditeur, là où l'opérateur a ouvert la bibliothèque aux canvas — ce qui a
+> demandé d'exposer `accepts_canvas` sur `GET /api/v2/libraries`, porte
+> distincte de celle des fichiers. La page En écoute la joue par-dessus la
+> pochette comme le fait le desktop : muette, en boucle, masquée aux
+> technologies d'assistance, absente quand l'utilisateur a demandé moins de
+> mouvement, et la pochette reste visible si le navigateur ne sait pas lire la
+> vidéo. Le client apprend qu'une piste porte un canvas en demandant son
+> ticket : aucun champ de la piste ne le dit, et le 404 du ticket y répond déjà.
+
 > **Rectifié le 2026-09-07.** Cette ligne disait « la correction est un
 > formulaire ». Elle ne l'est pas : `GET /tracks/{id}` n'expose aucune
 > provenance et `PATCH /tracks/{id}` efface les corrections qu'on ne lui renvoie

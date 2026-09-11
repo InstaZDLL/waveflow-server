@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  canvasUrl,
   hasSession,
   isAllowedRedirect,
   listAlbums,
@@ -172,5 +173,53 @@ describe("listAlbums", () => {
 
     expect(urls).toHaveLength(1);
     expect(new URLSearchParams(urls[0]?.split("?")[1]).has("sort")).toBe(false);
+  });
+});
+
+/**
+ * The ticket is how the web client asks whether a track has a canvas, so its
+ * two answers have to stay apart. A 404 is the server saying there is none;
+ * anything else is the server not answering, and reading that as none would
+ * quietly stop offering the removal of a loop that is still there.
+ */
+describe("canvasUrl", () => {
+  /** Answers every request with `response`, recording the URLs asked for. */
+  function answer(response: Response) {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        urls.push(url);
+        return Promise.resolve(response);
+      }),
+    );
+    return urls;
+  }
+
+  it("mints a ticket for the track and hands back its URL", async () => {
+    const urls = answer(
+      new Response(
+        JSON.stringify({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(canvasUrl("track-1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+    expect(urls).toEqual(["/api/v2/tracks/track-1/canvas-ticket"]);
+  });
+
+  it("reads a 404 as a track without a canvas", async () => {
+    answer(new Response(null, { status: 404 }));
+
+    await expect(canvasUrl("track-1")).resolves.toBeNull();
+  });
+
+  it("throws a failure rather than calling it no canvas", async () => {
+    answer(new Response(null, { status: 503 }));
+
+    await expect(canvasUrl("track-1")).rejects.toMatchObject({ status: 503 });
   });
 });
