@@ -526,6 +526,49 @@ The default ticket lifetime is one hour and is configurable with
 Redeeming a ticket rechecks current library access. An invalid, expired or
 revoked-access ticket returns `404`.
 
+### A track's canvas
+
+A canvas is a short video loop attached to a track and played without sound
+over it ([RFC-009](rfcs/RFC-009-track-canvas.md)). A person gives it, so no
+scan finds one, and it lives in a store of the server's rather than in the
+library's folder.
+
+| Route | Purpose |
+|---|---|
+| `PUT /api/v2/tracks/{track_id}/canvas` | Place a loop, replacing the one the track carried |
+| `DELETE /api/v2/tracks/{track_id}/canvas` | Take it away |
+| `GET /api/v2/tracks/{track_id}/canvas` | The loop the track carries now; revalidate it |
+| `GET /api/v2/canvas/{canvas_hash}` | A loop by its content, immutable under that URL |
+| `POST /api/v2/tracks/{track_id}/canvas-ticket` | A URL a `<video>` element can play |
+| `GET /api/v2/canvas-stream/{ticket}` | What that URL serves |
+
+Placing one takes an `owner` or `manager` of a library whose operator has set
+`accepts_canvas`. The body is the file itself, whole, under the route's own
+ceiling (`WAVEFLOW_CANVAS_MAX_BYTES`, 4 MiB by default). The server reads the
+bytes rather than the name: it keeps an mp4 or a webm carrying a video stream
+that runs no longer than `WAVEFLOW_CANVAS_MAX_DURATION_SECS`, and takes any
+soundtrack out before storing it. The answer names what was stored:
+
+```json
+{
+  "url": "/api/v2/canvas/BLAKE3_HEX",
+  "hash": "BLAKE3_HEX",
+  "format": "webm",
+  "byte_size": 312004
+}
+```
+
+A refusal is `404` when the track is missing, the account may not place a
+canvas or the library takes none — the three are not told apart — `409` when
+the library's canvas quota is full, `413` over the size ceiling and `422` for a
+file that is not a short loop. Removal is not gated on `accepts_canvas`, so
+closing a library to loops never strands the ones it holds; removing from a
+track that carries none answers `404`.
+
+The ticket works like the audio one, and neither opens the other. Minting it
+checks the link, so it is also how a client asks whether a track has a canvas:
+a track without one answers `404`.
+
 ## User-data mutations and idempotency
 
 User data written through the native API and Subsonic façade uses the same
@@ -677,6 +720,10 @@ and never through the API, and every member sees it: the role says who may
 upload — `owner` or `manager` — and the flag says whether anyone can. A client
 that reads it offers an upload only where the server would take one, instead
 of hashing a whole file to be told `library_closed`.
+
+`accepts_canvas`, on the same list, is the same kind of decision for canvases,
+made with `waveflow library set-canvas`. It is a separate door: a library
+closed to files may take loops, and the reverse.
 
 Setting a Subsonic credential returns a new API key exactly once:
 
