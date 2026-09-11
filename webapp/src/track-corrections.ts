@@ -41,6 +41,15 @@ export function isNumericField(field: ScalarField): boolean {
 }
 
 /**
+ * Free text a tagger may break over lines. A text `<input>` strips line breaks
+ * from its value, so such a field needs a `<textarea>`: otherwise the editor
+ * shows a flattened value and saves it that way at the first keystroke.
+ */
+export function isMultilineField(field: ScalarField): boolean {
+  return field === "comment";
+}
+
+/**
  * One field of the form. `restore` is the explicit gesture of handing the field
  * back to the file, which is distinct from typing: it is the only way to remove
  * a list correction, whose file value the editor cannot display.
