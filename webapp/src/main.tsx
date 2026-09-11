@@ -22,6 +22,7 @@ import { Icon, type IconName } from "./icons";
 import {
   LibraryPicker,
   LibraryScopeProvider,
+  mayUploadTo,
   useLibraryScope,
 } from "./library-scope";
 import {
@@ -48,6 +49,7 @@ import {
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
 import { TrackEditorPage } from "./track-editor";
+import { UploadPage } from "./upload-page";
 import "./styles.css";
 
 const navigation: Array<{
@@ -63,10 +65,13 @@ const navigation: Array<{
     | "/playlists"
     | "/queue"
     | "/shares"
+    | "/upload"
     | "/admin";
   labelKey: TranslationKey;
   icon: IconName;
   admin?: boolean;
+  /** Shown only where the active library takes files from this account. */
+  upload?: boolean;
   primary?: boolean;
 }> = [
   { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
@@ -90,6 +95,7 @@ const navigation: Array<{
   },
   { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
   { to: "/shares", labelKey: "nav.shares", icon: "shares" },
+  { to: "/upload", labelKey: "nav.upload", icon: "upload", upload: true },
   { to: "/admin", labelKey: "nav.admin", icon: "admin", admin: true },
 ];
 
@@ -111,6 +117,7 @@ function Brand() {
 
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const user = currentUser();
+  const { active } = useLibraryScope();
   const { t } = useI18n();
   return (
     <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
@@ -118,6 +125,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
         .filter(
           (item) =>
             (!item.admin || user?.role === "admin") &&
+            (!item.upload || mayUploadTo(active)) &&
             (!mobile || item.primary),
         )
         .map((item) => (
@@ -350,6 +358,12 @@ const adminRoute = createRoute({
   component: AdminPage,
 });
 
+const uploadRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/upload",
+  component: UploadPage,
+});
+
 const trackEditRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/tracks/$trackId/edit",
@@ -379,6 +393,7 @@ const routeTree = rootRoute.addChildren([
     adminRoute,
     authorizeRoute,
     trackEditRoute,
+    uploadRoute,
   ]),
 ]);
 

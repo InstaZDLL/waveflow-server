@@ -22,9 +22,18 @@ export type IconName =
   | "play"
   | "pause"
   | "next"
-  | "edit";
+  | "edit"
+  | "upload";
 
 const paths: Record<IconName, ReactNode> = {
+  // An arrow into a tray: a file going into the library.
+  upload: (
+    <>
+      <path d="M12 15V4" />
+      <path d="m7.5 8.5 4.5-4.5 4.5 4.5" />
+      <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+    </>
+  ),
   // A pencil: correcting what a tag says, not rewriting the file.
   edit: (
     <>

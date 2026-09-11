@@ -2026,3 +2026,62 @@ button.danger {
 .correction-actions p {
   margin: 0;
 }
+
+/* Uploads. The rows are the list's own; the progress bar takes the width the
+   name does not need, and a long file name wraps rather than pushing the bar
+   out of its row. */
+.upload-detail {
+  max-width: 44rem;
+  margin: 0 0 1.25rem;
+}
+
+.upload-pick {
+  display: inline-grid;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.upload-formats {
+  margin: 0.6rem 0 1.5rem;
+  font-size: 0.8rem;
+}
+
+.upload-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(6rem, 12rem);
+  align-items: center;
+}
+
+.upload-name {
+  overflow-wrap: anywhere;
+}
+
+.upload-status {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.upload-item.done .upload-status,
+.upload-item.present .upload-status {
+  color: var(--accent);
+}
+
+.upload-item.refused .upload-status,
+.upload-item.failed .upload-status {
+  color: var(--danger);
+  white-space: normal;
+}
+
+.upload-list progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .upload-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.35rem;
+  }
+}
