@@ -83,10 +83,19 @@ class CancelledUpload extends Error {}
 let worker: Worker | null = null;
 let hashRequests = 0;
 
+/** The browser could not fingerprint the file: its worker failed or never loaded. */
+class HashingFailed extends Error {}
+
 /**
  * BLAKE3 of the whole file, computed in a worker. One worker for the page,
  * created on first use: files are fingerprinted one at a time, so a worker per
  * file would pay its start-up again for nothing.
+ *
+ * A worker that fails — its module refused, or an error before it answers —
+ * sends no message at all. Listening for messages alone would leave this
+ * promise pending for ever, and the one-at-a-time queue stuck behind it. So a
+ * failure rejects the request, and the worker is dropped: the next file starts
+ * a fresh one instead of waiting on a broken one.
  */
 function hashFile(
   file: File,
@@ -98,17 +107,30 @@ function hashFile(
   const hasher = worker;
   const id = hashRequests++;
   return new Promise((resolve, reject) => {
+    const settle = () => {
+      hasher.removeEventListener("message", listen);
+      hasher.removeEventListener("error", fail);
+      hasher.removeEventListener("messageerror", fail);
+    };
     const listen = ({ data }: MessageEvent<HashResponse>) => {
       if (data.id !== id) return;
       if ("read" in data) {
         onProgress(data.read);
         return;
       }
-      hasher.removeEventListener("message", listen);
+      settle();
       if ("hash" in data) resolve(data.hash);
-      else reject(new Error(data.error));
+      else reject(new HashingFailed(data.error));
+    };
+    const fail = () => {
+      settle();
+      hasher.terminate();
+      if (worker === hasher) worker = null;
+      reject(new HashingFailed("the fingerprinting worker failed"));
     };
     hasher.addEventListener("message", listen);
+    hasher.addEventListener("error", fail);
+    hasher.addEventListener("messageerror", fail);
     const request: HashRequest = { id, file };
     hasher.postMessage(request);
   });
@@ -158,6 +180,7 @@ async function sendFragments(
 }
 
 function failureReason(cause: unknown): TranslationKey {
+  if (cause instanceof HashingFailed) return "upload.reason.hashing";
   if (cause instanceof TypeError) return "upload.reason.network";
   if (!(cause instanceof ApiError)) return "upload.reason.error";
   switch (cause.status) {

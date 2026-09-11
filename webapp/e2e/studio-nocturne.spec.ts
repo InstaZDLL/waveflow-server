@@ -1175,6 +1175,30 @@ test("refuses a file the library cannot index, before hashing it", async ({
 });
 
 /**
+ * A worker that cannot load sends no message at all. Waiting for one would leave
+ * the row on "Fingerprinting…" for ever, and the queue — one file at a time —
+ * stuck behind it. Both files must fail, the second without waiting on the
+ * first, and nothing may be offered to the server.
+ */
+test("fails a file whose fingerprinting worker cannot load, and moves on", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.route("**/assets/hash-worker-*.js", (route) =>
+    route.fulfill({ status: 404, body: "" }),
+  );
+  await page.goto("/upload");
+  await page.getByLabel("Choose audio files").setInputFiles([
+    { name: "first.flac", mimeType: "audio/flac", buffer: Buffer.from([1, 2, 3]) },
+    { name: "second.flac", mimeType: "audio/flac", buffer: Buffer.from([4, 5, 6]) },
+  ]);
+  await expect(
+    page.getByText("Failed: this browser could not fingerprint the file"),
+  ).toHaveCount(2);
+  expect(uploadOffers).toEqual([]);
+});
+
+/**
  * Two locks, and the link needs both: a role that may upload, and a library
  * its operator has opened. The page behind it says which one is missing when
  * reached directly.
