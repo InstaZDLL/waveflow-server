@@ -1549,6 +1549,11 @@ async fn a_track_correction_survives_the_scan_that_would_have_erased_it() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    // An empty patch writes nothing, and it is still a request to correct this
+    // track: a listener is refused it the same way, or `{}` would answer
+    // differently from every other patch they send.
+    let (status, _) = patch(listener_token.clone(), serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // And a manager may, which is the half of the rule the refusal above cannot
     // show: were it `Owner` alone, everything asserted so far would still pass.
@@ -2098,9 +2103,37 @@ async fn a_correction_leaves_alone_what_it_does_not_mention() {
     assert_eq!(after_desktop["sort_title"], "Partial, The");
     assert_eq!(after_desktop["musicbrainz_recording_id"], identifier);
 
-    // `{}` mentions nothing, so it changes nothing.
+    // `{}` mentions nothing, so it changes nothing: not the correction, not the
+    // row, and not the library feed, where an `upsert` for a change that never
+    // happened would send every client to refetch the track.
+    let events = || {
+        let state = state.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM library_event WHERE library_id=?")
+                .bind(library_id.to_string())
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap()
+        }
+    };
+    // A sentinel rather than the stamp the last write left: two writes can land
+    // in the same millisecond, and a comparison with that stamp would then pass
+    // whether or not the row was rewritten.
+    sqlx::query("UPDATE track_override SET updated_at=1 WHERE track_id=?")
+        .bind(track_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let events_before = events().await;
     assert_eq!(patch(serde_json::json!({})).await, StatusCode::OK);
     assert_eq!(stored().await, after_desktop, "an empty patch is a no-op");
+    assert_eq!(events().await, events_before, "and announces nothing");
+    let stamp: i64 = sqlx::query_scalar("SELECT updated_at FROM track_override WHERE track_id=?")
+        .bind(track_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(stamp, 1, "and writes nothing");
 
     // `null` removes one correction, and only that one.
     assert_eq!(

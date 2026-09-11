@@ -91,6 +91,43 @@ impl DomainServices {
         let requested_artists = patch.artists.map(|list| list.map(clean_all));
         let requested_genres = patch.genres.map(|list| list.map(clean_all));
 
+        // A patch that mentions no field has nothing to merge, so it writes
+        // nothing and announces nothing: an `upsert` on the library feed for a
+        // change that never happened would send every client to refetch the
+        // track. It is still a request to correct this track, so it is refused
+        // exactly as a real patch would be — read without the gate, because
+        // there is no write for a revoked role to slip in front of.
+        if requested_title.is_none()
+            && requested_sort_title.is_none()
+            && patch.year.is_none()
+            && patch.track_number.is_none()
+            && patch.disc_number.is_none()
+            && requested_musicbrainz_recording_id.is_none()
+            && requested_comment.is_none()
+            && requested_artists.is_none()
+            && requested_genres.is_none()
+        {
+            let role: Option<String> = sqlx::query_scalar(
+                "SELECT m.role FROM track t \
+                 JOIN library_member m ON m.library_id=t.library_id \
+                 WHERE t.id=? AND m.user_id=?",
+            )
+            .bind(track_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?;
+            let role = crate::database::LibraryRole::from_str(&role.ok_or(ServiceError::NotFound)?)
+                .map_err(|_| ServiceError::Invalid)?;
+            if !role.may_write_metadata() {
+                return Err(ServiceError::Forbidden);
+            }
+            return self
+                .songs_by_ids(user_id, &[track_id])
+                .await?
+                .pop()
+                .ok_or(ServiceError::NotFound);
+        }
+
         // Removing a list correction needs the file, because the rows it wrote
         // replaced what the tags said and the catalogue no longer holds the
         // original. Read here, before the gate: file I/O has no business
