@@ -68,7 +68,7 @@ const library = (id: string, name: string) => ({
   id,
   name,
   visibility: "private" as const,
-  role: "owner" as const,
+  role: "owner" as "owner" | "manager" | "listener",
   last_scan_started_at: null,
   last_scan_completed_at: null,
 });
@@ -125,6 +125,58 @@ const genreSongs = [
   song(1, "Hidden Place", 5, true),
   song(2, "Cocoon", 0, false),
 ];
+
+/**
+ * A track another client has already corrected: a comment over two lines, and
+ * an artist fixed. A save that does not touch the comment must leave it out of
+ * the body — the server keeps whatever a patch does not mention, but only if
+ * the client does not send it back.
+ *
+ * Built afresh for each test, because the PATCH mock applies what it receives.
+ * The editor reads the corrections back after a save, and a mock that ignored
+ * the write would let a form that never reloaded pass for one that did.
+ */
+function correctableTrack() {
+  const overrides: Record<string, unknown> = {
+    title: null,
+    sort_title: null,
+    year: null,
+    track_number: null,
+    disc_number: null,
+    musicbrainz_recording_id: null,
+    comment: "Remastered\nBonus edition",
+    artists: ["Skunk Anansie"],
+    genres: null,
+  };
+  return {
+    song: {
+      ...song(9, "Army Of Me", 0, false),
+      year: 1995,
+      artists: [{ id: "artist-2", name: "Skunk Anansie" }],
+      genres: ["Trip Hop"],
+    },
+    tracked: {
+      source: {
+        title: "Army Of Me",
+        sort_title: null,
+        year: 1995,
+        track_number: 9,
+        disc_number: 1,
+        musicbrainz_recording_id: null,
+        comment: null,
+      },
+      overrides,
+    },
+  };
+}
+
+/** What the file credits: where a removed artists correction goes back to. */
+const fileArtists = [{ id: "artist-1", name: "Björk" }];
+
+let correctable = correctableTrack();
+
+/** Every correction body sent, in order. */
+let corrections: unknown[] = [];
 
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
@@ -257,6 +309,23 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: history });
       return;
     }
+    if (url.pathname === "/api/v2/tracks/song-9/overrides") {
+      await route.fulfill({ json: correctable.tracked });
+      return;
+    }
+    if (url.pathname === "/api/v2/tracks/song-9") {
+      if (route.request().method() === "PATCH") {
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        corrections.push(body);
+        // What the server does with it: a key present replaces its correction,
+        // null removes it, and a list that is removed goes back to the file.
+        Object.assign(correctable.tracked.overrides, body);
+        if (typeof body.title === "string") correctable.song.title = body.title;
+        if (body.artists === null) correctable.song.artists = fileArtists;
+      }
+      await route.fulfill({ json: correctable.song });
+      return;
+    }
     if (url.pathname.startsWith("/api/v2/tracks/")) {
       const id = url.pathname.split("/")[4];
       await route.fulfill({ json: { ...song(1, `Track ${id}`, 0, false), id } });
@@ -299,6 +368,8 @@ test.beforeEach(async ({ page }) => {
   tokensFail = false;
   scanFails = false;
   scanDrops = false;
+  corrections = [];
+  correctable = correctableTrack();
   slowAlbum = Promise.resolve();
   await mockAuthenticatedApi(page);
 });
@@ -876,4 +947,86 @@ test("offers no membership to grant while the list is unknown", async ({
   // The grant control is built from the list, so without one there is nothing
   // to build it from.
   await expect(panel.getByLabel("Give access to")).toHaveCount(0);
+});
+
+/**
+ * The editor's whole job, seen from the wire. The body must name the field that
+ * changed and the list handed back to the file, and nothing else — above all
+ * not the comment another client added, which a body sending the whole form
+ * would have erased before #177 and would pin now.
+ */
+test("corrects a track's tags and sends only what changed", async ({
+  page,
+}) => {
+  await page.goto("/tracks/song-9/edit");
+  await expect(
+    page.getByRole("heading", { name: "Correct tags" }),
+  ).toBeVisible();
+
+  const title = page.getByLabel("Title", { exact: true });
+  await expect(title).toHaveValue("Army Of Me");
+  // Provenance is shown here and nowhere else: the corrected value, and what
+  // the file says beneath it.
+  // A tagger's comment keeps both of its lines: an `<input>` would flatten it.
+  await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
+    "Remastered\nBonus edition",
+  );
+  await expect(page.getByText("The file says nothing here")).toBeVisible();
+
+  await title.fill("Army of Me");
+  await page
+    .getByRole("button", { name: /^Restore the file.s value: Artists$/ })
+    .click();
+  await expect(page.getByLabel("Artists", { exact: true })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  expect(corrections).toEqual([{ title: "Army of Me", artists: null }]);
+
+  // Read back, not assumed. The form now stands on the corrections the server
+  // holds: the artists are the file's again, and no longer corrected.
+  await expect(title).toHaveValue("Army of Me");
+  const artists = page.getByLabel("Artists", { exact: true });
+  await expect(artists).toBeEnabled();
+  await expect(artists).toHaveValue("Björk");
+  await expect(
+    page.getByRole("button", { name: /^Restore the file.s value: Artists$/ }),
+  ).toHaveCount(0);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+/**
+ * Offered where the server would accept it, and nowhere else. The listener half
+ * is not vacuous: the album waits for the list of libraries before it renders,
+ * so the rows below exist only once the role that decides them is known.
+ */
+test("offers a tag correction only to an owner or a manager", async ({
+  page,
+}) => {
+  await page.goto("/albums/album-2");
+  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
+  const links = page.getByRole("link", { name: /^Correct tags: / });
+  await expect(links).toHaveCount(3);
+  await expect(links.first()).toHaveAttribute("href", "/tracks/song-1/edit");
+
+  // A manager may correct as well: the other half of the pair the server
+  // names, and the half a regression to owner-only would drop.
+  libraries = [{ ...library("library-1", "Ma musique"), role: "manager" }];
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
+  await expect(links).toHaveCount(3);
+
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
+  // The row's own marks cell, where the link would be. Once its rating is in
+  // the page, the absence of the link is an answer and not a race.
+  await expect(
+    page.getByRole("group", { name: "Rating: Hidden Place" }),
+  ).toBeAttached();
+  await expect(links).toHaveCount(0);
 });

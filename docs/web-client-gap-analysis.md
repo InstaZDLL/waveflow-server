@@ -324,6 +324,15 @@ l'autre.
 canvas. Dans cet ordre : le téléversement est une machine, et le canvas suppose
 que le lecteur du lot C existe.
 
+> **Correction de tags livrée le 2026-09-11.** L'éditeur vit à
+> `/tracks/{id}/edit`, atteint depuis chaque ligne de piste par un propriétaire
+> ou un gestionnaire de la bibliothèque. Il montre la provenance des sept champs
+> scalaires, propose le rétablissement des deux listes sans aperçu, et
+> n'envoie que ce que le formulaire a changé : le calcul du corps est une
+> fonction pure et testée, parce que c'est là que se loge la perte de données.
+> Retaper la valeur du fichier retire la correction au lieu de l'épingler contre
+> un futur retag. Restent le téléversement, puis le canvas.
+
 > **Rectifié le 2026-09-07.** Cette ligne disait « la correction est un
 > formulaire ». Elle ne l'est pas : `GET /tracks/{id}` n'expose aucune
 > provenance et `PATCH /tracks/{id}` efface les corrections qu'on ne lui renvoie
