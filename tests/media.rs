@@ -347,6 +347,198 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
     assert_eq!(escaped.status(), StatusCode::NOT_FOUND);
 }
 
+/// A server whose transcode ceilings the test chose, one long track, and its
+/// owner: the setting of #185, which is about what a seek leaves behind.
+///
+/// Driven through `MediaService` rather than the router. What is under test is
+/// the cache and the slots, and nobody has to sign in to reach them.
+struct Seekable {
+    _temp: tempfile::TempDir,
+    state: waveflow_server::AppState,
+    owner: uuid::Uuid,
+    track: uuid::Uuid,
+}
+
+impl Seekable {
+    async fn new(global: usize, per_user: usize) -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = Config::for_data_dir(temp.path().join("data"));
+        // Before `initialize`, which copies the ceilings into the service.
+        config.transcode_global_limit = global;
+        config.transcode_per_user_limit = per_user;
+        let state = waveflow_server::initialize(&config).await.unwrap();
+        // Nobody signs in, so the account only has to exist for the library to
+        // belong to it.
+        let owner = state
+            .db
+            .create_account("seek-owner", "never-signs-in", AccountRole::Admin, now_ms())
+            .await
+            .unwrap();
+        let music = config.data_dir.join("seek-music");
+        std::fs::create_dir_all(&music).unwrap();
+        // Three minutes: far more MP3 than the stream's channel and FFmpeg's pipe
+        // hold together, so a play whose consumer reads one chunk and leaves is
+        // still encoding when it is abandoned.
+        write_test_wav_of_len(&music.join("Long.wav"), 8_000 * 180);
+        let root = std::fs::canonicalize(&music).unwrap();
+        let library = state
+            .db
+            .create_library(
+                owner,
+                "Seek library",
+                &root,
+                LibraryVisibility::Private,
+                now_ms(),
+            )
+            .await
+            .unwrap();
+        run_scan(
+            &state,
+            owner,
+            LibraryRecord {
+                id: library,
+                name: "Seek library".into(),
+                root_path: root,
+            },
+        )
+        .await;
+        let track = state
+            .db
+            .list_tracks_for_user(owner, library)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap()
+            .id;
+        Self {
+            _temp: temp,
+            state,
+            owner,
+            track,
+        }
+    }
+
+    /// An MP3 stream of the track, from `offset_ms`.
+    async fn stream(
+        &self,
+        offset_ms: u64,
+        range: Option<&str>,
+    ) -> Result<axum::response::Response, waveflow_server::media::MediaError> {
+        let track = self
+            .state
+            .db
+            .stream_track_for_user(self.owner, self.track)
+            .await
+            .unwrap()
+            .unwrap();
+        self.state
+            .media
+            .serve(
+                self.owner,
+                track,
+                waveflow_server::media::StreamQuery {
+                    format: waveflow_server::media::OutputFormat::Mp3,
+                    bitrate: Some(96),
+                    offset_ms,
+                },
+                range,
+            )
+            .await
+    }
+
+    /// Whether the whole transcode is in the cache, learned the way a client
+    /// learns it: a range that seeks is refused by a live transcode and
+    /// answered by a cached file.
+    async fn cached(&self) -> bool {
+        matches!(
+            self.stream(0, Some("bytes=64-127")).await,
+            Ok(response) if response.status() == StatusCode::PARTIAL_CONTENT
+        )
+    }
+
+    /// Waits until no transcode runs, a cache fill included.
+    async fn settle(&self) {
+        for _ in 0..3_000 {
+            if self.state.media.active_transcodes() == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("a transcode was still running after thirty seconds");
+    }
+}
+
+/// Issue #185, as a client lives it. The first play starts at the top and is
+/// dropped the moment the listener seeks, and the seek goes through
+/// `offset_ms`. Neither is a whole play, and yet the next play has to be a
+/// cached file a client can seek in by byte range — otherwise every play of the
+/// track is a live transcode seeked the same way, and it never leaves that loop.
+#[tokio::test]
+async fn a_seek_on_the_first_play_leaves_the_next_play_cached() {
+    let seekable = Seekable::new(4, 2).await;
+
+    let first = seekable.stream(0, None).await.unwrap();
+    let mut body = first.into_body();
+    body.frame().await.unwrap().unwrap();
+    drop(body);
+    seekable.settle().await;
+    // The precondition, checked rather than assumed: the abandoned play was
+    // killed and left nothing. Had it run to its end, the cache below would say
+    // nothing about seeking.
+    assert!(
+        !seekable.cached().await,
+        "the abandoned first play must not have filled the cache itself"
+    );
+
+    let seek = seekable.stream(90_000, None).await.unwrap();
+    assert_eq!(seek.status(), StatusCode::OK);
+    seek.into_body().collect().await.unwrap();
+    seekable.settle().await;
+
+    assert!(
+        seekable.cached().await,
+        "the play after a seek must be a cached file"
+    );
+}
+
+/// The fill never takes the last slot a live request could want. With two
+/// slots on the server and the seek holding one, leaving one free means not
+/// starting at all — and nothing is cached however long one waits.
+#[tokio::test]
+async fn a_seek_fills_the_cache_only_with_a_slot_to_spare() {
+    let seekable = Seekable::new(2, 1).await;
+
+    let seek = seekable.stream(90_000, None).await.unwrap();
+    // Read at once: a fill is counted before the seek's answer is returned, so
+    // one that started would already be here.
+    assert_eq!(
+        seekable.state.media.active_transcodes(),
+        1,
+        "the seek, and no fill beside it"
+    );
+    seek.into_body().collect().await.unwrap();
+    seekable.settle().await;
+    assert!(!seekable.cached().await);
+}
+
+/// The fill does not count against the account's own limit. That limit is what
+/// the seek itself holds, and a listener allowed one stream must not lose the
+/// cache for having used it.
+#[tokio::test]
+async fn a_seek_fills_the_cache_outside_the_accounts_own_limit() {
+    let seekable = Seekable::new(3, 1).await;
+
+    let seek = seekable.stream(90_000, None).await.unwrap();
+    assert_eq!(
+        seekable.state.media.active_transcodes(),
+        2,
+        "the seek, and the fill behind it"
+    );
+    seek.into_body().collect().await.unwrap();
+    seekable.settle().await;
+    assert!(seekable.cached().await);
+}
+
 #[tokio::test]
 async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     let (_temp, config, state) = test_app().await;

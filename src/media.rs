@@ -23,7 +23,7 @@ use axum::{
     Router,
 };
 use bytes::Bytes;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use serde::Deserialize;
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -66,6 +66,9 @@ struct MediaInner {
     users: DashMap<Uuid, Arc<Semaphore>>,
     cache_locks: DashMap<String, Arc<Mutex<()>>>,
     cache_access: DashMap<PathBuf, SystemTime>,
+    /// Cache keys a fill behind a seek is already working on, so a burst of
+    /// seeks on one track starts one encode rather than one per seek.
+    pending_fills: DashSet<String>,
     active_transcodes: AtomicUsize,
     transcoding_available: bool,
 }
@@ -126,6 +129,7 @@ impl MediaService {
                 users: DashMap::new(),
                 cache_locks: DashMap::new(),
                 cache_access: DashMap::new(),
+                pending_fills: DashSet::new(),
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
             }),
@@ -209,16 +213,23 @@ impl MediaService {
         }
 
         if query.offset_ms > 0 {
-            return self
+            let response = self
                 .stream_transcode(
                     user_id,
-                    source,
+                    source.clone(),
                     query.format,
                     bitrate,
                     query.offset_ms,
                     None,
                 )
-                .await;
+                .await?;
+            // After the live stream has its slots, never before: the listener
+            // waiting on this request comes first, and a fill that took the
+            // last slot would be the reason they were answered 429.
+            if !tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+                self.fill_cache_behind_a_seek(source, query.format, bitrate, key, cache_path);
+            }
+            return Ok(response);
         }
 
         let lock = self
@@ -250,6 +261,140 @@ impl MediaService {
         .await
     }
 
+    /// The FFmpeg invocation for a transcode, up to where its output goes.
+    ///
+    /// Shared by the live stream, which sends it to a pipe, and the cache fill
+    /// behind a seek, which sends it to a file. Two copies of these arguments
+    /// would drift apart the day one of them changed, and the cache would start
+    /// holding a different encode from the one its key names.
+    fn transcode_command(
+        &self,
+        source: &Path,
+        format: OutputFormat,
+        bitrate: u32,
+        offset_ms: u64,
+    ) -> Result<Command, MediaError> {
+        let mut command = Command::new(&self.inner.ffmpeg);
+        command.arg("-hide_banner").arg("-loglevel").arg("error");
+        if offset_ms > 0 {
+            command
+                .arg("-ss")
+                .arg(format!("{:.3}", offset_ms as f64 / 1000.0));
+        }
+        command
+            .arg("-i")
+            .arg(source)
+            .args(["-vn", "-map_metadata", "-1"]);
+        let bitrate_arg = format!("{bitrate}k");
+        match format {
+            OutputFormat::Mp3 => {
+                command.args(["-c:a", "libmp3lame", "-b:a", &bitrate_arg, "-f", "mp3"]);
+            }
+            OutputFormat::Opus => {
+                command.args([
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    &bitrate_arg,
+                    "-vbr",
+                    "on",
+                    "-f",
+                    "ogg",
+                ]);
+            }
+            OutputFormat::Raw => return Err(MediaError::InvalidRequest),
+        }
+        Ok(command)
+    }
+
+    /// Transcodes the whole track into the cache, behind a seek into a live
+    /// transcode of it. Issue #185.
+    ///
+    /// Seeking a live transcode goes through `offset_ms`, and asking for it is
+    /// the very act that abandons the offset-0 stream: the only one allowed to
+    /// fill the cache, and one whose departure kills its encoder and deletes its
+    /// partial file. The stream replacing it is not the whole track and is not
+    /// cached. Without this, a track seeked on its first play stayed a live
+    /// transcode on every later play, without byte ranges, so the client seeked
+    /// through `offset_ms` again and abandoned the stream again.
+    ///
+    /// **Below anything a listener is waiting on.** It starts only when it can
+    /// take a global slot and still leave one free, so it never turns a live
+    /// request into a 429, and it never counts against the account's own limit,
+    /// which the seek itself is holding. Without that room it does nothing, and
+    /// the next seek asks again.
+    ///
+    /// **Outside the cache lock.** The play a seek abandons still holds that
+    /// lock for the moment it takes to notice its consumer is gone, and the seek
+    /// lands inside that moment: waiting for the lock or giving up on it would
+    /// both miss the one case this is for. A second writer of the same key costs
+    /// an encode and nothing worse — each writes its own staging file, and the
+    /// one that finds the cache already there discards its own.
+    fn fill_cache_behind_a_seek(
+        &self,
+        source: PathBuf,
+        format: OutputFormat,
+        bitrate: u32,
+        key: String,
+        cache_path: PathBuf,
+    ) {
+        if !self.inner.pending_fills.insert(key.clone()) {
+            return;
+        }
+        // Released on every way out from here on, the refusals included, so a
+        // fill that could not start never stops the next seek from asking.
+        let pending = PendingFill {
+            inner: Arc::clone(&self.inner),
+            key,
+        };
+        // Two permits in one step and one handed straight back: a slot, with
+        // another still free after it. Checking for two and then taking one
+        // would leave a gap in which a second fill takes the last.
+        let Ok(mut global) = Arc::clone(&self.inner.global).try_acquire_many_owned(2) else {
+            return;
+        };
+        drop(global.split(1));
+        let Ok(mut command) = self.transcode_command(&source, format, bitrate, 0) else {
+            return;
+        };
+        let staging = staging_path(&cache_path);
+        command
+            .arg("-y")
+            .arg(&staging)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let inner = Arc::clone(&self.inner);
+        inner.active_transcodes.fetch_add(1, Ordering::Relaxed);
+
+        tokio::spawn(async move {
+            let _pending = pending;
+            let _global = global;
+            let _active = ActiveGuard(&inner.active_transcodes);
+            let finished = matches!(command.status().await, Ok(status) if status.success());
+            if !finished {
+                tracing::warn!(path = %source.display(), "ffmpeg cache fill failed");
+                let _ = tokio::fs::remove_file(&staging).await;
+                return;
+            }
+            // A play from the start may have committed the same key meanwhile.
+            // Its file is as good as this one, and replacing a file a reader
+            // may be streaming from is not a write worth making.
+            if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+                let _ = tokio::fs::remove_file(&staging).await;
+                return;
+            }
+            if let Err(error) = tokio::fs::rename(&staging, &cache_path).await {
+                tracing::warn!(error = %error, "transcode cache fill could not be committed");
+                let _ = tokio::fs::remove_file(&staging).await;
+                return;
+            }
+            inner.cache_access.insert(cache_path, SystemTime::now());
+            prune_cache(&inner).await;
+        });
+    }
+
     async fn stream_transcode(
         &self,
         user_id: Uuid,
@@ -272,36 +417,7 @@ impl MediaService {
             .try_acquire_owned()
             .map_err(|_| MediaError::Busy)?;
 
-        let mut command = Command::new(&self.inner.ffmpeg);
-        command.arg("-hide_banner").arg("-loglevel").arg("error");
-        if offset_ms > 0 {
-            command
-                .arg("-ss")
-                .arg(format!("{:.3}", offset_ms as f64 / 1000.0));
-        }
-        command
-            .arg("-i")
-            .arg(&source)
-            .args(["-vn", "-map_metadata", "-1"]);
-        let bitrate_arg = format!("{bitrate}k");
-        match format {
-            OutputFormat::Mp3 => {
-                command.args(["-c:a", "libmp3lame", "-b:a", &bitrate_arg, "-f", "mp3"]);
-            }
-            OutputFormat::Opus => {
-                command.args([
-                    "-c:a",
-                    "libopus",
-                    "-b:a",
-                    &bitrate_arg,
-                    "-vbr",
-                    "on",
-                    "-f",
-                    "ogg",
-                ]);
-            }
-            OutputFormat::Raw => return Err(MediaError::InvalidRequest),
-        }
+        let mut command = self.transcode_command(&source, format, bitrate, offset_ms)?;
         command
             .arg("pipe:1")
             .stdin(Stdio::null())
@@ -325,13 +441,7 @@ impl MediaService {
                 Some((path, guard)) => (Some(path), Some(guard)),
                 None => (None, None),
             };
-            let temp_path = cache_path.as_ref().map(|path| {
-                path.with_extension(format!(
-                    "{}.part-{}",
-                    path.extension().and_then(OsStr::to_str).unwrap_or("cache"),
-                    Uuid::new_v4()
-                ))
-            });
+            let temp_path = cache_path.as_deref().map(staging_path);
             let mut cache_file = match temp_path.as_ref() {
                 Some(path) => match tokio::fs::File::create(path).await {
                     Ok(file) => Some(file),
@@ -435,6 +545,19 @@ impl MediaService {
             body,
         )
             .into_response())
+    }
+}
+
+/// Releases a key's claim on the cache fill however the fill ends, so one that
+/// failed or never started does not stop the next seek from asking again.
+struct PendingFill {
+    inner: Arc<MediaInner>,
+    key: String,
+}
+
+impl Drop for PendingFill {
+    fn drop(&mut self) {
+        self.inner.pending_fills.remove(&self.key);
     }
 }
 
@@ -1341,6 +1464,20 @@ fn validate_bitrate(format: OutputFormat, bitrate: Option<u32>) -> Result<u32, M
     Ok(bitrate)
 }
 
+/// Where a transcode is written before it is whole, beside the name it will
+/// take. The pruning pass skips `.part-`, and the suffix is unique, so two
+/// writers of one key never share a file.
+fn staging_path(cache_path: &Path) -> PathBuf {
+    cache_path.with_extension(format!(
+        "{}.part-{}",
+        cache_path
+            .extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or("cache"),
+        Uuid::new_v4()
+    ))
+}
+
 fn cache_key(source_hash: &str, format: OutputFormat, bitrate: u32) -> String {
     blake3::hash(
         format!("{source_hash}:{format:?}:{bitrate}:{TRANSCODE_PROFILE_VERSION}").as_bytes(),
@@ -1436,10 +1573,11 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::SystemTime};
 
     use dashmap::DashMap;
-    use tokio::sync::Semaphore;
+    use tokio::sync::{Mutex, Semaphore};
 
     use super::{
-        parse_range, prune_cache, secure_track_path, starts_at_the_first_byte, MediaInner,
+        cache_key, parse_range, prune_cache, secure_track_path, starts_at_the_first_byte,
+        MediaInner, MediaService, OutputFormat,
     };
 
     #[test]
@@ -1516,11 +1654,75 @@ mod tests {
             users: DashMap::new(),
             cache_locks: DashMap::new(),
             cache_access: access,
+            pending_fills: dashmap::DashSet::new(),
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
             transcoding_available: true,
         };
         prune_cache(&inner).await;
         assert!(!old.exists());
         assert!(recent.exists());
+    }
+
+    /// The fill behind a seek neither waits on the cache lock nor gives up on
+    /// it. The play a seek abandons still holds that lock for the moment it
+    /// takes to notice its consumer is gone, and the seek lands inside that
+    /// moment. No integration test can arrange that instant; a test inside the
+    /// module can, by holding the lock itself the way the dying play does.
+    #[tokio::test]
+    async fn a_seek_fills_the_cache_while_the_abandoned_play_still_holds_its_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = crate::Config::for_data_dir(temp.path().join("data"));
+        config.transcode_global_limit = 4;
+        let media = MediaService::initialize(&config).await.unwrap();
+        let source = temp.path().join("track.wav");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=8000:cl=mono",
+                "-t",
+                "2",
+            ])
+            .arg(&source)
+            .status()
+            .expect("ffmpeg must be on PATH");
+        assert!(generated.success());
+
+        let key = cache_key("abandoned", OutputFormat::Mp3, 96);
+        let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
+        let lock = media
+            .inner
+            .cache_locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _held = lock.lock_owned().await;
+
+        media.fill_cache_behind_a_seek(source, OutputFormat::Mp3, 96, key, cache_path.clone());
+        assert_eq!(
+            media.active_transcodes(),
+            1,
+            "the fill must start while the lock is held"
+        );
+        for _ in 0..3_000 {
+            if media.active_transcodes() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            media.active_transcodes(),
+            0,
+            "the fill must not wait for the lock"
+        );
+        assert!(
+            cache_path.exists(),
+            "the fill must commit the whole transcode"
+        );
     }
 }
