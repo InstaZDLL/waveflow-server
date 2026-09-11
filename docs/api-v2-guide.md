@@ -358,6 +358,11 @@ play of the track is then a cached file with byte ranges. A server too busy to
 spare the slot skips it and a later seek asks again; a server configured with a
 single transcode slot never has one to spare.
 
+What that costs was measured on 2026-09-12 against a real library, rather than
+assumed: a track of six minutes forty at 96 kbit/s was encoded whole and
+committed about a second after the seek's own stream had finished. The extra
+slot is held for seconds, not for the length of the track.
+
 ### Correcting a track's tags
 
 `PATCH /api/v2/tracks/{track_id}` writes corrections that survive a rescan
