@@ -78,7 +78,7 @@ import {
 import { Artwork } from "./artwork";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
-import { useScopeId } from "./library-scope";
+import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
 import { usePlayer, usePlayerProgress } from "./player";
 
 const SKELETON_KEYS = [
@@ -93,7 +93,7 @@ const SKELETON_KEYS = [
 ];
 
 /** Resolves a promise into render state, with the error surfaced rather than swallowed. */
-function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
+export function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
   const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -129,7 +129,7 @@ export function Waiting() {
   );
 }
 
-function Loading({ error }: { error: string | null }) {
+export function Loading({ error }: { error: string | null }) {
   const { t } = useI18n();
   if (error) {
     return (
@@ -476,6 +476,13 @@ export function SongTable({
   const { t } = useI18n();
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  const { libraries } = useLibraryScope();
+  // Offered only where the server would accept the correction. It refuses
+  // anyway; this keeps the table from offering a refusal on every row.
+  const mayCorrect = (song: Song) =>
+    mayCorrectTracks(
+      libraries.find((library) => library.id === song.library_id),
+    );
 
   async function toggleStar(song: Song) {
     const on = !(stars[song.id] ?? song.starred_at !== null);
@@ -549,6 +556,18 @@ export function SongTable({
                     >
                       <Icon name="heart" size={16} filled={starred} />
                     </button>
+                    {mayCorrect(song) ? (
+                      <Link
+                        to="/tracks/$trackId/edit"
+                        params={{ trackId: song.id }}
+                        className="row-action"
+                        aria-label={t("correction.editTrack", {
+                          title: song.title,
+                        })}
+                      >
+                        <Icon name="edit" size={16} />
+                      </Link>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -1891,7 +1910,7 @@ export function AdminPage() {
   );
 }
 
-function PageHeader({
+export function PageHeader({
   title,
   detail,
   children,

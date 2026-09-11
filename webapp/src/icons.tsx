@@ -21,9 +21,17 @@ export type IconName =
   | "previous"
   | "play"
   | "pause"
-  | "next";
+  | "next"
+  | "edit";
 
 const paths: Record<IconName, ReactNode> = {
+  // A pencil: correcting what a tag says, not rewriting the file.
+  edit: (
+    <>
+      <path d="M4 20h4L19 9l-4-4L4 16v4Z" />
+      <path d="m13.5 6.5 4 4" />
+    </>
+  ),
   albums: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="3" />

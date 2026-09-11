@@ -1936,3 +1936,93 @@ button.danger {
 .member-row .control {
   min-width: 8rem;
 }
+
+/* A correction is reached from the row it corrects. A link rather than a
+   button, because it goes somewhere, and in the marks cell beside the rating
+   and the heart because the table has no room for another column. */
+.row-action {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.row-action:hover {
+  color: var(--accent);
+}
+
+/* The tag editor. One column: each field carries a second line — what the
+   file says beneath the correction — and two columns of those read as a table
+   nobody asked for. */
+.correction-page {
+  max-width: 44rem;
+}
+
+.correction-detail {
+  margin: 0 0 1.5rem;
+}
+
+.correction-form {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.correction-field {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.correction-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* The base field rule predates any multi-line input, so the textarea is not in
+   it. It takes the same chrome, and grows downward only: it holds a list of
+   names, one per line. */
+.correction-field textarea {
+  min-height: 5.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.correction-field :disabled {
+  opacity: 0.6;
+}
+
+.correction-badge {
+  padding: 0.05rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.correction-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.8rem;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.correction-actions p {
+  margin: 0;
+}
