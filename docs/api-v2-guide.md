@@ -362,11 +362,34 @@ curl -X PATCH https://music.example.com/api/v2/tracks/TRACK_UUID \
   -d '{"title":"Misspelled Title","year":1998}'
 ```
 
-**The body is the complete set of corrections**, not a delta. A field left out
-is not overridden, and `{}` clears every correction so the file's own values
-come back. A tag editor submits its whole form, and clearing a field is then
-saying nothing about it rather than sending a null that has to mean something
-special. Blank strings read the same way as absent.
+**The body is a partial patch, and every field has three states:**
+
+| In the body | Effect on that field's correction |
+| --- | --- |
+| absent | left exactly as it is |
+| `null` | removed — the field shows what the file says again |
+| a value | set |
+
+So `{}` changes nothing, and correcting the title never touches a comment that
+another client corrected. A blank string reads as `null`: a track with no title
+is not a correction worth storing.
+
+```bash
+# Remove the year correction, keep every other one.
+curl -X PATCH https://music.example.com/api/v2/tracks/TRACK_UUID \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"year":null}'
+```
+
+Until #177 this route was wholesale: the body was the complete set, and a field
+left out was *erased*. That dropped whatever a client did not mention, including
+corrections made by somebody else. A client that always sends every field it
+edits, `null` included, behaves identically under both; one that relied on
+omission to clear a correction must now send `null`.
+
+`GET /api/v2/tracks/{track_id}/overrides` answers the corrections on their own,
+beside what the file says, for an editor that has to show which is which.
 
 Correctable: `title`, `sort_title`, `year`, `track_number`, `disc_number`,
 `musicbrainz_recording_id`, `comment`, and the two lists `artists` and `genres`.
@@ -381,10 +404,11 @@ where one ends; a correction arrives already separated, so re-parsing it would
 give back the ambiguity it was made to settle — and would lose any name holding
 the separator. An empty list is a correction meaning the track credits nobody.
 
-**Omitting the field removes the correction and restores what the file's tags
-say** — which the server can only do by re-reading the file, since the correction
-replaced those rows in the catalogue. A track whose file cannot be read at that
-moment refuses the whole request rather than half-clearing it.
+**Sending `null` for a list removes the correction and restores what the file's
+tags say** — which the server can only do by re-reading the file, since the
+correction replaced those rows in the catalogue. A track whose file cannot be
+read at that moment refuses the whole request rather than half-clearing it.
+Leaving the list out keeps the correction and reads nothing.
 
 Correcting `artists` displaces only the track's own `artist` credits. A composer
 or a conductor comes from the file and is untouched, which is why a correction

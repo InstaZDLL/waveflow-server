@@ -50,9 +50,10 @@ pub async fn list_tracks(
 /// returns — a type the frozen Subsonic façade also builds from.
 ///
 /// It is the read half of correcting a tag. The write half, `PATCH
-/// /api/v2/tracks/{track_id}`, still replaces the whole set, so a client that
-/// means to change one field has to send back the others; until that is fixed
-/// this route is what lets it know what they are.
+/// /api/v2/tracks/{track_id}`, is a partial patch, so a client no longer needs
+/// this route to avoid dropping corrections it did not mean to touch. What it
+/// still needs it for is showing them: which fields are corrected, what the
+/// file says beneath, and what removing a correction would give back.
 #[utoipa::path(get, path = "/api/v2/tracks/{track_id}/overrides", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::TrackOverrides), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn get_track_overrides(
     State(state): State<AppState>,
@@ -101,13 +102,18 @@ pub async fn get_track_lyrics(
         .map_err(service_error)
 }
 
-/// Replaces the corrections a track carries.
+/// Corrects some of a track's tags, leaving the rest as they are.
 ///
-/// The body is the complete set: a field left out is not overridden, and
-/// sending an empty object clears every correction. That is a tag editor's
-/// shape — it submits its whole form — and it means clearing a field is saying
-/// nothing about it rather than sending a null that has to mean something
-/// special.
+/// A partial patch in three states. A field **absent** from the body leaves
+/// that correction alone, **`null`** removes it and hands the field back to the
+/// file, and a **value** sets it. `{}` therefore changes nothing. A blank string
+/// reads as `null`; `[]` is a value for the two lists, meaning the track credits
+/// nobody.
+///
+/// It replaced the whole set until #177, which dropped every correction a
+/// client did not mention — another client's included. The one client that sent
+/// it spelled every field out, `null` included, so its requests mean what they
+/// meant.
 ///
 /// The file on disk is never written. `full_hash` therefore does not move, so a
 /// client holding a content-based link to this track still holds it afterwards.
