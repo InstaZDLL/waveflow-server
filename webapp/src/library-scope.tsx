@@ -139,6 +139,20 @@ export function mayUploadTo(library: Library | null | undefined): boolean {
   );
 }
 
+/**
+ * Whether the account may place a canvas in a library: the pair that may
+ * upload, in a library its operator has opened to loops. The canvas's own flag,
+ * not the upload one (RFC-009 decision 5). Taking a canvas away is not gated on
+ * the flag — closing a library to loops must not strand the ones it holds — so
+ * this answers for placing only.
+ */
+export function mayPlaceCanvas(library: Library | null | undefined): boolean {
+  return (
+    (library?.role === "owner" || library?.role === "manager") &&
+    library.accepts_canvas === true
+  );
+}
+
 /** The active library's id, or `undefined` to mean "do not scope the call". */
 export function useScopeId(): string | undefined {
   return useLibraryScope().active?.id;

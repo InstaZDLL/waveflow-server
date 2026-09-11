@@ -30,6 +30,12 @@ pub struct LibraryAccess {
     /// that knows it offers an upload only where the server would take one,
     /// instead of hashing a whole file to be told `library_closed`.
     pub accepts_uploads: bool,
+    /// Whether the library takes canvases. A door of its own and not the upload
+    /// one (RFC-009 decision 5): a read-only library that refuses to grow in
+    /// audio may still take a few hundred kilobytes of loop, so a client that
+    /// read `accepts_uploads` for both would hide the canvas exactly where the
+    /// flag was split to allow it.
+    pub accepts_canvas: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +212,7 @@ impl Database {
     ) -> Result<Vec<LibraryAccess>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT l.id, l.name, l.visibility, m.role, l.last_scan_started_at, \
-                    l.last_scan_completed_at, l.accepts_uploads \
+                    l.last_scan_completed_at, l.accepts_uploads, l.accepts_canvas \
              FROM library l JOIN library_member m ON m.library_id=l.id \
              WHERE m.user_id=? ORDER BY l.name COLLATE NOCASE, l.id",
         )
@@ -227,6 +233,7 @@ impl Database {
                     last_scan_started_at: row.try_get("last_scan_started_at")?,
                     last_scan_completed_at: row.try_get("last_scan_completed_at")?,
                     accepts_uploads: row.try_get::<i64, _>("accepts_uploads")? != 0,
+                    accepts_canvas: row.try_get::<i64, _>("accepts_canvas")? != 0,
                 })
             })
             .collect()
