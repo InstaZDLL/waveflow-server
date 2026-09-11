@@ -227,7 +227,14 @@ impl MediaService {
             // waiting on this request comes first, and a fill that took the
             // last slot would be the reason they were answered 429.
             if !tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
-                self.fill_cache_behind_a_seek(source, query.format, bitrate, key, cache_path);
+                self.fill_cache_behind_a_seek(
+                    source,
+                    query.format,
+                    bitrate,
+                    key,
+                    cache_path,
+                    fill_deadline(track.duration_ms),
+                );
             }
             return Ok(response);
         }
@@ -330,6 +337,11 @@ impl MediaService {
     /// both miss the one case this is for. A second writer of the same key costs
     /// an encode and nothing worse — each writes its own staging file, and the
     /// one that finds the cache already there discards its own.
+    ///
+    /// **Bounded by `deadline`.** A live stream ends when its listener leaves;
+    /// a fill has no listener, so without a deadline an encode that never
+    /// finished would hold its slot and its key until the server restarted.
+    /// Past it, FFmpeg is killed and nothing it wrote is kept.
     fn fill_cache_behind_a_seek(
         &self,
         source: PathBuf,
@@ -337,6 +349,7 @@ impl MediaService {
         bitrate: u32,
         key: String,
         cache_path: PathBuf,
+        deadline: Duration,
     ) {
         if !self.inner.pending_fills.insert(key.clone()) {
             return;
@@ -369,12 +382,33 @@ impl MediaService {
         inner.active_transcodes.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
-            let _pending = pending;
-            let _global = global;
+            // Declared in this order so they drop in the reverse one: the key
+            // and the slot are given back before the count reaches zero, so a
+            // caller waiting on the count finds all three released.
             let _active = ActiveGuard(&inner.active_transcodes);
-            let finished = matches!(command.status().await, Ok(status) if status.success());
+            let _global = global;
+            let _pending = pending;
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to spawn ffmpeg for a cache fill");
+                    return;
+                }
+            };
+            let finished = match tokio::time::timeout(deadline, child.wait()).await {
+                Ok(status) => status.is_ok_and(|status| status.success()),
+                // Killed and awaited before its staging file is removed: a file
+                // a live process still holds cannot be deleted on Windows.
+                Err(_) => {
+                    let _ = child.kill().await;
+                    false
+                }
+            };
             if !finished {
-                tracing::warn!(path = %source.display(), "ffmpeg cache fill failed");
+                tracing::warn!(
+                    path = %source.display(),
+                    "ffmpeg cache fill failed or ran past its deadline"
+                );
                 let _ = tokio::fs::remove_file(&staging).await;
                 return;
             }
@@ -1464,6 +1498,20 @@ fn validate_bitrate(format: OutputFormat, bitrate: Option<u32>) -> Result<u32, M
     Ok(bitrate)
 }
 
+/// How far past the track's own length a cache fill may run.
+///
+/// Encodes run many times faster than the music, so the track's length is
+/// already a generous bound, and a fill slower than that has stopped being a
+/// background job on a server with other work. The minute covers FFmpeg
+/// starting on a busy machine, and a track whose length the scan did not learn.
+const FILL_DEADLINE_MARGIN: Duration = Duration::from_secs(60);
+
+/// The deadline a cache fill of a track this long runs under.
+fn fill_deadline(duration_ms: i64) -> Duration {
+    Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0))
+        .saturating_add(FILL_DEADLINE_MARGIN)
+}
+
 /// Where a transcode is written before it is whole, beside the name it will
 /// take. The pruning pass skips `.part-`, and the suffix is unique, so two
 /// writers of one key never share a file.
@@ -1570,7 +1618,11 @@ async fn prune_cache(inner: &MediaInner) {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::SystemTime};
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
 
     use dashmap::DashMap;
     use tokio::sync::{Mutex, Semaphore};
@@ -1675,23 +1727,7 @@ mod tests {
         config.transcode_global_limit = 4;
         let media = MediaService::initialize(&config).await.unwrap();
         let source = temp.path().join("track.wav");
-        let generated = std::process::Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "anullsrc=r=8000:cl=mono",
-                "-t",
-                "2",
-            ])
-            .arg(&source)
-            .status()
-            .expect("ffmpeg must be on PATH");
-        assert!(generated.success());
+        silent_wav(&source, 2);
 
         let key = cache_key("abandoned", OutputFormat::Mp3, 96);
         let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
@@ -1703,7 +1739,14 @@ mod tests {
             .clone();
         let _held = lock.lock_owned().await;
 
-        media.fill_cache_behind_a_seek(source, OutputFormat::Mp3, 96, key, cache_path.clone());
+        media.fill_cache_behind_a_seek(
+            source,
+            OutputFormat::Mp3,
+            96,
+            key,
+            cache_path.clone(),
+            Duration::from_secs(60),
+        );
         assert_eq!(
             media.active_transcodes(),
             1,
@@ -1724,5 +1767,74 @@ mod tests {
             cache_path.exists(),
             "the fill must commit the whole transcode"
         );
+    }
+
+    /// A fill has no listener who can leave, so nothing else ends an encode
+    /// that never finishes. Past its deadline FFmpeg is killed, and neither a
+    /// cache file, nor a staging file, nor the key's claim is left behind —
+    /// the slot and the key are free for the next seek.
+    #[tokio::test]
+    async fn a_cache_fill_past_its_deadline_is_killed_and_leaves_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = crate::Config::for_data_dir(temp.path().join("data"));
+        config.transcode_global_limit = 4;
+        let media = MediaService::initialize(&config).await.unwrap();
+        let source = temp.path().join("track.wav");
+        silent_wav(&source, 30);
+
+        let key = cache_key("overdue", OutputFormat::Mp3, 96);
+        let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
+        // A millisecond: less than FFmpeg takes to start, let alone to finish.
+        media.fill_cache_behind_a_seek(
+            source,
+            OutputFormat::Mp3,
+            96,
+            key,
+            cache_path.clone(),
+            Duration::from_millis(1),
+        );
+        assert_eq!(media.active_transcodes(), 1);
+        for _ in 0..3_000 {
+            if media.active_transcodes() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            media.active_transcodes(),
+            0,
+            "an overdue fill must give its slot back"
+        );
+        assert!(!cache_path.exists(), "an overdue fill must not commit");
+        let staged = std::fs::read_dir(&media.inner.cache_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains(".part-"));
+        assert!(!staged, "an overdue fill must remove its staging file");
+        assert!(
+            media.inner.pending_fills.is_empty(),
+            "an overdue fill must free its key for the next seek"
+        );
+    }
+
+    /// Silence at 8 kHz, as long as asked.
+    fn silent_wav(path: &std::path::Path, seconds: u32) {
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=8000:cl=mono",
+                "-t",
+            ])
+            .arg(seconds.to_string())
+            .arg(path)
+            .status()
+            .expect("ffmpeg must be on PATH");
+        assert!(generated.success());
     }
 }
