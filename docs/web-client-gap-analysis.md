@@ -331,7 +331,17 @@ que le lecteur du lot C existe.
 > n'envoie que ce que le formulaire a changé : le calcul du corps est une
 > fonction pure et testée, parce que c'est là que se loge la perte de données.
 > Retaper la valeur du fichier retire la correction au lieu de l'épingler contre
-> un futur retag. Restent le téléversement, puis le canvas.
+> un futur retag.
+
+> **Téléversement livré le 2026-09-11.** La page `/upload` n'apparaît que dans
+> une bibliothèque qui accepte les fichiers, pour un propriétaire ou un
+> gestionnaire — ce qui a demandé d'exposer `accepts_uploads` sur
+> `GET /api/v2/libraries`, jusque-là lu par le seul service de téléversement.
+> Chaque fichier est identifié dans le navigateur par un BLAKE3 calculé dans un
+> Web Worker avec `@noble/hashes` : le serveur recalcule cette empreinte à la
+> validation et refuse toute autre. Un fragment dont l'accusé se perd est repris
+> depuis l'état que le serveur relit, jamais depuis une supposition du client.
+> Reste le canvas.
 
 > **Rectifié le 2026-09-07.** Cette ligne disait « la correction est un
 > formulaire ». Elle ne l'est pas : `GET /tracks/{id}` n'expose aucune
