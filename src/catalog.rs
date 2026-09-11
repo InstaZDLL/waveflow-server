@@ -24,6 +24,12 @@ pub struct LibraryAccess {
     pub role: crate::database::LibraryRole,
     pub last_scan_started_at: Option<i64>,
     pub last_scan_completed_at: Option<i64>,
+    /// Whether the library takes files at all. The operator's decision, set
+    /// through the CLI and never through the API, and shown to every member:
+    /// the role says who may upload, this says whether anyone can. A client
+    /// that knows it offers an upload only where the server would take one,
+    /// instead of hashing a whole file to be told `library_closed`.
+    pub accepts_uploads: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -200,7 +206,7 @@ impl Database {
     ) -> Result<Vec<LibraryAccess>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT l.id, l.name, l.visibility, m.role, l.last_scan_started_at, \
-                    l.last_scan_completed_at \
+                    l.last_scan_completed_at, l.accepts_uploads \
              FROM library l JOIN library_member m ON m.library_id=l.id \
              WHERE m.user_id=? ORDER BY l.name COLLATE NOCASE, l.id",
         )
@@ -220,6 +226,7 @@ impl Database {
                         .map_err(|error| sqlx::Error::Decode(error.into()))?,
                     last_scan_started_at: row.try_get("last_scan_started_at")?,
                     last_scan_completed_at: row.try_get("last_scan_completed_at")?,
+                    accepts_uploads: row.try_get::<i64, _>("accepts_uploads")? != 0,
                 })
             })
             .collect()

@@ -670,6 +670,14 @@ Creating a library starts its first scan and returns both `library_id` and
 `scan_id`. The scan event route uses Server-Sent Events and still requires the
 Bearer token.
 
+`GET /api/v2/libraries` answers, for each library the account belongs to, its
+`role` and `accepts_uploads`. The flag says whether the library takes files at
+all. It is the operator’s decision, made with `waveflow library set-uploads`
+and never through the API, and every member sees it: the role says who may
+upload — `owner` or `manager` — and the flag says whether anyone can. A client
+that reads it offers an upload only where the server would take one, instead
+of hashing a whole file to be told `library_closed`.
+
 Setting a Subsonic credential returns a new API key exactly once:
 
 ```bash
