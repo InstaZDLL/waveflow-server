@@ -47,6 +47,7 @@ import {
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
+import { TrackEditorPage } from "./track-editor";
 import "./styles.css";
 
 const navigation: Array<{
@@ -349,6 +350,15 @@ const adminRoute = createRoute({
   component: AdminPage,
 });
 
+const trackEditRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/tracks/$trackId/edit",
+  component: function TrackEditRoute() {
+    const { trackId } = trackEditRoute.useParams();
+    return <TrackEditorPage trackId={trackId} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authedRoute.addChildren([
@@ -368,6 +378,7 @@ const routeTree = rootRoute.addChildren([
     sharesRoute,
     adminRoute,
     authorizeRoute,
+    trackEditRoute,
   ]),
 ]);
 
