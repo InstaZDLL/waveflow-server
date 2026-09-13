@@ -4,11 +4,15 @@
 - **Implémentée par** :
   [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), la moitié
   durable — les deux tables, la mise en file dans la transaction qui écrit
-  `play_event`, les cinq verdicts, et la tâche de drainage. **Aucun adaptateur,
-  donc aucun appel sortant** : le serveur ne parle toujours à personne, et
-  `Cargo.toml` ne porte toujours pas de client HTTP. ListenBrainz, les routes
-  natives et la CLI viennent ensuite, par la décision 11. Le champ *Statut*
-  ci-dessus ne bascule pas — il ne bascule jamais dans ce projet.
+  `play_event`, les cinq verdicts, et la tâche de drainage ; puis
+  [#192](https://github.com/InstaZDLL/waveflow-server/pull/192), l'appel
+  sortant — la surface bornée de la décision 10, l'adaptateur ListenBrainz, et
+  le délai que la décision 6 promettait d'honorer sans que le verdict puisse le
+  porter.
+  **Restent dehors : les routes natives et la CLI**, donc personne ne peut
+  encore lier un jeton depuis l'extérieur ; un opérateur le peut par le service.
+  Maloja puis Last.fm ensuite, par la décision 11. Le champ *Statut* ci-dessus
+  ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
 - **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
@@ -32,11 +36,31 @@ jours : un auditeur qui tient un profil d'écoute depuis dix ans ne l'abandonne
 pas parce qu'il a changé de serveur.
 
 Ce n'est pourtant pas une fonction qu'on branche. **Le serveur ne passe
-aujourd'hui aucun appel sortant** — `Cargo.toml` ne porte aucun client HTTP — et
-lui en faire passer change sa posture : une installation personnelle derrière un
-proxy devient un logiciel qui parle à des tiers, avec des identifiants, une file
-qui survit aux redémarrages et des échecs qui ne sont pas les siens. Chacune de
-ces phrases est une décision, et c'est pour cela que cette RFC précède le code.
+aujourd'hui aucun appel sortant**, et lui en faire passer change sa posture :
+une installation personnelle derrière un proxy devient un logiciel qui parle à
+des tiers, avec des identifiants, une file qui survit aux redémarrages et des
+échecs qui ne sont pas les siens. Chacune de ces phrases est une décision, et
+c'est pour cela que cette RFC précède le code.
+
+> **Corrigé le 2026-09-13, en écrivant
+> [#192](https://github.com/InstaZDLL/waveflow-server/pull/192).** Cette RFC
+> ajoutait ici « — `Cargo.toml` ne porte aucun client HTTP — » et appelait plus
+> bas l'arrivée d'une dépendance sortante « le point le plus lourd de
+> conséquences ». `cargo tree -i reqwest` répond en trois lignes : **reqwest
+> 0.12 arrive par `waveflow-core`, avec rustls, et est lié dans ce binaire
+> depuis toujours.** `Cargo.toml` n'en *déclarait* aucun ; le binaire en *liait*
+> un. Déclarer la dépendance n'a donc ajouté ni code ni seconde pile TLS —
+> `Cargo.lock` n'a bougé que d'une ligne — et la marche était bien plus basse
+> que ce paragraphe ne la dramatisait.
+>
+> Ce qui reste entièrement vrai, et qui était le vrai contenu de l'inquiétude :
+> **le serveur ne parlait à personne**, et maintenant il le peut. La posture
+> change ; c'est le graphe de dépendances qui ne changeait pas.
+>
+> Et le piège était réel, ailleurs que là où la RFC le cherchait : Cargo unifie
+> les features, donc déclarer `reqwest` avec ses défauts aurait activé
+> `default-tls` et fait entrer une seconde pile TLS **à côté** de rustls plutôt
+> qu'à sa place. C'est la déclaration recopiée de `waveflow-core` qui l'évite.
 
 ## Décision 1 — un seul point d'accroche, celui où les deux surfaces convergent
 

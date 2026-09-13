@@ -11,6 +11,7 @@ pub mod media;
 pub mod oauth;
 pub mod pid;
 pub mod scanner;
+pub mod scrobblers;
 pub mod security;
 pub mod services;
 pub mod stream_ticket;
@@ -545,6 +546,42 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         scanner.clone(),
         config,
     );
+    // The only outbound surface this server has, and it is switched on by the
+    // operator naming a destination rather than by anybody linking an account.
+    // Nothing leaves until both are true: an adapter with no authorisation
+    // behind it is never handed a listen. RFC-010 decision 11.
+    if let Some(base) = config.listenbrainz_url.as_deref() {
+        // `Config::from_env` refuses to boot on a malformed destination, so the
+        // `validate_destination` half of this cannot fail on a real server —
+        // it is reachable only because `for_data_dir` builds a `Config` without
+        // going through that gate.
+        //
+        // The `outbound_client` half is a different matter and really can fail
+        // at runtime, for reasons that have nothing to do with the operator's
+        // URL. An earlier version of this comment claimed neither branch was
+        // reachable, which was one claim too many.
+        let target = scrobblers::validate_destination(base, config.outbound_allow_plaintext)
+            .and_then(|base| {
+                let client = scrobblers::outbound_client(config.scrobbling.request_timeout)?;
+                scrobblers::listenbrainz::ListenBrainz::new(client, &base)
+            });
+        match target {
+            Ok(target) => services.register_scrobble_target(
+                services::ScrobbleProvider::ListenBrainz,
+                Arc::new(target),
+            ),
+            Err(error) => {
+                // **Never the URL itself.** `validate_destination` refuses a
+                // destination that carries credentials, so the one thing this
+                // branch is most likely to be handed is exactly the thing that
+                // must not be printed: `http://user:secret@host` would land in
+                // a startup log, or a support paste, in full. The variant names
+                // the fault precisely enough without it, and this repository's
+                // rule about secrets has no exception for an error path.
+                anyhow::bail!("the configured ListenBrainz destination is unusable: {error}")
+            }
+        }
+    }
     Ok(AppState {
         db,
         auth,
@@ -650,15 +687,48 @@ pub fn app(config: &Config, state: AppState) -> Router {
     }
 }
 
+/// Every prefix whose next path segment is a credential, and what a trace sink
+/// sees instead.
+///
+/// **A table rather than a chain of `if`s, because the chain lost one.** This
+/// function knew the audio ticket and the share token; the server has a third
+/// such route, `/api/v2/canvas-stream/{ticket}`, minted beside the audio one in
+/// `media.rs`, played by a `<video src>` that cannot send an `Authorization`
+/// header, and listed beside its twin in `PUBLIC_OPERATIONS` two hundred lines
+/// above. It was never added here, so the sealed ticket went into the
+/// `http_request` span verbatim.
+///
+/// **What that actually cost, stated exactly.** The span is opened at INFO, but
+/// nothing here asks for span lifecycle events, so opening one writes nothing on
+/// its own: a canvas playback that succeeds quietly emitted no line. The ticket
+/// reached a sink on every canvas request that logged anything *inside* that
+/// span — a failed ticket lookup, a 5xx — and on every request at all under
+/// `tower_http=debug`, where the tower layer's own request and response events
+/// fire in it. An earlier version of this paragraph said "every canvas
+/// playback", which is one notch stronger than the mechanism.
+///
+/// The shape is the fix. A new ticket route now has one obvious place to be
+/// declared, next to the ones that look exactly like it, rather than a branch
+/// somebody has to remember to add.
+///
+/// Matched on the raw path, so `/API/v2/stream/…` and a percent-encoded
+/// separator miss every entry. Left that way deliberately: reaching those
+/// spellings means already holding the ticket, so it is hardening rather than a
+/// disclosure route, and normalising here would put a second opinion about what
+/// a path means next to the router's.
+const CREDENTIAL_BEARING_PREFIXES: [(&str, &str); 3] = [
+    ("/api/v2/stream/", "/api/v2/stream/{redacted}"),
+    ("/api/v2/canvas-stream/", "/api/v2/canvas-stream/{redacted}"),
+    ("/share/", "/share/{redacted}"),
+];
+
 fn trace_path(path: &str) -> &str {
-    if path.starts_with("/api/v2/stream/") {
-        return "/api/v2/stream/{redacted}";
+    for (prefix, redacted) in CREDENTIAL_BEARING_PREFIXES {
+        if path.starts_with(prefix) {
+            return redacted;
+        }
     }
-    if path.starts_with("/share/") {
-        "/share/{redacted}"
-    } else {
-        path
-    }
+    path
 }
 
 async fn openapi_response(openapi: utoipa::openapi::OpenApi) -> Response {
@@ -747,18 +817,71 @@ mod tests {
         }
     }
 
+    /// Every entry in the table redacts, and no entry can shadow another.
+    ///
+    /// A property over the table rather than one `assert_eq!` per entry,
+    /// because a hand-written assertion per entry has exactly the weakness the
+    /// table was written to fix: it cannot notice the entry nobody wrote. This
+    /// form also catches the edit that would quietly undo the whole thing — a
+    /// broad prefix inserted above a narrow one, which first-match-wins would
+    /// silently relabel.
     #[test]
-    fn trace_paths_redact_public_share_bearer_tokens() {
-        assert_eq!(
-            trace_path("/api/v2/stream/sealed-ticket"),
-            "/api/v2/stream/{redacted}",
-            "a stream ticket is a credential and must not reach a trace sink"
-        );
-        assert_eq!(trace_path("/share/wfs_secret"), "/share/{redacted}");
-        assert_eq!(
-            trace_path("/share/wfs_secret/tracks/id/stream"),
-            "/share/{redacted}"
-        );
+    fn every_credential_bearing_prefix_is_redacted() {
+        for (prefix, redacted) in super::CREDENTIAL_BEARING_PREFIXES {
+            assert_eq!(
+                redacted,
+                format!("{prefix}{{redacted}}"),
+                "{prefix} must replace its next segment and nothing else"
+            );
+            assert_eq!(
+                trace_path(&format!("{prefix}a-sealed-secret")),
+                redacted,
+                "{prefix} must not reach a trace sink carrying its credential"
+            );
+            // A share token is followed by more path, and the whole tail goes.
+            assert_eq!(
+                trace_path(&format!("{prefix}a-sealed-secret/tracks/id/stream")),
+                redacted
+            );
+        }
+
+        for (outer, _) in super::CREDENTIAL_BEARING_PREFIXES {
+            for (inner, _) in super::CREDENTIAL_BEARING_PREFIXES {
+                assert!(
+                    outer == inner || !inner.starts_with(outer),
+                    "{outer} shadows {inner}: first match wins, so {inner} would never be reached"
+                );
+            }
+        }
+
+        // And a path that carries nothing is left exactly as it is.
         assert_eq!(trace_path("/rest/ping.view"), "/rest/ping.view");
+    }
+
+    /// Every public route whose path ends in a ticket has a redaction prefix.
+    ///
+    /// **This is the assertion that would have caught the canvas ticket**, and
+    /// the test above would not have. A table is self-consistent on its own: an
+    /// entry with a typo in its prefix redacts its own typo and satisfies every
+    /// property there, while the real route goes on being logged. What no
+    /// property over the table alone can do is notice a route nobody added to
+    /// it.
+    ///
+    /// `PUBLIC_OPERATIONS` had `/api/v2/canvas-stream/{ticket}` listed
+    /// correctly, two hundred lines from a redaction list that did not. The two
+    /// are tied together here so that distance stops mattering.
+    #[test]
+    fn every_public_ticket_route_has_a_redaction_prefix() {
+        for (path, _) in super::PUBLIC_OPERATIONS {
+            let Some(prefix) = path.strip_suffix("{ticket}") else {
+                continue;
+            };
+            assert!(
+                super::CREDENTIAL_BEARING_PREFIXES
+                    .iter()
+                    .any(|(candidate, _)| *candidate == prefix),
+                "{path} carries a credential in its path and nothing redacts it"
+            );
+        }
     }
 }
