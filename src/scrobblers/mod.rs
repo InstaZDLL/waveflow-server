@@ -27,32 +27,37 @@ pub enum OutboundError {
     Unbuildable,
 }
 
-/// The largest response body an adapter will read.
+/// How much of the budget a connection may spend before the rest of the request
+/// has had any of it.
 ///
-/// Every destination here answers a short JSON object. The cap exists because
-/// nothing else bounds what a host at the other end chooses to send, and an
-/// adapter reading an unbounded body is an adapter one hostile — or merely
-/// broken — destination can exhaust.
-pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+/// A third, so a destination that accepts slowly still leaves room for the
+/// submission itself rather than consuming the whole deadline in the handshake.
+const CONNECT_SHARE: u32 = 3;
 
 /// The client every adapter shares.
 ///
-/// Three properties, each of them decision 10 written down:
+/// Each property below is decision 10 written down:
 ///
 /// - **No redirect is followed.** `reqwest` follows up to ten by default, and
 ///   the tenth can be anywhere. A destination that answers `302` to an internal
 ///   address would otherwise have this server fetch it and hand back what it
 ///   found, which is the shape of every request-forgery there is.
-/// - **The wait is bounded**, by the same value the drain uses for its own
-///   backstop, so an adapter cannot outlast the deadline that is watching it.
 /// - **No proxy is read from the environment.** An operator's `HTTP_PROXY`,
 ///   set for something else entirely, must not silently become the route every
 ///   listen takes.
+/// - **Only the connection is bounded here.** The request as a whole is bounded
+///   once, by the drain's own `tokio::time::timeout`, and deliberately not a
+///   second time by this client.
+///
+/// That last one was two equal deadlines racing until a review noticed. Both
+/// ended at `Ambiguous`, so the queue looked the same either way — but only the
+/// drain's own deadline records the link as stalled, and that record is what
+/// stops one silent destination from spending an entry per row. Which of the two
+/// fired was a coin toss, so which protection applied was a coin toss.
 pub fn outbound_client(timeout: Duration) -> Result<reqwest::Client, OutboundError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(timeout)
-        .connect_timeout(timeout)
+        .connect_timeout(timeout / CONNECT_SHARE)
         .no_proxy()
         .user_agent(concat!("WaveFlowServer/", env!("CARGO_PKG_VERSION")))
         .build()
