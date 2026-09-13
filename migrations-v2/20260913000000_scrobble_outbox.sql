@@ -52,7 +52,19 @@ CREATE UNIQUE INDEX scrobble_link_live_idx
 -- become rather than what was played. A track deleted between the listen and the
 -- send no longer empties the row either.
 CREATE TABLE scrobble_outbox (
+    -- The rowid stays the internal identity: `retry_of` points at it, the drain
+    -- orders by it, and the jitter that keeps two rows from returning together
+    -- is derived from it. None of that wants a UUID.
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- What the outside is allowed to name. Public ids are UUIDs here, and the
+    -- two gestures decision 13 gives a person — discard this entry, retry that
+    -- one — are the only things that ever name a row from outside.
+    --
+    -- A sequential integer would work and would also say how many listens this
+    -- whole server has ever queued, to anyone holding one of their own. Added
+    -- now rather than when the routes arrive: while this migration is unmerged
+    -- it is one column, and afterwards it is a second migration and a backfill.
+    public_id TEXT NOT NULL UNIQUE,
     link_id TEXT NOT NULL REFERENCES scrobble_link(id) ON DELETE CASCADE,
     -- Provenance, and nullable on purpose: `ON DELETE SET NULL` is what lets the
     -- envelope outlive the track it came from. A cascade here would undo the

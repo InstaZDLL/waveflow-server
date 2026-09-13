@@ -229,11 +229,15 @@ impl DomainServices {
         let now = now_ms();
         for link in links {
             sqlx::query(
-                "INSERT INTO scrobble_outbox (link_id, play_event_id, played_at, title, \
+                "INSERT INTO scrobble_outbox (public_id, link_id, play_event_id, played_at, title, \
                  artists_json, album, album_artist, duration_ms, musicbrainz_recording_id, \
                  state, next_attempt_at, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
             )
+            // One per row rather than one per listen: the two destinations of a
+            // single listen are two entries, and a person acts on them one at a
+            // time.
+            .bind(Uuid::new_v4().to_string())
             .bind(&link)
             .bind(play_event_id)
             .bind(envelope.played_at)
@@ -493,18 +497,22 @@ impl DomainServices {
     }
 
     /// Throws away one ambiguous entry. The person prefers the gap.
+    ///
+    /// Named by its `public_id`, never by its rowid: the sequential one would
+    /// tell anyone holding a single entry of their own how many listens this
+    /// whole server has queued.
     pub async fn discard_uncertain_scrobble(
         &self,
         user_id: Uuid,
-        entry_id: i64,
+        entry: Uuid,
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
-            "UPDATE scrobble_outbox SET state='discarded', updated_at=? WHERE id=? \
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=? WHERE public_id=? \
              AND state='uncertain' AND link_id IN (SELECT id FROM scrobble_link WHERE user_id=?)",
         )
         .bind(now_ms())
-        .bind(entry_id)
+        .bind(entry.to_string())
         .bind(user_id.to_string())
         .execute(self.db.pool())
         .await?;
@@ -527,8 +535,8 @@ impl DomainServices {
     pub async fn retry_uncertain_scrobble(
         &self,
         user_id: Uuid,
-        entry_id: i64,
-    ) -> Result<i64, ServiceError> {
+        entry: Uuid,
+    ) -> Result<Uuid, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
@@ -544,35 +552,39 @@ impl DomainServices {
         // acceptance once, for one listen, deliberately. The unique index on
         // `retry_of` refuses the insert as well; this clause is what turns the
         // refusal into an ordinary 404 instead of a constraint error.
-        let exists = sqlx::query_scalar::<_, i64>(
+        // The rowid comes back from this lookup rather than from the caller:
+        // `retry_of`, the ordering and the jitter all speak in rowids, and the
+        // public name is resolved to one exactly here, once.
+        let rowid = sqlx::query_scalar::<_, i64>(
             "SELECT o.id FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
-             WHERE o.id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active' \
+             WHERE o.public_id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active' \
                AND NOT EXISTS (SELECT 1 FROM scrobble_outbox r WHERE r.retry_of=o.id)",
         )
-        .bind(entry_id)
+        .bind(entry.to_string())
         .bind(user_id.to_string())
         .fetch_optional(&mut *tx)
         .await?;
-        if exists.is_none() {
+        let Some(rowid) = rowid else {
             return Err(ServiceError::NotFound);
-        }
-        let inserted = sqlx::query(
-            "INSERT INTO scrobble_outbox (link_id, play_event_id, retry_of, played_at, title, \
-             artists_json, album, album_artist, duration_ms, musicbrainz_recording_id, \
+        };
+        let public_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO scrobble_outbox (public_id, link_id, play_event_id, retry_of, played_at, \
+             title, artists_json, album, album_artist, duration_ms, musicbrainz_recording_id, \
              state, next_attempt_at, created_at, updated_at) \
-             SELECT link_id, play_event_id, id, played_at, title, artists_json, album, \
+             SELECT ?, link_id, play_event_id, id, played_at, title, artists_json, album, \
                     album_artist, duration_ms, musicbrainz_recording_id, 'pending', ?, ?, ? \
              FROM scrobble_outbox WHERE id=?",
         )
+        .bind(public_id.to_string())
         .bind(now)
         .bind(now)
         .bind(now)
-        .bind(entry_id)
+        .bind(rowid)
         .execute(&mut *tx)
         .await?;
-        let id = inserted.last_insert_rowid();
         tx.commit().await?;
-        Ok(id)
+        Ok(public_id)
     }
 
     /// Walks the queue on a timer. The shape the six other background tasks
@@ -636,8 +648,24 @@ impl DomainServices {
         // `AuthBroken` has already established. `mark_link_broken` has finished
         // their rows in the database; this is what stops the requests.
         let mut broken_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        // Links that have already gone quiet on this pass.
+        //
+        // The same argument as `broken_links`, applied to the path that did not
+        // get it. Without this, a destination that accepts connections and never
+        // answers costs the deadline *per entry*: fifty rows at thirty seconds
+        // is a pass of twenty-five minutes, and — far worse — fifty `uncertain`
+        // rows, each of which is a decision decision 13 lets a person make
+        // exactly once. One outage would become a heap of irreversible manual
+        // choices, which is the accident the RFC refuses when it declines to
+        // offer a "retry everything" button, arriving from the other end.
+        //
+        // The entry that actually timed out stays `Ambiguous` — it really was
+        // sent. The ones behind it are not touched at all: they were never
+        // emitted, so they stay `pending` and come back next pass, when one
+        // further timeout will cost one further entry and no more.
+        let mut stalled_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         for entry in self.due_scrobbles(now_ms()).await? {
-            if broken_links.contains(&entry.link_id) {
+            if broken_links.contains(&entry.link_id) || stalled_links.contains(&entry.link_id) {
                 continue;
             }
             let Some(target) = self
@@ -721,6 +749,9 @@ impl DomainServices {
                         provider = entry.provider.as_str(),
                         "a scrobble submission passed its deadline and is now uncertain"
                     );
+                    // Nothing else queued for this destination is offered on
+                    // this pass; see `stalled_links` above.
+                    stalled_links.insert(entry.link_id);
                     ScrobbleVerdict::Ambiguous
                 }
             };

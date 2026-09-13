@@ -159,6 +159,22 @@ async fn rows(state: &AppState) -> Vec<(i64, String, i64, Option<i64>)> {
     .unwrap()
 }
 
+/// The public name of every row, in the same order as [`rows`].
+///
+/// Apart from `rows` rather than folded into it: the rowid is what `retry_of`
+/// and the ordering speak in, so the assertions about the shape of the queue
+/// keep reading that, while the two gestures a person makes are named the way
+/// the outside will name them.
+async fn public_ids(state: &AppState) -> Vec<uuid::Uuid> {
+    sqlx::query_scalar::<_, String>("SELECT public_id FROM scrobble_outbox ORDER BY id")
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|id| id.parse().unwrap())
+        .collect()
+}
+
 /// The one envelope waiting, read back from the queue.
 async fn queued_envelope(state: &AppState) -> ScrobbleEnvelope {
     let row = sqlx::query_as::<
@@ -336,7 +352,7 @@ async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
 }
 
 /// Drives one listen to `uncertain`, which three tests below start from.
-async fn one_uncertain_entry(state: &AppState, fixture: &Fixture) -> i64 {
+async fn one_uncertain_entry(state: &AppState, fixture: &Fixture) -> uuid::Uuid {
     let target = Recorder::always(ScrobbleVerdict::Ambiguous);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
@@ -348,9 +364,8 @@ async fn one_uncertain_entry(state: &AppState, fixture: &Fixture) -> i64 {
         .await
         .unwrap();
     state.services.drain_scrobble_outbox().await.unwrap();
-    let rows = rows(state).await;
-    assert_eq!(rows[0].1, "uncertain");
-    rows[0].0
+    assert_eq!(rows(state).await[0].1, "uncertain");
+    public_ids(state).await[0]
 }
 
 #[tokio::test]
@@ -468,6 +483,52 @@ async fn a_listen_interrupted_mid_flight_is_uncertain_rather_than_sent_again() {
     let links = state.services.scrobble_links(fixture.owner).await.unwrap();
     assert_eq!(links[0].uncertain, 1);
     assert_eq!(links[0].health, "degraded");
+}
+
+#[tokio::test]
+async fn a_silent_destination_costs_one_entry_a_pass_and_not_the_whole_queue() {
+    let (_temp, config, state) =
+        tuned_app(|limits| limits.request_timeout = Duration::from_millis(150)).await;
+    let fixture = fixture(&config, &state, "silent-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(rows(&state).await.len(), 4);
+
+    let target = std::sync::Arc::new(Stalls {
+        calls: Mutex::new(0),
+    });
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    // One deadline spent, not four. The cost that matters is not the twenty
+    // seconds saved here: it is that each `uncertain` row is a decision
+    // decision 13 lets a person make exactly once, so a single outage would
+    // otherwise turn into a heap of irreversible manual choices.
+    assert_eq!(*target.calls.lock().unwrap(), 1);
+    assert_eq!(drained.uncertain, 1);
+
+    // The one that really was sent is uncertain, because nobody knows whether
+    // it arrived. The three behind it were never emitted, so they are untouched
+    // and come back next pass.
+    let rows = rows(&state).await;
+    assert_eq!(rows[0].1, "uncertain");
+    for row in &rows[1..] {
+        assert_eq!(row.1, "pending");
+        assert_eq!(row.2, 0, "an entry that was never sent has spent nothing");
+    }
 }
 
 #[tokio::test]
@@ -909,11 +970,13 @@ async fn retrying_an_uncertain_entry_adds_to_the_history_instead_of_rewriting_it
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state.services.drain_scrobble_outbox().await.unwrap();
-    let uncertain_id = rows(&state).await[0].0;
+    // The rowid for the shape of the queue, the public name for the gesture.
+    let uncertain_row = rows(&state).await[0].0;
+    let uncertain = public_ids(&state).await[0];
 
-    let retry_id = state
+    let retry = state
         .services
-        .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+        .retry_uncertain_scrobble(fixture.owner, uncertain)
         .await
         .unwrap();
 
@@ -922,13 +985,15 @@ async fn retrying_an_uncertain_entry_adds_to_the_history_instead_of_rewriting_it
     // The ambiguous attempt stays in the record exactly as it happened.
     assert_eq!(
         rows_after[0],
-        (uncertain_id, "uncertain".to_owned(), 1, None)
+        (uncertain_row, "uncertain".to_owned(), 1, None)
     );
     // The new one says who asked for it, by pointing at the one it repeats.
-    assert_eq!(
-        rows_after[1],
-        (retry_id, "pending".to_owned(), 0, Some(uncertain_id))
-    );
+    assert_eq!(rows_after[1].1, "pending");
+    assert_eq!(rows_after[1].2, 0);
+    assert_eq!(rows_after[1].3, Some(uncertain_row));
+    // And it is answered for by the name the caller was handed, not a rowid.
+    assert_eq!(public_ids(&state).await[1], retry);
+    assert_ne!(retry, uncertain);
 
     // It has stopped asking the person for a decision without having stopped
     // being true.
@@ -957,11 +1022,11 @@ async fn discarding_an_uncertain_entry_stops_it_counting() {
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state.services.drain_scrobble_outbox().await.unwrap();
-    let uncertain_id = rows(&state).await[0].0;
+    let uncertain = public_ids(&state).await[0];
 
     state
         .services
-        .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+        .discard_uncertain_scrobble(fixture.owner, uncertain)
         .await
         .unwrap();
 
@@ -973,7 +1038,7 @@ async fn discarding_an_uncertain_entry_stops_it_counting() {
     // And it is gone for good: a second gesture on it finds nothing to act on.
     assert!(state
         .services
-        .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+        .discard_uncertain_scrobble(fixture.owner, uncertain)
         .await
         .is_err());
 }
