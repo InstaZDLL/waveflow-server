@@ -531,6 +531,76 @@ async fn a_silent_destination_costs_one_entry_a_pass_and_not_the_whole_queue() {
     }
 }
 
+/// A destination that answers perfectly well — after something else has
+/// already settled the row out from under this pass.
+///
+/// That is what a concurrent recovery leaves behind, reproduced deterministically
+/// instead of by racing a sixty-second margin against the writer gate.
+struct SettlesBehindYourBack {
+    pool: sqlx::SqlitePool,
+}
+
+impl ScrobbleTarget for SettlesBehindYourBack {
+    fn submit<'a>(
+        &'a self,
+        _envelope: &'a ScrobbleEnvelope,
+        _secret: &'a str,
+    ) -> BoxFuture<'a, ScrobbleVerdict> {
+        Box::pin(async move {
+            sqlx::query(
+                "UPDATE scrobble_outbox SET state='uncertain', last_failure='interrupted' \
+                 WHERE state='sending'",
+            )
+            .execute(&self.pool)
+            .await
+            .unwrap();
+            ScrobbleVerdict::Accepted
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_verdict_that_arrives_after_its_row_was_settled_is_not_counted() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "late-verdict-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::new(SettlesBehindYourBack {
+            pool: state.db.pool().clone(),
+        }) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    // Where the row ended up is defensible — nobody knows whether the
+    // destination took it. What must not happen is the report carrying on as
+    // though this pass had written something.
+    assert_eq!(
+        drained.accepted, 0,
+        "a verdict about a row this pass no longer owns is not an acceptance"
+    );
+    assert_eq!(rows(&state).await[0].1, "uncertain");
+
+    // And above all: no success stamped for a submission the queue cannot
+    // claim. `healthy` must never come from a write that did not happen.
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert!(
+        links[0].last_success_at.is_none(),
+        "last_success_at must not record a success the row never accepted"
+    );
+    assert_eq!(links[0].uncertain, 1);
+}
+
 #[tokio::test]
 async fn an_account_that_linked_nothing_queues_nothing() {
     let (_temp, config, state) = test_app().await;

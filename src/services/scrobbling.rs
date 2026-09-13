@@ -177,6 +177,21 @@ struct DueEntry {
     envelope: ScrobbleEnvelope,
 }
 
+/// What one `Retryable` verdict came to.
+///
+/// Three words rather than a boolean, because there are three outcomes and the
+/// third is easy to miss: the row may no longer have been this pass's to write.
+/// Folding that into either of the other two would report an attempt that was
+/// never recorded — see [`DomainServices::settle_scrobble`].
+enum Rescheduled {
+    /// Pushed out to a later attempt.
+    Later,
+    /// Out of attempts, and settled as abandoned.
+    Abandoned,
+    /// Already settled elsewhere. Nothing to count.
+    NotOurs,
+}
+
 /// The floor of the growing wait between two attempts.
 const RETRY_BASE: Duration = Duration::from_secs(60);
 /// Its ceiling. Past this, waiting longer buys nothing a restart would not.
@@ -756,26 +771,35 @@ impl DomainServices {
                 }
             };
             match verdict {
+                // Every arm counts only what it actually wrote. A verdict whose
+                // row had already been settled elsewhere is a verdict about a
+                // row this pass no longer owns, and reporting it would describe
+                // a write that did not happen — see `settle_scrobble`.
                 ScrobbleVerdict::Accepted => {
-                    self.settle_scrobble(&entry, "sent", None).await?;
-                    drained.accepted += 1;
-                }
-                ScrobbleVerdict::Retryable => {
-                    if self.reschedule_scrobble(&entry).await? {
-                        drained.retrying += 1;
-                    } else {
-                        drained.abandoned += 1;
+                    if self.settle_scrobble(&entry, "sent", None).await? {
+                        drained.accepted += 1;
                     }
                 }
+                ScrobbleVerdict::Retryable => match self.reschedule_scrobble(&entry).await? {
+                    Rescheduled::Later => drained.retrying += 1,
+                    Rescheduled::Abandoned => drained.abandoned += 1,
+                    Rescheduled::NotOurs => {}
+                },
                 ScrobbleVerdict::PermanentReject => {
-                    self.settle_scrobble(&entry, "rejected", Some("rejected"))
-                        .await?;
-                    drained.rejected += 1;
+                    if self
+                        .settle_scrobble(&entry, "rejected", Some("rejected"))
+                        .await?
+                    {
+                        drained.rejected += 1;
+                    }
                 }
                 ScrobbleVerdict::Ambiguous => {
-                    self.settle_scrobble(&entry, "uncertain", Some("ambiguous"))
-                        .await?;
-                    drained.uncertain += 1;
+                    if self
+                        .settle_scrobble(&entry, "uncertain", Some("ambiguous"))
+                        .await?
+                    {
+                        drained.uncertain += 1;
+                    }
                 }
                 ScrobbleVerdict::AuthBroken => {
                     // This row is claimed, so the sweep inside
@@ -784,6 +808,9 @@ impl DomainServices {
                     // terms as the ones queued behind it.
                     self.settle_scrobble(&entry, "cancelled", Some("auth_broken"))
                         .await?;
+                    // Unconditional, unlike the counters above: a refused
+                    // authorisation is a fact about the link, not about whether
+                    // this particular row was still ours to write.
                     self.mark_link_broken(entry.link_id, "auth_broken").await?;
                     broken_links.insert(entry.link_id);
                     drained.broken += 1;
@@ -896,16 +923,31 @@ impl DomainServices {
     /// oversight: `recover_stale_sending` reads it as `uncertain` later, which
     /// is exactly what a listen that was emitted and never confirmed is. It
     /// must not be "repaired" into `pending` — that would send it again.
+    /// Answers whether the row really moved.
+    ///
+    /// It can fail to, and the window is narrow but real. `recover_stale_sending`
+    /// computes its cutoff *before* taking the writer gate, while this has to
+    /// wait for that gate before writing — a wait a long scan can stretch past
+    /// the margin. A concurrent pass may by then have read the row as abandoned
+    /// and settled it `uncertain`, and the drain is public, so a manual or test
+    /// pass really can run beside the background one.
+    ///
+    /// Where the row ends up is defensible either way: `uncertain` is the honest
+    /// verdict for a listen whose fate was lost track of. What must not follow
+    /// is the *reporting* carrying on regardless — counting an accepted
+    /// submission that was never recorded, or stamping `last_success_at` for it.
+    /// Decision 12 says what the API shows is a state and not a guess, and a
+    /// counter describing a write that did not happen is a guess.
     async fn settle_scrobble(
         &self,
         entry: &DueEntry,
         state: &str,
         failure: Option<&str>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<bool, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        sqlx::query(
+        let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
              updated_at=? WHERE id=? AND state='sending'",
         )
@@ -915,6 +957,17 @@ impl DomainServices {
         .bind(entry.id)
         .execute(&mut *tx)
         .await?;
+        if moved.rows_affected() == 0 {
+            // The link updates below are rolled back with it: a success this
+            // row cannot claim must not leave `last_success_at` behind.
+            tx.rollback().await?;
+            tracing::warn!(
+                entry = entry.id,
+                verdict = state,
+                "a scrobble verdict arrived after its row had been settled elsewhere"
+            );
+            return Ok(false);
+        }
         if state == "sent" {
             sqlx::query(
                 "UPDATE scrobble_link SET last_success_at=?, last_failure=NULL, updated_at=? \
@@ -934,7 +987,7 @@ impl DomainServices {
                 .await?;
         }
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 
     /// Moves one entry out of the way without spending an attempt.
@@ -966,22 +1019,32 @@ impl DomainServices {
 
     /// Pushes one entry out to its next attempt, or gives up on it.
     ///
-    /// Answers `true` when it will be tried again. A queue that never empties
-    /// is a fault and not a state — decision 6 — so the attempts are bounded and
-    /// what is abandoned is counted.
-    async fn reschedule_scrobble(&self, entry: &DueEntry) -> Result<bool, ServiceError> {
+    /// A queue that never empties is a fault and not a state — decision 6 — so
+    /// the attempts are bounded and what is abandoned is counted.
+    ///
+    /// Answers [`Rescheduled::NotOurs`] when the row had already been settled
+    /// elsewhere, on the same terms and for the same reason as
+    /// [`Self::settle_scrobble`].
+    async fn reschedule_scrobble(&self, entry: &DueEntry) -> Result<Rescheduled, ServiceError> {
         let attempts = entry.attempts.saturating_add(1);
         let exhausted =
             u64::try_from(attempts).unwrap_or(u64::MAX) >= u64::from(self.scrobbling.max_attempts);
         if exhausted {
-            self.settle_scrobble(entry, "abandoned", Some("attempts_exhausted"))
-                .await?;
-            return Ok(false);
+            return Ok(
+                if self
+                    .settle_scrobble(entry, "abandoned", Some("attempts_exhausted"))
+                    .await?
+                {
+                    Rescheduled::Abandoned
+                } else {
+                    Rescheduled::NotOurs
+                },
+            );
         }
         let now = now_ms();
         let wait = retry_delay(attempts, entry.id);
         let _writer = self.db.writer_guard().await;
-        sqlx::query(
+        let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
              last_failure='retryable', updated_at=? WHERE id=? AND state='sending'",
         )
@@ -991,7 +1054,15 @@ impl DomainServices {
         .bind(entry.id)
         .execute(self.db.pool())
         .await?;
-        Ok(true)
+        Ok(if moved.rows_affected() == 0 {
+            tracing::warn!(
+                entry = entry.id,
+                "a retryable verdict arrived after its row had been settled elsewhere"
+            );
+            Rescheduled::NotOurs
+        } else {
+            Rescheduled::Later
+        })
     }
 
     /// Marks one link broken and finishes its queue.
