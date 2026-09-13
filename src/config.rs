@@ -71,6 +71,31 @@ pub struct CanvasLimits {
     pub library_quota_bytes: i64,
 }
 
+/// How the server drains what it owes a third party. RFC-010.
+///
+/// Apart from the credentials, which belong to an account and are posed through
+/// the API — decision 9. What is left here is what belongs to the deployment:
+/// how often the queue moves, how many times a failure is worth repeating, and
+/// how long a queue may sit still before the operator should be told it has
+/// stopped.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrobbleLimits {
+    /// How often the drain walks the queue.
+    pub drain_interval: Duration,
+    /// How many times one listen may be submitted before it is abandoned and
+    /// counted. Bounded because a queue that never empties is a fault and not a
+    /// state — decision 6.
+    pub max_attempts: u32,
+    /// How long the oldest waiting listen may be waiting before the link is
+    /// reported `degraded`. A valid token with a queue that has not moved for
+    /// hours is the silent failure a durable queue exists to make visible —
+    /// decision 12.
+    pub stale_after: Duration,
+    /// How many listens one drain pass takes. It bounds the pass, never the
+    /// request: decision 11 sends one listen per request whatever this says.
+    pub batch: usize,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -140,6 +165,15 @@ pub struct Config {
     /// there is — sharing the flag made this whole feature inert exactly where
     /// it is most wanted.
     pub canvas: CanvasLimits,
+    /// How the server drains what it owes a third party.
+    ///
+    /// `WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS`,
+    /// `WAVEFLOW_SCROBBLE_MAX_ATTEMPTS`, `WAVEFLOW_SCROBBLE_STALE_AFTER_SECS`,
+    /// `WAVEFLOW_SCROBBLE_BATCH`.
+    ///
+    /// None of these matter until an account links a destination: a server that
+    /// has only been upgraded makes no outbound request at all.
+    pub scrobbling: ScrobbleLimits,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
@@ -180,6 +214,7 @@ impl std::fmt::Debug for Config {
             .field("library_event_retention", &self.library_event_retention)
             .field("canvas_dir", &self.canvas_dir)
             .field("canvas", &self.canvas)
+            .field("scrobbling", &self.scrobbling)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
             .finish()
@@ -262,6 +297,24 @@ impl Config {
             )?,
         };
         validate_canvas(&canvas)?;
+        let scrobbling = ScrobbleLimits {
+            // A minute is far below what any destination considers a listening
+            // history's resolution, and far above what a queue of a few rows
+            // costs to walk.
+            drain_interval: Duration::from_secs(parse_positive_env(
+                "WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS",
+                60u64,
+            )?),
+            // Eight doublings from a minute carry a listen across most of a day
+            // of an outage, which is longer than any of the three destinations
+            // has plausibly been down.
+            max_attempts: parse_positive_env("WAVEFLOW_SCROBBLE_MAX_ATTEMPTS", 8u32)?,
+            stale_after: Duration::from_secs(parse_positive_env(
+                "WAVEFLOW_SCROBBLE_STALE_AFTER_SECS",
+                3_600u64,
+            )?),
+            batch: parse_positive_env("WAVEFLOW_SCROBBLE_BATCH", 50usize)?,
+        };
         // Both refuse zero and negatives at startup rather than falling back:
         // every fallback for a bound is wrong, and the operator is turned away
         // where they can see why. No ceiling — an enormous value means "purge
@@ -342,6 +395,7 @@ impl Config {
             library_event_retention,
             canvas_dir,
             canvas,
+            scrobbling,
             allowed_origins,
             pid,
         })
@@ -397,6 +451,17 @@ impl Config {
                 max_bytes: 256 * 1024,
                 max_duration_secs: 15,
                 library_quota_bytes: 1024 * 1024,
+            },
+            // Same reasoning again: small enough that a test can exhaust the
+            // attempts without waiting out eight doublings, shaped like
+            // production rather than unlimited. The interval is never reached —
+            // `spawn_scrobble_drain` is started by `main`, and tests run the
+            // pass themselves.
+            scrobbling: ScrobbleLimits {
+                drain_interval: Duration::from_secs(60),
+                max_attempts: 3,
+                stale_after: Duration::from_secs(3600),
+                batch: 8,
             },
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs

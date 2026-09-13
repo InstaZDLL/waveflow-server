@@ -123,3 +123,7 @@ path = "tests/uploads.rs"
 [[test]]
 name = "canvas"
 path = "tests/canvas.rs"
+
+[[test]]
+name = "scrobbling"
+path = "tests/scrobbling.rs"
