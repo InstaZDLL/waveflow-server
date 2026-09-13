@@ -654,3 +654,70 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
     );
     assert!(restored.db.integrity_check().await.unwrap());
 }
+
+/// A caller may suggest the name its request is traced under, and not choose it.
+///
+/// `x-request-id` exists so a correlation id survives a reverse proxy, so this
+/// is a filter and not an overwrite: a well-formed id is kept, and the round
+/// trip below is the only way to see which one the server actually used —
+/// `PropagateRequestIdLayer` puts it on the response.
+#[tokio::test]
+async fn a_caller_cannot_name_its_own_request_with_arbitrary_text() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let named = |value: Option<&str>| {
+        let router = router.clone();
+        let value = value.map(str::to_owned);
+        async move {
+            let mut request = Request::get("/health");
+            if let Some(value) = value.as_deref() {
+                request = request.header("x-request-id", value);
+            }
+            let response = router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            response
+                .headers()
+                .get("x-request-id")
+                .map(|value| value.to_str().unwrap().to_owned())
+        }
+    };
+
+    // The legitimate case, and the reason this is not an unconditional
+    // overwrite: an id a proxy could have minted comes back unchanged.
+    let kept = "01JD5X-trace_id.7f";
+    assert_eq!(named(Some(kept)).await.as_deref(), Some(kept));
+
+    // Every request carries one, chosen here when the caller offered nothing.
+    let forged = named(None).await.expect("a request is always named");
+    assert_ne!(forged, kept);
+
+    for refused in [
+        // Unbounded length is the half a character check alone would miss.
+        "x".repeat(65).as_str(),
+        // A space, which reads as two fields wherever a trace is parsed.
+        "two words",
+        // Punctuation an identifier has no use for.
+        "id;drop",
+        // Non-ASCII, which a sink may re-encode.
+        "identifiant-café",
+        // Nothing at all, which would name a request the empty string.
+        "",
+    ] {
+        let answered = named(Some(refused))
+            .await
+            .expect("a refused id is replaced, never dropped");
+        assert_ne!(
+            answered, refused,
+            "the server repeated back an id it should have refused"
+        );
+        // And what replaced it is this server's own, not a trimmed version of
+        // what arrived: a sanitiser that edited the caller's text would still
+        // be letting the caller choose most of it.
+        assert!(
+            uuid::Uuid::parse_str(&answered).is_ok(),
+            "a refused id is replaced by a minted one"
+        );
+    }
+}

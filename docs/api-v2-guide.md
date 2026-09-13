@@ -31,6 +31,15 @@ curl https://music.example.com/ready
 `/health` proves that the process responds. `/ready` additionally verifies
 SQLite access; scan progress and FFmpeg capability do not affect readiness.
 
+### Correlating a request
+
+Every response carries `x-request-id`, and that value is what the server's own
+logs record for the request. Send the header yourself to carry a correlation id
+across a reverse proxy and it is kept — provided it is at most 64 characters of
+letters, digits, `-`, `_` or `.`. Anything else is replaced by an id the server
+mints, which the response then carries instead: what ends up in a log line is
+always an identifier, never arbitrary text a caller chose.
+
 ### First-run setup
 
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
