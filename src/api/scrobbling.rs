@@ -135,10 +135,12 @@ pub async fn unlink_scrobble(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// Under `scrobble-queue` rather than beside `{provider}`: there, the word
+// `uncertain` would sit in the same position as a destination's name and the
+// two would be one segment read two ways. Kept out of the `///` block because
+// utoipa publishes that verbatim as the operation description, and a caller
+// does not need the routing argument.
 /// Every listen whose fate nobody knows, and which is still asking.
-///
-/// Under `scrobble-queue` rather than beside `{provider}`, so that a
-/// destination's name and this word can never be read as the same segment.
 #[utoipa::path(get, path = "/api/v2/scrobble-queue/uncertain", tag = "scrobbling", responses((status = 200, body = [crate::services::UncertainScrobble]), (status = 401, body = ErrorResponse)))]
 pub async fn list_uncertain_scrobbles(
     State(state): State<AppState>,
