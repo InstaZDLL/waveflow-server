@@ -726,13 +726,24 @@ async fn a_refused_destination_is_never_quoted_back_with_its_credentials() {
     };
     let said = format!("{error:#}");
 
-    for secret in ["hunter2", "wf-user", "10.0.0.2"] {
+    // **Named, never quoted.** The first version of this loop put `{secret:?}`
+    // and the whole error into the assertion message, and CodeQL was right to
+    // call that a cleartext write of a credential — in the one test whose
+    // entire subject is that credentials must not be written. What a failure
+    // here needs to say is *which* part came back, not the part itself.
+    for (part, secret) in [
+        ("the password", "hunter2"),
+        ("the account", "wf-user"),
+        ("the host", "10.0.0.2"),
+    ] {
         assert!(
             !said.contains(secret),
-            "the startup error quoted {secret:?} back from the destination: {said}"
+            "the startup error quoted {part} back from the destination"
         );
     }
-    // And it still says enough to be fixed by the person who typed it.
+    // And it still says enough to be fixed by the person who typed it. Printing
+    // `said` is safe here and only here: the loop above has just established
+    // that it carries none of the three.
     assert!(
         said.contains("credentials"),
         "the error must name the fault: {said}"
