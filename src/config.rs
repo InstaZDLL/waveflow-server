@@ -217,6 +217,11 @@ pub struct Config {
     /// because Maloja and ListenBrainz self-host and a container on the
     /// operator's own network is a reasonable destination; the default refuses
     /// it because the request carries a personal token.
+    ///
+    /// **On is not a blank cheque.** Even set, plaintext only reaches a host
+    /// that looks like it is on that network — see `validate_destination`. The
+    /// flag says "this address is mine", not "send my members' tokens in clear
+    /// wherever I point you".
     pub outbound_allow_plaintext: bool,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
