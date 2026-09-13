@@ -875,17 +875,27 @@ async fn a_destination_cannot_park_a_listen_past_our_own_ceiling() {
     assert!(next >= before + 3_600_000);
 }
 
+// The herd this file used to test for lives in
+// `services::scrobbling::tests::the_spread_scatters_neighbouring_rows_across_the_interval`
+// now. Two of the fixes in this branch turned out to contradict each other
+// here: a rate-limited link now rests for the rest of the pass, so only one row
+// is ever offered, and a test that needed four waits in one pass could no
+// longer get them. The property is a pure function's, and proving it through a
+// drain, a database and an HTTP server proved less while costing more. What a
+// rate limit does to the *batch* is `a_destination_that_asked_for_room_is_not_offered_the_rest_of_the_batch`;
+// what it does to the *wait* is `a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked`.
+
 #[tokio::test]
-async fn two_rate_limited_listens_do_not_come_back_in_a_herd() {
+async fn a_destination_that_asked_for_room_is_not_offered_the_rest_of_the_batch() {
     let destination = spawn_destination(429, Some(3_600)).await;
     let (_temp, config, state) = app_reaching(&destination.base).await;
-    let fixture = fixture(&config, &state, "herd-listener").await;
+    let fixture = fixture(&config, &state, "resting-listener").await;
     state
         .services
         .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
         .await
         .unwrap();
-    for _ in 0..2 {
+    for _ in 0..4 {
         state
             .services
             .scrobble(fixture.owner, fixture.tagged, true, None)
@@ -894,35 +904,23 @@ async fn two_rate_limited_listens_do_not_come_back_in_a_herd() {
     }
 
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
-    assert_eq!(drained.retrying, 2);
 
-    // The *wait*, not the instant. `reschedule_scrobble` binds
-    // `next_attempt_at = now + wait` and `updated_at = now` from the same
-    // `now`, so their difference is exactly the wait it computed.
-    //
-    // Comparing `next_attempt_at` directly does not work, and an inversion is
-    // what proved it: that function takes its own `now_ms()` per row, so two
-    // rows settled a few milliseconds apart already differ by that drift. The
-    // assertion passed on wall-clock noise rather than on the spread, and
-    // removing the spread left it green — a test that could not fail for the
-    // reason it names.
-    let waits: Vec<i64> =
-        sqlx::query_scalar("SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id")
-            .fetch_all(state.db.pool())
-            .await
-            .unwrap();
-    assert_eq!(waits.len(), 2);
-    // Both honoured the hour the destination asked for...
-    for wait in &waits {
-        assert!(*wait >= 3_600_000, "the destination's own answer must win");
+    // One submission, not four. The batch is chosen before the first verdict,
+    // so without the link resting, being told to slow down would be answered by
+    // sending the rest of it — each row earning its own refusal and spending
+    // its own attempt, at a destination that had just asked for room.
+    assert_eq!(destination.bodies.lock().unwrap().len(), 1);
+    assert_eq!(drained.retrying, 1);
+
+    // The one that was refused waits and has spent an attempt; the three behind
+    // it were never offered, so they have spent nothing and come back next
+    // pass.
+    let rows = rows(&state).await;
+    assert_eq!(rows[0].2, 1);
+    for row in &rows[1..] {
+        assert_eq!(row.1, "pending");
+        assert_eq!(row.2, 0, "a row that was never offered has spent nothing");
     }
-    // ...and still came back apart. Folded into one value, the spread is lost
-    // exactly when it is most needed: both rows would return at the same
-    // millisecond, in a herd, at a destination that had just asked for room.
-    assert_ne!(
-        waits[0], waits[1],
-        "two rows told to wait the same hour must not return together"
-    );
 }
 
 #[tokio::test]
