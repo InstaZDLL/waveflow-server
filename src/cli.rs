@@ -43,6 +43,15 @@ pub enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Link an account to a scrobbling destination, or read its queue.
+    ///
+    /// The same gestures the native API offers, for an operator preparing a
+    /// server nobody has opened a browser on yet — exactly the reason the
+    /// dedicated Subsonic password has a command here too.
+    Scrobble {
+        #[command(subcommand)]
+        command: ScrobbleCommand,
+    },
     /// Check the SQLite database integrity.
     Database {
         #[command(subcommand)]
@@ -154,6 +163,53 @@ pub struct SetCredentialArgs {
     password_env: String,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ScrobbleCommand {
+    /// Authorise an account at a destination, replacing any authorisation it
+    /// already had there.
+    Link(LinkScrobbleArgs),
+    /// Withdraw it. Listens already queued under it stay queued under it and
+    /// are never sent to whatever is linked next.
+    Unlink(UnlinkScrobbleArgs),
+    /// What each of an account's links is doing.
+    Status(ScrobbleStatusArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LinkScrobbleArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    /// `listenbrainz`, `maloja` or `lastfm`.
+    #[arg(long)]
+    provider: String,
+    /// Environment variable containing the token. The value never appears in
+    /// argv, for the same reason the account password does not: a shell history
+    /// and a process list are both readable by people this credential is not
+    /// for.
+    #[arg(long, default_value = "WAVEFLOW_SCROBBLE_TOKEN")]
+    token_env: String,
+}
+
+#[derive(Debug, Args)]
+pub struct UnlinkScrobbleArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    #[arg(long)]
+    provider: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScrobbleStatusArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+}
+
 #[derive(Debug, Args)]
 pub struct RevokeCredentialArgs {
     #[arg(long)]
@@ -221,6 +277,11 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
         },
         Command::Token { command } => match command {
             TokenCommand::Create(args) => create_token(state, args).await,
+        },
+        Command::Scrobble { command } => match command {
+            ScrobbleCommand::Link(args) => link_scrobble(state, args).await,
+            ScrobbleCommand::Unlink(args) => unlink_scrobble(state, args).await,
+            ScrobbleCommand::Status(args) => scrobble_status(state, args).await,
         },
         Command::Database { command } => match command {
             DatabaseCommand::Check => {
@@ -499,6 +560,89 @@ async fn create_token(state: &AppState, args: CreateTokenArgs) -> anyhow::Result
     Ok(())
 }
 
+/// The destination named on the command line.
+///
+/// Through `FromStr`, which is the same reading the API and the `CHECK`
+/// constraint use. A `ValueEnum` here would be a fifth spelling of a fact that
+/// already has four, and one test holds those four together.
+fn scrobble_provider(raw: &str) -> anyhow::Result<crate::services::ScrobbleProvider> {
+    <crate::services::ScrobbleProvider as std::str::FromStr>::from_str(raw)
+        .map_err(|_| anyhow::anyhow!("unknown destination: {raw} (listenbrainz, maloja or lastfm)"))
+}
+
+/// Through `DomainServices`, never around it.
+///
+/// The same reasoning `create_token` carries: this mutation is also an HTTP
+/// route, and a link made here must carry the validation, the sealing and the
+/// generation semantics a link made there carries. Two copies of the insert
+/// would not guarantee that.
+async fn link_scrobble(state: &AppState, args: LinkScrobbleArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let provider = scrobble_provider(&args.provider)?;
+    let secret = read_secret_env(&args.token_env)?;
+    state
+        .services
+        .link_scrobble(user.id, provider, &secret)
+        .await?;
+    println!(
+        "Linked {} to {} (any previous authorisation there is withdrawn)",
+        args.username,
+        provider.as_str()
+    );
+    Ok(())
+}
+
+async fn unlink_scrobble(state: &AppState, args: UnlinkScrobbleArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let provider = scrobble_provider(&args.provider)?;
+    // Saying so rather than failing: the caller asked for this account to hold
+    // no authorisation there, and it holds none. The API answers the same way.
+    if state.services.unlink_scrobble(user.id, provider).await? {
+        println!("Unlinked {} from {}", args.username, provider.as_str());
+    } else {
+        println!("{} had no link to {}", args.username, provider.as_str());
+    }
+    Ok(())
+}
+
+async fn scrobble_status(state: &AppState, args: ScrobbleStatusArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let links = state.services.scrobble_links(user.id).await?;
+    if links.is_empty() {
+        println!("{} has no scrobbling links", args.username);
+        return Ok(());
+    }
+    for link in links {
+        // Counters, never content: decision 12 governs what this prints exactly
+        // as it governs what the route publishes.
+        println!(
+            "{:<13} {:<9} pending {:<5} retrying {:<5} uncertain {:<5} {}",
+            link.provider.as_str(),
+            link.health,
+            link.pending,
+            link.retrying,
+            link.uncertain,
+            link.last_failure.as_deref().unwrap_or("-")
+        );
+    }
+    Ok(())
+}
+
 async fn require_admin(
     db: &Database,
     username: &str,
@@ -515,7 +659,25 @@ async fn require_admin(
 
 fn read_secret_env(name: &str) -> anyhow::Result<String> {
     let value = std::env::var(name).with_context(|| format!("{name} is required"))?;
-    if value.is_empty() {
+    non_blank(name, value)
+}
+
+/// The rule, kept apart from the lookup so it can be exercised without one.
+///
+/// Judged on the trimmed value, returned untrimmed. A variable holding nothing
+/// but a newline used to pass and fail three layers down as a bare "invalid
+/// input", which tells the person who pasted it nothing. The value itself is
+/// handed back as it was found, because this same path reads account and
+/// Subsonic passwords, and silently trimming one of those would change a
+/// credential that already works.
+///
+/// Split out because a review pointed out that the guard was testable after all
+/// — this PR had claimed it could not be, on the grounds that exercising it
+/// needed `std::env::set_var`, which was removed as a data race. It needed no
+/// environment at all; it needed the predicate to stop being welded to the
+/// lookup.
+fn non_blank(name: &str, value: String) -> anyhow::Result<String> {
+    if value.trim().is_empty() {
         anyhow::bail!("{name} cannot be empty");
     }
     Ok(value)
@@ -533,4 +695,30 @@ fn validate_username(username: &str) -> anyhow::Result<()> {
         anyhow::bail!("username may only contain letters, numbers, '.', '-' and '_'");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::non_blank;
+
+    #[test]
+    fn a_secret_of_whitespace_is_refused_and_the_variable_is_named() {
+        for blank in ["", " ", "\n", "  \t\r\n "] {
+            let refused = non_blank("WAVEFLOW_EXAMPLE_SECRET", blank.to_owned()).unwrap_err();
+            assert!(
+                refused.to_string().contains("WAVEFLOW_EXAMPLE_SECRET"),
+                "the message has to name the variable the person must fix"
+            );
+        }
+    }
+
+    /// Returned as it was found, never trimmed.
+    ///
+    /// The same path reads account and Subsonic passwords; trimming what it
+    /// hands back would silently alter a credential that already works.
+    #[test]
+    fn a_secret_with_padding_survives_intact() {
+        let kept = non_blank("WAVEFLOW_EXAMPLE_SECRET", "  a token  ".to_owned()).unwrap();
+        assert_eq!(kept, "  a token  ");
+    }
 }

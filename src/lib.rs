@@ -160,6 +160,12 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::create_scrobble,
         api::list_history,
         api::list_now_playing,
+        api::list_scrobble_links,
+        api::link_scrobble,
+        api::unlink_scrobble,
+        api::list_uncertain_scrobbles,
+        api::discard_uncertain_scrobble,
+        api::retry_uncertain_scrobble,
         api::get_queue,
         api::save_queue,
         api::list_shares,
@@ -230,6 +236,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::QueueItem,
         services::RatingItem,
         services::HistoryItem,
+        services::ScrobbleProvider,
+        services::ScrobbleLinkState,
+        services::UncertainScrobble,
+        api::LinkScrobbleRequest,
+        api::RetriedScrobbleResponse,
         services::BookmarkItem,
         services::UserItem,
         api::CreatePlaylistRequest,
@@ -284,6 +295,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         ,(name = "user-data", description = "Cross-protocol playlists and playback state")
         ,(name = "sync", description = "Durable WaveFlow Desktop user-data synchronization")
         ,(name = "administration", description = "Administrative user and credential management")
+        ,(name = "scrobbling", description = "Per-account authorisations at external listening services, and the queue behind them")
     )
 )]
 pub struct ApiDoc;
@@ -779,6 +791,66 @@ pub async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::trace_path;
+
+    /// The scrobbling routes carry no operation-id protocol, and must not
+    /// advertise one.
+    ///
+    /// `annotate_mutation_headers` injects a `409` and the two mutation headers
+    /// into every `user-data` write, because every one of those goes through
+    /// `mutation_context`. These do not — RFC-010 decision 12 keeps this state
+    /// out of synchronisation entirely — so they carry their own tag.
+    ///
+    /// Written because removing a hand-written `409` from the retry route did
+    /// not remove the `409`: it vacated the entry that the injected one then
+    /// filled, with no response schema and a description about operation ids
+    /// that was false for it. The document was worse than before the fix, and
+    /// nothing said so.
+    #[test]
+    fn the_scrobbling_routes_advertise_no_operation_id_protocol() {
+        use utoipa::OpenApi;
+
+        let openapi = super::ApiDoc::openapi();
+        let mut checked = 0;
+        for (path, item) in &openapi.paths.paths {
+            if !path.starts_with("/api/v2/scrobble-") {
+                continue;
+            }
+            for operation in [
+                item.put.as_ref(),
+                item.post.as_ref(),
+                item.delete.as_ref(),
+                item.patch.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                checked += 1;
+                assert!(
+                    !operation.responses.responses.contains_key("409"),
+                    "{path} advertises a conflict it cannot produce"
+                );
+                let names: Vec<&str> = operation
+                    .parameters
+                    .iter()
+                    .flatten()
+                    .map(|parameter| parameter.name.as_str())
+                    .collect();
+                assert!(
+                    !names.contains(&super::api::OPERATION_ID_HEADER),
+                    "{path} advertises an operation id it never reads"
+                );
+                assert!(
+                    !names.contains(&super::api::DEVICE_ID_HEADER),
+                    "{path} advertises a device id it never reads"
+                );
+            }
+        }
+        assert_eq!(
+            checked, 4,
+            "two on the link, two on the queue — a count that falls if a route is added \
+             without deciding which protocol it belongs to"
+        );
+    }
 
     /// Every entry in `PUBLIC_OPERATIONS` names an operation that exists, and
     /// leaves it carrying no security requirement.

@@ -1042,10 +1042,16 @@ mod uploads;
 
 /// The scrobbling vocabulary, which is the one thing in this module tree that
 /// has to be spoken outside it: an adapter implements [`ScrobbleTarget`]
-/// without being part of the domain, and the API reads the link states.
+/// without being part of the domain, and the API reads the link states and the
+/// entries still waiting for a person to decide about them.
+///
+/// A named list rather than a glob, so that crossing this boundary stays a
+/// decision. `UncertainScrobble` joined it when the routes arrived, because
+/// decision 13 asks somebody to choose and nothing outside could see what
+/// about.
 pub use scrobbling::{
     ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider, ScrobbleTarget,
-    ScrobbleVerdict,
+    ScrobbleVerdict, UncertainScrobble,
 };
 
 impl DomainServices {
