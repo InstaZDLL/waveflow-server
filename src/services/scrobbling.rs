@@ -128,10 +128,12 @@ pub trait ScrobbleTarget: Send + Sync + 'static {
 /// The registry `initialize` fills and the drain reads.
 pub(super) type ScrobbleTargets = Arc<dashmap::DashMap<ScrobbleProvider, Arc<dyn ScrobbleTarget>>>;
 
-/// What one link's queue looks like from outside.
-///
-/// Counters, never content. Decision 12: what the API shows is a state, not an
-/// echo of the envelope nor of the destination's own words.
+// Decision 12: what the API shows is a state, not an echo of the envelope nor
+// of the destination's own words. In a `//` because `ToSchema` publishes the
+// `///` verbatim as this schema's description, and "decision 12" names nothing
+// a client can look up.
+
+/// What one link's queue looks like from outside: counters, never content.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScrobbleLinkState {
     pub provider: ScrobbleProvider,
@@ -146,13 +148,43 @@ pub struct ScrobbleLinkState {
     pub pending: i64,
     /// Waiting after at least one failure.
     pub retrying: i64,
-    /// Ambiguous, and still asking the person to decide. A retried one stops
-    /// being counted here without being erased — see [`DomainServices::retry_uncertain_scrobble`].
+    /// Ambiguous, and still asking the person to decide. An entry that has been
+    /// retried stops being counted here, without being erased.
     pub uncertain: i64,
     pub oldest_pending_at: Option<i64>,
     pub last_success_at: Option<i64>,
     /// A normalised cause — `rate_limited`, `auth_broken` — or nothing.
     pub last_failure: Option<String>,
+}
+
+// Decision 12 keeps the envelope out of the API — what this publishes is a
+// state, never an echo of what was heard — while decision 13 asks a person to
+// choose the fate of one specific listen. A bare UUID is not something anybody
+// can choose about, which is what `played_at` is here for.
+//
+// In a `//` and not a `///` because `ToSchema` publishes the doc block verbatim
+// as this schema's description, and "decision 12" has no referent outside
+// `docs/rfcs/`.
+
+/// One listen whose fate is unknown, named so that it can be answered.
+///
+/// Carries no title and no artists — only the entry's own state, and
+/// `played_at`, which lets a client match it against a listen it already holds
+/// from its history.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UncertainScrobble {
+    // A UUID rather than the rowid: a sequential id would tell anyone holding a
+    // single entry of their own how many listens this whole server has ever
+    // queued. Kept out of the `///` for the same reason as the block above.
+    /// The entry's public name, and the only one this API will accept back.
+    pub id: Uuid,
+    pub provider: ScrobbleProvider,
+    /// When the listen happened, not when it was queued.
+    pub played_at: i64,
+    pub attempts: i64,
+    /// A normalised cause — `stalled`, `auth_broken` — or nothing.
+    pub last_failure: Option<String>,
+    pub updated_at: i64,
 }
 
 /// What one drain pass did.
@@ -553,6 +585,74 @@ impl DomainServices {
         Ok(states)
     }
 
+    /// Every ambiguous entry still asking this account for a decision.
+    ///
+    /// **Without this, the two gestures decision 13 grants cannot be aimed.**
+    /// `discard_uncertain_scrobble` and `retry_uncertain_scrobble` both name an
+    /// entry by its `public_id`, and until now nothing published one: a person
+    /// was asked to choose, and given no way to learn what about.
+    ///
+    /// **The exclusions are the counter's, deliberately.** An entry already
+    /// retried has stopped asking, so [`Self::scrobble_links`] stops counting
+    /// it; a list that went on naming it would ask for the same decision
+    /// forever, and the count beside it would disagree. An unlinked generation
+    /// drops out for the same reason from the other side: there is no
+    /// authorisation left to answer under at all. Its rows stay in the table
+    /// and stay true; they have simply stopped being a question.
+    ///
+    /// **A `broken` link is still listed, and that is not an oversight.** Its
+    /// rows ask something answerable — [`Self::discard_uncertain_scrobble`]
+    /// works on them, and preferring the gap is a decision.
+    /// [`Self::retry_uncertain_scrobble`] requires `status='active'` and will
+    /// refuse them for as long as the token stays bad, exactly as
+    /// [`Self::due_scrobbles`] refuses to drain under one. The two gestures have
+    /// different preconditions here, on purpose.
+    ///
+    /// An earlier version of this paragraph said the list excluded whatever
+    /// retry refuses. That was true of `unlinked` and false of `broken`, which
+    /// is the shape of claim this file keeps having to correct.
+    /// `an_entry_under_a_broken_link_can_be_discarded_but_not_retried` holds the
+    /// asymmetry still.
+    ///
+    /// Newest first: an ambiguous listen from this afternoon is the one a person
+    /// can still remember playing.
+    pub async fn uncertain_scrobbles(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<UncertainScrobble>, ServiceError> {
+        // Tenancy in the query rather than in a caller, as everywhere else here:
+        // the join to `scrobble_link` is what makes another account's entry
+        // unnameable rather than merely unreturned.
+        let rows = sqlx::query(
+            "SELECT o.public_id, l.provider, o.played_at, o.attempts, \
+                    o.last_failure, o.updated_at \
+             FROM scrobble_outbox o JOIN scrobble_link l ON l.id = o.link_id \
+             WHERE l.user_id=? AND l.status <> 'unlinked' AND o.state='uncertain' \
+               AND o.id NOT IN \
+                 (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+             ORDER BY o.played_at DESC, o.id DESC",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(UncertainScrobble {
+                    // Stored as text and parsed back rather than trusted: a
+                    // value this cannot read is a row this server wrote wrong,
+                    // and answering with it would publish nonsense as an id.
+                    id: Uuid::parse_str(row.try_get("public_id")?)
+                        .map_err(|_| ServiceError::Invalid)?,
+                    provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                    played_at: row.try_get("played_at")?,
+                    attempts: row.try_get("attempts")?,
+                    last_failure: row.try_get("last_failure")?,
+                    updated_at: row.try_get("updated_at")?,
+                })
+            })
+            .collect()
+    }
+
     /// Throws away one ambiguous entry. The person prefers the gap.
     ///
     /// Named by its `public_id`, never by its rowid: the sequential one would
@@ -565,8 +665,11 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
-            "UPDATE scrobble_outbox SET state='discarded', updated_at=? WHERE public_id=? \
-             AND state='uncertain' AND link_id IN (SELECT id FROM scrobble_link WHERE user_id=?)",
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=? \
+             WHERE public_id=? AND state='uncertain' \
+             AND id NOT IN (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+             AND link_id IN \
+               (SELECT id FROM scrobble_link WHERE user_id=? AND status <> 'unlinked')",
         )
         .bind(now_ms())
         .bind(entry.to_string())
