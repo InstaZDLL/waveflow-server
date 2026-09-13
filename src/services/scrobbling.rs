@@ -1,0 +1,896 @@
+//! Sending a listen somewhere else. RFC-010.
+//!
+//! The whole of this module is arranged around one sentence from decision 5:
+//! **the transactional outbox gives atomicity between WaveFlow and its own
+//! queue, and it cannot give atomicity between WaveFlow and a third party.**
+//! What follows is exactly one side of that frontier — the queue, its states,
+//! and the drain that walks it. Nothing here knows what ListenBrainz, Maloja or
+//! Last.fm are; an adapter answers with one of five words and the drain acts on
+//! the word.
+
+use super::*;
+
+use std::time::Duration;
+
+use futures_util::future::BoxFuture;
+
+/// A destination the server can be taught to speak to.
+///
+/// The vocabulary is CHECK-constrained in the schema, so this enum and that
+/// constraint are one fact written twice on purpose: the database refuses a
+/// value this cannot name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrobbleProvider {
+    ListenBrainz,
+    Maloja,
+    LastFm,
+}
+
+impl ScrobbleProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ListenBrainz => "listenbrainz",
+            Self::Maloja => "maloja",
+            Self::LastFm => "lastfm",
+        }
+    }
+}
+
+impl FromStr for ScrobbleProvider {
+    type Err = ServiceError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(match value {
+            "listenbrainz" => Self::ListenBrainz,
+            "maloja" => Self::Maloja,
+            "lastfm" => Self::LastFm,
+            _ => return Err(ServiceError::Invalid),
+        })
+    }
+}
+
+/// One listen, frozen as it was heard.
+///
+/// Every field is a copy taken at the moment of the listen. Decision 2: the
+/// track is never re-read at drain time, because a correction to its tags would
+/// otherwise rewrite history that has already happened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrobbleEnvelope {
+    pub played_at: i64,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub musicbrainz_recording_id: Option<String>,
+}
+
+/// What one attempt at one destination came to.
+///
+/// **Not an HTTP status.** Decision 6: Last.fm answers `200` carrying an
+/// application error in the body, and Maloja reports refusals in its JSON, so a
+/// drain that read the status line would take a failure for a success. The
+/// adapter reads whatever its destination actually says and answers one of
+/// these five words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrobbleVerdict {
+    /// The destination has it. Nothing further.
+    Accepted,
+    /// The destination did not get it, and saying so again later may work.
+    Retryable,
+    /// The authorisation is no longer good. The link is marked broken and its
+    /// queue finishes, because every further attempt would fail identically.
+    AuthBroken,
+    /// The destination read the submission and refuses it. No retry can fix a
+    /// payload the other end will not have.
+    PermanentReject,
+    /// **We do not know.** The request may have been recorded before the
+    /// connection broke. Decision 5 forbids retrying automatically here: a
+    /// duplicate in a public listening history is worse than a gap.
+    Ambiguous,
+}
+
+/// One destination, as the drain sees it.
+///
+/// Deliberately dyn-safe and deliberately ignorant of the queue: an adapter is
+/// handed a listen and a secret, and answers a verdict. It is constructed with
+/// whatever it needs to reach its destination — a base URL among other things —
+/// so the queue never carries one. Decision 10: a destination is the operator's
+/// setting, never an account's.
+pub trait ScrobbleTarget: Send + Sync + 'static {
+    fn submit<'a>(
+        &'a self,
+        envelope: &'a ScrobbleEnvelope,
+        secret: &'a str,
+    ) -> BoxFuture<'a, ScrobbleVerdict>;
+}
+
+/// The registry `initialize` fills and the drain reads.
+pub(super) type ScrobbleTargets = Arc<dashmap::DashMap<ScrobbleProvider, Arc<dyn ScrobbleTarget>>>;
+
+/// What one link's queue looks like from outside.
+///
+/// Counters, never content. Decision 12: what the API shows is a state, not an
+/// echo of the envelope nor of the destination's own words.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ScrobbleLinkState {
+    pub provider: ScrobbleProvider,
+    /// `healthy`, `degraded` or `broken`.
+    ///
+    /// **`healthy` cannot mean "the token is still good".** A valid link with
+    /// three thousand listens waiting since this morning is broken in every
+    /// sense the person cares about, and that silent failure is the whole
+    /// reason a durable queue is visible at all.
+    pub health: &'static str,
+    /// Waiting, and never attempted.
+    pub pending: i64,
+    /// Waiting after at least one failure.
+    pub retrying: i64,
+    /// Ambiguous, and still asking the person to decide. A retried one stops
+    /// being counted here without being erased — see [`DomainServices::retry_uncertain_scrobble`].
+    pub uncertain: i64,
+    pub oldest_pending_at: Option<i64>,
+    pub last_success_at: Option<i64>,
+    /// A normalised cause — `rate_limited`, `auth_broken` — or nothing.
+    pub last_failure: Option<String>,
+}
+
+/// What one drain pass did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScrobbleDrain {
+    pub accepted: usize,
+    pub retrying: usize,
+    pub abandoned: usize,
+    pub rejected: usize,
+    pub uncertain: usize,
+    pub broken: usize,
+    /// Rows left exactly as they were because no adapter is registered for
+    /// their destination. Not an attempt: a server missing an adapter is a
+    /// misconfiguration, and spending the listen's retries on it would destroy
+    /// the queue the operator is about to fix.
+    pub unserviced: usize,
+}
+
+/// One row the drain is about to act on.
+struct DueEntry {
+    id: i64,
+    link_id: Uuid,
+    provider: ScrobbleProvider,
+    nonce: Vec<u8>,
+    ciphertext: Vec<u8>,
+    attempts: i64,
+    envelope: ScrobbleEnvelope,
+}
+
+/// The floor of the growing wait between two attempts.
+const RETRY_BASE: Duration = Duration::from_secs(60);
+/// Its ceiling. Past this, waiting longer buys nothing a restart would not.
+const RETRY_CEILING: Duration = Duration::from_secs(60 * 60);
+
+impl DomainServices {
+    /// Queues one listen for every destination this account has linked.
+    ///
+    /// Called from inside the transaction that writes `play_event`, under the
+    /// same writer gate — decision 1. A listen therefore cannot be recorded
+    /// without being queued, nor queued without being recorded, and the
+    /// idempotence `claim_operation` already provides covers both at once: a
+    /// replayed scrobble rolls the transaction back and so writes neither.
+    ///
+    /// Silent when the account has linked nothing, which is every account until
+    /// somebody says otherwise.
+    pub(super) async fn enqueue_scrobble_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        play_event_id: i64,
+        track_id: Uuid,
+        played_at: i64,
+    ) -> Result<(), ServiceError> {
+        let links = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM scrobble_link WHERE user_id=? AND status='active' ORDER BY provider",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&mut *connection)
+        .await?;
+        if links.is_empty() {
+            return Ok(());
+        }
+        let Some(envelope) = self
+            .scrobble_envelope_on(&mut *connection, track_id, played_at)
+            .await?
+        else {
+            return Ok(());
+        };
+        let artists_json =
+            serde_json::to_string(&envelope.artists).map_err(|_| ServiceError::Invalid)?;
+        let now = now_ms();
+        for link in links {
+            sqlx::query(
+                "INSERT INTO scrobble_outbox (link_id, play_event_id, played_at, title, \
+                 artists_json, album, album_artist, duration_ms, musicbrainz_recording_id, \
+                 state, next_attempt_at, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            )
+            .bind(&link)
+            .bind(play_event_id)
+            .bind(envelope.played_at)
+            .bind(&envelope.title)
+            .bind(&artists_json)
+            .bind(envelope.album.as_deref())
+            .bind(envelope.album_artist.as_deref())
+            .bind(envelope.duration_ms)
+            .bind(envelope.musicbrainz_recording_id.as_deref())
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *connection)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// The listen as it was heard, or `None` when it is not worth sending.
+    ///
+    /// Decision 7: a track the server cannot name is never submitted. Without a
+    /// title or without a single credited artist the submission is unusable at
+    /// the far end and skews the statistics it lands in, so it is dropped here
+    /// rather than queued to be refused later.
+    async fn scrobble_envelope_on(
+        &self,
+        connection: &mut SqliteConnection,
+        track_id: Uuid,
+        played_at: i64,
+    ) -> Result<Option<ScrobbleEnvelope>, ServiceError> {
+        // The corrected values, through the same `COALESCE` every projection
+        // reads: what was heard is what the catalogue was showing at the time.
+        let Some(row) = sqlx::query(
+            "SELECT COALESCE(ovr.title, t.title) AS title, t.album_title, \
+                    alb.album_artist_name, t.duration_ms, \
+                    COALESCE(ovr.musicbrainz_recording_id, t.musicbrainz_recording_id) \
+                      AS musicbrainz_recording_id \
+             FROM track t \
+             LEFT JOIN album alb ON alb.id=t.album_id \
+             LEFT JOIN track_override ovr ON ovr.track_id=t.id \
+             WHERE t.id=?",
+        )
+        .bind(track_id.to_string())
+        .fetch_optional(&mut *connection)
+        .await?
+        else {
+            return Ok(None);
+        };
+        let title: String = row.try_get("title")?;
+        if title.trim().is_empty() {
+            return Ok(None);
+        }
+        let artists = sqlx::query_scalar::<_, String>(
+            "SELECT ar.name FROM track_participant tp JOIN artist ar ON ar.id=tp.artist_id \
+             WHERE tp.track_id=? AND tp.role='artist' ORDER BY tp.position",
+        )
+        .bind(track_id.to_string())
+        .fetch_all(&mut *connection)
+        .await?;
+        if artists.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(ScrobbleEnvelope {
+            played_at,
+            title,
+            artists,
+            album: row.try_get("album_title")?,
+            album_artist: row.try_get("album_artist_name")?,
+            duration_ms: row.try_get("duration_ms")?,
+            musicbrainz_recording_id: row.try_get("musicbrainz_recording_id")?,
+        }))
+    }
+
+    /// Teaches the drain how to reach one destination.
+    ///
+    /// Registered after `initialize` rather than built into the services, which
+    /// is what lets a test drive the whole queue against a double and lets an
+    /// operator run a server with no outbound adapter at all.
+    pub fn register_scrobble_target(
+        &self,
+        provider: ScrobbleProvider,
+        target: Arc<dyn ScrobbleTarget>,
+    ) {
+        self.scrobble_targets.insert(provider, target);
+    }
+
+    /// Authorises this account to submit to one destination, in a new
+    /// generation.
+    ///
+    /// Any live generation for the same pair is unlinked first, and its queue
+    /// finishes with it — decision 4. The two happen under one transaction, so
+    /// there is no instant at which a waiting listen belongs to no
+    /// authorisation.
+    pub async fn link_scrobble(
+        &self,
+        user_id: Uuid,
+        provider: ScrobbleProvider,
+        secret: &str,
+    ) -> Result<Uuid, ServiceError> {
+        let secret = secret.trim();
+        if secret.is_empty() || secret.len() > 512 {
+            return Err(ServiceError::Invalid);
+        }
+        let sealed = self.secret_box.encrypt(secret.as_bytes())?;
+        let id = Uuid::new_v4();
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        self.unlink_scrobble_on(&mut tx, user_id, provider, now)
+            .await?;
+        sqlx::query(
+            "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
+             credential_ciphertext, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(provider.as_str())
+        .bind(sealed.nonce.as_slice())
+        .bind(sealed.ciphertext.as_slice())
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    /// Withdraws the authorisation, and finishes what was waiting under it.
+    ///
+    /// Answers whether there was anything live to withdraw.
+    pub async fn unlink_scrobble(
+        &self,
+        user_id: Uuid,
+        provider: ScrobbleProvider,
+    ) -> Result<bool, ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        let unlinked = self
+            .unlink_scrobble_on(&mut tx, user_id, provider, now)
+            .await?;
+        tx.commit().await?;
+        Ok(unlinked)
+    }
+
+    /// The half of unlinking that both callers share.
+    ///
+    /// The waiting rows are cancelled rather than deleted: they record listens
+    /// that really happened and were really never sent, and a queue that erases
+    /// its own losses cannot be asked what it lost.
+    async fn unlink_scrobble_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        provider: ScrobbleProvider,
+        now: i64,
+    ) -> Result<bool, ServiceError> {
+        let live = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM scrobble_link WHERE user_id=? AND provider=? AND status <> 'unlinked'",
+        )
+        .bind(user_id.to_string())
+        .bind(provider.as_str())
+        .fetch_optional(&mut *connection)
+        .await?;
+        let Some(link_id) = live else {
+            return Ok(false);
+        };
+        sqlx::query(
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure='unlinked', updated_at=? \
+             WHERE link_id=? AND state='pending'",
+        )
+        .bind(now)
+        .bind(&link_id)
+        .execute(&mut *connection)
+        .await?;
+        sqlx::query("UPDATE scrobble_link SET status='unlinked', updated_at=? WHERE id=?")
+            .bind(now)
+            .bind(&link_id)
+            .execute(&mut *connection)
+            .await?;
+        Ok(true)
+    }
+
+    /// Every live link this account holds, and the shape of its queue.
+    pub async fn scrobble_links(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<ScrobbleLinkState>, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT id, provider, status, last_success_at, last_failure FROM scrobble_link \
+             WHERE user_id=? AND status <> 'unlinked' ORDER BY provider",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut states = Vec::with_capacity(rows.len());
+        let now = now_ms();
+        for row in rows {
+            let link_id: String = row.try_get("id")?;
+            let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
+            // `SUM(CASE …)` rather than `COUNT(*) FILTER`: the aggregate filter
+            // needs a SQLite newer than the floor this crate builds against,
+            // and one query answering four counts is the point either way.
+            //
+            // The uncertain count excludes an entry a person has already
+            // retried. It is still true and still readable; it has simply
+            // stopped asking for a decision, and a counter that kept naming it
+            // would ask for the same one forever.
+            let counts = sqlx::query(
+                "SELECT \
+                   SUM(CASE WHEN state='pending' AND attempts=0 THEN 1 ELSE 0 END) AS pending, \
+                   SUM(CASE WHEN state='pending' AND attempts>0 THEN 1 ELSE 0 END) AS retrying, \
+                   SUM(CASE WHEN state='uncertain' AND id NOT IN \
+                     (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+                     THEN 1 ELSE 0 END) AS uncertain, \
+                   MIN(CASE WHEN state='pending' THEN created_at END) AS oldest_pending_at \
+                 FROM scrobble_outbox WHERE link_id=?",
+            )
+            .bind(&link_id)
+            .fetch_one(self.db.pool())
+            .await?;
+            // `SUM` over no rows is NULL, which is nought here: a link nobody
+            // has played under yet has an empty queue, not an unknown one.
+            let pending: i64 = counts.try_get::<Option<i64>, _>("pending")?.unwrap_or(0);
+            let retrying: i64 = counts.try_get::<Option<i64>, _>("retrying")?.unwrap_or(0);
+            let uncertain: i64 = counts.try_get::<Option<i64>, _>("uncertain")?.unwrap_or(0);
+            let oldest_pending_at: Option<i64> = counts.try_get("oldest_pending_at")?;
+            let broken: String = row.try_get("status")?;
+            states.push(ScrobbleLinkState {
+                provider,
+                health: link_health(
+                    &broken,
+                    uncertain,
+                    oldest_pending_at,
+                    now,
+                    self.scrobbling.stale_after,
+                ),
+                pending,
+                retrying,
+                uncertain,
+                oldest_pending_at,
+                last_success_at: row.try_get("last_success_at")?,
+                last_failure: row.try_get("last_failure")?,
+            });
+        }
+        Ok(states)
+    }
+
+    /// Throws away one ambiguous entry. The person prefers the gap.
+    pub async fn discard_uncertain_scrobble(
+        &self,
+        user_id: Uuid,
+        entry_id: i64,
+    ) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let changed = sqlx::query(
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=? WHERE id=? \
+             AND state='uncertain' AND link_id IN (SELECT id FROM scrobble_link WHERE user_id=?)",
+        )
+        .bind(now_ms())
+        .bind(entry_id)
+        .bind(user_id.to_string())
+        .execute(self.db.pool())
+        .await?;
+        if changed.rows_affected() == 0 {
+            return Err(ServiceError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Sends one ambiguous entry again, knowing it may already be there.
+    ///
+    /// **Retrying is not reactivating.** The ambiguous attempt stays in the
+    /// record exactly as it happened and a *new* row is queued beside it,
+    /// pointing back at it. Reopening the original would falsify the only trace
+    /// that explains why the destination may hold this listen twice —
+    /// decision 13.
+    ///
+    /// The original stops being counted as uncertain, because it no longer asks
+    /// the person for anything; it has not stopped being true.
+    pub async fn retry_uncertain_scrobble(
+        &self,
+        user_id: Uuid,
+        entry_id: i64,
+    ) -> Result<i64, ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        // The link has to be live: a retry under a withdrawn authorisation
+        // would submit to whichever profile happens to be linked now, which is
+        // the very substitution generations exist to prevent.
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT o.id FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
+             WHERE o.id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active'",
+        )
+        .bind(entry_id)
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if exists.is_none() {
+            return Err(ServiceError::NotFound);
+        }
+        let inserted = sqlx::query(
+            "INSERT INTO scrobble_outbox (link_id, play_event_id, retry_of, played_at, title, \
+             artists_json, album, album_artist, duration_ms, musicbrainz_recording_id, \
+             state, next_attempt_at, created_at, updated_at) \
+             SELECT link_id, play_event_id, id, played_at, title, artists_json, album, \
+                    album_artist, duration_ms, musicbrainz_recording_id, 'pending', ?, ?, ? \
+             FROM scrobble_outbox WHERE id=?",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .bind(entry_id)
+        .execute(&mut *tx)
+        .await?;
+        let id = inserted.last_insert_rowid();
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    /// Walks the queue on a timer. The shape the six other background tasks
+    /// use: a pass at boot, then one per interval.
+    pub fn spawn_scrobble_drain(&self) {
+        let services = self.clone();
+        let interval = services.scrobbling.drain_interval;
+        tokio::spawn(async move {
+            services.drain_scrobbles_now().await;
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                services.drain_scrobbles_now().await;
+            }
+        });
+    }
+
+    async fn drain_scrobbles_now(&self) {
+        match self.drain_scrobble_outbox().await {
+            Ok(drained) if drained == ScrobbleDrain::default() => {}
+            Ok(drained) => tracing::info!(
+                accepted = drained.accepted,
+                retrying = drained.retrying,
+                abandoned = drained.abandoned,
+                rejected = drained.rejected,
+                uncertain = drained.uncertain,
+                broken = drained.broken,
+                unserviced = drained.unserviced,
+                "scrobble queue drained"
+            ),
+            Err(error) => tracing::warn!(%error, "could not drain the scrobble queue"),
+        }
+    }
+
+    /// One pass. Public so a test can run it rather than wait out an interval.
+    ///
+    /// **No writer gate is held across a submission.** The batch is read, each
+    /// entry is submitted with nothing locked, and only the verdict is written
+    /// back under the gate. Holding the process-wide gate across a third
+    /// party's latency would let a destination that has stopped answering block
+    /// every other write on the server.
+    ///
+    /// One listen per request, deliberately. Decision 11: Last.fm would take
+    /// fifty at a time, and a batch of fifty that comes back `Ambiguous` makes
+    /// fifty listens uncertain at once — which decision 5 then forbids retrying.
+    pub async fn drain_scrobble_outbox(&self) -> Result<ScrobbleDrain, ServiceError> {
+        let mut drained = ScrobbleDrain::default();
+        // Links this pass has just found broken.
+        //
+        // The batch is chosen before the first verdict comes back, so without
+        // this every entry queued behind a broken authorisation would still be
+        // submitted once — each failing identically, which is exactly what
+        // `AuthBroken` has already established. `mark_link_broken` has finished
+        // their rows in the database; this is what stops the requests.
+        let mut broken_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        for entry in self.due_scrobbles(now_ms()).await? {
+            if broken_links.contains(&entry.link_id) {
+                continue;
+            }
+            let Some(target) = self
+                .scrobble_targets
+                .get(&entry.provider)
+                .map(|found| Arc::clone(found.value()))
+            else {
+                drained.unserviced += 1;
+                continue;
+            };
+            let secret = match self.secret_box.decrypt(&entry.nonce, &entry.ciphertext) {
+                Ok(secret) => secret,
+                // A secret that will not open is a broken link, not a broken
+                // listen: it means this database and this `instance.key` are
+                // not the pair that sealed it, and no amount of retrying
+                // decrypts it.
+                Err(_) => {
+                    self.mark_link_broken(entry.link_id, "credential_unreadable")
+                        .await?;
+                    broken_links.insert(entry.link_id);
+                    drained.broken += 1;
+                    continue;
+                }
+            };
+            let secret = match String::from_utf8(secret) {
+                Ok(secret) => secret,
+                Err(_) => {
+                    self.mark_link_broken(entry.link_id, "credential_unreadable")
+                        .await?;
+                    broken_links.insert(entry.link_id);
+                    drained.broken += 1;
+                    continue;
+                }
+            };
+            let verdict = target.submit(&entry.envelope, &secret).await;
+            match verdict {
+                ScrobbleVerdict::Accepted => {
+                    self.settle_scrobble(&entry, "sent", None).await?;
+                    drained.accepted += 1;
+                }
+                ScrobbleVerdict::Retryable => {
+                    if self.reschedule_scrobble(&entry).await? {
+                        drained.retrying += 1;
+                    } else {
+                        drained.abandoned += 1;
+                    }
+                }
+                ScrobbleVerdict::PermanentReject => {
+                    self.settle_scrobble(&entry, "rejected", Some("rejected"))
+                        .await?;
+                    drained.rejected += 1;
+                }
+                ScrobbleVerdict::Ambiguous => {
+                    self.settle_scrobble(&entry, "uncertain", Some("ambiguous"))
+                        .await?;
+                    drained.uncertain += 1;
+                }
+                ScrobbleVerdict::AuthBroken => {
+                    self.mark_link_broken(entry.link_id, "auth_broken").await?;
+                    broken_links.insert(entry.link_id);
+                    drained.broken += 1;
+                }
+            }
+        }
+        Ok(drained)
+    }
+
+    /// The rows that are due, under a link that is still good.
+    async fn due_scrobbles(&self, now: i64) -> Result<Vec<DueEntry>, ServiceError> {
+        let rows = sqlx::query(
+            "SELECT o.id, o.link_id, o.attempts, o.played_at, o.title, o.artists_json, o.album, \
+                    o.album_artist, o.duration_ms, o.musicbrainz_recording_id, \
+                    l.provider, l.credential_nonce, l.credential_ciphertext \
+             FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
+             WHERE o.state='pending' AND o.next_attempt_at <= ? AND l.status='active' \
+             ORDER BY o.next_attempt_at, o.id LIMIT ?",
+        )
+        .bind(now)
+        .bind(i64::try_from(self.scrobbling.batch).unwrap_or(i64::MAX))
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut entries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let artists: Vec<String> = serde_json::from_str(row.try_get("artists_json")?)
+                .map_err(|_| ServiceError::Invalid)?;
+            entries.push(DueEntry {
+                id: row.try_get("id")?,
+                link_id: parse_uuid(row.try_get("link_id")?)?,
+                provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                nonce: row.try_get("credential_nonce")?,
+                ciphertext: row.try_get("credential_ciphertext")?,
+                attempts: row.try_get("attempts")?,
+                envelope: ScrobbleEnvelope {
+                    played_at: row.try_get("played_at")?,
+                    title: row.try_get("title")?,
+                    artists,
+                    album: row.try_get("album")?,
+                    album_artist: row.try_get("album_artist")?,
+                    duration_ms: row.try_get("duration_ms")?,
+                    musicbrainz_recording_id: row.try_get("musicbrainz_recording_id")?,
+                },
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Writes one terminal state, and the link's last success with it.
+    async fn settle_scrobble(
+        &self,
+        entry: &DueEntry,
+        state: &str,
+        failure: Option<&str>,
+    ) -> Result<(), ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
+             updated_at=? WHERE id=? AND state='pending'",
+        )
+        .bind(state)
+        .bind(failure)
+        .bind(now)
+        .bind(entry.id)
+        .execute(&mut *tx)
+        .await?;
+        if state == "sent" {
+            sqlx::query(
+                "UPDATE scrobble_link SET last_success_at=?, last_failure=NULL, updated_at=? \
+                 WHERE id=?",
+            )
+            .bind(now)
+            .bind(now)
+            .bind(entry.link_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        } else if let Some(failure) = failure {
+            sqlx::query("UPDATE scrobble_link SET last_failure=?, updated_at=? WHERE id=?")
+                .bind(failure)
+                .bind(now)
+                .bind(entry.link_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Pushes one entry out to its next attempt, or gives up on it.
+    ///
+    /// Answers `true` when it will be tried again. A queue that never empties
+    /// is a fault and not a state — decision 6 — so the attempts are bounded and
+    /// what is abandoned is counted.
+    async fn reschedule_scrobble(&self, entry: &DueEntry) -> Result<bool, ServiceError> {
+        let attempts = entry.attempts.saturating_add(1);
+        let exhausted =
+            u64::try_from(attempts).unwrap_or(u64::MAX) >= u64::from(self.scrobbling.max_attempts);
+        if exhausted {
+            self.settle_scrobble(entry, "abandoned", Some("attempts_exhausted"))
+                .await?;
+            return Ok(false);
+        }
+        let now = now_ms();
+        let wait = retry_delay(attempts, entry.id);
+        let _writer = self.db.writer_guard().await;
+        sqlx::query(
+            "UPDATE scrobble_outbox SET attempts=?, next_attempt_at=?, last_failure='retryable', \
+             updated_at=? WHERE id=? AND state='pending'",
+        )
+        .bind(attempts)
+        .bind(now.saturating_add(wait))
+        .bind(now)
+        .bind(entry.id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(true)
+    }
+
+    /// Marks one link broken and finishes its queue.
+    ///
+    /// Every waiting row under it would fail identically, so leaving them
+    /// pending would be asking the same refused question a few thousand times.
+    async fn mark_link_broken(&self, link_id: Uuid, cause: &str) -> Result<(), ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "UPDATE scrobble_link SET status='broken', last_failure=?, updated_at=? WHERE id=?",
+        )
+        .bind(cause)
+        .bind(now)
+        .bind(link_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=? \
+             WHERE link_id=? AND state='pending'",
+        )
+        .bind(cause)
+        .bind(now)
+        .bind(link_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// Where a link stands, from its status and the shape of its queue.
+///
+/// Kept apart from the query so the rule can be read and exercised on its own:
+/// the whole point of decision 12 is that this is a judgement and not a column.
+fn link_health(
+    status: &str,
+    uncertain: i64,
+    oldest_pending_at: Option<i64>,
+    now: i64,
+    stale_after: Duration,
+) -> &'static str {
+    if status == "broken" {
+        return "broken";
+    }
+    if uncertain > 0 {
+        return "degraded";
+    }
+    let stale_ms = i64::try_from(stale_after.as_millis()).unwrap_or(i64::MAX);
+    if oldest_pending_at.is_some_and(|oldest| now.saturating_sub(oldest) > stale_ms) {
+        return "degraded";
+    }
+    "healthy"
+}
+
+/// How long to wait before attempt number `attempts`.
+///
+/// Doubling from a minute to an hour, spread by the row's own id. The spread
+/// exists so that a queue which failed together does not come back together;
+/// it has no reason to be unpredictable, which is why it costs no randomness —
+/// two rows that failed in the same second still return at different moments.
+fn retry_delay(attempts: i64, entry_id: i64) -> i64 {
+    let step = u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX);
+    let base = RETRY_BASE
+        .saturating_mul(2u32.saturating_pow(step.min(16)))
+        .min(RETRY_CEILING);
+    let base_ms = i64::try_from(base.as_millis()).unwrap_or(i64::MAX);
+    // Up to a quarter of the wait, either side of nothing.
+    let spread = base_ms / 4;
+    let jitter = if spread > 0 {
+        entry_id.rem_euclid(spread)
+    } else {
+        0
+    };
+    base_ms.saturating_add(jitter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_link_that_answers_is_still_degraded_while_its_queue_does_not_move() {
+        let hour = Duration::from_secs(3600);
+        let now = 10_000_000;
+
+        // Nothing waiting, nothing ambiguous.
+        assert_eq!(link_health("active", 0, None, now, hour), "healthy");
+
+        // Waiting, but not for long.
+        assert_eq!(
+            link_health("active", 0, Some(now - 60_000), now, hour),
+            "healthy"
+        );
+
+        // This is the silent failure a durable queue exists to make visible: the
+        // token is good, the destination answers, and nothing has moved for
+        // hours.
+        assert_eq!(
+            link_health("active", 0, Some(now - 6 * 3_600_000), now, hour),
+            "degraded"
+        );
+
+        // One ambiguous entry is enough: it is waiting on a person, not on a
+        // network, and nothing will move it on its own.
+        assert_eq!(link_health("active", 1, None, now, hour), "degraded");
+
+        // A broken authorisation outranks both.
+        assert_eq!(
+            link_health("broken", 3, Some(now - 6 * 3_600_000), now, hour),
+            "broken"
+        );
+    }
+
+    #[test]
+    fn the_wait_grows_to_an_hour_and_two_rows_never_return_together() {
+        let minute = 60_000;
+        // The first retry waits about a minute, the later ones about an hour,
+        // and never more.
+        assert!((minute..minute + minute / 4).contains(&retry_delay(1, 0)));
+        assert!(retry_delay(40, 0) <= 3_600_000 + 3_600_000 / 4);
+        assert!(retry_delay(40, 0) >= 3_600_000);
+        // Monotonic while it grows.
+        assert!(retry_delay(3, 0) > retry_delay(1, 0));
+        // And two entries that failed in the same instant come back apart.
+        assert_ne!(retry_delay(2, 7), retry_delay(2, 8));
+    }
+}
