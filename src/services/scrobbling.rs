@@ -128,10 +128,12 @@ pub trait ScrobbleTarget: Send + Sync + 'static {
 /// The registry `initialize` fills and the drain reads.
 pub(super) type ScrobbleTargets = Arc<dashmap::DashMap<ScrobbleProvider, Arc<dyn ScrobbleTarget>>>;
 
-/// What one link's queue looks like from outside.
-///
-/// Counters, never content. Decision 12: what the API shows is a state, not an
-/// echo of the envelope nor of the destination's own words.
+// Decision 12: what the API shows is a state, not an echo of the envelope nor
+// of the destination's own words. In a `//` because `ToSchema` publishes the
+// `///` verbatim as this schema's description, and "decision 12" names nothing
+// a client can look up.
+
+/// What one link's queue looks like from outside: counters, never content.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScrobbleLinkState {
     pub provider: ScrobbleProvider,
@@ -146,8 +148,8 @@ pub struct ScrobbleLinkState {
     pub pending: i64,
     /// Waiting after at least one failure.
     pub retrying: i64,
-    /// Ambiguous, and still asking the person to decide. A retried one stops
-    /// being counted here without being erased — see [`DomainServices::retry_uncertain_scrobble`].
+    /// Ambiguous, and still asking the person to decide. An entry that has been
+    /// retried stops being counted here, without being erased.
     pub uncertain: i64,
     pub oldest_pending_at: Option<i64>,
     pub last_success_at: Option<i64>,

@@ -233,13 +233,15 @@ async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
         "{forbidden}"
     );
 
-    // **The order matters, and nothing else pins it.** `link` checks the admin,
-    // resolves the account, parses the provider, and only then reads the
-    // secret. The absent-variable case in the test above traverses all four but
-    // asserts about the last, so hoisting `read_secret_env` to the top of
-    // `link_scrobble` would leave every CLI test green. This is the assertion
-    // that notices: a non-administrator is turned away before the command looks
-    // for a token at all.
+    // **Admin before secret, and nothing else pins it.** `link` checks the
+    // admin, resolves the account, parses the provider, and only then reads the
+    // secret. The absent-variable case above traverses all four but asserts
+    // about the last, so hoisting `read_secret_env` to the top of
+    // `link_scrobble` would leave every CLI test green. This is what notices.
+    //
+    // It pins that one edge and not the whole order: moving the read between
+    // the admin check and the account lookup still fails the admin first, and
+    // this would stay green. Said plainly rather than claimed wider.
     let too_early = run_cli(
         &state,
         &[
