@@ -298,12 +298,27 @@ fn reset_in(response: &reqwest::Response) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-/// The standard one, in either of the two forms RFC 9110 allows.
+/// The standard one: delta-seconds, or an HTTP date.
 ///
-/// Delta-seconds, or an HTTP date. **A date already past, or one that will not
-/// parse, reads as absent** rather than as zero: "wait until a moment that has
-/// gone" is not a request to wait, and turning it into one would let a clock
-/// skew of a few seconds decide a listen's schedule.
+/// **A date already past, or one that will not parse, reads as absent** rather
+/// than as zero: "wait until a moment that has gone" is not a request to wait,
+/// and turning it into one would let a clock skew of a few seconds decide a
+/// listen's schedule.
+///
+/// **HTTP-date is three formats, and this reads one of them.** RFC 9110 §5.6.7
+/// asks a recipient to accept IMF-fixdate plus the obsolete RFC 850 and asctime
+/// spellings. `parse_from_rfc2822` covers IMF-fixdate, which is the only one
+/// anything still sends; the other two therefore read as absent and fall to this
+/// server's own backoff, which is the safe direction. Declined rather than
+/// missed: RFC 850 carries a two-digit year, and a fifty-year windowing rule is
+/// a real defect to buy in exchange for a format no destination emits. An
+/// earlier version of this comment said "either of the two forms RFC 9110
+/// allows" — it counted delta-seconds and HTTP-date, and missed that the second
+/// is itself three.
+///
+/// Delta-seconds is `1*DIGIT`, so the digits are checked before the parse:
+/// `u64::from_str` accepts a leading `+`, and `+30` is not a spelling this is
+/// allowed to understand.
 fn retry_after(response: &reqwest::Response) -> Option<Duration> {
     let raw = response
         .headers()
@@ -312,7 +327,12 @@ fn retry_after(response: &reqwest::Response) -> Option<Duration> {
         .ok()?
         .trim()
         .to_owned();
-    if let Ok(seconds) = raw.parse::<u64>() {
+    // `1*DIGIT` spelled out: at least one, and every one of them a digit. The
+    // emptiness half is not redundant with the parse failing on `""` — it is
+    // the rule written where the rule is, rather than inferred from what a
+    // parser happens to reject.
+    let plain_digits = !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some(seconds) = plain_digits.then(|| raw.parse::<u64>().ok()).flatten() {
         return Some(Duration::from_secs(seconds));
     }
     let until = chrono::DateTime::parse_from_rfc2822(&raw).ok()?;
@@ -437,6 +457,10 @@ mod tests {
         let past = chrono::Utc::now() - chrono::Duration::seconds(120);
         assert_eq!(answered("retry-after", &past.to_rfc2822()), None);
         assert_eq!(answered("retry-after", "in a little while"), None);
+        // RFC 9110's delta-seconds is `1*DIGIT`, so a signed number is not one.
+        // `u64::from_str` accepts a leading `+`, which read `+30` as a wait
+        // nobody had spelled in a form this is allowed to understand.
+        assert_eq!(answered("retry-after", "+30"), None);
         assert_eq!(answered("x-unrelated", "30"), None);
     }
 

@@ -701,6 +701,44 @@ async fn app_reaching(base: &str) -> (tempfile::TempDir, waveflow_server::Config
     (temp, config, state)
 }
 
+/// A destination that cannot be used is never quoted back.
+///
+/// `validate_destination` refuses a URL carrying credentials, so the value this
+/// error branch is most likely to be holding is precisely the one that must not
+/// be printed — and a startup error goes to a log, a terminal, and whatever a
+/// person pastes into an issue. The repository's rule about secrets has no
+/// exception for an error path.
+///
+/// Here rather than nowhere because the guard is one line, and this branch has
+/// four times now found a guard that was in place, plausible, and reachable by
+/// nothing.
+#[tokio::test]
+async fn a_refused_destination_is_never_quoted_back_with_its_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    // A private host, so the plaintext rule lets this through and the
+    // credential rule is what refuses it. That is the path carrying a password.
+    config.listenbrainz_url = Some("http://wf-user:hunter2@10.0.0.2".to_owned());
+
+    let error = match waveflow_server::initialize(&config).await {
+        Ok(_) => panic!("a destination carrying credentials must refuse the boot"),
+        Err(error) => error,
+    };
+    let said = format!("{error:#}");
+
+    for secret in ["hunter2", "wf-user", "10.0.0.2"] {
+        assert!(
+            !said.contains(secret),
+            "the startup error quoted {secret:?} back from the destination: {said}"
+        );
+    }
+    // And it still says enough to be fixed by the person who typed it.
+    assert!(
+        said.contains("credentials"),
+        "the error must name the fault: {said}"
+    );
+}
+
 #[tokio::test]
 async fn a_listen_reaches_the_destination_in_the_shape_it_documents() {
     let destination = spawn_destination(200, None).await;
@@ -791,7 +829,11 @@ async fn a_rate_limit_named_only_by_the_standard_header_is_honoured_too() {
     // learned the standard header. For a while it had not — the function that
     // read it was written and never called, and only a dead-code warning said
     // so. This test is what would have said so instead.
-    let destination = spawn_delaying(429, Some(("retry-after", "3600".to_owned()))).await;
+    // Half an hour, not a whole one: `RETRY_CEILING_MS` is exactly an hour, so
+    // asking for 3600 sits the expected value on the clamp boundary and passes
+    // only by the margin the clock happens to add. Half of it tests the same
+    // reading with nothing resting on where the ceiling falls.
+    let destination = spawn_delaying(429, Some(("retry-after", "1800".to_owned()))).await;
     let (_temp, config, state) = app_reaching(&destination.base).await;
     let fixture = fixture(&config, &state, "proxied-listener").await;
     state
@@ -809,7 +851,7 @@ async fn a_rate_limit_named_only_by_the_standard_header_is_honoured_too() {
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
     assert_eq!(drained.retrying, 1);
 
-    // An hour, against a first backoff of one minute: only the header can
+    // Half an hour, against a first backoff of one minute: only the header can
     // explain a wait this long, so reading it is the only way to pass.
     let next: i64 =
         sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox ORDER BY id LIMIT 1")
@@ -817,8 +859,8 @@ async fn a_rate_limit_named_only_by_the_standard_header_is_honoured_too() {
             .await
             .unwrap();
     assert!(
-        next >= before + 3_600_000,
-        "a `Retry-After` of an hour must outlast our own one-minute backoff"
+        next >= before + 1_800_000,
+        "a `Retry-After` of half an hour must outlast our own one-minute backoff"
     );
 }
 

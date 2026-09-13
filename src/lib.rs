@@ -571,7 +571,14 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
                 Arc::new(target),
             ),
             Err(error) => {
-                anyhow::bail!("ListenBrainz destination {base} is unusable: {error}")
+                // **Never the URL itself.** `validate_destination` refuses a
+                // destination that carries credentials, so the one thing this
+                // branch is most likely to be handed is exactly the thing that
+                // must not be printed: `http://user:secret@host` would land in
+                // a startup log, or a support paste, in full. The variant names
+                // the fault precisely enough without it, and this repository's
+                // rule about secrets has no exception for an error path.
+                anyhow::bail!("the configured ListenBrainz destination is unusable: {error}")
             }
         }
     }
