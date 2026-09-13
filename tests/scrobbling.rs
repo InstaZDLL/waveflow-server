@@ -934,6 +934,47 @@ async fn a_destination_that_asked_for_room_is_not_offered_the_rest_of_the_batch(
 }
 
 #[tokio::test]
+async fn a_drain_interval_longer_than_the_ceiling_does_not_kill_the_drain() {
+    let destination = spawn_destination(429, Some(3_600)).await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.listenbrainz_url = Some(destination.base.clone());
+    // Longer than `RETRY_CEILING`, which nothing forbids: `parse_positive_env`
+    // bounds this below zero and nowhere above. That made the rest floor exceed
+    // the rest ceiling, and `Ord::clamp` panics when its minimum exceeds its
+    // maximum — inside a `tokio::spawn`ed loop, so the queue would have stopped
+    // for the life of the process. The silent stop this whole RFC exists to
+    // prevent, reachable by one plausible setting.
+    config.scrobbling.drain_interval = Duration::from_secs(7_200);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let fixture = fixture(&config, &state, "slow-interval-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    // The assertion is that this returns at all rather than unwinding.
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    assert_eq!(drained.retrying, 1);
+    // And the bounds still did their work: the row waits, and not for the
+    // thirty-one thousand years an unclamped answer would have bought.
+    let wait: i64 = sqlx::query_scalar(
+        "SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id LIMIT 1",
+    )
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert!((3_600_000..=4_600_000).contains(&wait));
+}
+
+#[tokio::test]
 async fn a_rate_limit_that_names_no_delay_still_rests_the_link() {
     // `429` carrying no `X-RateLimit-Reset-In` at all — a destination under
     // load, or one whose proxy stripped the header on the way back.
@@ -1015,7 +1056,12 @@ async fn a_rate_limited_backlog_does_not_starve_another_destination() {
 
     // The first pass is filled by the rate-limited backlog: one row offered and
     // refused, the other three moved out of the way.
-    state.services.drain_scrobble_outbox().await.unwrap();
+    let first = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(first.retrying, 1);
+    assert_eq!(
+        first.rested, 3,
+        "a pass that moves rows aside must say so, or it looks like a pass that did nothing"
+    );
     // The second must reach the destination that is perfectly willing.
     state.services.drain_scrobble_outbox().await.unwrap();
 

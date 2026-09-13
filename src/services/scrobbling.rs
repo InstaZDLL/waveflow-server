@@ -174,6 +174,13 @@ pub struct ScrobbleDrain {
     /// misconfiguration, and spending the listen's retries on it would destroy
     /// the queue the operator is about to fix.
     pub unserviced: usize,
+    /// Rows moved out of the way because their destination had just asked for
+    /// room, or gone silent. Not an attempt either — nothing was sent.
+    ///
+    /// Counted because without it a pass that defers forty-nine rows compares
+    /// equal to `default()` and logs nothing at all, which is a hole in a module
+    /// whose whole argument is that a queue which stops must say so.
+    pub rested: usize,
 }
 
 /// One row the drain is about to act on.
@@ -653,6 +660,7 @@ impl DomainServices {
                 uncertain = drained.uncertain,
                 broken = drained.broken,
                 unserviced = drained.unserviced,
+                rested = drained.rested,
                 recovered = drained.recovered,
                 "scrobble queue drained"
             ),
@@ -731,9 +739,15 @@ impl DomainServices {
         // The floor keeps a `429` that named no duration from deferring by
         // nothing at all; the ceiling is the one the queue already refuses to
         // let a third party exceed.
-        let rest_floor =
-            i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(i64::MAX);
+        // The ceiling first, because the floor falls back to it.
+        //
+        // `unwrap_or(i64::MAX)` on the floor was the same park-a-row-forever
+        // hole this queue already refuses a destination, arriving by the other
+        // door — configuration. An interval this platform cannot represent in
+        // milliseconds is not a reason to defer a listen past the end of time.
         let rest_ceiling = i64::try_from(RETRY_CEILING.as_millis()).unwrap_or(i64::MAX);
+        let rest_floor =
+            i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(rest_ceiling);
         for entry in self.due_scrobbles(now_ms()).await? {
             if broken_links.contains(&entry.link_id) {
                 // Its waiting rows are already `cancelled`, so there is nothing
@@ -741,7 +755,9 @@ impl DomainServices {
                 continue;
             }
             if let Some(rest) = resting_links.get(&entry.link_id).copied() {
-                self.defer_scrobble(&entry, rest).await?;
+                if self.defer_scrobble(&entry, rest).await? {
+                    drained.rested += 1;
+                }
                 continue;
             }
             let Some(target) = self
@@ -760,8 +776,9 @@ impl DomainServices {
                 // *does* have an adapter would never be reached. That is
                 // starvation rather than slowness, and it is the reason this
                 // defers instead of merely counting.
-                self.defer_scrobble(&entry, rest_floor).await?;
-                drained.unserviced += 1;
+                if self.defer_scrobble(&entry, rest_floor).await? {
+                    drained.unserviced += 1;
+                }
                 continue;
             };
             let secret = match self.secret_box.decrypt(&entry.nonce, &entry.ciphertext) {
@@ -848,9 +865,23 @@ impl DomainServices {
                     // and resting the whole link on one of those would slow a
                     // recovery nobody asked to slow.
                     if let Some(after) = after {
+                        // `min` then `max`, never `clamp`: `Ord::clamp` panics
+                        // when its minimum exceeds its maximum, and nothing
+                        // stops an operator setting `WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS`
+                        // above the hour — `parse_positive_env` bounds it below
+                        // zero and nowhere above. That panic would unwind inside
+                        // a spawned task and stop the queue for the life of the
+                        // process: the silent stop this RFC exists to prevent,
+                        // reachable by one plausible setting.
+                        //
+                        // The order is also the right answer when the floor does
+                        // exceed the ceiling: if a pass runs every two hours,
+                        // deferring by one would have the row offered again
+                        // before the next pass anyway, so the floor should win.
                         let asked = i64::try_from(after.as_millis())
                             .unwrap_or(i64::MAX)
-                            .clamp(rest_floor, rest_ceiling);
+                            .min(rest_ceiling)
+                            .max(rest_floor);
                         resting_links.insert(entry.link_id, asked);
                     }
                     match self.reschedule_scrobble(&entry, after).await? {
@@ -1079,10 +1110,13 @@ impl DomainServices {
     /// can carry, and the delay a destination asked for when the link is resting
     /// under a rate limit. Never an attempt — this only moves a row out of the
     /// way, and `attempts` is what says something was tried.
-    async fn defer_scrobble(&self, entry: &DueEntry, wait: i64) -> Result<(), ServiceError> {
+    /// Answers whether the row really moved, on the same terms as every other
+    /// writer here: a pass counts what it wrote and not what it attempted, and a
+    /// row a concurrent pass has already taken is not this one's to report.
+    async fn defer_scrobble(&self, entry: &DueEntry, wait: i64) -> Result<bool, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        sqlx::query(
+        let moved = sqlx::query(
             "UPDATE scrobble_outbox SET next_attempt_at=?, updated_at=? \
              WHERE id=? AND state='pending'",
         )
@@ -1091,7 +1125,7 @@ impl DomainServices {
         .bind(entry.id)
         .execute(self.db.pool())
         .await?;
-        Ok(())
+        Ok(moved.rows_affected() == 1)
     }
 
     /// Pushes one entry out to its next attempt, or gives up on it.
