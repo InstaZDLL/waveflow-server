@@ -702,9 +702,19 @@ impl DomainServices {
         // sent. The ones behind it are not touched at all: they were never
         // emitted, so they stay `pending` and come back next pass, when one
         // further timeout will cost one further entry and no more.
-        let mut stalled_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        // Two reasons reach this set and they end in the same gesture: stop
+        // offering this link rows for the rest of the pass.
+        //
+        // A destination that went silent, and one that answered `429` with a
+        // delay. The second was missing until a review found it: the batch is
+        // chosen before the first verdict, so being told to slow down was
+        // followed by forty-nine more submissions on the same pass, each
+        // earning its own refusal and spending its own attempt. Answering
+        // "please wait" by sending the rest of the batch is the opposite of
+        // honouring it, and decision 6 is explicit that the delay is honoured.
+        let mut resting_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         for entry in self.due_scrobbles(now_ms()).await? {
-            if broken_links.contains(&entry.link_id) || stalled_links.contains(&entry.link_id) {
+            if broken_links.contains(&entry.link_id) || resting_links.contains(&entry.link_id) {
                 continue;
             }
             let Some(target) = self
@@ -789,8 +799,8 @@ impl DomainServices {
                         "a scrobble submission passed its deadline and is now uncertain"
                     );
                     // Nothing else queued for this destination is offered on
-                    // this pass; see `stalled_links` above.
-                    stalled_links.insert(entry.link_id);
+                    // this pass; see `resting_links` above.
+                    resting_links.insert(entry.link_id);
                     ScrobbleVerdict::Ambiguous
                 }
             };
@@ -805,6 +815,13 @@ impl DomainServices {
                     }
                 }
                 ScrobbleVerdict::Retryable { after } => {
+                    // Only when the destination actually asked. A refused
+                    // connection or a 5xx is a fault, not a request for room,
+                    // and resting the whole link on one of those would slow a
+                    // recovery nobody asked to slow.
+                    if after.is_some() {
+                        resting_links.insert(entry.link_id);
+                    }
                     match self.reschedule_scrobble(&entry, after).await? {
                         Rescheduled::Later => drained.retrying += 1,
                         Rescheduled::Abandoned => drained.abandoned += 1,
@@ -1107,12 +1124,23 @@ impl DomainServices {
         let base = retry_base(attempts).max(asked);
         let wait = base.saturating_add(retry_spread(base, entry.id));
         let _writer = self.db.writer_guard().await;
+        // Two causes rather than one, because `ScrobbleLinkState::last_failure`
+        // is documented as carrying a *normalised* cause and named
+        // `rate_limited` among them — while nothing ever wrote it. A comment
+        // asserting a value the code never produces is the category this branch
+        // set out to be rid of, so the code now produces it.
+        let cause = if after.is_some() {
+            "rate_limited"
+        } else {
+            "retryable"
+        };
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
-             last_failure='retryable', updated_at=? WHERE id=? AND state='sending'",
+             last_failure=?, updated_at=? WHERE id=? AND state='sending'",
         )
         .bind(attempts)
         .bind(now.saturating_add(wait))
+        .bind(cause)
         .bind(now)
         .bind(entry.id)
         .execute(self.db.pool())
@@ -1197,13 +1225,25 @@ fn retry_base(attempts: i64) -> i64 {
 }
 
 /// The spreading half: up to a quarter of the wait, added.
+///
+/// The id is **mixed** before it is folded into the interval, and that is the
+/// whole of what makes this worth having. Rowids are consecutive, so
+/// `entry_id % spread` put two neighbouring rows one millisecond apart inside a
+/// fifteen-minute window — a spread that existed, passed its test, and did
+/// nothing. A review caught it; the test could not, because `assert_ne!` tells
+/// "absent" from "present" and never "present and useless".
+///
+/// Multiplied by the odd golden-ratio constant and read from the high bits,
+/// because those are the bits a multiplicative hash actually scrambles — the low
+/// ones keep the input's own structure, which is the structure being escaped.
+/// Still no randomness: two rows must land apart, not unpredictably.
 fn retry_spread(base_ms: i64, entry_id: i64) -> i64 {
     let spread = base_ms / 4;
-    if spread > 0 {
-        entry_id.rem_euclid(spread)
-    } else {
-        0
+    if spread <= 0 {
+        return 0;
     }
+    let mixed = entry_id.unsigned_abs().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    i64::try_from(mixed >> 32).unwrap_or(i64::MAX) % spread
 }
 
 #[cfg(test)]
@@ -1279,6 +1319,40 @@ mod tests {
     fn wait(attempts: i64, entry_id: i64) -> i64 {
         let base = retry_base(attempts);
         base.saturating_add(retry_spread(base, entry_id))
+    }
+
+    /// Neighbouring rows must land *far* apart, not merely at different
+    /// milliseconds.
+    ///
+    /// This is the property an integration test could not hold. Rowids are
+    /// consecutive, so the unmixed spread put four rows at 1, 2, 3 and 4
+    /// milliseconds inside a fifteen-minute window — distinct, and a herd all
+    /// the same. `assert_ne!` tells "absent" from "present" and never "present
+    /// and useless", so it certified a property the code did not deliver until
+    /// a review read the arithmetic.
+    ///
+    /// A pure function, tested purely: dragging the drain, a database and an
+    /// HTTP server through this proved less and cost more.
+    #[test]
+    fn the_spread_scatters_neighbouring_rows_across_the_interval() {
+        let base = 3_600_000;
+        let mut offsets: Vec<i64> = (1..=4).map(|id| retry_spread(base, id)).collect();
+        for offset in &offsets {
+            assert!(
+                (0..base / 4).contains(offset),
+                "the spread never leaves its quarter of the wait"
+            );
+        }
+        offsets.sort_unstable();
+        let smallest = offsets
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .min()
+            .expect("four offsets have three gaps");
+        assert!(
+            smallest >= 1_000,
+            "neighbouring rows land {smallest}ms apart, which is still a herd"
+        );
     }
 
     /// The attempt cap and the schedule beside it describe one span of time, so
