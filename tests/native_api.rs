@@ -301,12 +301,11 @@ async fn an_uncertain_entry_is_listed_and_answered_over_http() {
     // `public_id` alone would have answered 404 to that and passed. The thing a
     // route can get wrong that a service method cannot is *whose* id it passes,
     // so the id below is the owner's real entry, presented by a stranger.
-    let stranger = state
+    state
         .db
         .create_account("uncertain-stranger", &hash, AccountRole::User, now_ms())
         .await
         .unwrap();
-    let _ = stranger;
     let stranger_login = router
         .clone()
         .oneshot(json_request(

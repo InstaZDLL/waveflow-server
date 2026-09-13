@@ -659,12 +659,24 @@ async fn require_admin(
 
 fn read_secret_env(name: &str) -> anyhow::Result<String> {
     let value = std::env::var(name).with_context(|| format!("{name} is required"))?;
-    // Judged on the trimmed value, returned untrimmed. A variable holding
-    // nothing but a newline used to pass here and fail three layers down as a
-    // bare "invalid input", which tells the person who pasted it nothing. The
-    // value itself is handed back as it was found, because this same function
-    // reads account and Subsonic passwords, and silently trimming one of those
-    // would change a credential that already works.
+    non_blank(name, value)
+}
+
+/// The rule, kept apart from the lookup so it can be exercised without one.
+///
+/// Judged on the trimmed value, returned untrimmed. A variable holding nothing
+/// but a newline used to pass and fail three layers down as a bare "invalid
+/// input", which tells the person who pasted it nothing. The value itself is
+/// handed back as it was found, because this same path reads account and
+/// Subsonic passwords, and silently trimming one of those would change a
+/// credential that already works.
+///
+/// Split out because a review pointed out that the guard was testable after all
+/// — this PR had claimed it could not be, on the grounds that exercising it
+/// needed `std::env::set_var`, which was removed as a data race. It needed no
+/// environment at all; it needed the predicate to stop being welded to the
+/// lookup.
+fn non_blank(name: &str, value: String) -> anyhow::Result<String> {
     if value.trim().is_empty() {
         anyhow::bail!("{name} cannot be empty");
     }
@@ -683,4 +695,30 @@ fn validate_username(username: &str) -> anyhow::Result<()> {
         anyhow::bail!("username may only contain letters, numbers, '.', '-' and '_'");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::non_blank;
+
+    #[test]
+    fn a_secret_of_whitespace_is_refused_and_the_variable_is_named() {
+        for blank in ["", " ", "\n", "  \t\r\n "] {
+            let refused = non_blank("WAVEFLOW_EXAMPLE_SECRET", blank.to_owned()).unwrap_err();
+            assert!(
+                refused.to_string().contains("WAVEFLOW_EXAMPLE_SECRET"),
+                "the message has to name the variable the person must fix"
+            );
+        }
+    }
+
+    /// Returned as it was found, never trimmed.
+    ///
+    /// The same path reads account and Subsonic passwords; trimming what it
+    /// hands back would silently alter a credential that already works.
+    #[test]
+    fn a_secret_with_padding_survives_intact() {
+        let kept = non_blank("WAVEFLOW_EXAMPLE_SECRET", "  a token  ".to_owned()).unwrap();
+        assert_eq!(kept, "  a token  ");
+    }
 }
