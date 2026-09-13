@@ -74,8 +74,19 @@ CREATE TABLE scrobble_outbox (
     -- are all terminal. They are six words rather than one because each names a
     -- different thing that happened, and the counters decision 12 describes
     -- cannot be computed from a single `done`.
+    --
+    -- `sending` is the one transient state, and it is what makes a submission
+    -- at-most-once rather than merely usually-once. A row is moved into it by
+    -- an `UPDATE … WHERE state='pending'` before anything is emitted, so two
+    -- passes cannot both take it — and a row found in it long after any
+    -- deadline could have expired belongs to a process that died mid-flight,
+    -- which is `uncertain` by decision 5: nobody knows whether the destination
+    -- recorded it. Left as `pending`, that row would simply be sent again.
     state TEXT NOT NULL CHECK (
-        state IN ('pending', 'sent', 'uncertain', 'discarded', 'rejected', 'abandoned', 'cancelled')
+        state IN (
+            'pending', 'sending', 'sent', 'uncertain', 'discarded', 'rejected',
+            'abandoned', 'cancelled'
+        )
     ),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     next_attempt_at INTEGER NOT NULL,
@@ -94,6 +105,19 @@ CREATE TABLE scrobble_outbox (
 -- there is no longer a listen anything could queue a second time.
 CREATE UNIQUE INDEX scrobble_outbox_once_idx
     ON scrobble_outbox(play_event_id, link_id) WHERE retry_of IS NULL;
+
+-- One deliberate duplicate per ambiguous entry, and not two.
+--
+-- Decision 13 lets a person retry a listen whose fate is unknown, accepting
+-- that the destination may already hold it. That acceptance is given once. The
+-- original stays `uncertain` afterwards — it must, because erasing it would
+-- falsify the only trace explaining why a duplicate exists — so nothing in the
+-- row itself says it has already been answered, and a second call would queue a
+-- second copy. Here rather than only in the service, for the reason decision 5
+-- gives about the index above: the one path in this design that can manufacture
+-- duplicates on demand should be shut by the schema.
+CREATE UNIQUE INDEX scrobble_outbox_one_retry_idx
+    ON scrobble_outbox(retry_of) WHERE retry_of IS NOT NULL;
 
 -- What the drain asks for: the due rows, in the order they became due.
 CREATE INDEX scrobble_outbox_due_idx ON scrobble_outbox(state, next_attempt_at);
