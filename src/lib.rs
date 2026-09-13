@@ -621,17 +621,25 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let request_id_header = axum::http::HeaderName::from_static(REQUEST_ID_HEADER);
     let middleware = ServiceBuilder::new()
         // Before `SetRequestIdLayer`, which keeps whatever the caller sent and
-        // only forges an id when the header is absent. Dropping an unusable one
-        // here is what turns "the caller decides" into "the caller may suggest":
-        // the layer below then mints a UUID, and the span carries that instead.
+        // only forges an id when the header is absent. Dropping the inbound one
+        // unconditionally is what makes the layer below always mint, so the
+        // value in every `http_request` span is one this server chose.
+        //
+        // `CLAUDE.md` says no header reaches a trace sink, without exception,
+        // and an id narrow enough to look like an identifier is still a string
+        // a stranger picked: send a well-formed UUID that somebody else's
+        // requests are using and the trace record stops telling two callers
+        // apart. Validating the shape would have addressed the noise and left
+        // that.
+        //
+        // The correlation the header exists for is not lost, only reversed:
+        // `PropagateRequestIdLayer` returns the minted id on the response, so
+        // an upstream proxy records the name this server gave rather than
+        // imposing one. That is the ordinary arrangement wherever a server does
+        // not trust what is in front of it, and this one is routinely in front
+        // of nothing at all.
         .map_request(|mut request: Request<_>| {
-            let refused = request
-                .headers()
-                .get(REQUEST_ID_HEADER)
-                .is_some_and(|value| !usable_correlation_id(value.as_bytes()));
-            if refused {
-                request.headers_mut().remove(REQUEST_ID_HEADER);
-            }
+            request.headers_mut().remove(REQUEST_ID_HEADER);
             request
         })
         .layer(SetRequestIdLayer::new(
@@ -755,32 +763,6 @@ fn trace_path(path: &str) -> &str {
         }
     }
     path
-}
-
-/// The longest correlation id this server will repeat back to anyone.
-///
-/// Long enough for a UUID, a hex trace id, or the ids the common proxies mint,
-/// and short enough that a line in a trace sink stays a line.
-const MAX_CORRELATION_ID: usize = 64;
-
-/// Whether an `x-request-id` a caller sent may be kept as this request's name.
-///
-/// The header exists so a correlation id survives a reverse proxy, which is a
-/// real use and the reason this is a filter rather than an unconditional
-/// overwrite. But the value lands in every `http_request` span, and `CLAUDE.md`
-/// is plain that no header reaches a trace sink — so what the caller may choose
-/// is narrowed to what an identifier can be, and anything else is dropped and
-/// replaced by one this server minted.
-///
-/// A `HeaderValue` already cannot carry CR or LF, so no forged log line was ever
-/// possible. What this removes is the rest: unbounded length, and arbitrary text
-/// standing where an identifier is read.
-fn usable_correlation_id(value: &[u8]) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_CORRELATION_ID
-        && value
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 async fn openapi_response(openapi: utoipa::openapi::OpenApi) -> Response {

@@ -655,14 +655,19 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
     assert!(restored.db.integrity_check().await.unwrap());
 }
 
-/// A caller may suggest the name its request is traced under, and not choose it.
+/// A request is named by this server, whatever the caller proposed.
 ///
-/// `x-request-id` exists so a correlation id survives a reverse proxy, so this
-/// is a filter and not an overwrite: a well-formed id is kept, and the round
-/// trip below is the only way to see which one the server actually used —
-/// `PropagateRequestIdLayer` puts it on the response.
+/// The name goes in every `http_request` span, and `CLAUDE.md` allows no header
+/// into a trace sink. A well-formed id is no safer than a malformed one for
+/// that purpose — reuse somebody else's and the trace record stops telling two
+/// callers apart — so the header is dropped on the way in and one is minted
+/// here, whatever arrived.
+///
+/// The round trip below is the only way to see which id the server actually
+/// used: `PropagateRequestIdLayer` puts it on the response, which is also what
+/// keeps correlation possible — an upstream records the name it was given.
 #[tokio::test]
-async fn a_caller_cannot_name_its_own_request_with_arbitrary_text() {
+async fn a_caller_cannot_name_its_own_request() {
     let (_temp, config, state) = test_app().await;
     let router = waveflow_server::app(&config, state);
     let named = |value: Option<&str>| {
@@ -684,17 +689,17 @@ async fn a_caller_cannot_name_its_own_request_with_arbitrary_text() {
         }
     };
 
-    // The legitimate case, and the reason this is not an unconditional
-    // overwrite: an id a proxy could have minted comes back unchanged.
-    let kept = "01JD5X-trace_id.7f";
-    assert_eq!(named(Some(kept)).await.as_deref(), Some(kept));
+    // Every request carries one, minted here, when the caller offered nothing.
+    let unprompted = named(None).await.expect("a request is always named");
+    assert!(uuid::Uuid::parse_str(&unprompted).is_ok());
 
-    // Every request carries one, chosen here when the caller offered nothing.
-    let forged = named(None).await.expect("a request is always named");
-    assert_ne!(forged, kept);
-
-    for refused in [
-        // Unbounded length is the half a character check alone would miss.
+    for proposed in [
+        // The case a shape check would have let through, and the reason there
+        // is no shape check: an id belonging to another caller's requests.
+        "550e8400-e29b-41d4-a716-446655440000",
+        // The one a proxy would plausibly mint, and equally not kept.
+        "01JD5X-trace_id.7f",
+        // Unbounded length.
         "x".repeat(65).as_str(),
         // A space, which reads as two fields wherever a trace is parsed.
         "two words",
@@ -705,19 +710,23 @@ async fn a_caller_cannot_name_its_own_request_with_arbitrary_text() {
         // Nothing at all, which would name a request the empty string.
         "",
     ] {
-        let answered = named(Some(refused))
+        let answered = named(Some(proposed))
             .await
-            .expect("a refused id is replaced, never dropped");
+            .expect("a request is named even when the caller proposed nothing usable");
         assert_ne!(
-            answered, refused,
-            "the server repeated back an id it should have refused"
+            answered, proposed,
+            "the server adopted a name the caller chose"
         );
-        // And what replaced it is this server's own, not a trimmed version of
-        // what arrived: a sanitiser that edited the caller's text would still
-        // be letting the caller choose most of it.
+        // And what replaced it is a minted id, not an edited version of what
+        // arrived: a sanitiser would still be letting the caller choose most
+        // of it.
         assert!(
             uuid::Uuid::parse_str(&answered).is_ok(),
-            "a refused id is replaced by a minted one"
+            "the name a request carries is one this server minted"
+        );
+        assert_ne!(
+            answered, unprompted,
+            "each request is named once, not named the same thing twice"
         );
     }
 }
