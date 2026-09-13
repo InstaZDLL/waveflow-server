@@ -240,7 +240,21 @@ fn status_verdict(status: reqwest::StatusCode, retry_after: Option<Duration>) ->
         }
         429 => {
             tracing::info!(?retry_after, "listenbrainz asked for room");
-            ScrobbleVerdict::Retryable { after: retry_after }
+            // `Some` even when the header was absent or unreadable, and that is
+            // the whole point: the **status** says room was asked for, the
+            // header only says how much. Passing `reset_in`'s `None` through
+            // made a rate limit indistinguishable from a connect failure, so a
+            // `429` without a usable header rested no link and recorded itself
+            // as an ordinary `retryable` — defeating both of the things this
+            // verdict carries `after` for.
+            //
+            // Zero rather than an invented number: the queue takes the larger
+            // of its own backoff and this, so zero adds nothing to the wait
+            // while still saying, truthfully, that the destination asked and
+            // named no duration.
+            ScrobbleVerdict::Retryable {
+                after: Some(retry_after.unwrap_or(Duration::ZERO)),
+            }
         }
         // Everything else, 5xx and the surprises alike — including a redirect,
         // which this client does not follow and which means the operator's

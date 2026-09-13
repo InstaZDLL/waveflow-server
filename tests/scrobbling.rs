@@ -752,6 +752,13 @@ async fn a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked() {
         next >= before + 3_600_000,
         "the wait must honour the destination's own answer, not our shorter backoff"
     );
+
+    // And the link says *why* it is waiting, in the normalised vocabulary
+    // decision 12 describes. `rate_limited` was documented there while nothing
+    // wrote it, and then written to the wrong table — the outbox row rather
+    // than the link that `ScrobbleLinkState` actually reads.
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].last_failure.as_deref(), Some("rate_limited"));
 }
 
 #[tokio::test]
@@ -916,11 +923,161 @@ async fn a_destination_that_asked_for_room_is_not_offered_the_rest_of_the_batch(
     // it were never offered, so they have spent nothing and come back next
     // pass.
     let rows = rows(&state).await;
+    // Asserted before the loop below, which would otherwise pass vacuously if
+    // the four calls ever stopped queueing four rows.
+    assert_eq!(rows.len(), 4);
     assert_eq!(rows[0].2, 1);
     for row in &rows[1..] {
         assert_eq!(row.1, "pending");
         assert_eq!(row.2, 0, "a row that was never offered has spent nothing");
     }
+}
+
+#[tokio::test]
+async fn a_rate_limit_that_names_no_delay_still_rests_the_link() {
+    // `429` carrying no `X-RateLimit-Reset-In` at all — a destination under
+    // load, or one whose proxy stripped the header on the way back.
+    //
+    // The **status** is what says room was asked for; the header only says how
+    // much. Passing the missing header through as `after: None` made this
+    // indistinguishable from a connect failure, so the link rested for nothing
+    // and the cause was recorded as an ordinary `retryable` — both of the
+    // things that value carries, bypassed by a header being absent.
+    let destination = spawn_destination(429, None).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "silent-limit-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
+
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    assert_eq!(
+        destination.bodies.lock().unwrap().len(),
+        1,
+        "a rate limit that named no delay must still stop the rest of the batch"
+    );
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].last_failure.as_deref(), Some("rate_limited"));
+}
+
+#[tokio::test]
+async fn a_rate_limited_backlog_does_not_starve_another_destination() {
+    let listenbrainz = spawn_destination(429, Some(3_600)).await;
+    // A batch of four, so the backlog below fills a whole pass on its own —
+    // the shape a real server reaches the moment one destination is limited
+    // and the other is not.
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.listenbrainz_url = Some(listenbrainz.base.clone());
+    config.scrobbling.batch = 4;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let fixture = fixture(&config, &state, "starved-listener").await;
+
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
+
+    // A second destination, linked after the backlog exists and reachable.
+    let maloja = Recorder::always(ScrobbleVerdict::Accepted);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::Maloja,
+        std::sync::Arc::clone(&maloja) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::Maloja, "maloja-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    // The first pass is filled by the rate-limited backlog: one row offered and
+    // refused, the other three moved out of the way.
+    state.services.drain_scrobble_outbox().await.unwrap();
+    // The second must reach the destination that is perfectly willing.
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    // Skipping the rested rows rather than deferring them leaves them due with
+    // an *older* `next_attempt_at`, so they keep sorting ahead of this one and
+    // it is never reached — not slowly, never.
+    assert_eq!(
+        maloja.seen().len(),
+        1,
+        "a rate-limited backlog must not starve a destination that is answering"
+    );
+}
+
+#[tokio::test]
+async fn the_spread_reaches_the_rows_the_drain_actually_reschedules() {
+    // A server fault rather than a rate limit, on purpose: a `500` earns
+    // `Retryable { after: None }`, which does not rest the link — so all four
+    // rows are rescheduled in one pass and their waits can only differ by the
+    // spread.
+    let destination = spawn_destination(500, None).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "scattered-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.retrying, 4);
+
+    // This is the test the deleted integration one should have been. A review
+    // pointed out that after that deletion, *nothing* failed if the spread
+    // stopped being applied in production: the unit test proves the pure
+    // function, and the helper beside it re-implements the composition rather
+    // than calling the path the drain takes. Removing
+    // `.saturating_add(retry_spread(..))` from `reschedule_scrobble` left the
+    // whole suite green.
+    let waits: Vec<i64> =
+        sqlx::query_scalar("SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(waits.len(), 4);
+    let mut sorted = waits.clone();
+    sorted.sort_unstable();
+    let smallest_gap = sorted
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .min()
+        .expect("four rows have three gaps");
+    assert!(
+        smallest_gap >= 1_000,
+        "the drain rescheduled four rows {smallest_gap}ms apart, which is still a herd"
+    );
 }
 
 #[tokio::test]

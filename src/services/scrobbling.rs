@@ -712,9 +712,36 @@ impl DomainServices {
         // earning its own refusal and spending its own attempt. Answering
         // "please wait" by sending the rest of the batch is the opposite of
         // honouring it, and decision 6 is explicit that the delay is honoured.
-        let mut resting_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        // Carrying how long each one asked for, because skipping is not enough.
+        //
+        // A skipped row keeps its old `next_attempt_at`, already in the past, so
+        // it is due again the instant the next pass runs — and it sorts *ahead*
+        // of another link's newer rows. One row of the resting link drains per
+        // pass while the rest hold the head of the queue, and a link with a
+        // large backlog starves every other one for hours or for good. The file
+        // already makes this argument for the no-adapter case, twenty lines
+        // below; the resting path needed the same answer.
+        //
+        // Deferring by the delay that was actually asked is not a slower retry
+        // than skipping — a skipped row returns in one drain interval anyway —
+        // it is a *more* honouring one: right now the other rows sit due and are
+        // re-offered once a minute despite an hour having been requested.
+        let mut resting_links: std::collections::HashMap<Uuid, i64> =
+            std::collections::HashMap::new();
+        // The floor keeps a `429` that named no duration from deferring by
+        // nothing at all; the ceiling is the one the queue already refuses to
+        // let a third party exceed.
+        let rest_floor =
+            i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(i64::MAX);
+        let rest_ceiling = i64::try_from(RETRY_CEILING.as_millis()).unwrap_or(i64::MAX);
         for entry in self.due_scrobbles(now_ms()).await? {
-            if broken_links.contains(&entry.link_id) || resting_links.contains(&entry.link_id) {
+            if broken_links.contains(&entry.link_id) {
+                // Its waiting rows are already `cancelled`, so there is nothing
+                // left to defer and no place for them to be in the way of.
+                continue;
+            }
+            if let Some(rest) = resting_links.get(&entry.link_id).copied() {
+                self.defer_scrobble(&entry, rest).await?;
                 continue;
             }
             let Some(target) = self
@@ -733,7 +760,7 @@ impl DomainServices {
                 // *does* have an adapter would never be reached. That is
                 // starvation rather than slowness, and it is the reason this
                 // defers instead of merely counting.
-                self.defer_scrobble(&entry).await?;
+                self.defer_scrobble(&entry, rest_floor).await?;
                 drained.unserviced += 1;
                 continue;
             };
@@ -799,8 +826,9 @@ impl DomainServices {
                         "a scrobble submission passed its deadline and is now uncertain"
                     );
                     // Nothing else queued for this destination is offered on
-                    // this pass; see `resting_links` above.
-                    resting_links.insert(entry.link_id);
+                    // this pass; see `resting_links` above. No delay was named
+                    // here — silence asks for nothing — so the floor stands.
+                    resting_links.insert(entry.link_id, rest_floor);
                     ScrobbleVerdict::Ambiguous
                 }
             };
@@ -819,8 +847,11 @@ impl DomainServices {
                     // connection or a 5xx is a fault, not a request for room,
                     // and resting the whole link on one of those would slow a
                     // recovery nobody asked to slow.
-                    if after.is_some() {
-                        resting_links.insert(entry.link_id);
+                    if let Some(after) = after {
+                        let asked = i64::try_from(after.as_millis())
+                            .unwrap_or(i64::MAX)
+                            .clamp(rest_floor, rest_ceiling);
+                        resting_links.insert(entry.link_id, asked);
                     }
                     match self.reschedule_scrobble(&entry, after).await? {
                         Rescheduled::Later => drained.retrying += 1,
@@ -1044,9 +1075,12 @@ impl DomainServices {
     /// Refusing the link instead would be the other way to prevent this, and it
     /// is the wrong one: a durable queue exists precisely so that a listen
     /// survives until the thing that carries it arrives.
-    async fn defer_scrobble(&self, entry: &DueEntry) -> Result<(), ServiceError> {
+    /// `wait` is how far out to push it: one drain interval for a row nothing
+    /// can carry, and the delay a destination asked for when the link is resting
+    /// under a rate limit. Never an attempt — this only moves a row out of the
+    /// way, and `attempts` is what says something was tried.
+    async fn defer_scrobble(&self, entry: &DueEntry, wait: i64) -> Result<(), ServiceError> {
         let now = now_ms();
-        let wait = i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(i64::MAX);
         let _writer = self.db.writer_guard().await;
         sqlx::query(
             "UPDATE scrobble_outbox SET next_attempt_at=?, updated_at=? \
@@ -1134,6 +1168,7 @@ impl DomainServices {
         } else {
             "retryable"
         };
+        let mut tx = self.db.pool().begin().await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
              last_failure=?, updated_at=? WHERE id=? AND state='sending'",
@@ -1143,8 +1178,28 @@ impl DomainServices {
         .bind(cause)
         .bind(now)
         .bind(entry.id)
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await?;
+        // The link's own column as well, and this is the half that was missing.
+        //
+        // `ScrobbleLinkState::last_failure` is read from `scrobble_link`, never
+        // from the row — so writing the cause onto the outbox entry alone left
+        // decision 12's normalised `rate_limited` unreachable by anything that
+        // reports it. An earlier commit message in this branch claimed that gap
+        // was closed. It was not; this closes it.
+        //
+        // Only when the row really moved, on the same terms as every counter in
+        // the drain: a verdict about a row this pass no longer owns must not
+        // rewrite the link's state either.
+        if moved.rows_affected() == 1 {
+            sqlx::query("UPDATE scrobble_link SET last_failure=?, updated_at=? WHERE id=?")
+                .bind(cause)
+                .bind(now)
+                .bind(entry.link_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(if moved.rows_affected() == 0 {
             tracing::warn!(
                 entry = entry.id,
@@ -1243,7 +1298,10 @@ fn retry_spread(base_ms: i64, entry_id: i64) -> i64 {
         return 0;
     }
     let mixed = entry_id.unsigned_abs().wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    i64::try_from(mixed >> 32).unwrap_or(i64::MAX) % spread
+    // The shift leaves a value below 2^32, so both conversions are exact and
+    // there is no fallback branch — nothing unreachable for a later reader to
+    // mistake for a case that happens.
+    i64::from((mixed >> 32) as u32) % spread
 }
 
 #[cfg(test)]
