@@ -824,8 +824,8 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
     );
     let api_key = stdout.trim_end_matches(['\r', '\n']);
     assert!(
-        api_key.starts_with("wfsk_"),
-        "standard output should hold the API key itself"
+        api_key.starts_with("wfsk_") && !api_key.contains('\n'),
+        "standard output should hold the API key on one line and nothing else"
     );
     assert!(
         !stderr.contains(api_key),
