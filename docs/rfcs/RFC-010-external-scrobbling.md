@@ -9,7 +9,8 @@
   sortant — la surface bornée de la décision 10, l'adaptateur ListenBrainz, et
   le délai que la décision 6 promettait d'honorer sans que le verdict puisse le
   porter.
-  Puis la troisième tranche, **les routes natives et la CLI** : un compte pose
+  Puis [#193](https://github.com/InstaZDLL/waveflow-server/pull/193), **les routes
+  natives et la CLI** : un compte pose
   et retire son autorisation lui-même, lit l'état de sa file, et répond des
   écoutes dont personne ne sait si elles sont arrivées — la décision 13
   demandait ce choix à une personne sans qu'aucune surface ne lui montre sur
