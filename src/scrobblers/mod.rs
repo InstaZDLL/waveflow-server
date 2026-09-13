@@ -21,6 +21,8 @@ pub enum OutboundError {
     Unparseable,
     #[error("the destination must be https")]
     NotHttps,
+    #[error("plaintext is only allowed to a host on the operator's own network")]
+    PlaintextToPublicHost,
     #[error("the destination must not carry credentials, a query or a fragment")]
     NotABareOrigin,
     #[error("the outbound client could not be built")]
@@ -72,13 +74,33 @@ pub fn outbound_client(timeout: Duration) -> Result<reqwest::Client, OutboundErr
 /// this rule must not forbid. What it must forbid is a *default* that quietly
 /// sends a personal token in clear across somebody's internet.
 ///
+/// **And the escape is now no wider than that justification.** A review pointed
+/// out that `submit` sends `Authorization: Token …` on the first request, so
+/// plaintext to a *public* host is cleartext transmission of somebody's
+/// credential — CWE-319. Decision 10 had always read "sauf pour une cible
+/// explicitement déclarée par l'opérateur **en clair sur son propre réseau**",
+/// and the paragraph above said the same; neither was ever checked, so the flag
+/// bought plaintext to anywhere. The reviewer asked for HTTP to be refused
+/// outright, which would remove the self-hosted case the decision exists to
+/// permit. Making the code enforce the sentence it already claimed is the
+/// narrower and truer fix.
+///
+/// Judged on the literal, never resolved: a name that resolves privately but
+/// does not look private is refused, and the operator writes the address
+/// instead. Guessing from DNS would make this answer depend on what a resolver
+/// said at boot.
+///
 /// A bare origin only — no credentials, no query, no fragment. A path is
 /// allowed, because a self-hosted instance may well live under one.
 pub fn validate_destination(raw: &str, allow_plaintext: bool) -> Result<url::Url, OutboundError> {
     let parsed = url::Url::parse(raw.trim()).map_err(|_| OutboundError::Unparseable)?;
     match parsed.scheme() {
         "https" => {}
-        "http" if allow_plaintext => {}
+        "http" if allow_plaintext => {
+            if !is_on_our_own_network(parsed.host()) {
+                return Err(OutboundError::PlaintextToPublicHost);
+            }
+        }
         _ => return Err(OutboundError::NotHttps),
     }
     if !parsed.username().is_empty()
@@ -90,6 +112,43 @@ pub fn validate_destination(raw: &str, allow_plaintext: bool) -> Result<url::Url
         return Err(OutboundError::NotABareOrigin);
     }
     Ok(parsed)
+}
+
+/// Whether a host is plausibly on the operator's own network.
+///
+/// The addresses are the ones that cannot be routed across the internet:
+/// loopback, the three private IPv4 ranges, link-local, and their IPv6
+/// equivalents — unique-local `fc00::/7` and link-local `fe80::/10`, spelled out
+/// by hand because `Ipv6Addr`'s own predicates for those are still unstable.
+///
+/// The names are the ones that cannot resolve on it: `localhost`, the mDNS and
+/// intranet suffixes, and **a single label with no dot at all** — which is what a
+/// container is called on a Docker network, and the self-hosted case this whole
+/// escape exists for.
+///
+/// A public name is refused even if it happens to resolve to `10.0.0.2` today.
+/// That is the deliberate half: a check that asked a resolver would answer
+/// differently depending on when it was asked, and a DNS answer is not a thing
+/// to hang a credential on.
+fn is_on_our_own_network(host: Option<url::Host<&str>>) -> bool {
+    match host {
+        Some(url::Host::Ipv4(address)) => {
+            address.is_loopback() || address.is_private() || address.is_link_local()
+        }
+        Some(url::Host::Ipv6(address)) => {
+            let leading = address.segments()[0];
+            address.is_loopback() || (leading & 0xfe00) == 0xfc00 || (leading & 0xffc0) == 0xfe80
+        }
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            !name.contains('.')
+                || name == "localhost"
+                || [".localhost", ".local", ".internal", ".home.arpa"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        }
+        None => false,
+    }
 }
 
 /// Joins a path onto a configured destination without letting the path escape.
@@ -139,6 +198,51 @@ mod tests {
         for refused in ["ftp://host", "file:///etc/passwd", "not a url"] {
             assert!(validate_destination(refused, true).is_err(), "{refused}");
         }
+    }
+
+    /// The escape reaches exactly as far as the sentence that justifies it.
+    #[test]
+    fn plaintext_is_allowed_only_towards_the_operators_own_network() {
+        // The shapes decision 10 carved it for: a container named on a Docker
+        // network, the intranet suffixes, and the addresses that cannot be
+        // routed across the internet.
+        for own in [
+            "http://maloja",
+            "http://maloja.local",
+            "http://listens.internal",
+            "http://listens.home.arpa",
+            "http://127.0.0.1:8080",
+            "http://10.0.0.2",
+            "http://172.16.4.9",
+            "http://192.168.1.50",
+            "http://169.254.7.7",
+            "http://[::1]:8080",
+            "http://[fd00::1]",
+            "http://[fe80::1]",
+        ] {
+            assert!(validate_destination(own, true).is_ok(), "{own}");
+        }
+
+        // And never a public host, whatever the flag says: the first request
+        // to it would carry `Authorization: Token …` in clear.
+        for public in [
+            "http://api.listenbrainz.org",
+            "http://maloja.example.com",
+            "http://1.1.1.1",
+            "http://[2606:4700::1111]",
+            // A trailing dot and a capital spell the same public name.
+            "http://API.ListenBrainz.ORG.",
+        ] {
+            assert_eq!(
+                validate_destination(public, true),
+                Err(OutboundError::PlaintextToPublicHost),
+                "{public}"
+            );
+        }
+
+        // HTTPS reaches all of them, which is the point: the rule is about a
+        // credential crossing in clear, not about where it is going.
+        assert!(validate_destination("https://api.listenbrainz.org", false).is_ok());
     }
 
     #[test]

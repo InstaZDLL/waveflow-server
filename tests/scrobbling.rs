@@ -9,17 +9,20 @@
 //! directly — which is the point of the trait: the drain knows five words and no
 //! providers, so the five words are what those tests drive.
 //!
-//! **Every test that names `spawn_destination` is not.** Those stand a real
-//! HTTP server on loopback and let the ListenBrainz adapter talk to it, because
-//! what they check exists only on the wire: the `Token` scheme, the JSON shape,
-//! the seconds-not-milliseconds timestamp, and what a status line does to a row.
-//! A double would prove none of it. They reach `127.0.0.1` and nothing else — no
-//! test in this file touches a network this machine does not own.
+//! **Every test that awaits a [`Destination`] is not.** Those stand a real HTTP
+//! server on loopback and let the ListenBrainz adapter talk to it, because what
+//! they check exists only on the wire: the `Token` scheme, the JSON shape, the
+//! seconds-not-milliseconds timestamp, the header a `429` names its delay in,
+//! and what a status line does to a row. A double would prove none of it. They
+//! reach `127.0.0.1` and nothing else — no test in this file touches a network
+//! this machine does not own.
 //!
 //! Stated as a rule rather than a list on purpose. This paragraph named three
 //! tests and was wrong within the hour, because the list went stale the moment
-//! another one was added — twice. A rule cannot drift from the code the way a
-//! count does.
+//! another one was added — twice. **Then the rule itself went stale**: it said
+//! "names `spawn_destination`" until a second constructor appeared beside it, so
+//! it now names the *type* both return. A function can be joined by a sibling;
+//! the thing the test holds cannot.
 //!
 //! The accounts below are inserted with a placeholder in `password_hash` rather
 //! than hashed from a literal. They never log in — this target has no HTTP
@@ -626,6 +629,21 @@ struct Destination {
 }
 
 async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
+    spawn_delaying(
+        status,
+        reset_in.map(|seconds| ("x-ratelimit-reset-in", seconds.to_string())),
+    )
+    .await
+}
+
+/// The same destination, naming its delay in a header of the caller's choosing.
+///
+/// Two headers carry that answer: ListenBrainz's own, and the standard
+/// `Retry-After` that an nginx or a CDN in front of a self-hosted instance
+/// replies with instead. A helper that can only send the first cannot tell
+/// whether the adapter reads the second — and it did not, for the length of a
+/// branch, while every rate-limit test here stayed green.
+async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> Destination {
     let bodies = std::sync::Arc::new(Mutex::new(Vec::new()));
     let authorizations = std::sync::Arc::new(Mutex::new(Vec::new()));
     let router = axum::Router::new().route(
@@ -636,6 +654,7 @@ async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
             move |headers: axum::http::HeaderMap, body: String| {
                 let bodies = std::sync::Arc::clone(&bodies);
                 let authorizations = std::sync::Arc::clone(&authorizations);
+                let delay = delay.clone();
                 async move {
                     authorizations.lock().unwrap().push(
                         headers
@@ -650,8 +669,8 @@ async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
                         .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
                     let mut response = axum::response::Response::builder()
                         .status(axum::http::StatusCode::from_u16(status).unwrap());
-                    if let Some(seconds) = reset_in {
-                        response = response.header("x-ratelimit-reset-in", seconds.to_string());
+                    if let Some((header, value)) = delay {
+                        response = response.header(header, value);
                     }
                     response.body(axum::body::Body::from("{}")).unwrap()
                 }
@@ -759,6 +778,48 @@ async fn a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked() {
     // than the link that `ScrobbleLinkState` actually reads.
     let links = state.services.scrobble_links(fixture.owner).await.unwrap();
     assert_eq!(links[0].last_failure.as_deref(), Some("rate_limited"));
+}
+
+#[tokio::test]
+async fn a_rate_limit_named_only_by_the_standard_header_is_honoured_too() {
+    // No vendor header at all — this is the `429` a proxy in front of a
+    // self-hosted instance answers with, and decision 6 names `Retry-After` as
+    // a delay to honour.
+    //
+    // The test above cannot tell the two readings apart: it sends
+    // `x-ratelimit-reset-in`, so it passes whether or not the adapter ever
+    // learned the standard header. For a while it had not — the function that
+    // read it was written and never called, and only a dead-code warning said
+    // so. This test is what would have said so instead.
+    let destination = spawn_delaying(429, Some(("retry-after", "3600".to_owned()))).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "proxied-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let before = now_ms();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.retrying, 1);
+
+    // An hour, against a first backoff of one minute: only the header can
+    // explain a wait this long, so reading it is the only way to pass.
+    let next: i64 =
+        sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox ORDER BY id LIMIT 1")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert!(
+        next >= before + 3_600_000,
+        "a `Retry-After` of an hour must outlast our own one-minute backoff"
+    );
 }
 
 #[tokio::test]

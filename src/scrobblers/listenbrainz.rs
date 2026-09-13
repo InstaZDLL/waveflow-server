@@ -170,7 +170,7 @@ impl ScrobbleTarget for ListenBrainz {
                 Err(error) => return transport_verdict(&error),
             };
             let status = response.status();
-            let retry_after = reset_in(&response);
+            let retry_after = asked_wait(&response);
             // **The body is never read.** Decision 12 says what this server
             // reports is a state and not an echo of the destination's own
             // words, and every verdict below is earned by the status line
@@ -275,6 +275,17 @@ fn status_verdict(status: reqwest::StatusCode, retry_after: Option<Duration>) ->
 /// queue and not here: an adapter's job is to say faithfully what the far end
 /// answered, and `reschedule_scrobble` is what decides how much of that this
 /// server is willing to be told.
+///
+/// **Two headers, in that order.** ListenBrainz documents its own, and that is
+/// what a direct answer carries. `Retry-After` is the standard one, and it is
+/// what arrives when a proxy, a CDN or an nginx in front of a self-hosted
+/// instance answers the `429` instead — decision 6 names that header by name,
+/// and reading only the vendor's left the standard one unread.
+fn asked_wait(response: &reqwest::Response) -> Option<Duration> {
+    reset_in(response).or_else(|| retry_after(response))
+}
+
+/// ListenBrainz's own, in whole seconds.
 fn reset_in(response: &reqwest::Response) -> Option<Duration> {
     response
         .headers()
@@ -285,6 +296,30 @@ fn reset_in(response: &reqwest::Response) -> Option<Duration> {
         .parse::<u64>()
         .ok()
         .map(Duration::from_secs)
+}
+
+/// The standard one, in either of the two forms RFC 9110 allows.
+///
+/// Delta-seconds, or an HTTP date. **A date already past, or one that will not
+/// parse, reads as absent** rather than as zero: "wait until a moment that has
+/// gone" is not a request to wait, and turning it into one would let a clock
+/// skew of a few seconds decide a listen's schedule.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    let raw = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_owned();
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let until = chrono::DateTime::parse_from_rfc2822(&raw).ok()?;
+    let seconds = until
+        .signed_duration_since(chrono::Utc::now())
+        .num_seconds();
+    (seconds > 0).then(|| Duration::from_secs(seconds.unsigned_abs()))
 }
 
 #[cfg(test)]
@@ -358,6 +393,51 @@ mod tests {
             metadata["additional_info"]["submission_client"],
             CLIENT_NAME
         );
+    }
+
+    /// A rate limit may ask in either of the two forms RFC 9110 allows — and
+    /// two more that are not a request to wait at all.
+    ///
+    /// Decision 6 says a delay the destination asks for is honoured. Only
+    /// ListenBrainz's own vendor header was read, so a `429` from the nginx or
+    /// the CDN in front of a self-hosted instance — which answers with the
+    /// standard header — was heard as "no delay given".
+    #[test]
+    fn a_rate_limit_may_ask_in_seconds_or_in_a_date() {
+        fn answered(header: &str, value: &str) -> Option<Duration> {
+            let response = axum::http::Response::builder()
+                .status(429)
+                .header(header, value)
+                .body(String::new())
+                .unwrap();
+            asked_wait(&reqwest::Response::from(response))
+        }
+
+        // The vendor's header, in whole seconds.
+        assert_eq!(
+            answered(RESET_IN_HEADER, "12"),
+            Some(Duration::from_secs(12))
+        );
+        // The standard one, as delta-seconds.
+        assert_eq!(answered("retry-after", "30"), Some(Duration::from_secs(30)));
+
+        // And as an HTTP date, which is the form a proxy answers with. Read as
+        // a distance from now, so it is asserted as a window rather than a
+        // value: the clock moves between building the header and reading it.
+        let soon = chrono::Utc::now() + chrono::Duration::seconds(120);
+        let asked = answered("retry-after", &soon.to_rfc2822()).expect("a future date is a wait");
+        assert!(
+            asked > Duration::from_secs(110) && asked <= Duration::from_secs(120),
+            "a date two minutes out must read as about two minutes, got {asked:?}"
+        );
+
+        // A moment already gone is not a request to wait, and neither is a
+        // header nobody can parse. Both read as absent — which sends the entry
+        // to the queue's own backoff, not to an immediate retry.
+        let past = chrono::Utc::now() - chrono::Duration::seconds(120);
+        assert_eq!(answered("retry-after", &past.to_rfc2822()), None);
+        assert_eq!(answered("retry-after", "in a little while"), None);
+        assert_eq!(answered("x-unrelated", "30"), None);
     }
 
     #[test]
