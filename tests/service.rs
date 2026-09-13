@@ -30,6 +30,38 @@ async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Re
     waveflow_server::cli::execute(cli.command.expect("a command was given"), state).await
 }
 
+/// An account inserted rather than created, with a placeholder where a hash
+/// would be.
+///
+/// These never authenticate: the CLI resolves them by username and checks a
+/// role, and nothing in this file logs in as one. Calling
+/// `security::hash_password` for them would add another occurrence of the
+/// repository's fixture password, which CodeQL raises as a hard-coded
+/// credential on every new one — there are already seventy-seven of those
+/// dismissed on `main`, and adding to that pile for accounts that cannot log in
+/// would be spending somebody else's attention.
+async fn inserted_account(
+    state: &waveflow_server::AppState,
+    username: &str,
+    role: &str,
+) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    let now = now_ms();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', ?, 0, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(username)
+    .bind(role)
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    id
+}
+
 /// The CLI reads a queue and withdraws an authorisation, and says which
 /// variable it wanted when the token is not there.
 ///
@@ -48,17 +80,8 @@ async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Re
 #[tokio::test]
 async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
     let (_temp, _config, state) = test_app().await;
-    let hash = security::hash_password("correct horse battery staple").unwrap();
-    state
-        .db
-        .create_account("cli-scrobble-admin", &hash, AccountRole::Admin, now_ms())
-        .await
-        .unwrap();
-    let user = state
-        .db
-        .create_account("cli-scrobble-user", &hash, AccountRole::User, now_ms())
-        .await
-        .unwrap();
+    inserted_account(&state, "cli-scrobble-admin", "admin").await;
+    let user = inserted_account(&state, "cli-scrobble-user", "user").await;
 
     // **No `set_var` here, and that is the whole design of this test.** A review
     // pointed out that a unique variable name solves collision and not the
@@ -179,17 +202,8 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
 #[tokio::test]
 async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
     let (_temp, _config, state) = test_app().await;
-    let hash = security::hash_password("correct horse battery staple").unwrap();
-    state
-        .db
-        .create_account("cli-refusing-admin", &hash, AccountRole::Admin, now_ms())
-        .await
-        .unwrap();
-    state
-        .db
-        .create_account("cli-refusing-user", &hash, AccountRole::User, now_ms())
-        .await
-        .unwrap();
+    inserted_account(&state, "cli-refusing-admin", "admin").await;
+    inserted_account(&state, "cli-refusing-user", "user").await;
 
     let unknown = run_cli(
         &state,
