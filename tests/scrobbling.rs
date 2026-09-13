@@ -953,25 +953,39 @@ async fn a_drain_interval_longer_than_the_ceiling_does_not_kill_the_drain() {
         .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
         .await
         .unwrap();
-    state
-        .services
-        .scrobble(fixture.owner, fixture.tagged, true, None)
-        .await
-        .unwrap();
+    // **Two**, and that is the whole difference between this test and the one
+    // it replaced. With a single listen the bounds are computed, written into
+    // the resting map, and never read — the map is only consulted for a
+    // *second* row on the same link — so the wait asserted below came from
+    // `reschedule_scrobble`'s own ceiling and the assertion could not fail for
+    // the reason its comment gave. A review caught that; the earlier version of
+    // this file had the same shape twice before.
+    for _ in 0..2 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
 
-    // The assertion is that this returns at all rather than unwinding.
+    // The first assertion is that this returns at all rather than unwinding.
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
 
     assert_eq!(drained.retrying, 1);
-    // And the bounds still did their work: the row waits, and not for the
-    // thirty-one thousand years an unclamped answer would have bought.
-    let wait: i64 = sqlx::query_scalar(
-        "SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id LIMIT 1",
-    )
-    .fetch_one(state.db.pool())
-    .await
-    .unwrap();
-    assert!((3_600_000..=4_600_000).contains(&wait));
+    assert_eq!(drained.rested, 1);
+
+    let waits: Vec<i64> =
+        sqlx::query_scalar("SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    // The row that was offered waits by its own schedule, capped at the hour.
+    assert!((3_600_000..=4_600_000).contains(&waits[0]));
+    // The row behind it waits by the bounds under test — and this is the half
+    // that needed a second listen to exist at all. The floor wins here, because
+    // a pass every two hours means a one-hour deferral would have the row
+    // offered again before the next pass could serve it.
+    assert_eq!(waits[1], 7_200_000);
 }
 
 #[tokio::test]

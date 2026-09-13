@@ -169,10 +169,14 @@ pub struct ScrobbleDrain {
     /// because they are not something this pass decided — they are what it
     /// found.
     pub recovered: usize,
-    /// Rows left exactly as they were because no adapter is registered for
-    /// their destination. Not an attempt: a server missing an adapter is a
-    /// misconfiguration, and spending the listen's retries on it would destroy
-    /// the queue the operator is about to fix.
+    /// Rows moved aside because no adapter is registered for their destination.
+    /// Not an attempt: a server missing an adapter is a misconfiguration, and
+    /// spending the listen's retries on it would destroy the queue the operator
+    /// is about to fix.
+    ///
+    /// This said "left exactly as they were" until a review noticed the path had
+    /// called `defer_scrobble` since the day it was written. The row keeps its
+    /// `attempts`; it does not keep its place.
     pub unserviced: usize,
     /// Rows moved out of the way because their destination had just asked for
     /// room, or gone silent. Not an attempt either — nothing was sent.
@@ -211,8 +215,15 @@ enum Rescheduled {
 
 /// The floor of the growing wait between two attempts.
 const RETRY_BASE: Duration = Duration::from_secs(60);
+/// Its ceiling in milliseconds.
+///
+/// One number, spelled twice from itself. Converting the `Duration` at each use
+/// needed a fallback that could never fire, in a file that argues a few hundred
+/// lines below that an unreachable branch is a case a later reader will mistake
+/// for one that happens.
+const RETRY_CEILING_MS: i64 = 60 * 60 * 1_000;
 /// Its ceiling. Past this, waiting longer buys nothing a restart would not.
-const RETRY_CEILING: Duration = Duration::from_secs(60 * 60);
+const RETRY_CEILING: Duration = Duration::from_millis(RETRY_CEILING_MS as u64);
 /// How far past the outbound deadline a claimed row must sit before it is read
 /// as abandoned rather than in flight.
 ///
@@ -745,9 +756,15 @@ impl DomainServices {
         // hole this queue already refuses a destination, arriving by the other
         // door — configuration. An interval this platform cannot represent in
         // milliseconds is not a reason to defer a listen past the end of time.
-        let rest_ceiling = i64::try_from(RETRY_CEILING.as_millis()).unwrap_or(i64::MAX);
-        let rest_floor =
-            i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(rest_ceiling);
+        let rest_ceiling = RETRY_CEILING_MS;
+        // At least a millisecond. `parse_positive_env` refuses a zero interval
+        // from the environment, but a `Config` built in process can carry one —
+        // the tests build theirs that way — and a floor of zero would defer a
+        // rested row by nothing, putting it straight back at the head of the
+        // queue and undoing the resting path entirely.
+        let rest_floor = i64::try_from(self.scrobbling.drain_interval.as_millis())
+            .unwrap_or(rest_ceiling)
+            .max(1);
         for entry in self.due_scrobbles(now_ms()).await? {
             if broken_links.contains(&entry.link_id) {
                 // Its waiting rows are already `cancelled`, so there is nothing
@@ -1125,7 +1142,18 @@ impl DomainServices {
         .bind(entry.id)
         .execute(self.db.pool())
         .await?;
-        Ok(moved.rows_affected() == 1)
+        if moved.rows_affected() != 1 {
+            // Said aloud, like every other "this row was not ours" path here.
+            // A pass that lost each of its deferrals to a concurrent one would
+            // otherwise count nothing and log nothing, which reads exactly like
+            // a pass with nothing to do.
+            tracing::warn!(
+                entry = entry.id,
+                "a row moved aside had already been settled elsewhere"
+            );
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Pushes one entry out to its next attempt, or gives up on it.
@@ -1176,7 +1204,7 @@ impl DomainServices {
         // Clamping is not ignoring: past the ceiling this waits an hour, asks
         // again, is refused again, and waits again. What it costs is one
         // attempt per refusal, which is what the cap is for.
-        let ceiling = i64::try_from(RETRY_CEILING.as_millis()).unwrap_or(i64::MAX);
+        let ceiling = RETRY_CEILING_MS;
         let asked = after
             .map_or(0, |after| {
                 i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
@@ -1233,7 +1261,20 @@ impl DomainServices {
                 .execute(&mut *tx)
                 .await?;
         }
-        tx.commit().await?;
+        // Rolled back rather than committed empty, on the same terms as
+        // `settle_scrobble`: a verdict about a row this pass no longer owns
+        // writes nothing, and an empty transaction that commits is a write a
+        // reader has to reason about before discovering it is not one.
+        //
+        // An earlier commit message in this branch said this was already done.
+        // It was not — the sentence was written from the plan instead of from
+        // the diff, which is the third time that has happened here, and naming
+        // it is cheaper than the review round it cost.
+        if moved.rows_affected() == 0 {
+            tx.rollback().await?;
+        } else {
+            tx.commit().await?;
+        }
         Ok(if moved.rows_affected() == 0 {
             tracing::warn!(
                 entry = entry.id,
