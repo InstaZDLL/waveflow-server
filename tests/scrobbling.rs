@@ -856,11 +856,18 @@ async fn a_destination_cannot_park_a_listen_past_our_own_ceiling() {
         .await
         .unwrap();
     let before = now_ms();
-    state
-        .services
-        .scrobble(fixture.owner, fixture.tagged, true, None)
-        .await
-        .unwrap();
+    // **Two**, and for the same reason the drain-interval test needed two: the
+    // resting map is only consulted for a *second* row on the same link, so
+    // with one listen the clamped value is computed, stored, and never read. A
+    // review caught that this test proved the floor and not the ceiling — the
+    // inert half surviving one screen above the place it had just been fixed.
+    for _ in 0..2 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
 
     state.services.drain_scrobble_outbox().await.unwrap();
 
@@ -880,6 +887,21 @@ async fn a_destination_cannot_park_a_listen_past_our_own_ceiling() {
     );
     // And still a real wait: clamping is not ignoring.
     assert!(next >= before + 3_600_000);
+
+    // The row behind it carries the clamp itself, exactly. `defer_scrobble`
+    // binds `next_attempt_at` and `updated_at` from one `now`, so this
+    // difference is the deferral and nothing else — an hour, where the
+    // destination asked for thirty-one thousand years.
+    let waits: Vec<i64> =
+        sqlx::query_scalar("SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(waits.len(), 2);
+    assert_eq!(
+        waits[1], 3_600_000,
+        "the ceiling must bound what a destination can ask the queue to wait"
+    );
 }
 
 // The herd this file used to test for lives in
@@ -979,6 +1001,10 @@ async fn a_drain_interval_longer_than_the_ceiling_does_not_kill_the_drain() {
             .fetch_all(state.db.pool())
             .await
             .unwrap();
+    // Asserted before either row is indexed, which is the guard this file
+    // argues for twice elsewhere — indexing panics rather than passing
+    // vacuously, but the inconsistency is worth closing where it is noticed.
+    assert_eq!(waits.len(), 2);
     // The row that was offered waits by its own schedule, capped at the hour.
     assert!((3_600_000..=4_600_000).contains(&waits[0]));
     // The row behind it waits by the bounds under test — and this is the half

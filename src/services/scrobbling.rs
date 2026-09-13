@@ -648,7 +648,21 @@ impl DomainServices {
     /// use: a pass at boot, then one per interval.
     pub fn spawn_scrobble_drain(&self) {
         let services = self.clone();
-        let interval = services.scrobbling.drain_interval;
+        // Never zero, because `tokio::time::interval` panics on a zero period —
+        // here, inside a `tokio::spawn`ed task, where the unwind takes the queue
+        // with it and says nothing. The same shape as the `clamp` panic three
+        // commits ago, and the same answer.
+        //
+        // `parse_positive_env` refuses a zero interval from the environment, so
+        // this is unreachable from a configured server. It is reachable from a
+        // `Config` built in process, which is how every test builds one, and
+        // this is the only one of the seven background tasks whose period comes
+        // from an assignable field rather than a constant or a validated
+        // `Option`.
+        let interval = services
+            .scrobbling
+            .drain_interval
+            .max(Duration::from_millis(1));
         tokio::spawn(async move {
             services.drain_scrobbles_now().await;
             let mut ticker = tokio::time::interval(interval);
@@ -757,11 +771,20 @@ impl DomainServices {
         // door — configuration. An interval this platform cannot represent in
         // milliseconds is not a reason to defer a listen past the end of time.
         let rest_ceiling = RETRY_CEILING_MS;
-        // At least a millisecond. `parse_positive_env` refuses a zero interval
-        // from the environment, but a `Config` built in process can carry one —
-        // the tests build theirs that way — and a floor of zero would defer a
-        // rested row by nothing, putting it straight back at the head of the
-        // queue and undoing the resting path entirely.
+        // At least a millisecond, which closes the literal zero and no more
+        // than that.
+        //
+        // An earlier version of this comment claimed it kept a rested row from
+        // going "straight back at the head of the queue". That is not true and
+        // a review said so: `due_scrobbles` selects `next_attempt_at <= now`,
+        // so nought and one are both due on the very next pass. What this
+        // actually prevents is a zero deferral being written at all.
+        //
+        // `parse_positive_env` refuses a zero interval from the environment; a
+        // `Config` built in process can carry one, and the tests build theirs
+        // that way. The sharper hazard of that value is not here but in
+        // `spawn_scrobble_drain`, where `tokio::time::interval` panics on a
+        // zero period — guarded there.
         let rest_floor = i64::try_from(self.scrobbling.drain_interval.as_millis())
             .unwrap_or(rest_ceiling)
             .max(1);
@@ -1147,9 +1170,13 @@ impl DomainServices {
             // A pass that lost each of its deferrals to a concurrent one would
             // otherwise count nothing and log nothing, which reads exactly like
             // a pass with nothing to do.
+            //
+            // The tense matters and the first draft had it wrong: this fires on
+            // the branch where the row was *not* moved aside, so saying it was
+            // would report the very action that did not happen.
             tracing::warn!(
                 entry = entry.id,
-                "a row moved aside had already been settled elsewhere"
+                "a row could not be moved aside; it had been settled elsewhere"
             );
             return Ok(false);
         }
