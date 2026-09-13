@@ -155,23 +155,26 @@ pub struct ScrobbleLinkState {
     pub last_failure: Option<String>,
 }
 
-/// One ambiguous entry, named so that a person can act on it.
+// Decision 12 keeps the envelope out of the API — what this publishes is a
+// state, never an echo of what was heard — while decision 13 asks a person to
+// choose the fate of one specific listen. A bare UUID is not something anybody
+// can choose about, which is what `played_at` is here for.
+//
+// In a `//` and not a `///` because `ToSchema` publishes the doc block verbatim
+// as this schema's description, and "decision 12" has no referent outside
+// `docs/rfcs/`.
+
+/// One listen whose fate is unknown, named so that it can be answered.
 ///
-/// **Counters are not enough here, and content is not allowed.** Decision 12
-/// keeps the envelope out of the API — what this publishes is a state, never an
-/// echo of what was heard — while decision 13 asks a person to choose the fate
-/// of one specific listen. A bare UUID is not something anybody can choose
-/// about.
-///
-/// `played_at` is what resolves that: it is the moment of their own gesture,
-/// already readable through `/api/v2/history`, so a client matches the entry
-/// against a listen it already holds instead of this server republishing one.
-/// The title and the artists stay where the envelope is.
+/// Carries no title and no artists — only the entry's own state, and
+/// `played_at`, which lets a client match it against a listen it already holds
+/// from its history.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UncertainScrobble {
-    /// The only name the outside is ever given. The rowid is sequential and
-    /// would tell anyone holding a single entry of their own how many listens
-    /// this whole server has queued.
+    // A UUID rather than the rowid: a sequential id would tell anyone holding a
+    // single entry of their own how many listens this whole server has ever
+    // queued. Kept out of the `///` for the same reason as the block above.
+    /// The entry's public name, and the only one this API will accept back.
     pub id: Uuid,
     pub provider: ScrobbleProvider,
     /// When the listen happened, not when it was queued.
@@ -660,8 +663,11 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
-            "UPDATE scrobble_outbox SET state='discarded', updated_at=? WHERE public_id=? \
-             AND state='uncertain' AND link_id IN (SELECT id FROM scrobble_link WHERE user_id=?)",
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=? \
+             WHERE public_id=? AND state='uncertain' \
+             AND id NOT IN (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+             AND link_id IN \
+               (SELECT id FROM scrobble_link WHERE user_id=? AND status <> 'unlinked')",
         )
         .bind(now_ms())
         .bind(entry.to_string())

@@ -437,6 +437,19 @@ async fn an_ambiguous_entry_can_be_found_before_it_is_answered() {
         links[0].uncertain, 0,
         "the list and the counter move together"
     );
+    // And the acceptance is spent on both sides: an entry that has stopped
+    // being listed has stopped being discardable too. Until this branch
+    // `discard_uncertain_scrobble` carried neither of the listing's exclusions,
+    // so a client holding the id could still flip a retried original to
+    // `discarded` — a gesture nothing offered any more.
+    assert!(matches!(
+        state
+            .services
+            .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+            .await
+            .unwrap_err(),
+        ServiceError::NotFound
+    ));
 }
 
 /// Another account's ambiguous entry is not listed, and not nameable.
@@ -463,12 +476,15 @@ async fn one_account_never_sees_another_account_s_ambiguous_entries() {
         .unwrap()
         .is_empty());
     // And knowing the id changes nothing, which is the half a list alone would
-    // not prove.
-    assert!(state
+    // not prove. Named rather than merely failed: `.is_err()` would accept a
+    // database fault as readily as a refusal, and the claim here is about
+    // *which* answer a stranger gets.
+    let refused = state
         .services
         .discard_uncertain_scrobble(stranger.owner, uncertain_id)
         .await
-        .is_err());
+        .unwrap_err();
+    assert!(matches!(refused, ServiceError::NotFound));
 }
 
 /// A broken link keeps its question, and loses one of the two answers.
@@ -574,7 +590,7 @@ async fn an_unlinked_generation_stops_asking_for_a_decision() {
         .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
         .await
         .unwrap();
-    one_uncertain_entry(&state, &fixture).await;
+    let uncertain_id = one_uncertain_entry(&state, &fixture).await;
     assert_eq!(
         state
             .services
@@ -602,6 +618,17 @@ async fn an_unlinked_generation_stops_asking_for_a_decision() {
         "uncertain",
         "the entry stops asking, and is not rewritten for it"
     );
+    // Nor discardable. The gesture the list stopped offering is the gesture the
+    // service stopped accepting, which is what keeps the two from disagreeing
+    // about an entry nobody can act on any more.
+    assert!(matches!(
+        state
+            .services
+            .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+            .await
+            .unwrap_err(),
+        ServiceError::NotFound
+    ));
 }
 
 #[tokio::test]

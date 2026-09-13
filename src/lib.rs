@@ -295,6 +295,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         ,(name = "user-data", description = "Cross-protocol playlists and playback state")
         ,(name = "sync", description = "Durable WaveFlow Desktop user-data synchronization")
         ,(name = "administration", description = "Administrative user and credential management")
+        ,(name = "scrobbling", description = "Per-account authorisations at external listening services, and the queue behind them")
     )
 )]
 pub struct ApiDoc;
@@ -791,16 +792,6 @@ pub async fn shutdown_signal() {
 mod tests {
     use super::trace_path;
 
-    /// Every entry in `PUBLIC_OPERATIONS` names an operation that exists, and
-    /// leaves it carrying no security requirement.
-    ///
-    /// The list is looked up by two strings, so a path that is renamed or a
-    /// method spelled `PUT` instead of `put` matches nothing, clears nothing,
-    /// and goes on looking correct. That was cheap while the result was only a
-    /// missing security block. `annotate_scope_refusals` reads what this pass
-    /// leaves behind, so a public operation that keeps the global requirement
-    /// is now handed a 403 it can never answer — a refusal documented on a
-    /// route that holds no credential to refuse.
     /// The scrobbling routes carry no operation-id protocol, and must not
     /// advertise one.
     ///
@@ -861,6 +852,16 @@ mod tests {
         );
     }
 
+    /// Every entry in `PUBLIC_OPERATIONS` names an operation that exists, and
+    /// leaves it carrying no security requirement.
+    ///
+    /// The list is looked up by two strings, so a path that is renamed or a
+    /// method spelled `PUT` instead of `put` matches nothing, clears nothing,
+    /// and goes on looking correct. That was cheap while the result was only a
+    /// missing security block. `annotate_scope_refusals` reads what this pass
+    /// leaves behind, so a public operation that keeps the global requirement
+    /// is now handed a 403 it can never answer — a refusal documented on a
+    /// route that holds no credential to refuse.
     #[test]
     fn every_public_operation_is_found_and_cleared() {
         use utoipa::OpenApi;
