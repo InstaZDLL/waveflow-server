@@ -9,13 +9,13 @@
   sortant — la surface bornée de la décision 10, l'adaptateur ListenBrainz, et
   le délai que la décision 6 promettait d'honorer sans que le verdict puisse le
   porter.
-  Puis [#193](https://github.com/InstaZDLL/waveflow-server/pull/193), **les routes
-  natives et la CLI** : un compte pose
-  et retire son autorisation lui-même, lit l'état de sa file, et répond des
-  écoutes dont personne ne sait si elles sont arrivées — la décision 13
-  demandait ce choix à une personne sans qu'aucune surface ne lui montre sur
-  quoi. Un opérateur dispose des mêmes gestes en ligne de commande, pour un
-  serveur que nul n'a encore ouvert dans un navigateur.
+  Puis [#193](https://github.com/InstaZDLL/waveflow-server/pull/193), **les
+  routes natives et la CLI** : un compte pose et retire son autorisation
+  lui-même, lit l'état de sa file, et répond des écoutes dont personne ne sait
+  si elles sont arrivées — la décision 13 demandait ce choix à une personne sans
+  qu'aucune surface ne lui montre sur quoi. Un opérateur dispose des mêmes
+  gestes en ligne de commande, pour un serveur que nul n'a encore ouvert dans un
+  navigateur.
   Maloja puis Last.fm ensuite, par la décision 11. Le champ *Statut* ci-dessus
   ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
