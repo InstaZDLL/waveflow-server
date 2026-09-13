@@ -178,6 +178,12 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
     sortant, des identifiants par compte et une file de reprise — donc une
     décision de conception, donc une RFC avant du code.
 
+    > **La RFC existe depuis le 2026-09-13** :
+    > [RFC-010](rfcs/RFC-010-external-scrobbling.md). Elle tranche le point
+    > d'accroche, la file durable, ce qu'on ne met pas en file, les
+    > identifiants scellés par compte, la livraison au plus une fois et la
+    > surface sortante — la première de ce serveur. Rien n'est encore écrit.
+
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
 
