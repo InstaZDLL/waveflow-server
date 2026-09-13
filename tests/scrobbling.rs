@@ -22,6 +22,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::catalog::LibraryRecord;
+use waveflow_server::config::ScrobbleLimits;
 use waveflow_server::database::LibraryVisibility;
 use waveflow_server::services::{
     ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleVerdict,
@@ -219,24 +220,25 @@ impl ScrobbleTarget for Stalls {
     }
 }
 
-/// An app whose outbound deadline this test chose.
+/// An app whose scrobbling limits this test chose.
 ///
 /// Tuned before `initialize`, never after: `DomainServices` copies these values
-/// out of `Config` when it is built, so shortening the deadline on the returned
-/// `Config` would silently exercise the old one.
-async fn app_with_deadline(
-    deadline: Duration,
+/// out of `Config` when it is built, so changing one on the returned `Config`
+/// would silently exercise the old one.
+async fn tuned_app(
+    tune: impl FnOnce(&mut ScrobbleLimits),
 ) -> (tempfile::TempDir, waveflow_server::Config, AppState) {
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    config.scrobbling.request_timeout = deadline;
+    tune(&mut config.scrobbling);
     let state = waveflow_server::initialize(&config).await.unwrap();
     (temp, config, state)
 }
 
 #[tokio::test]
 async fn a_destination_that_never_answers_does_not_hold_the_queue_forever() {
-    let (_temp, config, state) = app_with_deadline(Duration::from_millis(150)).await;
+    let (_temp, config, state) =
+        tuned_app(|limits| limits.request_timeout = Duration::from_millis(150)).await;
     let fixture = fixture(&config, &state, "stalling-listener").await;
     state
         .services
@@ -282,6 +284,55 @@ async fn a_destination_that_never_answers_does_not_hold_the_queue_forever() {
     let links = state.services.scrobble_links(fixture.owner).await.unwrap();
     assert_eq!(links[0].health, "degraded");
     assert_eq!(links[0].last_failure.as_deref(), Some("ambiguous"));
+}
+
+#[tokio::test]
+async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
+    // A batch of one, so the row nothing can carry fills a whole pass on its
+    // own. That is the smallest arrangement in which the question can be asked
+    // at all, and the shape a real server reaches when one destination has been
+    // queueing for a while.
+    let (_temp, config, state) = tuned_app(|limits| limits.batch = 1).await;
+    let fixture = fixture(&config, &state, "starving-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::Maloja, "maloja-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    // One listen, one row per authorisation, and the ListenBrainz row sorts
+    // first — which is what puts the unreachable destination at the head.
+    assert_eq!(rows(&state).await.len(), 2);
+
+    // Only one of the two can be reached by this process. That is the ordinary
+    // state of affairs while adapters are being added one at a time.
+    let target = Recorder::always(ScrobbleVerdict::Accepted);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::Maloja,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+
+    let first = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(first.unserviced, 1);
+    assert_eq!(first.accepted, 0);
+
+    // The second pass must reach the other destination. Without the row
+    // stepping aside, the same unserviceable one is fetched again every time
+    // and the Maloja listen is never sent — not late, never: nothing advances
+    // a row no adapter can carry.
+    let second = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(second.accepted, 1);
+    assert_eq!(target.seen().len(), 1);
+    assert_eq!(target.seen()[0].1, "maloja-secret");
 }
 
 #[tokio::test]
@@ -451,6 +502,10 @@ async fn an_accepted_listen_leaves_the_queue_and_the_secret_arrives_intact() {
     let unserviced = state.services.drain_scrobble_outbox().await.unwrap();
     assert_eq!(unserviced.unserviced, 1);
     assert_eq!(rows(&state).await[0].2, 0, "no attempt may have been spent");
+    // It does step aside, though, so that a destination which *can* be reached
+    // is never stuck behind it. Bringing it forward here is what a restart does
+    // once the operator has supplied the missing adapter.
+    make_everything_due(&state).await;
 
     let target = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
