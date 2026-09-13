@@ -14,11 +14,27 @@
 use super::*;
 
 /// The credential an account presents at a destination.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema)]
 pub struct LinkScrobbleRequest {
     /// Never read back. Like every other secret here it is replaced rather than
     /// shown, and the service seals it under the instance key.
     pub secret: String,
+}
+
+/// Written by hand so the guarantee is structural rather than circumstantial.
+///
+/// Nothing formats this today, which is exactly when it costs nothing to hold
+/// still. Deriving `Debug` would mean the next `tracing::debug!` somebody adds
+/// to this handler prints a member's token — and the previous slice of this RFC
+/// spent a commit removing that same shape of leak from a startup error one file
+/// away.
+impl std::fmt::Debug for LinkScrobbleRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LinkScrobbleRequest")
+            .field("secret", &"[redacted]")
+            .finish()
+    }
 }
 
 /// What a deliberate retry produced.
@@ -28,6 +44,31 @@ pub struct RetriedScrobbleResponse {
     /// must, because erasing it would falsify the only trace explaining why a
     /// duplicate exists.
     pub id: Uuid,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The secret does not survive being formatted.
+    ///
+    /// The failure message deliberately carries neither the secret nor the
+    /// formatted output: if this guard were removed, that output would *be* the
+    /// token, and a panic message is a log line. The previous slice of this RFC
+    /// earned a CodeQL `rust/cleartext-logging` alert for exactly that, on a
+    /// test whose subject was also non-disclosure.
+    #[test]
+    fn a_link_request_does_not_print_its_secret() {
+        let request = LinkScrobbleRequest {
+            secret: "a-token-nobody-should-read".to_owned(),
+        };
+        let shown = format!("{request:?}");
+        assert!(
+            !shown.contains("a-token-nobody-should-read"),
+            "the debug output carried the secret"
+        );
+        assert!(shown.contains("[redacted]"), "the secret was not replaced");
+    }
 }
 
 /// The destination named in a path, or a 422.
@@ -130,9 +171,21 @@ pub async fn discard_uncertain_scrobble(
 
 /// The second, and the only path in this design that can make a duplicate on
 /// purpose: the person accepts that the destination may already hold this
-/// listen. Granted once per entry, which the schema holds as well as the
-/// service — a second call is a 409, not a second copy.
-#[utoipa::path(post, path = "/api/v2/scrobble-queue/uncertain/{entry_id}/retry", tag = "user-data", params(("entry_id" = Uuid, Path)), responses((status = 200, body = RetriedScrobbleResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse)))]
+/// listen. Granted once per entry.
+///
+/// **A second call is a 404, not a 409**, and the difference is deliberate. The
+/// service resolves the entry with a `NOT EXISTS` clause that already excludes
+/// anything retried, so an entry that has spent its one acceptance simply stops
+/// being findable — its own comment says the clause exists "to turn the refusal
+/// into an ordinary 404 instead of a constraint error". This annotation declared
+/// a `409` that nothing can produce: the unique index is unreachable behind the
+/// writer guard, and `db_error` maps every sqlx failure to 503 rather than to a
+/// conflict. A generated client would have carried a branch that never fires and
+/// none for the one that does.
+///
+/// It is also the answer a stranger's id gets, which is the point: 404 blurs
+/// "spent" and "not yours" into one reply.
+#[utoipa::path(post, path = "/api/v2/scrobble-queue/uncertain/{entry_id}/retry", tag = "user-data", params(("entry_id" = Uuid, Path)), responses((status = 200, body = RetriedScrobbleResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn retry_uncertain_scrobble(
     State(state): State<AppState>,
     Path(entry_id): Path<Uuid>,

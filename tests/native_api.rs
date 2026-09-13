@@ -295,13 +295,71 @@ async fn an_uncertain_entry_is_listed_and_answered_over_http() {
     // The envelope stays where it is: a state, never an echo of what was heard.
     assert!(waiting[0].get("title").is_none());
 
-    // An id belonging to nobody is a 404, not a decision.
-    let response = send(
-        Method::DELETE,
-        format!("/api/v2/scrobble-queue/uncertain/{}", uuid::Uuid::new_v4()),
+    // **Somebody else's id, not nobody's.** This assertion used to send a fresh
+    // `Uuid::new_v4()`, which belongs to no account at all — a handler that had
+    // dropped the tenancy binding entirely and looked the entry up by
+    // `public_id` alone would have answered 404 to that and passed. The thing a
+    // route can get wrong that a service method cannot is *whose* id it passes,
+    // so the id below is the owner's real entry, presented by a stranger.
+    let stranger = state
+        .db
+        .create_account("uncertain-stranger", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let _ = stranger;
+    let stranger_login = router
+        .clone()
+        .oneshot(json_request(
+            "/api/v2/auth/login",
+            serde_json::json!({
+                "username": "uncertain-stranger",
+                "password": "correct horse battery staple",
+                "device_name": "Integration"
+            }),
+        ))
+        .await
+        .unwrap();
+    let stranger_access = json_body(stranger_login).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let send_as_stranger = |method: Method, path: String| {
+        let router = router.clone();
+        let access = stranger_access.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("authorization", format!("Bearer {access}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Their own queue is empty, and the owner's entry is not theirs to answer.
+    let response = send_as_stranger(Method::GET, "/api/v2/scrobble-queue/uncertain".into()).await;
+    assert_eq!(json_body(response).await.as_array().unwrap().len(), 0);
+    let response = send_as_stranger(
+        Method::POST,
+        format!("/api/v2/scrobble-queue/uncertain/{entry}/retry"),
     )
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = send_as_stranger(
+        Method::DELETE,
+        format!("/api/v2/scrobble-queue/uncertain/{entry}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // And it is still there afterwards: refused, not quietly consumed.
+    let response = send(Method::GET, "/api/v2/scrobble-queue/uncertain".into()).await;
+    assert_eq!(json_body(response).await.as_array().unwrap().len(), 1);
 
     let response = send(
         Method::POST,

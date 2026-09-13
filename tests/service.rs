@@ -51,14 +51,15 @@ async fn the_cli_links_and_unlinks_a_scrobble_destination() {
         .await
         .unwrap();
 
-    // Named by this test alone. `cargo test` runs these as threads inside one
-    // process and an environment variable is process-wide, so a fixed name
-    // would be shared with every other test that ever needs one — which is the
-    // reason `--token-env` is a flag rather than a constant.
-    let token_env = "WAVEFLOW_TEST_CLI_SCROBBLE_TOKEN";
-    std::env::set_var(token_env, "lb-token-from-the-shell");
-
-    run_cli(
+    // **No `set_var` here, and that is the whole design of this test.** A review
+    // pointed out that a unique variable name solves collision and not the
+    // race: `cargo test` runs these as threads in one process, and mutating the
+    // environment while a sibling thread reads it — `tempfile::tempdir()` reads
+    // `TMPDIR` on every one of them — is undefined behaviour, which is why
+    // edition 2024 made `set_var` unsafe. So `link` is exercised at the one
+    // seam that needs no environment at all: a variable that is *absent*, which
+    // is the default state of the process.
+    let missing = run_cli(
         &state,
         &[
             "scrobble",
@@ -70,11 +71,51 @@ async fn the_cli_links_and_unlinks_a_scrobble_destination() {
             "--provider",
             "listenbrainz",
             "--token-env",
-            token_env,
+            "WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET",
         ],
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    // Naming the variable is the whole job of that message: the person who has
+    // to fix this cannot see which one the command looked for.
+    assert!(
+        missing
+            .to_string()
+            .contains("WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET"),
+        "{missing}"
+    );
+
+    // And the flag surface is pinned by parsing rather than by running, so the
+    // names and the default are held still without the process being touched.
+    let parsed = format!(
+        "{:?}",
+        waveflow_server::cli::Cli::parse_from([
+            "waveflow-server",
+            "scrobble",
+            "link",
+            "--actor",
+            "a",
+            "--username",
+            "b",
+            "--provider",
+            "listenbrainz",
+        ])
+        .command
+        .unwrap()
+    );
+    assert!(parsed.contains("WAVEFLOW_SCROBBLE_TOKEN"), "{parsed}");
+
+    // The link itself is posed through the service, which is what the command
+    // calls anyway — the assertions below then read it back the same way.
+    state
+        .services
+        .link_scrobble(
+            user,
+            waveflow_server::services::ScrobbleProvider::ListenBrainz,
+            "lb-token-from-the-shell",
+        )
+        .await
+        .unwrap();
 
     let links = state.services.scrobble_links(user).await.unwrap();
     assert_eq!(links.len(), 1);

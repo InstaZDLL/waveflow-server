@@ -591,10 +591,23 @@ impl DomainServices {
     /// retried has stopped asking, so [`Self::scrobble_links`] stops counting
     /// it; a list that went on naming it would ask for the same decision
     /// forever, and the count beside it would disagree. An unlinked generation
-    /// drops out for the same reason from the other side — there is no live
-    /// authorisation left to answer under, which is exactly why
-    /// `retry_uncertain_scrobble` refuses one. Its rows stay in the table and
-    /// stay true; they have simply stopped being a question.
+    /// drops out for the same reason from the other side: there is no
+    /// authorisation left to answer under at all. Its rows stay in the table
+    /// and stay true; they have simply stopped being a question.
+    ///
+    /// **A `broken` link is still listed, and that is not an oversight.** Its
+    /// rows ask something answerable — [`Self::discard_uncertain_scrobble`]
+    /// works on them, and preferring the gap is a decision.
+    /// [`Self::retry_uncertain_scrobble`] requires `status='active'` and will
+    /// refuse them for as long as the token stays bad, exactly as
+    /// [`Self::due_scrobbles`] refuses to drain under one. The two gestures have
+    /// different preconditions here, on purpose.
+    ///
+    /// An earlier version of this paragraph said the list excluded whatever
+    /// retry refuses. That was true of `unlinked` and false of `broken`, which
+    /// is the shape of claim this file keeps having to correct.
+    /// `an_entry_under_a_broken_link_can_be_discarded_but_not_retried` holds the
+    /// asymmetry still.
     ///
     /// Newest first: an ambiguous listen from this afternoon is the one a person
     /// can still remember playing.
