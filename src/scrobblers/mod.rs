@@ -120,27 +120,56 @@ pub fn validate_destination(raw: &str, allow_plaintext: bool) -> Result<url::Url
 /// loopback, the three private IPv4 ranges, link-local, and their IPv6
 /// equivalents — unique-local `fc00::/7` and link-local `fe80::/10`, spelled out
 /// by hand because `Ipv6Addr`'s own predicates for those are still unstable.
+/// **An IPv4-mapped address is unwrapped and judged as the address it names**,
+/// so `[::ffff:10.0.0.1]` and `10.0.0.1` get the same answer. A review found
+/// them getting opposite ones: the refusal was safe, but it told an operator
+/// their own network was public, which is the worst kind of true-sounding lie
+/// for a boot failure to tell.
 ///
-/// The names are the ones that cannot resolve on it: `localhost`, the mDNS and
-/// intranet suffixes, and **a single label with no dot at all** — which is what a
-/// container is called on a Docker network, and the self-hosted case this whole
-/// escape exists for.
+/// The deprecated IPv4-*compatible* spelling is a different thing and stays
+/// refused: `to_ipv4_mapped` answers only for `::ffff:a.b.c.d`, so `[::10.0.0.1]`
+/// falls through to the segment tests and fails them. It is now the one IPv6
+/// spelling of a private address that disagrees with its IPv4 twin, and it is
+/// left that way deliberately — the form is deprecated, nothing writes it on
+/// purpose, and refusing is the safe direction. Said here because the paragraph
+/// above, read alone, promises more agreement than there is.
+///
+/// The names are `localhost`, the mDNS and intranet suffixes, and **any single
+/// label with no dot in it** — which is what a container is called on a Docker
+/// network, and the self-hosted case this whole escape exists for.
+///
+/// That last rule is about shape, not about resolution. `com` and `ai` are
+/// single labels that answer publicly, so a dotless name is not a synonym for an
+/// unreachable one; the rule holds because this string is an operator's own
+/// setting and nobody points a server at a TLD apex. An earlier version of this
+/// paragraph claimed dotless names "cannot resolve", which was simply false.
+///
+/// A name made only of dots trims to the empty string, which contains no dot and
+/// so read as ours. Refused — nobody's network is called that, and accepting it
+/// was an accident of how the trimming is written rather than a decision.
 ///
 /// A public name is refused even if it happens to resolve to `10.0.0.2` today.
 /// That is the deliberate half: a check that asked a resolver would answer
 /// differently depending on when it was asked, and a DNS answer is not a thing
 /// to hang a credential on.
 fn is_on_our_own_network(host: Option<url::Host<&str>>) -> bool {
+    fn unroutable(address: std::net::Ipv4Addr) -> bool {
+        address.is_loopback() || address.is_private() || address.is_link_local()
+    }
     match host {
-        Some(url::Host::Ipv4(address)) => {
-            address.is_loopback() || address.is_private() || address.is_link_local()
-        }
+        Some(url::Host::Ipv4(address)) => unroutable(address),
         Some(url::Host::Ipv6(address)) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return unroutable(mapped);
+            }
             let leading = address.segments()[0];
             address.is_loopback() || (leading & 0xfe00) == 0xfc00 || (leading & 0xffc0) == 0xfe80
         }
         Some(url::Host::Domain(name)) => {
             let name = name.trim_end_matches('.').to_ascii_lowercase();
+            if name.is_empty() {
+                return false;
+            }
             !name.contains('.')
                 || name == "localhost"
                 || [".localhost", ".local", ".internal", ".home.arpa"]
@@ -219,6 +248,13 @@ mod tests {
             "http://[::1]:8080",
             "http://[fd00::1]",
             "http://[fe80::1]",
+            // The same private addresses written the IPv4-mapped way. The doc
+            // above promises "their IPv6 equivalents", and an operator who
+            // spells one like this was getting a boot failure saying their own
+            // network was public.
+            "http://[::ffff:127.0.0.1]",
+            "http://[::ffff:10.0.0.1]",
+            "http://[::ffff:c0a8:1]",
         ] {
             assert!(validate_destination(own, true).is_ok(), "{own}");
         }
@@ -232,6 +268,14 @@ mod tests {
             "http://[2606:4700::1111]",
             // A trailing dot and a capital spell the same public name.
             "http://API.ListenBrainz.ORG.",
+            // And the mapped form of a public address is still public.
+            "http://[::ffff:1.1.1.1]",
+            // A name that is nothing but dots trims to the empty string, which
+            // has no dot in it and was therefore reading as "ours". Nobody's
+            // network is called that; accepting it was an accident of the test
+            // rather than a decision.
+            "http://.",
+            "http://..",
         ] {
             assert_eq!(
                 validate_destination(public, true),
