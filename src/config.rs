@@ -105,6 +105,23 @@ pub struct ScrobbleLimits {
     pub batch: usize,
 }
 
+/// How many times a listen is offered before the queue gives up on it.
+///
+/// Thirty, because the waits grow to an hour and stop there: six doublings from
+/// a minute, then an hour apiece. Thirty submissions therefore span a little
+/// over **a day** of a destination being down, which is the span worth
+/// surviving — a nightly maintenance window, a regional outage, a certificate
+/// nobody renewed until morning.
+///
+/// It was eight, with a comment claiming the same day; eight delivers two hours
+/// and three minutes. The comment was the honest statement of what this is for,
+/// so the number moved to meet it rather than the sentence being trimmed to fit.
+/// Giving up early buys nothing here: abandoning a listen is a permanent hole in
+/// someone's history, and unlike a retry after an ambiguous answer it risks no
+/// duplicate at all. `the_default_attempt_cap_carries_a_listen_across_a_day_of_outage`
+/// keeps this paragraph and the arithmetic from drifting apart again.
+pub const DEFAULT_SCROBBLE_MAX_ATTEMPTS: u32 = 30;
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -315,10 +332,10 @@ impl Config {
                 "WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS",
                 60u64,
             )?),
-            // Eight doublings from a minute carry a listen across most of a day
-            // of an outage, which is longer than any of the three destinations
-            // has plausibly been down.
-            max_attempts: parse_positive_env("WAVEFLOW_SCROBBLE_MAX_ATTEMPTS", 8u32)?,
+            max_attempts: parse_positive_env(
+                "WAVEFLOW_SCROBBLE_MAX_ATTEMPTS",
+                DEFAULT_SCROBBLE_MAX_ATTEMPTS,
+            )?,
             stale_after: Duration::from_secs(parse_positive_env(
                 "WAVEFLOW_SCROBBLE_STALE_AFTER_SECS",
                 3_600u64,

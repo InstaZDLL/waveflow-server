@@ -124,3 +124,13 @@ CREATE INDEX scrobble_outbox_due_idx ON scrobble_outbox(state, next_attempt_at);
 
 -- What the counters ask for: one link's queue, by state.
 CREATE INDEX scrobble_outbox_link_idx ON scrobble_outbox(link_id, state);
+
+-- What the foreign key asks for when a listen is deleted.
+--
+-- `play_event_id` is `ON DELETE SET NULL`, so removing a `play_event` row makes
+-- SQLite look for the outbox rows pointing at it. The only other index leading
+-- with this column is `scrobble_outbox_once_idx`, which is partial and so cannot
+-- answer for a retry row — leaving a scan. Deleting tracks is not a rare event
+-- here: an ordinary rescan that finds files gone cascades track -> play_event
+-- -> this lookup.
+CREATE INDEX scrobble_outbox_play_event_idx ON scrobble_outbox(play_event_id);
