@@ -155,6 +155,33 @@ pub struct ScrobbleLinkState {
     pub last_failure: Option<String>,
 }
 
+/// One ambiguous entry, named so that a person can act on it.
+///
+/// **Counters are not enough here, and content is not allowed.** Decision 12
+/// keeps the envelope out of the API — what this publishes is a state, never an
+/// echo of what was heard — while decision 13 asks a person to choose the fate
+/// of one specific listen. A bare UUID is not something anybody can choose
+/// about.
+///
+/// `played_at` is what resolves that: it is the moment of their own gesture,
+/// already readable through `/api/v2/history`, so a client matches the entry
+/// against a listen it already holds instead of this server republishing one.
+/// The title and the artists stay where the envelope is.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UncertainScrobble {
+    /// The only name the outside is ever given. The rowid is sequential and
+    /// would tell anyone holding a single entry of their own how many listens
+    /// this whole server has queued.
+    pub id: Uuid,
+    pub provider: ScrobbleProvider,
+    /// When the listen happened, not when it was queued.
+    pub played_at: i64,
+    pub attempts: i64,
+    /// A normalised cause — `stalled`, `auth_broken` — or nothing.
+    pub last_failure: Option<String>,
+    pub updated_at: i64,
+}
+
 /// What one drain pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScrobbleDrain {
@@ -551,6 +578,61 @@ impl DomainServices {
             });
         }
         Ok(states)
+    }
+
+    /// Every ambiguous entry still asking this account for a decision.
+    ///
+    /// **Without this, the two gestures decision 13 grants cannot be aimed.**
+    /// `discard_uncertain_scrobble` and `retry_uncertain_scrobble` both name an
+    /// entry by its `public_id`, and until now nothing published one: a person
+    /// was asked to choose, and given no way to learn what about.
+    ///
+    /// **The exclusions are the counter's, deliberately.** An entry already
+    /// retried has stopped asking, so [`Self::scrobble_links`] stops counting
+    /// it; a list that went on naming it would ask for the same decision
+    /// forever, and the count beside it would disagree. An unlinked generation
+    /// drops out for the same reason from the other side — there is no live
+    /// authorisation left to answer under, which is exactly why
+    /// `retry_uncertain_scrobble` refuses one. Its rows stay in the table and
+    /// stay true; they have simply stopped being a question.
+    ///
+    /// Newest first: an ambiguous listen from this afternoon is the one a person
+    /// can still remember playing.
+    pub async fn uncertain_scrobbles(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<UncertainScrobble>, ServiceError> {
+        // Tenancy in the query rather than in a caller, as everywhere else here:
+        // the join to `scrobble_link` is what makes another account's entry
+        // unnameable rather than merely unreturned.
+        let rows = sqlx::query(
+            "SELECT o.public_id, l.provider, o.played_at, o.attempts, \
+                    o.last_failure, o.updated_at \
+             FROM scrobble_outbox o JOIN scrobble_link l ON l.id = o.link_id \
+             WHERE l.user_id=? AND l.status <> 'unlinked' AND o.state='uncertain' \
+               AND o.id NOT IN \
+                 (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+             ORDER BY o.played_at DESC, o.id DESC",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(UncertainScrobble {
+                    // Stored as text and parsed back rather than trusted: a
+                    // value this cannot read is a row this server wrote wrong,
+                    // and answering with it would publish nonsense as an id.
+                    id: Uuid::parse_str(row.try_get("public_id")?)
+                        .map_err(|_| ServiceError::Invalid)?,
+                    provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                    played_at: row.try_get("played_at")?,
+                    attempts: row.try_get("attempts")?,
+                    last_failure: row.try_get("last_failure")?,
+                    updated_at: row.try_get("updated_at")?,
+                })
+            })
+            .collect()
     }
 
     /// Throws away one ambiguous entry. The person prefers the gap.

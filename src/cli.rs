@@ -43,6 +43,15 @@ pub enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Link an account to a scrobbling destination, or read its queue.
+    ///
+    /// The same gestures the native API offers, for an operator preparing a
+    /// server nobody has opened a browser on yet — exactly the reason the
+    /// dedicated Subsonic password has a command here too.
+    Scrobble {
+        #[command(subcommand)]
+        command: ScrobbleCommand,
+    },
     /// Check the SQLite database integrity.
     Database {
         #[command(subcommand)]
@@ -154,6 +163,53 @@ pub struct SetCredentialArgs {
     password_env: String,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ScrobbleCommand {
+    /// Authorise an account at a destination, replacing any authorisation it
+    /// already had there.
+    Link(LinkScrobbleArgs),
+    /// Withdraw it. Listens already queued under it stay queued under it and
+    /// are never sent to whatever is linked next.
+    Unlink(UnlinkScrobbleArgs),
+    /// What each of an account's links is doing.
+    Status(ScrobbleStatusArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LinkScrobbleArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    /// `listenbrainz`, `maloja` or `lastfm`.
+    #[arg(long)]
+    provider: String,
+    /// Environment variable containing the token. The value never appears in
+    /// argv, for the same reason the account password does not: a shell history
+    /// and a process list are both readable by people this credential is not
+    /// for.
+    #[arg(long, default_value = "WAVEFLOW_SCROBBLE_TOKEN")]
+    token_env: String,
+}
+
+#[derive(Debug, Args)]
+pub struct UnlinkScrobbleArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    #[arg(long)]
+    provider: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScrobbleStatusArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+}
+
 #[derive(Debug, Args)]
 pub struct RevokeCredentialArgs {
     #[arg(long)]
@@ -221,6 +277,11 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
         },
         Command::Token { command } => match command {
             TokenCommand::Create(args) => create_token(state, args).await,
+        },
+        Command::Scrobble { command } => match command {
+            ScrobbleCommand::Link(args) => link_scrobble(state, args).await,
+            ScrobbleCommand::Unlink(args) => unlink_scrobble(state, args).await,
+            ScrobbleCommand::Status(args) => scrobble_status(state, args).await,
         },
         Command::Database { command } => match command {
             DatabaseCommand::Check => {
@@ -496,6 +557,89 @@ async fn create_token(state: &AppState, args: CreateTokenArgs) -> anyhow::Result
         .await?;
     println!("Created API token {} for {}", record.id, args.username);
     println!("Token (shown once): {token}");
+    Ok(())
+}
+
+/// The destination named on the command line.
+///
+/// Through `FromStr`, which is the same reading the API and the `CHECK`
+/// constraint use. A `ValueEnum` here would be a fifth spelling of a fact that
+/// already has four, and one test holds those four together.
+fn scrobble_provider(raw: &str) -> anyhow::Result<crate::services::ScrobbleProvider> {
+    <crate::services::ScrobbleProvider as std::str::FromStr>::from_str(raw)
+        .map_err(|_| anyhow::anyhow!("unknown destination: {raw} (listenbrainz, maloja or lastfm)"))
+}
+
+/// Through `DomainServices`, never around it.
+///
+/// The same reasoning `create_token` carries: this mutation is also an HTTP
+/// route, and a link made here must carry the validation, the sealing and the
+/// generation semantics a link made there carries. Two copies of the insert
+/// would not guarantee that.
+async fn link_scrobble(state: &AppState, args: LinkScrobbleArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let provider = scrobble_provider(&args.provider)?;
+    let secret = read_secret_env(&args.token_env)?;
+    state
+        .services
+        .link_scrobble(user.id, provider, &secret)
+        .await?;
+    println!(
+        "Linked {} to {} (any previous authorisation there is withdrawn)",
+        args.username,
+        provider.as_str()
+    );
+    Ok(())
+}
+
+async fn unlink_scrobble(state: &AppState, args: UnlinkScrobbleArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let provider = scrobble_provider(&args.provider)?;
+    // Saying so rather than failing: the caller asked for this account to hold
+    // no authorisation there, and it holds none. The API answers the same way.
+    if state.services.unlink_scrobble(user.id, provider).await? {
+        println!("Unlinked {} from {}", args.username, provider.as_str());
+    } else {
+        println!("{} had no link to {}", args.username, provider.as_str());
+    }
+    Ok(())
+}
+
+async fn scrobble_status(state: &AppState, args: ScrobbleStatusArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let links = state.services.scrobble_links(user.id).await?;
+    if links.is_empty() {
+        println!("{} has no scrobbling links", args.username);
+        return Ok(());
+    }
+    for link in links {
+        // Counters, never content: decision 12 governs what this prints exactly
+        // as it governs what the route publishes.
+        println!(
+            "{:<13} {:<9} pending {:<5} retrying {:<5} uncertain {:<5} {}",
+            link.provider.as_str(),
+            link.health,
+            link.pending,
+            link.retrying,
+            link.uncertain,
+            link.last_failure.as_deref().unwrap_or("-")
+        );
+    }
     Ok(())
 }
 
