@@ -481,6 +481,86 @@ async fn one_account_never_sees_another_account_s_ambiguous_entries() {
 ///
 /// The row itself stays, and stays `uncertain`. It has stopped being a question;
 /// it has not stopped being true, and those are different things.
+/// A broken link keeps its question, and loses one of the two answers.
+///
+/// `retry_uncertain_scrobble` requires `status='active'`, exactly as the drain
+/// does — resubmitting under a token the destination has already refused is not
+/// a thing to offer. But discarding stays available and stays meaningful, so the
+/// entry goes on being listed.
+///
+/// The listing's own doc claimed the opposite for a while: that it excluded
+/// whatever retry refuses. True of `unlinked`, false of `broken`, and nothing
+/// held the difference still. This does.
+#[tokio::test]
+async fn an_entry_under_a_broken_link_can_be_discarded_but_not_retried() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "broken-link-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let uncertain_id = one_uncertain_entry(&state, &fixture).await;
+
+    // A second listen, refused for its credential, is what marks the link
+    // broken. The ambiguous entry above is terminal and is not touched by it.
+    let refuses = Recorder::always(ScrobbleVerdict::AuthBroken);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&refuses) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    // The tagged track, not the bare one. `bare` carries no usable tags and is
+    // never queued at all — the first version of this test scrobbled it, queued
+    // nothing, drained nothing, and left the link perfectly healthy while
+    // asserting it was broken.
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+    // Said out loud rather than inferred from the health string: if queueing
+    // ever stopped working, every assertion below would still be reachable by
+    // accident and this test would report something it had not exercised.
+    assert_eq!(
+        refuses.seen().len(),
+        1,
+        "the destination has to have been asked for its refusal to mean anything"
+    );
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken", "the token was refused");
+
+    // Still asking, because discarding is still an answer.
+    let waiting = state
+        .services
+        .uncertain_scrobbles(fixture.owner)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].id, uncertain_id);
+
+    // But not this answer: a retry would submit under a credential the
+    // destination has already refused.
+    assert!(state
+        .services
+        .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+        .await
+        .is_err());
+
+    // The one that remains works, and the question then stops.
+    state
+        .services
+        .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+        .await
+        .unwrap();
+    assert!(state
+        .services
+        .uncertain_scrobbles(fixture.owner)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 #[tokio::test]
 async fn an_unlinked_generation_stops_asking_for_a_decision() {
     let (_temp, config, state) = test_app().await;

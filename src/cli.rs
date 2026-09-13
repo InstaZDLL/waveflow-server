@@ -659,7 +659,13 @@ async fn require_admin(
 
 fn read_secret_env(name: &str) -> anyhow::Result<String> {
     let value = std::env::var(name).with_context(|| format!("{name} is required"))?;
-    if value.is_empty() {
+    // Judged on the trimmed value, returned untrimmed. A variable holding
+    // nothing but a newline used to pass here and fail three layers down as a
+    // bare "invalid input", which tells the person who pasted it nothing. The
+    // value itself is handed back as it was found, because this same function
+    // reads account and Subsonic passwords, and silently trimming one of those
+    // would change a credential that already works.
+    if value.trim().is_empty() {
         anyhow::bail!("{name} cannot be empty");
     }
     Ok(value)
