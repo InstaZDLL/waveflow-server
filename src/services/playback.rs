@@ -58,7 +58,7 @@ impl DomainServices {
         if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
             return Err(ServiceError::Invalid);
         }
-        sqlx::query(
+        let recorded = sqlx::query(
             "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
         )
         .bind(user_id.to_string())
@@ -68,6 +68,20 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         if submission {
+            // In this transaction and under this writer gate, which is the
+            // whole of RFC-010 decision 1: a listen cannot be recorded without
+            // being queued for the destinations this account has linked, nor
+            // queued without being recorded. A now-playing is deliberately not
+            // queued — decision 3 — because delivering it late would announce a
+            // track the listener left long ago.
+            self.enqueue_scrobble_on(
+                &mut tx,
+                user_id,
+                recorded.last_insert_rowid(),
+                track_id,
+                now,
+            )
+            .await?;
             sqlx::query("DELETE FROM now_playing WHERE user_id=?")
                 .bind(user_id.to_string())
                 .execute(&mut *tx)

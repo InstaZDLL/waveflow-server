@@ -1,9 +1,14 @@
 # RFC-010 — Le scrobbling externe
 
 - **Statut** : Proposed
-- **Implémentée par** : rien encore. Quand du code existera, c'est cette ligne
-  qui nommera les PR, et le champ *Statut* ci-dessus ne basculera pas — il ne
-  bascule jamais dans ce projet.
+- **Implémentée par** :
+  [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), la moitié
+  durable — les deux tables, la mise en file dans la transaction qui écrit
+  `play_event`, les cinq verdicts, et la tâche de drainage. **Aucun adaptateur,
+  donc aucun appel sortant** : le serveur ne parle toujours à personne, et
+  `Cargo.toml` ne porte toujours pas de client HTTP. ListenBrainz, les routes
+  natives et la CLI viennent ensuite, par la décision 11. Le champ *Statut*
+  ci-dessus ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
 - **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
@@ -339,5 +344,19 @@ version laissait pendantes sont tranchées ci-dessus, et ce qui reste appartient
 à l'implémentation : le nom exact des routes, le seuil au-delà duquel une file
 qui n'avance pas devient `degraded`, et la forme précise du JSON.
 
-C'est la ligne *Implémentée par* de l'en-tête qu'il faudra lire ensuite. Elle
-dit encore « rien encore ».
+**Une question que cette RFC n'avait pas posée** est apparue en relisant le code
+de [#191](https://github.com/InstaZDLL/waveflow-server/pull/191) : la file ne se
+purge jamais. Une ligne terminale — `sent`, `rejected`, `abandoned`, `cancelled`,
+`discarded` — reste indéfiniment, donc la table grandit d'une ligne par écoute et
+par destination, sans fin, chez un auditeur actif. Ce n'est pas une décision
+d'architecture et cela n'a pas retenu #191, parce que la rétention ne demande
+aucune migration : un réglage de déploiement et une tâche de purge, sur le patron
+de [RFC-007](RFC-007-library-event-stream.md) — une fenêtre, un plancher, et la
+septième tâche de fond qui existe déjà.
+
+Une seule contrainte en sort, et elle vient d'ici : **`uncertain` ne se purge
+jamais.** Cette ligne-là attend la décision d'une personne, et la lui retirer
+au bout de trente jours, c'est décider à sa place — exactement ce que la
+décision 13 refuse.
+
+C'est la ligne *Implémentée par* de l'en-tête qu'il faut lire pour le reste.
