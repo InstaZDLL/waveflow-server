@@ -36,6 +36,14 @@ lofty = "0.25"
 libc = "0.2"
 md-5 = "0.11"
 rand = "0.10"
+# The feature set is `waveflow-core`'s, deliberately, minus `blocking` which
+# nothing here needs. That crate already pulls reqwest over rustls into this
+# binary, so declaring it adds no code and no second TLS stack — it makes
+# explicit what was already linked. Naming `default-features = false` is what
+# keeps it that way: the default set would switch on `default-tls`, and Cargo
+# unifies features across the graph, so OpenSSL would arrive beside rustls
+# rather than instead of it.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-path", "mime-guess"] }
 serde_json = "1"

@@ -87,7 +87,17 @@ pub enum ScrobbleVerdict {
     /// The destination has it. Nothing further.
     Accepted,
     /// The destination did not get it, and saying so again later may work.
-    Retryable,
+    ///
+    /// `after` is what the destination itself asked for when it said so —
+    /// ListenBrainz answers `429` with `X-RateLimit-Reset-In`, in seconds.
+    /// Decision 6 promised to honour that and PR #191 had nowhere to put it, so
+    /// the verdict was opaque and the header was read by nobody.
+    ///
+    /// **It is honoured as a floor, never as a replacement.** Waiting *at
+    /// least* as long as asked is what honouring means; taking the destination's
+    /// twelve seconds in place of our own sixteen-minute backoff would answer a
+    /// request to slow down by speeding up.
+    Retryable { after: Option<Duration> },
     /// The authorisation is no longer good. The link is marked broken and its
     /// queue finishes, because every further attempt would fail identically.
     AuthBroken,
@@ -780,11 +790,13 @@ impl DomainServices {
                         drained.accepted += 1;
                     }
                 }
-                ScrobbleVerdict::Retryable => match self.reschedule_scrobble(&entry).await? {
-                    Rescheduled::Later => drained.retrying += 1,
-                    Rescheduled::Abandoned => drained.abandoned += 1,
-                    Rescheduled::NotOurs => {}
-                },
+                ScrobbleVerdict::Retryable { after } => {
+                    match self.reschedule_scrobble(&entry, after).await? {
+                        Rescheduled::Later => drained.retrying += 1,
+                        Rescheduled::Abandoned => drained.abandoned += 1,
+                        Rescheduled::NotOurs => {}
+                    }
+                }
                 ScrobbleVerdict::PermanentReject => {
                     if self
                         .settle_scrobble(&entry, "rejected", Some("rejected"))
@@ -1025,7 +1037,11 @@ impl DomainServices {
     /// Answers [`Rescheduled::NotOurs`] when the row had already been settled
     /// elsewhere, on the same terms and for the same reason as
     /// [`Self::settle_scrobble`].
-    async fn reschedule_scrobble(&self, entry: &DueEntry) -> Result<Rescheduled, ServiceError> {
+    async fn reschedule_scrobble(
+        &self,
+        entry: &DueEntry,
+        after: Option<Duration>,
+    ) -> Result<Rescheduled, ServiceError> {
         let attempts = entry.attempts.saturating_add(1);
         let exhausted =
             u64::try_from(attempts).unwrap_or(u64::MAX) >= u64::from(self.scrobbling.max_attempts);
@@ -1042,7 +1058,12 @@ impl DomainServices {
             );
         }
         let now = now_ms();
-        let wait = retry_delay(attempts, entry.id);
+        // The longer of the two, so a destination asking for room gets at least
+        // what it asked for and our own backoff is never shortened by it.
+        let asked = after.map_or(0, |after| {
+            i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
+        });
+        let wait = retry_delay(attempts, entry.id).max(asked);
         let _writer = self.db.writer_guard().await;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \

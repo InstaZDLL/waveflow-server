@@ -3474,6 +3474,7 @@ dependencies = [
  "lofty",
  "md-5",
  "rand 0.10.2",
+ "reqwest",
  "rust-embed",
  "serde",
  "serde_json",

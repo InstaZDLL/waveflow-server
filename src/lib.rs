@@ -11,6 +11,7 @@ pub mod media;
 pub mod oauth;
 pub mod pid;
 pub mod scanner;
+pub mod scrobblers;
 pub mod security;
 pub mod services;
 pub mod stream_ticket;
@@ -545,6 +546,30 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         scanner.clone(),
         config,
     );
+    // The only outbound surface this server has, and it is switched on by the
+    // operator naming a destination rather than by anybody linking an account.
+    // Nothing leaves until both are true: an adapter with no authorisation
+    // behind it is never handed a listen. RFC-010 decision 11.
+    if let Some(base) = config.listenbrainz_url.as_deref() {
+        // Both were validated by `Config::from_env`, which refuses to boot on a
+        // malformed destination, so neither branch below is reachable from a
+        // running server — they are here because `for_data_dir` builds a
+        // `Config` without going through that gate.
+        let target = scrobblers::validate_destination(base, config.outbound_allow_plaintext)
+            .and_then(|base| {
+                let client = scrobblers::outbound_client(config.scrobbling.request_timeout)?;
+                scrobblers::listenbrainz::ListenBrainz::new(client, &base)
+            });
+        match target {
+            Ok(target) => services.register_scrobble_target(
+                services::ScrobbleProvider::ListenBrainz,
+                Arc::new(target),
+            ),
+            Err(error) => {
+                anyhow::bail!("ListenBrainz destination {base} is unusable: {error}")
+            }
+        }
+    }
     Ok(AppState {
         db,
         auth,
