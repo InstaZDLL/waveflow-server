@@ -145,6 +145,11 @@ pub struct ScrobbleDrain {
     pub rejected: usize,
     pub uncertain: usize,
     pub broken: usize,
+    /// Rows a previous process left claimed and never settled, finished as
+    /// `uncertain` at the start of this pass. Counted apart from `uncertain`
+    /// because they are not something this pass decided — they are what it
+    /// found.
+    pub recovered: usize,
     /// Rows left exactly as they were because no adapter is registered for
     /// their destination. Not an attempt: a server missing an adapter is a
     /// misconfiguration, and spending the listen's retries on it would destroy
@@ -167,6 +172,14 @@ struct DueEntry {
 const RETRY_BASE: Duration = Duration::from_secs(60);
 /// Its ceiling. Past this, waiting longer buys nothing a restart would not.
 const RETRY_CEILING: Duration = Duration::from_secs(60 * 60);
+/// How far past the outbound deadline a claimed row must sit before it is read
+/// as abandoned rather than in flight.
+///
+/// A live submission cannot outlast `request_timeout`, so any margin at all
+/// would do; a generous one means a paused process — a laptop closing, a
+/// container throttled — is never mistaken for a dead one and does not have a
+/// listen declared uncertain out from under it.
+const STALE_SENDING_MARGIN: Duration = Duration::from_secs(60);
 
 impl DomainServices {
     /// Queues one listen for every destination this account has linked.
@@ -503,9 +516,19 @@ impl DomainServices {
         // The link has to be live: a retry under a withdrawn authorisation
         // would submit to whichever profile happens to be linked now, which is
         // the very substitution generations exist to prevent.
+        //
+        // And the entry must not already have been retried. The original stays
+        // `uncertain` for good — erasing it would falsify the only trace
+        // explaining why a duplicate exists — so nothing in the row itself says
+        // it has been answered, and without this clause a second call would
+        // queue a second copy, and a third a third. Decision 13 gives that
+        // acceptance once, for one listen, deliberately. The unique index on
+        // `retry_of` refuses the insert as well; this clause is what turns the
+        // refusal into an ordinary 404 instead of a constraint error.
         let exists = sqlx::query_scalar::<_, i64>(
             "SELECT o.id FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
-             WHERE o.id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active'",
+             WHERE o.id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active' \
+               AND NOT EXISTS (SELECT 1 FROM scrobble_outbox r WHERE r.retry_of=o.id)",
         )
         .bind(entry_id)
         .bind(user_id.to_string())
@@ -560,6 +583,7 @@ impl DomainServices {
                 uncertain = drained.uncertain,
                 broken = drained.broken,
                 unserviced = drained.unserviced,
+                recovered = drained.recovered,
                 "scrobble queue drained"
             ),
             Err(error) => tracing::warn!(%error, "could not drain the scrobble queue"),
@@ -578,7 +602,13 @@ impl DomainServices {
     /// fifty at a time, and a batch of fifty that comes back `Ambiguous` makes
     /// fifty listens uncertain at once — which decision 5 then forbids retrying.
     pub async fn drain_scrobble_outbox(&self) -> Result<ScrobbleDrain, ServiceError> {
-        let mut drained = ScrobbleDrain::default();
+        // Before anything else: whatever a previous process left mid-flight.
+        // Those rows are claimed, so nothing below would look at them, and left
+        // alone they would sit `sending` forever.
+        let mut drained = ScrobbleDrain {
+            recovered: usize::try_from(self.recover_stale_sending().await?).unwrap_or(0),
+            ..Default::default()
+        };
         // Links this pass has just found broken.
         //
         // The batch is chosen before the first verdict comes back, so without
@@ -635,6 +665,13 @@ impl DomainServices {
                     continue;
                 }
             };
+            // Taken out of `pending` before a single byte is emitted. A pass
+            // that loses the race leaves the row to whoever won it rather than
+            // sending a second copy — see `claim_scrobble` for why this also
+            // matters to a process that never races anyone.
+            if !self.claim_scrobble(&entry).await? {
+                continue;
+            }
             // Bounded, because nothing else bounds it. A destination that
             // accepts the connection and then never answers would otherwise
             // hold this background task for the life of the process — and the
@@ -691,6 +728,12 @@ impl DomainServices {
                     drained.uncertain += 1;
                 }
                 ScrobbleVerdict::AuthBroken => {
+                    // This row is claimed, so the sweep inside
+                    // `mark_link_broken` — which finishes the link's *waiting*
+                    // rows — does not reach it. Finished here, on the same
+                    // terms as the ones queued behind it.
+                    self.settle_scrobble(&entry, "cancelled", Some("auth_broken"))
+                        .await?;
                     self.mark_link_broken(entry.link_id, "auth_broken").await?;
                     broken_links.insert(entry.link_id);
                     drained.broken += 1;
@@ -698,6 +741,63 @@ impl DomainServices {
             }
         }
         Ok(drained)
+    }
+
+    /// Takes one row out of `pending` before anything is emitted.
+    ///
+    /// Answers whether this pass got it. The `UPDATE … WHERE state='pending'`
+    /// is the whole mechanism: two passes reaching for the same row both run
+    /// it, SQLite serialises them, and exactly one sees a row affected. The
+    /// loser leaves it alone instead of sending a second copy. `drain_scrobble_outbox`
+    /// is public, so a manual or test pass really can run beside the background
+    /// one.
+    ///
+    /// It also closes a window that has nothing to do with racing. Between a
+    /// submission leaving and its verdict being committed the process can stop,
+    /// and a row left `pending` there is simply sent again at the next boot —
+    /// the duplicate this whole module exists to avoid, arriving without anyone
+    /// choosing it. Left `sending`, it is recoverable as what it actually is:
+    /// unknown.
+    async fn claim_scrobble(&self, entry: &DueEntry) -> Result<bool, ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let claimed = sqlx::query(
+            "UPDATE scrobble_outbox SET state='sending', updated_at=? \
+             WHERE id=? AND state='pending'",
+        )
+        .bind(now)
+        .bind(entry.id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(claimed.rows_affected() == 1)
+    }
+
+    /// Finishes the rows a stopped process left mid-flight.
+    ///
+    /// A row is `sending` only between its claim and its verdict, and a live
+    /// submission cannot outlast `request_timeout`. Anything still `sending`
+    /// well past that belongs to a process that stopped between emitting and
+    /// recording, so nobody knows whether the destination took it — which is
+    /// `uncertain` by decision 5, and emphatically not `pending`. Returning it
+    /// to the queue would be the server choosing a duplicate on someone's
+    /// behalf, which is the one choice it never gets to make.
+    async fn recover_stale_sending(&self) -> Result<u64, ServiceError> {
+        let now = now_ms();
+        let stale_after = self
+            .scrobbling
+            .request_timeout
+            .saturating_add(STALE_SENDING_MARGIN);
+        let cutoff = now.saturating_sub(i64::try_from(stale_after.as_millis()).unwrap_or(i64::MAX));
+        let _writer = self.db.writer_guard().await;
+        let recovered = sqlx::query(
+            "UPDATE scrobble_outbox SET state='uncertain', last_failure='interrupted', \
+             updated_at=? WHERE state='sending' AND updated_at < ?",
+        )
+        .bind(now)
+        .bind(cutoff)
+        .execute(self.db.pool())
+        .await?;
+        Ok(recovered.rows_affected())
     }
 
     /// The rows that are due, under a link that is still good.
@@ -751,7 +851,7 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         sqlx::query(
             "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
-             updated_at=? WHERE id=? AND state='pending'",
+             updated_at=? WHERE id=? AND state='sending'",
         )
         .bind(state)
         .bind(failure)
@@ -826,8 +926,8 @@ impl DomainServices {
         let wait = retry_delay(attempts, entry.id);
         let _writer = self.db.writer_guard().await;
         sqlx::query(
-            "UPDATE scrobble_outbox SET attempts=?, next_attempt_at=?, last_failure='retryable', \
-             updated_at=? WHERE id=? AND state='pending'",
+            "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
+             last_failure='retryable', updated_at=? WHERE id=? AND state='sending'",
         )
         .bind(attempts)
         .bind(now.saturating_add(wait))

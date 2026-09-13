@@ -335,6 +335,141 @@ async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
     assert_eq!(target.seen()[0].1, "maloja-secret");
 }
 
+/// Drives one listen to `uncertain`, which three tests below start from.
+async fn one_uncertain_entry(state: &AppState, fixture: &Fixture) -> i64 {
+    let target = Recorder::always(ScrobbleVerdict::Ambiguous);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+    let rows = rows(state).await;
+    assert_eq!(rows[0].1, "uncertain");
+    rows[0].0
+}
+
+#[tokio::test]
+async fn an_ambiguous_entry_may_be_retried_once_and_not_twice() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "retrying-once-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let uncertain_id = one_uncertain_entry(&state, &fixture).await;
+
+    state
+        .services
+        .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+        .await
+        .unwrap();
+
+    // The original stays `uncertain` for good, so nothing in the row itself
+    // says it has been answered. Without a guard the same gesture would queue a
+    // second copy, and a third a third — and this is the one path in the whole
+    // design that can manufacture duplicates on demand. Decision 13 gives that
+    // acceptance once, for one listen, deliberately.
+    assert!(state
+        .services
+        .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+        .await
+        .is_err());
+    assert_eq!(rows(&state).await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_refused_listen_is_not_offered_to_the_destination_again() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "refused-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    let target = Recorder::always(ScrobbleVerdict::PermanentReject);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.rejected, 1);
+    assert_eq!(rows(&state).await[0].1, "rejected");
+
+    // No retry can fix a payload the far end has read and will not have, so
+    // this is terminal — and unlike `uncertain` it asks nothing of anybody.
+    make_everything_due(&state).await;
+    assert_eq!(
+        state.services.drain_scrobble_outbox().await.unwrap(),
+        Default::default()
+    );
+    assert_eq!(target.seen().len(), 1);
+
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].last_failure.as_deref(), Some("rejected"));
+    assert_eq!(links[0].pending, 0);
+    assert_eq!(links[0].uncertain, 0);
+}
+
+#[tokio::test]
+async fn a_listen_interrupted_mid_flight_is_uncertain_rather_than_sent_again() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "interrupted-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    // What a process that died between emitting a submission and recording its
+    // verdict leaves behind: a row claimed long ago and never settled. Written
+    // directly because the only other way to produce it is to kill the server.
+    sqlx::query("UPDATE scrobble_outbox SET state='sending', updated_at=?")
+        .bind(now_ms() - 600_000)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    let target = Recorder::always(ScrobbleVerdict::Accepted);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    assert_eq!(drained.recovered, 1);
+    // Uncertain, because nobody knows whether the destination took it. Returned
+    // to the queue instead, it would have been sent a second time — a duplicate
+    // arriving with no person having chosen it, which is the one choice this
+    // server never makes.
+    assert_eq!(rows(&state).await[0].1, "uncertain");
+    assert_eq!(
+        target.seen().len(),
+        0,
+        "an interrupted submission must not be re-emitted"
+    );
+    // And it is counted where a person will be asked to decide about it.
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].uncertain, 1);
+    assert_eq!(links[0].health, "degraded");
+}
+
 #[tokio::test]
 async fn an_account_that_linked_nothing_queues_nothing() {
     let (_temp, config, state) = test_app().await;
