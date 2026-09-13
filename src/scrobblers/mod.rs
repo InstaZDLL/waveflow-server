@@ -134,15 +134,22 @@ pub fn validate_destination(raw: &str, allow_plaintext: bool) -> Result<url::Url
 /// purpose, and refusing is the safe direction. Said here because the paragraph
 /// above, read alone, promises more agreement than there is.
 ///
-/// The names are `localhost`, the mDNS and intranet suffixes, and **any single
-/// label with no dot in it** — which is what a container is called on a Docker
-/// network, and the self-hosted case this whole escape exists for.
+/// The names are `localhost` and the mDNS and intranet suffixes — `.local`,
+/// `.internal`, `.home.arpa` — and nothing else.
 ///
-/// That last rule is about shape, not about resolution. `com` and `ai` are
-/// single labels that answer publicly, so a dotless name is not a synonym for an
-/// unreachable one; the rule holds because this string is an operator's own
-/// setting and nobody points a server at a TLD apex. An earlier version of this
-/// paragraph claimed dotless names "cannot resolve", which was simply false.
+/// **A bare single label was accepted here and is not any more.** The argument
+/// for it was that `http://maloja` is what a container is called on a Docker
+/// network, which is true. The argument against it is stronger, and a review had
+/// to make it twice before it landed: **a single label is completed by the
+/// resolver's own search list.** `http://maloja` on a host configured with
+/// `search corp.example.com` names a public address, and the literal does not
+/// say which. That is precisely the DNS dependence the paragraph below refuses —
+/// it was sitting inside the rule that refuses it. `com` and `ai` are single
+/// labels too, and they answer publicly.
+///
+/// An operator on a container network writes the address, or a name under one of
+/// the suffixes above. That is a smaller cost than a personal token in clear to
+/// wherever a search domain happened to point.
 ///
 /// A name made only of dots trims to the empty string, which contains no dot and
 /// so read as ours. Refused — nobody's network is called that, and accepting it
@@ -170,8 +177,7 @@ fn is_on_our_own_network(host: Option<url::Host<&str>>) -> bool {
             if name.is_empty() {
                 return false;
             }
-            !name.contains('.')
-                || name == "localhost"
+            name == "localhost"
                 || [".localhost", ".local", ".internal", ".home.arpa"]
                     .iter()
                     .any(|suffix| name.ends_with(suffix))
@@ -236,7 +242,6 @@ mod tests {
         // network, the intranet suffixes, and the addresses that cannot be
         // routed across the internet.
         for own in [
-            "http://maloja",
             "http://maloja.local",
             "http://listens.internal",
             "http://listens.home.arpa",
@@ -262,6 +267,11 @@ mod tests {
         // And never a public host, whatever the flag says: the first request
         // to it would carry `Authorization: Token …` in clear.
         for public in [
+            // A bare label is completed by the resolver's search list, so this
+            // one names whatever `search` says it does — which the string
+            // itself cannot tell us. It was accepted until a review made the
+            // point twice.
+            "http://maloja",
             "http://api.listenbrainz.org",
             "http://maloja.example.com",
             "http://1.1.1.1",
