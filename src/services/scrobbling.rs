@@ -20,10 +20,19 @@ use futures_util::future::BoxFuture;
 /// constraint are one fact written twice on purpose: the database refuses a
 /// value this cannot name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ScrobbleProvider {
+    /// Spelled out per variant rather than derived from the name.
+    /// `rename_all = "snake_case"` turns this one into `listen_brainz` and
+    /// `LastFm` into `last_fm` — names the `CHECK` constraint refuses and
+    /// `FromStr` cannot read, so the API would publish a destination no client
+    /// could send back in. One rule per variant, and no interaction between
+    /// two. [`tests::the_four_spellings_of_a_destination_agree`] holds them
+    /// together.
+    #[serde(rename = "listenbrainz")]
     ListenBrainz,
+    #[serde(rename = "maloja")]
     Maloja,
+    #[serde(rename = "lastfm")]
     LastFm,
 }
 
@@ -375,6 +384,16 @@ impl DomainServices {
     /// The waiting rows are cancelled rather than deleted: they record listens
     /// that really happened and were really never sent, and a queue that erases
     /// its own losses cannot be asked what it lost.
+    ///
+    /// **A row already in flight is left alone, deliberately.** It is not
+    /// waiting — the request has left — and decision 4 finishes what is
+    /// *waiting*. Calling it `cancelled` would be a lie about something that
+    /// really was submitted, so it settles as whatever it truly turns out to be
+    /// and stays there as history. It cannot be acted on afterwards either:
+    /// `retry_uncertain_scrobble` requires a live link, and `scrobble_links`
+    /// does not report an unlinked one. This is the same asymmetry the
+    /// `AuthBroken` arm had to close, and the opposite answer is the right one
+    /// here.
     async fn unlink_scrobble_on(
         &self,
         connection: &mut SqliteConnection,
@@ -840,6 +859,12 @@ impl DomainServices {
     }
 
     /// Writes one terminal state, and the link's last success with it.
+    ///
+    /// If this fails after a submission has already left, the pass aborts with
+    /// the row still `sending`. That is the right resting place rather than an
+    /// oversight: `recover_stale_sending` reads it as `uncertain` later, which
+    /// is exactly what a listen that was emitted and never confirmed is. It
+    /// must not be "repaired" into `pending` — that would send it again.
     async fn settle_scrobble(
         &self,
         entry: &DueEntry,
@@ -1017,6 +1042,32 @@ fn retry_delay(attempts: i64, entry_id: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wire name, the database name, `as_str` and `FromStr` are one fact.
+    ///
+    /// They were four separate facts until a review noticed that
+    /// `rename_all = "snake_case"` serialised `ListenBrainz` as
+    /// `listen_brainz`: a link list would have published a destination that
+    /// `FromStr` refuses and the `CHECK` constraint has never heard of, so a
+    /// client could read back a value it could not send in. Nothing had noticed
+    /// because the surface that serialises it is not written yet — which is
+    /// precisely when this costs nothing to hold still.
+    #[test]
+    fn the_four_spellings_of_a_destination_agree() {
+        for provider in [
+            ScrobbleProvider::ListenBrainz,
+            ScrobbleProvider::Maloja,
+            ScrobbleProvider::LastFm,
+        ] {
+            let name = provider.as_str();
+            assert_eq!(
+                serde_json::to_string(&provider).unwrap(),
+                format!("\"{name}\""),
+                "what the API publishes must be what the database stores"
+            );
+            assert_eq!(ScrobbleProvider::from_str(name).unwrap(), provider);
+        }
+    }
 
     #[test]
     fn a_link_that_answers_is_still_degraded_while_its_queue_does_not_move() {
