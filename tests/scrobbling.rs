@@ -40,7 +40,7 @@ use waveflow_server::catalog::LibraryRecord;
 use waveflow_server::config::ScrobbleLimits;
 use waveflow_server::database::LibraryVisibility;
 use waveflow_server::services::{
-    ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleVerdict,
+    ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleVerdict, ServiceError,
 };
 use waveflow_server::AppState;
 
@@ -531,11 +531,15 @@ async fn an_entry_under_a_broken_link_can_be_discarded_but_not_retried() {
 
     // But not this answer: a retry would submit under a credential the
     // destination has already refused.
-    assert!(state
+    let refused = state
         .services
         .retry_uncertain_scrobble(fixture.owner, uncertain_id)
         .await
-        .is_err());
+        .unwrap_err();
+    // Named rather than merely failed: `.is_err()` cannot tell "the link is
+    // broken, so this entry is not findable for retry" from any other fault,
+    // and a test that accepts every failure accepts the wrong one too.
+    assert!(matches!(refused, ServiceError::NotFound));
 
     // The one that remains works, and the question then stops.
     state

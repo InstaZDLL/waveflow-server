@@ -26,7 +26,7 @@ use support::*;
 async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Result<()> {
     let mut full = vec!["waveflow-server"];
     full.extend_from_slice(argv);
-    let cli = waveflow_server::cli::Cli::parse_from(full);
+    let cli = waveflow_server::cli::Cli::try_parse_from(full)?;
     waveflow_server::cli::execute(cli.command.expect("a command was given"), state).await
 }
 
@@ -98,7 +98,7 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
     // names and the default are held still without the process being touched.
     let parsed = format!(
         "{:?}",
-        waveflow_server::cli::Cli::parse_from([
+        waveflow_server::cli::Cli::try_parse_from([
             "waveflow-server",
             "scrobble",
             "link",
@@ -109,6 +109,7 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
             "--provider",
             "listenbrainz",
         ])
+        .expect("the scrobble link flags have to parse — that is what this pins")
         .command
         .unwrap()
     );
