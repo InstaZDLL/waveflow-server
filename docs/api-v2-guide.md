@@ -124,6 +124,14 @@ cargo run -- token create --actor admin --username listener --name "Home automat
 The command prints the plaintext once. Use it directly as a Bearer token. It
 has no refresh flow and must be revoked administratively when no longer needed.
 
+The token is written to standard output on its own, and everything else the
+command says goes to standard error — so it can be captured without being read
+off a terminal that would then keep it:
+
+```bash
+cargo run -- token create --actor admin --username listener --name "Automation" > token
+```
+
 ### Browser session
 
 Browser clients use `/api/v2/web/auth/login`, `/refresh` and `/logout`. Login

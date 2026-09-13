@@ -30,6 +30,9 @@ or `PUT /api/v2/admin/users/{username}/subsonic-credential` as documented in
 [the native API guide](api-v2-guide.md). Both paths print or return an API key
 exactly once.
 
+The CLI writes the key to standard output by itself, with everything else it
+says on standard error, so `… > key` captures the key and nothing more.
+
 WaveFlow has been validated with Symfonium, Feishin, DSub, Substreamer and
 Juliet. See the compatibility matrix for exact versions and exercised features.
 
