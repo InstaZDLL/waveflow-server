@@ -1102,6 +1102,28 @@ mod tests {
         );
     }
 
+    /// The attempt cap and the schedule beside it describe one span of time, so
+    /// what the cap is *for* is checked here rather than asserted in prose.
+    ///
+    /// A review found the comment on that constant claiming "most of a day"
+    /// above a number that delivered two hours and three minutes. The sentence
+    /// was the honest statement of the intention, so the number moved to meet
+    /// it — and this exists so the two cannot drift apart again, which prose
+    /// alone has already failed to prevent once.
+    #[test]
+    fn the_default_attempt_cap_carries_a_listen_across_a_day_of_outage() {
+        let cap = i64::from(crate::config::DEFAULT_SCROBBLE_MAX_ATTEMPTS);
+        // One submission per attempt, and one wait between each pair of them,
+        // so a cap of `n` spends `n - 1` waits. Without jitter: the spread only
+        // ever adds.
+        let covered: i64 = (1..cap).map(|attempt| retry_delay(attempt, 0)).sum();
+        let hours = covered / 3_600_000;
+        assert!(
+            (23..=26).contains(&hours),
+            "the default cap covers {hours}h of outage, which is not the day its comment claims"
+        );
+    }
+
     #[test]
     fn the_wait_grows_to_an_hour_and_two_rows_never_return_together() {
         let minute = 60_000;
