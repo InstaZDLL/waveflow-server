@@ -5,9 +5,18 @@
 //! what each verdict does to a row and what unlinking does to a queue are
 //! decided there rather than at a surface, so they are tested there.
 //!
-//! **Nothing here reaches the network.** Every destination is a double
-//! implementing [`ScrobbleTarget`], which is the point of the trait: the drain
-//! knows five words and no providers, so the five words are what a test drives.
+//! **Most destinations here are doubles**, implementing [`ScrobbleTarget`]
+//! directly — which is the point of the trait: the drain knows five words and no
+//! providers, so the five words are what those tests drive.
+//!
+//! **Three are not.** `a_listen_reaches_the_destination_in_the_shape_it_documents`,
+//! `a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked` and
+//! `a_destination_that_refuses_the_token_breaks_the_link` stand a real HTTP
+//! server on loopback and let the ListenBrainz adapter talk to it, because what
+//! they check exists only on the wire: the `Token` scheme, the JSON shape, and
+//! the seconds-not-milliseconds timestamp. A double would prove none of it. They
+//! reach `127.0.0.1` and nothing else — no test in this file touches a network
+//! this machine does not own.
 //!
 //! The accounts below are inserted with a placeholder in `password_hash` rather
 //! than hashed from a literal. They never log in — this target has no HTTP
@@ -601,6 +610,176 @@ async fn a_verdict_that_arrives_after_its_row_was_settled_is_not_counted() {
     assert_eq!(links[0].uncertain, 1);
 }
 
+/// A stand-in for ListenBrainz, on loopback, that answers what a test told it
+/// to and remembers what it was asked.
+///
+/// A real socket rather than a double of the trait: these tests are the only
+/// ones that exercise the adapter itself — the header, the JSON on the wire,
+/// and the status-to-verdict mapping — and a double would prove none of it.
+struct Destination {
+    base: String,
+    bodies: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+    authorizations: std::sync::Arc<Mutex<Vec<String>>>,
+}
+
+async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
+    let bodies = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let authorizations = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new().route(
+        "/1/submit-listens",
+        axum::routing::post({
+            let bodies = std::sync::Arc::clone(&bodies);
+            let authorizations = std::sync::Arc::clone(&authorizations);
+            move |headers: axum::http::HeaderMap, body: String| {
+                let bodies = std::sync::Arc::clone(&bodies);
+                let authorizations = std::sync::Arc::clone(&authorizations);
+                async move {
+                    authorizations.lock().unwrap().push(
+                        headers
+                            .get(axum::http::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                    bodies
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
+                    let mut response = axum::response::Response::builder()
+                        .status(axum::http::StatusCode::from_u16(status).unwrap());
+                    if let Some(seconds) = reset_in {
+                        response = response.header("x-ratelimit-reset-in", seconds.to_string());
+                    }
+                    response.body(axum::body::Body::from("{}")).unwrap()
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    Destination {
+        base: format!("http://{address}"),
+        bodies,
+        authorizations,
+    }
+}
+
+/// An app configured to reach that destination.
+///
+/// This goes through `initialize`, so it exercises the whole chain a real
+/// server walks — the destination is validated, the client is built, the
+/// adapter is registered — rather than registering a target by hand as the
+/// tests above do.
+async fn app_reaching(base: &str) -> (tempfile::TempDir, waveflow_server::Config, AppState) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.listenbrainz_url = Some(base.to_owned());
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    (temp, config, state)
+}
+
+#[tokio::test]
+async fn a_listen_reaches_the_destination_in_the_shape_it_documents() {
+    let destination = spawn_destination(200, None).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "listenbrainz-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, Some(1_700_000_000_123))
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 1);
+    assert_eq!(rows(&state).await[0].1, "sent");
+
+    // The scheme ListenBrainz documents, and not `Bearer`.
+    let authorizations = destination.authorizations.lock().unwrap().clone();
+    assert_eq!(authorizations, vec!["Token lb-secret".to_owned()]);
+
+    let bodies = destination.bodies.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 1);
+    let listen = &bodies[0]["payload"][0];
+    assert_eq!(bodies[0]["listen_type"], "single");
+    // **Seconds.** The envelope holds epoch milliseconds like everything else
+    // here, and sending those unconverted would date this listen some fifty
+    // thousand years out — in a history that keeps it.
+    assert_eq!(listen["listened_at"], 1_700_000_000);
+    assert_eq!(listen["track_metadata"]["track_name"], "Matrix flac");
+    assert_eq!(listen["track_metadata"]["artist_name"], "Alpha, Beta");
+}
+
+#[tokio::test]
+async fn a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked() {
+    // An hour, against a first backoff of one minute, so only the destination's
+    // own answer can explain the wait.
+    let destination = spawn_destination(429, Some(3_600)).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "rate-limited-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let before = now_ms();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.retrying, 1);
+
+    // Honouring a request to slow down means not returning before it says, so
+    // the wait is the longer of the two and never the destination's in place of
+    // ours. Decision 6 promised this and PR #191 had nowhere to carry it.
+    let next: i64 =
+        sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox ORDER BY id LIMIT 1")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert!(
+        next >= before + 3_600_000,
+        "the wait must honour the destination's own answer, not our shorter backoff"
+    );
+}
+
+#[tokio::test]
+async fn a_destination_that_refuses_the_token_breaks_the_link() {
+    let destination = spawn_destination(401, None).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "refused-token-listener").await;
+    state
+        .services
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "stale-secret",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    assert_eq!(drained.broken, 1);
+    assert_eq!(rows(&state).await[0].1, "cancelled");
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken");
+    assert_eq!(links[0].last_failure.as_deref(), Some("auth_broken"));
+}
+
 #[tokio::test]
 async fn an_account_that_linked_nothing_queues_nothing() {
     let (_temp, config, state) = test_app().await;
@@ -863,7 +1042,7 @@ async fn a_retryable_answer_comes_back_until_the_attempts_run_out() {
         .scrobble(fixture.owner, fixture.tagged, true, None)
         .await
         .unwrap();
-    let target = Recorder::always(ScrobbleVerdict::Retryable);
+    let target = Recorder::always(ScrobbleVerdict::Retryable { after: None });
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,

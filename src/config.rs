@@ -201,6 +201,23 @@ pub struct Config {
     /// None of these matter until an account links a destination: a server that
     /// has only been upgraded makes no outbound request at all.
     pub scrobbling: ScrobbleLimits,
+    /// Where ListenBrainz lives, validated at startup.
+    ///
+    /// `WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL`, defaulting to the public instance.
+    /// Set it empty to register no adapter at all.
+    ///
+    /// A destination is the operator's setting and never an account's —
+    /// RFC-010 decision 10 — so it is here rather than on `scrobble_link`. It
+    /// costs nothing while nobody has linked a token: an adapter with no
+    /// authorisation behind it is never handed a listen.
+    pub listenbrainz_url: Option<String>,
+    /// Whether an outbound destination may be plain HTTP.
+    ///
+    /// `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT`, off by default. The escape exists
+    /// because Maloja and ListenBrainz self-host and a container on the
+    /// operator's own network is a reasonable destination; the default refuses
+    /// it because the request carries a personal token.
+    pub outbound_allow_plaintext: bool,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
@@ -242,6 +259,8 @@ impl std::fmt::Debug for Config {
             .field("canvas_dir", &self.canvas_dir)
             .field("canvas", &self.canvas)
             .field("scrobbling", &self.scrobbling)
+            .field("listenbrainz_url", &self.listenbrainz_url)
+            .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
             .finish()
@@ -363,6 +382,24 @@ impl Config {
                 "WAVEFLOW_TRANSCODE_PER_USER_LIMIT cannot exceed WAVEFLOW_TRANSCODE_GLOBAL_LIMIT"
             );
         }
+        // Refused here rather than at the first submission, for the same reason
+        // `WAVEFLOW_PUBLIC_URL` is: booting with scrobbling silently switched
+        // off because of a typo is the exact silent failure RFC-010 spends
+        // itself making visible. An operator who wants no adapter says so by
+        // setting this empty, which is a different thing from misspelling it.
+        let outbound_allow_plaintext = parse_bool_env("WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT", false)?;
+        let listenbrainz_url = std::env::var("WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL")
+            .unwrap_or_else(|_| "https://api.listenbrainz.org".to_owned());
+        let listenbrainz_url = match listenbrainz_url.trim() {
+            "" => None,
+            raw => {
+                crate::scrobblers::validate_destination(raw, outbound_allow_plaintext).map_err(
+                    |error| anyhow::anyhow!("invalid WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL: {error}"),
+                )?;
+                Some(raw.to_owned())
+            }
+        };
+
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -431,6 +468,8 @@ impl Config {
             canvas_dir,
             canvas,
             scrobbling,
+            listenbrainz_url,
+            outbound_allow_plaintext,
             allowed_origins,
             pid,
         })
@@ -501,6 +540,12 @@ impl Config {
                 stale_after: Duration::from_secs(3600),
                 batch: 8,
             },
+            // **No destination, so the suite cannot reach the real
+            // ListenBrainz.** A test that means to exercise the adapter points
+            // this at a server it started itself, over plain HTTP on loopback —
+            // which is why the escape is on here and off in production.
+            listenbrainz_url: None,
+            outbound_allow_plaintext: true,
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.
@@ -576,6 +621,25 @@ where
         .unwrap_or_else(|_| default.to_owned())
         .parse()
         .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
+}
+
+/// A flag an operator either set on purpose or did not set at all.
+///
+/// A spelling this does not recognise is refused rather than read as `false`.
+/// Every silent fallback in this file is a bug waiting to be filed against
+/// something else, and this one especially: `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT`
+/// guards whether a personal token may cross a network in clear, so an operator
+/// who typed `True ` or `on` must be told, not quietly overruled.
+fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
+    let Ok(raw) = std::env::var(name) else {
+        return Ok(default);
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" => Ok(default),
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => anyhow::bail!("invalid {name}: expected a boolean, found {other:?}"),
+    }
 }
 
 fn parse_positive_env<T>(name: &str, default: T) -> anyhow::Result<T>
