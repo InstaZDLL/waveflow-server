@@ -162,6 +162,31 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
     .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    // A secret that is nothing but spaces is refused for a destination this
+    // server *does* know, which is the half the case above cannot reach: there
+    // the provider parse answers first, and the secret is never looked at. The
+    // spaces matter too — an empty string would pass a check written before the
+    // trim rather than after it, and this one would not.
+    let response = send(
+        Method::PUT,
+        "/api/v2/scrobble-links/listenbrainz".into(),
+        owner.clone(),
+        Some(serde_json::json!({"secret": "   "})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // And the authorisation posed earlier is untouched: a refusal replaces
+    // nothing.
+    let response = send(
+        Method::GET,
+        "/api/v2/scrobble-links".into(),
+        owner.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(json_body(response).await.as_array().unwrap().len(), 1);
+
     // And no credential route is reachable without one.
     let response = send(
         Method::GET,
@@ -376,6 +401,35 @@ async fn an_uncertain_entry_is_listed_and_answered_over_http() {
     // Answered, so it stops asking.
     let response = send(Method::GET, "/api/v2/scrobble-queue/uncertain".into()).await;
     assert_eq!(json_body(response).await.as_array().unwrap().len(), 0);
+
+    // The copy the retry queued comes back ambiguous in its turn — the double
+    // above answers that way every time — and *that* is the entry this discards.
+    // Until here the delete route was only ever measured refusing a stranger,
+    // which a handler that refused everybody would satisfy just as well.
+    state.services.drain_scrobble_outbox().await.unwrap();
+    let response = send(Method::GET, "/api/v2/scrobble-queue/uncertain".into()).await;
+    let waiting = json_body(response).await;
+    assert_eq!(waiting.as_array().unwrap().len(), 1);
+    let second = waiting[0]["id"].as_str().unwrap().to_owned();
+    assert_ne!(second, entry, "the copy, not the listen it was copied from");
+
+    let response = send(
+        Method::DELETE,
+        format!("/api/v2/scrobble-queue/uncertain/{second}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Thrown away rather than hidden from one listing: it is gone from the
+    // queue, and discarding it again finds nothing to discard.
+    let response = send(Method::GET, "/api/v2/scrobble-queue/uncertain".into()).await;
+    assert_eq!(json_body(response).await.as_array().unwrap().len(), 0);
+    let response = send(
+        Method::DELETE,
+        format!("/api/v2/scrobble-queue/uncertain/{second}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 /// Bookmarks and API tokens were reachable from one surface each: bookmarks
