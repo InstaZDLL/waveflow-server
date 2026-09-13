@@ -95,13 +95,18 @@ pub async fn list_scrobble_links(
         .map_err(service_error)
 }
 
-/// Linking again replaces the authorisation rather than adding one.
+// Decision 4 makes the row the generation, which is why relinking inserts a new
+// one instead of updating the old. Out of the `///` because utoipa publishes
+// that as the operation description and "decision 4" names nothing a caller can
+// look up.
+
+/// Links a destination, replacing any authorisation this account already had
+/// there.
 ///
-/// `PUT` for that reason: the destination names the resource, and presenting a
-/// second token leaves one link, not two. What it does *not* do is reuse the
-/// old row — decision 4 makes the row the generation, so listens already queued
-/// stay attached to the authorisation they were queued under and can never be
-/// submitted to whichever profile is linked now.
+/// `PUT` because the destination names the resource: presenting a second token
+/// leaves one link, not two. Listens already queued stay attached to the
+/// authorisation they were queued under, and are never submitted under the new
+/// one.
 #[utoipa::path(put, path = "/api/v2/scrobble-links/{provider}", tag = "scrobbling", params(("provider" = String, Path)), request_body = LinkScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn link_scrobble(
     State(state): State<AppState>,
@@ -155,7 +160,8 @@ pub async fn list_uncertain_scrobbles(
         .map_err(service_error)
 }
 
-/// The first of the two gestures decision 13 grants: the person prefers the gap.
+/// Throws the entry away. The listen is never submitted, and the queue stops
+/// asking about it.
 #[utoipa::path(delete, path = "/api/v2/scrobble-queue/uncertain/{entry_id}", tag = "scrobbling", params(("entry_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn discard_uncertain_scrobble(
     State(state): State<AppState>,
