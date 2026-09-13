@@ -5,6 +5,7 @@
 use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
+use clap::Parser;
 use tower::ServiceExt;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::database::AccountRole;
@@ -15,6 +16,172 @@ use waveflow_server::security;
 #[allow(dead_code)]
 mod support;
 use support::*;
+
+/// One command line, parsed the way a shell would hand it over.
+///
+/// Through `Cli::parse_from` rather than by building the argument struct: the
+/// fields are private, which is the hint, and this way the flag names and the
+/// defaults are part of what these tests hold still. A command surface gets
+/// those wrong far more easily than it gets the call wrong.
+async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Result<()> {
+    let mut full = vec!["waveflow-server"];
+    full.extend_from_slice(argv);
+    let cli = waveflow_server::cli::Cli::parse_from(full);
+    waveflow_server::cli::execute(cli.command.expect("a command was given"), state).await
+}
+
+/// The CLI poses and withdraws the same authorisation the route does.
+///
+/// RFC-010 decision 9 asks for both surfaces because an operator preparing a
+/// headless server has no browser to click in. Both call the same
+/// `DomainServices` methods — the assertions below read the result back through
+/// the service, so a command that wrote its own row would fail them.
+#[tokio::test]
+async fn the_cli_links_and_unlinks_a_scrobble_destination() {
+    let (_temp, _config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("cli-scrobble-admin", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let user = state
+        .db
+        .create_account("cli-scrobble-user", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+
+    // Named by this test alone. `cargo test` runs these as threads inside one
+    // process and an environment variable is process-wide, so a fixed name
+    // would be shared with every other test that ever needs one — which is the
+    // reason `--token-env` is a flag rather than a constant.
+    let token_env = "WAVEFLOW_TEST_CLI_SCROBBLE_TOKEN";
+    std::env::set_var(token_env, "lb-token-from-the-shell");
+
+    run_cli(
+        &state,
+        &[
+            "scrobble",
+            "link",
+            "--actor",
+            "cli-scrobble-admin",
+            "--username",
+            "cli-scrobble-user",
+            "--provider",
+            "listenbrainz",
+            "--token-env",
+            token_env,
+        ],
+    )
+    .await
+    .unwrap();
+
+    let links = state.services.scrobble_links(user).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].provider.as_str(), "listenbrainz");
+    assert_eq!(links[0].health, "healthy");
+
+    // Reading the queue is a third gesture and must not need the secret.
+    run_cli(
+        &state,
+        &[
+            "scrobble",
+            "status",
+            "--actor",
+            "cli-scrobble-admin",
+            "--username",
+            "cli-scrobble-user",
+        ],
+    )
+    .await
+    .unwrap();
+
+    run_cli(
+        &state,
+        &[
+            "scrobble",
+            "unlink",
+            "--actor",
+            "cli-scrobble-admin",
+            "--username",
+            "cli-scrobble-user",
+            "--provider",
+            "listenbrainz",
+        ],
+    )
+    .await
+    .unwrap();
+    assert!(state
+        .services
+        .scrobble_links(user)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// What the command refuses, and who it refuses.
+///
+/// Both failures happen before any secret is read or sealed, which is the point
+/// of checking them: a destination this server cannot name and an actor who is
+/// not an administrator are both answered by the command rather than by the
+/// database refusing a `CHECK` afterwards.
+#[tokio::test]
+async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
+    let (_temp, _config, state) = test_app().await;
+    let hash = security::hash_password("correct horse battery staple").unwrap();
+    state
+        .db
+        .create_account("cli-refusing-admin", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("cli-refusing-user", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+
+    let unknown = run_cli(
+        &state,
+        &[
+            "scrobble",
+            "unlink",
+            "--actor",
+            "cli-refusing-admin",
+            "--username",
+            "cli-refusing-user",
+            "--provider",
+            "spotify",
+        ],
+    )
+    .await
+    .unwrap_err();
+    // The message names the three this server knows, because the person who
+    // typed the fourth cannot be expected to guess them.
+    let said = unknown.to_string();
+    assert!(said.contains("listenbrainz"), "{said}");
+    assert!(said.contains("maloja"), "{said}");
+    assert!(said.contains("lastfm"), "{said}");
+
+    // An ordinary account cannot pose an authorisation for somebody else, which
+    // is the whole difference between this surface and the self-scoped route.
+    let forbidden = run_cli(
+        &state,
+        &[
+            "scrobble",
+            "status",
+            "--actor",
+            "cli-refusing-user",
+            "--username",
+            "cli-refusing-user",
+        ],
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        forbidden.to_string().contains("administrator"),
+        "{forbidden}"
+    );
+}
 
 #[tokio::test]
 async fn probes_and_openapi_are_available_without_scan_readiness() {

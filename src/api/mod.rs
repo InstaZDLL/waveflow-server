@@ -33,6 +33,7 @@ mod oauth;
 mod playback;
 mod playlists;
 mod probes;
+mod scrobbling;
 mod setup;
 mod shares;
 mod sync;
@@ -53,6 +54,7 @@ pub use oauth::*;
 pub use playback::*;
 pub use playlists::*;
 pub use probes::*;
+pub use scrobbling::*;
 pub use setup::*;
 pub use shares::*;
 pub use sync::*;
@@ -168,6 +170,26 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scrobbles", post(create_scrobble))
         .route("/api/v2/history", get(list_history))
         .route("/api/v2/now-playing", get(list_now_playing))
+        .route("/api/v2/scrobble-links", get(list_scrobble_links))
+        .route(
+            "/api/v2/scrobble-links/{provider}",
+            put(link_scrobble).delete(unlink_scrobble),
+        )
+        // Deliberately not under `scrobble-links/`: `uncertain` would sit in the
+        // same position as `{provider}` and the two would be one segment read
+        // two ways.
+        .route(
+            "/api/v2/scrobble-queue/uncertain",
+            get(list_uncertain_scrobbles),
+        )
+        .route(
+            "/api/v2/scrobble-queue/uncertain/{entry_id}",
+            axum::routing::delete(discard_uncertain_scrobble),
+        )
+        .route(
+            "/api/v2/scrobble-queue/uncertain/{entry_id}/retry",
+            post(retry_uncertain_scrobble),
+        )
         .route("/api/v2/queue", get(get_queue).put(save_queue))
         .route("/api/v2/shares", get(list_shares).post(create_share))
         .route(
