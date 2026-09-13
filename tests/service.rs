@@ -30,14 +30,23 @@ async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Re
     waveflow_server::cli::execute(cli.command.expect("a command was given"), state).await
 }
 
-/// The CLI poses and withdraws the same authorisation the route does.
+/// The CLI reads a queue and withdraws an authorisation, and says which
+/// variable it wanted when the token is not there.
 ///
-/// RFC-010 decision 9 asks for both surfaces because an operator preparing a
-/// headless server has no browser to click in. Both call the same
-/// `DomainServices` methods — the assertions below read the result back through
-/// the service, so a command that wrote its own row would fail them.
+/// **Named for what it does.** It was called `..._links_and_unlinks_...` while
+/// the link itself was posed through `DomainServices` — so it would have passed
+/// with `cli::link_scrobble` deleted, which is the defect class this file's
+/// commit set out to remove, reintroduced one file over.
+///
+/// What `link` *is* covered for: the admin check, the account lookup and the
+/// provider parse, all of which run before the secret is read, and which the
+/// absent-variable case below therefore traverses. What it is not covered for is
+/// the two lines after that — the successful `read_secret_env` and the service
+/// call. Driving those from here would need the process environment mutated
+/// while sibling threads read it, which is the race this test exists without.
+/// A subprocess against `CARGO_BIN_EXE_waveflow-server` would close it.
 #[tokio::test]
-async fn the_cli_links_and_unlinks_a_scrobble_destination() {
+async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
     let (_temp, _config, state) = test_app().await;
     let hash = security::hash_password("correct horse battery staple").unwrap();
     state

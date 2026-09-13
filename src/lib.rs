@@ -801,6 +801,66 @@ mod tests {
     /// leaves behind, so a public operation that keeps the global requirement
     /// is now handed a 403 it can never answer — a refusal documented on a
     /// route that holds no credential to refuse.
+    /// The scrobbling routes carry no operation-id protocol, and must not
+    /// advertise one.
+    ///
+    /// `annotate_mutation_headers` injects a `409` and the two mutation headers
+    /// into every `user-data` write, because every one of those goes through
+    /// `mutation_context`. These do not — RFC-010 decision 12 keeps this state
+    /// out of synchronisation entirely — so they carry their own tag.
+    ///
+    /// Written because removing a hand-written `409` from the retry route did
+    /// not remove the `409`: it vacated the entry that the injected one then
+    /// filled, with no response schema and a description about operation ids
+    /// that was false for it. The document was worse than before the fix, and
+    /// nothing said so.
+    #[test]
+    fn the_scrobbling_routes_advertise_no_operation_id_protocol() {
+        use utoipa::OpenApi;
+
+        let openapi = super::ApiDoc::openapi();
+        let mut checked = 0;
+        for (path, item) in &openapi.paths.paths {
+            if !path.starts_with("/api/v2/scrobble-") {
+                continue;
+            }
+            for operation in [
+                item.put.as_ref(),
+                item.post.as_ref(),
+                item.delete.as_ref(),
+                item.patch.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                checked += 1;
+                assert!(
+                    !operation.responses.responses.contains_key("409"),
+                    "{path} advertises a conflict it cannot produce"
+                );
+                let names: Vec<&str> = operation
+                    .parameters
+                    .iter()
+                    .flatten()
+                    .map(|parameter| parameter.name.as_str())
+                    .collect();
+                assert!(
+                    !names.contains(&super::api::OPERATION_ID_HEADER),
+                    "{path} advertises an operation id it never reads"
+                );
+                assert!(
+                    !names.contains(&super::api::DEVICE_ID_HEADER),
+                    "{path} advertises a device id it never reads"
+                );
+            }
+        }
+        assert_eq!(
+            checked, 4,
+            "two on the link, two on the queue — a count that falls if a route is added \
+             without deciding which protocol it belongs to"
+        );
+    }
+
     #[test]
     fn every_public_operation_is_found_and_cleared() {
         use utoipa::OpenApi;

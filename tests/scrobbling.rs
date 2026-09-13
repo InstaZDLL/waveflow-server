@@ -471,16 +471,6 @@ async fn one_account_never_sees_another_account_s_ambiguous_entries() {
         .is_err());
 }
 
-/// Withdrawing the authorisation stops the question, without erasing the answer.
-///
-/// `retry_uncertain_scrobble` already refuses an entry whose generation is gone
-/// — a retry under a withdrawn authorisation would submit to whichever profile
-/// is linked now, which is what generations exist to prevent. So an entry that
-/// can no longer be retried must stop being offered as a decision, or the
-/// surface asks for one of two gestures it will then refuse.
-///
-/// The row itself stays, and stays `uncertain`. It has stopped being a question;
-/// it has not stopped being true, and those are different things.
 /// A broken link keeps its question, and loses one of the two answers.
 ///
 /// `retry_uncertain_scrobble` requires `status='active'`, exactly as the drain
@@ -561,6 +551,16 @@ async fn an_entry_under_a_broken_link_can_be_discarded_but_not_retried() {
         .is_empty());
 }
 
+/// Withdrawing the authorisation stops the question, without erasing the answer.
+///
+/// `retry_uncertain_scrobble` already refuses an entry whose generation is gone
+/// — a retry under a withdrawn authorisation would submit to whichever profile
+/// is linked now, which is what generations exist to prevent. So an entry that
+/// can no longer be retried must stop being offered as a decision, or the
+/// surface asks for one of two gestures it will then refuse.
+///
+/// The row itself stays, and stays `uncertain`. It has stopped being a question;
+/// it has not stopped being true, and those are different things.
 #[tokio::test]
 async fn an_unlinked_generation_stops_asking_for_a_decision() {
     let (_temp, config, state) = test_app().await;

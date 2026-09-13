@@ -81,7 +81,7 @@ fn provider(raw: &str) -> Result<crate::services::ScrobbleProvider, ApiError> {
     crate::services::ScrobbleProvider::from_str(raw).map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/scrobble-links", tag = "user-data", responses((status = 200, body = [crate::services::ScrobbleLinkState]), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/scrobble-links", tag = "scrobbling", responses((status = 200, body = [crate::services::ScrobbleLinkState]), (status = 401, body = ErrorResponse)))]
 pub async fn list_scrobble_links(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -102,7 +102,7 @@ pub async fn list_scrobble_links(
 /// old row — decision 4 makes the row the generation, so listens already queued
 /// stay attached to the authorisation they were queued under and can never be
 /// submitted to whichever profile is linked now.
-#[utoipa::path(put, path = "/api/v2/scrobble-links/{provider}", tag = "user-data", params(("provider" = String, Path)), request_body = LinkScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(put, path = "/api/v2/scrobble-links/{provider}", tag = "scrobbling", params(("provider" = String, Path)), request_body = LinkScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn link_scrobble(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -120,7 +120,7 @@ pub async fn link_scrobble(
 
 /// Unlinking a destination that is not linked succeeds: the caller asked for
 /// this account to have no authorisation there, and it has none.
-#[utoipa::path(delete, path = "/api/v2/scrobble-links/{provider}", tag = "user-data", params(("provider" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/scrobble-links/{provider}", tag = "scrobbling", params(("provider" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn unlink_scrobble(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -139,7 +139,7 @@ pub async fn unlink_scrobble(
 ///
 /// Under `scrobble-queue` rather than beside `{provider}`, so that a
 /// destination's name and this word can never be read as the same segment.
-#[utoipa::path(get, path = "/api/v2/scrobble-queue/uncertain", tag = "user-data", responses((status = 200, body = [crate::services::UncertainScrobble]), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/scrobble-queue/uncertain", tag = "scrobbling", responses((status = 200, body = [crate::services::UncertainScrobble]), (status = 401, body = ErrorResponse)))]
 pub async fn list_uncertain_scrobbles(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -154,7 +154,7 @@ pub async fn list_uncertain_scrobbles(
 }
 
 /// The first of the two gestures decision 13 grants: the person prefers the gap.
-#[utoipa::path(delete, path = "/api/v2/scrobble-queue/uncertain/{entry_id}", tag = "user-data", params(("entry_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/scrobble-queue/uncertain/{entry_id}", tag = "scrobbling", params(("entry_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn discard_uncertain_scrobble(
     State(state): State<AppState>,
     Path(entry_id): Path<Uuid>,
@@ -169,23 +169,29 @@ pub async fn discard_uncertain_scrobble(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The second, and the only path in this design that can make a duplicate on
-/// purpose: the person accepts that the destination may already hold this
-/// listen. Granted once per entry.
+// Everything in the `///` block below is published verbatim as this operation's
+// description: utoipa maps the first paragraph to `summary` and the rest to
+// `description`, so every generated client ships it. Reasoning about how the
+// code came to be shaped this way belongs here, in a `//` comment nobody
+// generates a client from.
+//
+// This route used to declare a `409` as well. Nothing could produce one: the
+// service excludes anything already retried with `NOT EXISTS`, so a spent entry
+// stops being findable and answers 404 — and `db_error` maps every sqlx failure
+// to 503 rather than to a conflict, so even the unique index could not surface
+// as one. Removing the declaration was not enough on its own, because
+// `annotate_mutation_headers` injects a 409 into every `user-data` write; these
+// routes carry the `scrobbling` tag instead, which is what decision 12 says they
+// are — operational state that never travels through synchronisation.
+// `the_scrobbling_routes_advertise_no_operation_id_protocol` holds that still.
+
+/// Sends one ambiguous listen again, accepting that the destination may already
+/// hold it. Granted once per entry.
 ///
-/// **A second call is a 404, not a 409**, and the difference is deliberate. The
-/// service resolves the entry with a `NOT EXISTS` clause that already excludes
-/// anything retried, so an entry that has spent its one acceptance simply stops
-/// being findable — its own comment says the clause exists "to turn the refusal
-/// into an ordinary 404 instead of a constraint error". This annotation declared
-/// a `409` that nothing can produce: the unique index is unreachable behind the
-/// writer guard, and `db_error` maps every sqlx failure to 503 rather than to a
-/// conflict. A generated client would have carried a branch that never fires and
-/// none for the one that does.
-///
-/// It is also the answer a stranger's id gets, which is the point: 404 blurs
-/// "spent" and "not yours" into one reply.
-#[utoipa::path(post, path = "/api/v2/scrobble-queue/uncertain/{entry_id}/retry", tag = "user-data", params(("entry_id" = Uuid, Path)), responses((status = 200, body = RetriedScrobbleResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+/// A second attempt answers `404`, and so does an entry belonging to somebody
+/// else: once the single acceptance is spent, the entry stops being findable at
+/// all, and this route does not distinguish "already answered" from "not yours".
+#[utoipa::path(post, path = "/api/v2/scrobble-queue/uncertain/{entry_id}/retry", tag = "scrobbling", params(("entry_id" = Uuid, Path)), responses((status = 200, body = RetriedScrobbleResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn retry_uncertain_scrobble(
     State(state): State<AppState>,
     Path(entry_id): Path<Uuid>,
