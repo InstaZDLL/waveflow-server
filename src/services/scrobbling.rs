@@ -596,6 +596,18 @@ impl DomainServices {
                 .get(&entry.provider)
                 .map(|found| Arc::clone(found.value()))
             else {
+                // Stepped aside rather than left at the head of the queue.
+                //
+                // No attempt is spent — a server with no adapter for this
+                // destination is misconfigured, which is not a failed delivery
+                // — but the row must not keep its place either. `due_scrobbles`
+                // orders by `next_attempt_at` under a fixed batch, and a row
+                // nothing can service never advances on its own, so without
+                // this it would fill every pass forever and a destination that
+                // *does* have an adapter would never be reached. That is
+                // starvation rather than slowness, and it is the reason this
+                // defers instead of merely counting.
+                self.defer_scrobble(&entry).await?;
                 drained.unserviced += 1;
                 continue;
             };
@@ -766,6 +778,33 @@ impl DomainServices {
                 .await?;
         }
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Moves one entry out of the way without spending an attempt.
+    ///
+    /// For the row nothing can carry yet: the destination is linked and the
+    /// listen is real, but this process knows no adapter for it. Deferring by
+    /// one drain interval is what keeps it from starving the destinations that
+    /// can be reached, and keeping `attempts` where it is means the row loses
+    /// nothing when the operator supplies the missing adapter.
+    ///
+    /// Refusing the link instead would be the other way to prevent this, and it
+    /// is the wrong one: a durable queue exists precisely so that a listen
+    /// survives until the thing that carries it arrives.
+    async fn defer_scrobble(&self, entry: &DueEntry) -> Result<(), ServiceError> {
+        let now = now_ms();
+        let wait = i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(i64::MAX);
+        let _writer = self.db.writer_guard().await;
+        sqlx::query(
+            "UPDATE scrobble_outbox SET next_attempt_at=?, updated_at=? \
+             WHERE id=? AND state='pending'",
+        )
+        .bind(now.saturating_add(wait))
+        .bind(now)
+        .bind(entry.id)
+        .execute(self.db.pool())
+        .await?;
         Ok(())
     }
 
