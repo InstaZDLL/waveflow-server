@@ -7,7 +7,8 @@
 - **Date** : 2026-09-13
 - **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
-  l'effacer.
+  l'effacer. Une seconde passe le même jour a tranché les trois questions qui
+  restaient : décisions 11 à 13.
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)
@@ -254,15 +255,89 @@ il existera un champ d'URL, et il ne peut pas être libre.
 - **La documentation** : une section du guide d'API, et une ligne dans
   `docs/web-client-gap-analysis.md`, dont le point 15 attend celle-ci.
 
+## Décision 11 — l'ordre des destinataires, et une écoute par requête
+
+**ListenBrainz, puis Maloja, puis Last.fm.**
+
+ListenBrainz épouse l'architecture ci-dessus sans rien lui demander : un jeton
+par personne, du JSON, une soumission permanente et un `playing_now` que sa
+documentation donne explicitement pour temporaire — la décision 3 exactement.
+Il s'auto-héberge, donc il éprouve aussi la décision 10 dès le premier jour.
+
+Maloja vient ensuite : son API native accepte directement une liste d'artistes,
+un artiste d'album, une durée et un horodatage, donc l'enveloppe de la
+décision 2 s'y verse sans perte.
+
+Last.fm en dernier, **parce que c'est lui qui éprouve le plus l'abstraction** :
+signature, identifiants d'application en plus de la session du compte, et des
+erreurs applicatives sous un `200`. Un adaptateur écrit pour lui d'abord aurait
+fait fuir ses particularités dans le drainage ; écrit en troisième, il se
+heurte à une frontière déjà tenue par deux autres.
+
+### Une écoute, une requête
+
+Last.fm accepte jusqu'à cinquante scrobbles par appel. **On n'en profite pas,**
+**pas au début.** Une requête de cinquante qui revient `Ambiguous` rend
+cinquante écoutes incertaines d'un coup, et la décision 5 interdit alors de
+retenter : le lot transforme une perte possible en cinquante pertes probables.
+
+Une ligne de file, une requête. Grouper redeviendra une décision le jour où le
+débit sera un problème mesuré, et ce jour-là il faudra dire ce qu'un lot
+ambigu devient — ce que cette RFC n'a pas à trancher pour un serveur personnel.
+
+## Décision 12 — ce que l'API montre : des compteurs, jamais un écho
+
+Un lien expose son état et la forme de sa file, agrégés :
+
+- `healthy`, `degraded`, `broken` ;
+- combien de lignes attendent, combien retentent, combien sont `uncertain` ;
+- depuis quand attend la plus ancienne, et quand remonte le dernier succès ;
+- éventuellement une dernière cause normalisée — `rate_limited`, `auth_broken`.
+
+**`healthy` ne peut pas vouloir dire « j'ai encore un jeton ».** Un lien valide
+avec trois mille écoutes en attente depuis six heures est en panne, et c'est
+précisément la panne silencieuse qu'une file durable existe pour rendre
+visible. D'où `degraded` : le lien répond, mais la file ne se vide pas — des
+reprises, des incertaines, ou une attente trop vieille. `broken` reste réservé
+à `AuthBroken` et à une configuration inutilisable.
+
+**Jamais le contenu de l'enveloppe, jamais la réponse brute du fournisseur.**
+La décision 10 interdit déjà l'écho ; ceci en est le corollaire du côté
+lecture. Ce qui sort est un compte, pas un titre ni un corps d'erreur.
+
+**Et cela ne passe pas par la synchronisation.** C'est de l'état opérationnel
+du serveur, pas une donnée d'utilisateur à répliquer vers le desktop : la
+[RFC-003](RFC-003-waveflow-sync-v2.md) n'a pas à le porter, et une lecture
+native du lien suffit. L'y ajouter ferait voyager, à chaque appareil et à
+chaque réveil, un compteur qui ne décrit qu'une machine.
+
+## Décision 13 — `uncertain` se jette ou se retente, et le doublon est choisi
+
+Une entrée `uncertain` est terminale pour le serveur. La personne, elle, a deux
+gestes : **`discard`** et **`retry`**.
+
+C'est la seule forme de doublon que cette RFC accepte, parce qu'il est choisi.
+Le geste porte donc son avertissement : *le destinataire a peut-être déjà
+enregistré cette écoute ; retenter peut la compter deux fois.* Une personne qui
+tient à son historique préférera parfois le trou, et c'est son arbitrage, pas
+celui du serveur.
+
+**Retenter n'est pas réactiver.** La tentative ambiguë reste dans l'histoire
+telle qu'elle fut ; la nouvelle s'y ajoute, marquée comme demandée par la
+personne. Effacer la première ferait mentir la seule trace qui explique
+pourquoi un doublon existe chez le destinataire.
+
+**Une entrée à la fois, et pas de « tout retenter ».** Un bouton qui relance
+trois cents incertaines transforme une décision consciente en accident. Il
+pourra s'ajouter plus tard, si quelqu'un le demande en sachant ce qu'il
+demande.
+
 ## Ce qui reste ouvert
 
-- **Quel destinataire d'abord.** ListenBrainz est le plus simple — un jeton dans
-  l'en-tête d'autorisation, une soumission JSON — et Last.fm demande la signature
-  et la session de la décision 4. Le premier n'engage pas le second, et c'est par
-  lui qu'il faut commencer.
-- **Si la profondeur de la file se montre** dans l'API, ou seulement son état :
-  sain, rompu, ou avec des envois incertains.
-- **Ce qu'un état `uncertain` permet de faire ensuite.** Le compte le voit ; rien
-  ne dit encore s'il peut demander une seconde tentative en connaissance de
-  cause, ce qui serait le seul doublon que cette RFC accepterait — parce qu'il
-  serait choisi.
+Plus aucune décision d'architecture. Les trois questions que la première
+version laissait pendantes sont tranchées ci-dessus, et ce qui reste appartient
+à l'implémentation : le nom exact des routes, le seuil au-delà duquel une file
+qui n'avance pas devient `degraded`, et la forme précise du JSON.
+
+C'est la ligne *Implémentée par* de l'en-tête qu'il faudra lire ensuite. Elle
+dit encore « rien encore ».
