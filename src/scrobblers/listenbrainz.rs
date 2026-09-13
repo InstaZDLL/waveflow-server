@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use crate::services::{ScrobbleEnvelope, ScrobbleTarget, ScrobbleVerdict};
 
-use super::{endpoint, OutboundError, MAX_RESPONSE_BYTES};
+use super::{endpoint, OutboundError};
 
 /// How the destination names us in its own logs.
 const CLIENT_NAME: &str = "WaveFlow Server";
@@ -135,11 +135,33 @@ impl ScrobbleTarget for ListenBrainz {
         secret: &'a str,
     ) -> BoxFuture<'a, ScrobbleVerdict> {
         Box::pin(async move {
+            // Built here rather than passed as a `String` to `.header()`, which
+            // cannot fail inline. reqwest stores a rejected header value as a
+            // deferred error that surfaces only at `send()` — where
+            // `transport_verdict` would find no connect error, call the listen
+            // `Ambiguous`, and log that the destination "did not answer a
+            // request that had already left". Every word of that would be
+            // false: nothing left. And `Ambiguous` is the one verdict
+            // decision 13 turns into an irreversible decision for a person, one
+            // per listen.
+            //
+            // A stored secret that cannot even be spelled as a header is a
+            // broken authorisation, so it is named one. The link goes `broken`,
+            // its queue finishes, and the account is told — instead of
+            // collecting a pile of choices nobody can undo.
+            let Ok(mut credential) =
+                reqwest::header::HeaderValue::from_str(&format!("Token {secret}"))
+            else {
+                tracing::warn!("the stored listenbrainz token is not a usable header value");
+                return ScrobbleVerdict::AuthBroken;
+            };
+            // Marked so that no future header logging anywhere can print it.
+            credential.set_sensitive(true);
             let sent = self
                 .client
                 .post(self.submit.clone())
                 // The scheme ListenBrainz documents, and not `Bearer`.
-                .header(reqwest::header::AUTHORIZATION, format!("Token {secret}"))
+                .header(reqwest::header::AUTHORIZATION, credential)
                 .json(&submission(envelope))
                 .send()
                 .await;
@@ -149,24 +171,47 @@ impl ScrobbleTarget for ListenBrainz {
             };
             let status = response.status();
             let retry_after = reset_in(&response);
-            // Read for the log alone, bounded, and never returned to anyone:
-            // decision 10 says what the API shows is a state and not an echo of
-            // somebody else's words.
-            let detail = bounded_body(response).await;
-            status_verdict(status, retry_after, &detail)
+            // **The body is never read.** Decision 12 says what this server
+            // reports is a state and not an echo of the destination's own
+            // words, and every verdict below is earned by the status line
+            // alone. A body that is never read is also the tightest bound there
+            // is on one — stricter than reading a bounded prefix of it, which
+            // is what this did until a review pointed out that the prefix was
+            // going straight into structured logs.
+            drop(response);
+            status_verdict(status, retry_after)
         })
     }
 }
 
 /// What a failure to get an answer at all means.
 ///
-/// A connect failure is the one case where nothing left this machine, so it is
-/// the one case that may be retried freely. Everything else — a timeout, a
-/// broken body, a response that would not decode — happened *after* the request
-/// was on the wire, and decision 5 calls that indistinguishable from a success
-/// whose acknowledgement was lost.
+/// **Two failures happen before anything leaves this machine**, and they are the
+/// two that may be answered freely: a refused connection, and a request this
+/// client could not even assemble. Everything else — a timeout, a broken body, a
+/// response that would not decode — happened *after* the request was on the
+/// wire, and decision 5 calls that indistinguishable from a success whose
+/// acknowledgement was lost.
+///
+/// The second case was missing until a review found it, and the criterion in
+/// this comment said "a connect failure is the one case" while the code tested
+/// only that. Named here so the next adapter with a third pre-flight failure
+/// does not inherit the trap: anything unassembled that falls through to the
+/// `else` becomes `Ambiguous`, which decision 13 turns into an irreversible
+/// decision for a person — over bytes that never existed.
+///
+/// **The builder branch is belt-and-braces and is currently unreachable**, said
+/// plainly rather than left to look load-bearing. `submit` builds its header
+/// value explicitly and answers `AuthBroken` before sending, so the one failure
+/// that used to arrive here now never does; the only other builder error this
+/// request could raise is a serialisation fault in a struct this crate owns.
+/// It stays because the next adapter will not necessarily be as careful, and
+/// because the cost of it being wrong is the verdict nobody can undo.
 fn transport_verdict(error: &reqwest::Error) -> ScrobbleVerdict {
-    if error.is_connect() {
+    if error.is_builder() {
+        tracing::warn!("the listenbrainz request could not be assembled");
+        ScrobbleVerdict::Retryable { after: None }
+    } else if error.is_connect() {
         tracing::warn!("listenbrainz refused the connection");
         ScrobbleVerdict::Retryable { after: None }
     } else {
@@ -175,12 +220,8 @@ fn transport_verdict(error: &reqwest::Error) -> ScrobbleVerdict {
     }
 }
 
-/// The verdict a status line earns.
-fn status_verdict(
-    status: reqwest::StatusCode,
-    retry_after: Option<Duration>,
-    detail: &str,
-) -> ScrobbleVerdict {
+/// The verdict a status line earns — and the status line alone.
+fn status_verdict(status: reqwest::StatusCode, retry_after: Option<Duration>) -> ScrobbleVerdict {
     if status.is_success() {
         return ScrobbleVerdict::Accepted;
     }
@@ -194,7 +235,7 @@ fn status_verdict(
         // Read, understood, refused. No retry fixes a payload the far end will
         // not have.
         400 | 413 | 422 => {
-            tracing::warn!(%status, detail, "listenbrainz refused the submission");
+            tracing::warn!(%status, "listenbrainz refused the submission");
             ScrobbleVerdict::PermanentReject
         }
         429 => {
@@ -208,13 +249,18 @@ fn status_verdict(
         // through the link's own `degraded`, and the queue gives up after that
         // rather than pretending forever.
         _ => {
-            tracing::warn!(%status, detail, "listenbrainz answered unusably");
+            tracing::warn!(%status, "listenbrainz answered unusably");
             ScrobbleVerdict::Retryable { after: None }
         }
     }
 }
 
 /// How long the destination asked us to wait, in whole seconds.
+///
+/// Reported exactly as it was given, however absurd. Bounding it belongs to the
+/// queue and not here: an adapter's job is to say faithfully what the far end
+/// answered, and `reschedule_scrobble` is what decides how much of that this
+/// server is willing to be told.
 fn reset_in(response: &reqwest::Response) -> Option<Duration> {
     response
         .headers()
@@ -225,23 +271,6 @@ fn reset_in(response: &reqwest::Response) -> Option<Duration> {
         .parse::<u64>()
         .ok()
         .map(Duration::from_secs)
-}
-
-/// At most [`MAX_RESPONSE_BYTES`] of whatever came back, for the log.
-///
-/// Streamed rather than `text()`: nothing bounds what a host at the other end
-/// chooses to send, and an adapter that reads it all is one broken destination
-/// away from exhausting this process.
-async fn bounded_body(mut response: reqwest::Response) -> String {
-    let mut collected: Vec<u8> = Vec::new();
-    while let Ok(Some(chunk)) = response.chunk().await {
-        let room = MAX_RESPONSE_BYTES.saturating_sub(collected.len());
-        if room == 0 {
-            break;
-        }
-        collected.extend_from_slice(&chunk[..chunk.len().min(room)]);
-    }
-    String::from_utf8_lossy(&collected).into_owned()
 }
 
 #[cfg(test)]
@@ -323,39 +352,37 @@ mod tests {
         let no_wait = None;
 
         assert_eq!(
-            status_verdict(StatusCode::OK, no_wait, ""),
+            status_verdict(StatusCode::OK, no_wait),
             ScrobbleVerdict::Accepted
         );
         // A bad token breaks the link rather than the listen.
         assert_eq!(
-            status_verdict(StatusCode::UNAUTHORIZED, no_wait, ""),
+            status_verdict(StatusCode::UNAUTHORIZED, no_wait),
             ScrobbleVerdict::AuthBroken
         );
         // A refused payload is terminal: no retry can fix it.
         assert_eq!(
-            status_verdict(StatusCode::BAD_REQUEST, no_wait, ""),
+            status_verdict(StatusCode::BAD_REQUEST, no_wait),
             ScrobbleVerdict::PermanentReject
         );
-        // And a rate limit carries the destination's own answer back.
+        // And a rate limit carries the destination's own answer back, exactly
+        // as it was given — bounding it is the queue's business, not this
+        // function's.
         assert_eq!(
-            status_verdict(
-                StatusCode::TOO_MANY_REQUESTS,
-                Some(Duration::from_secs(12)),
-                ""
-            ),
+            status_verdict(StatusCode::TOO_MANY_REQUESTS, Some(Duration::from_secs(12))),
             ScrobbleVerdict::Retryable {
                 after: Some(Duration::from_secs(12))
             }
         );
         // A server fault says nothing about the listen.
         assert_eq!(
-            status_verdict(StatusCode::BAD_GATEWAY, no_wait, ""),
+            status_verdict(StatusCode::BAD_GATEWAY, no_wait),
             ScrobbleVerdict::Retryable { after: None }
         );
         // A redirect is not followed, so it reaches here: the operator's
         // destination moved, and the listen waits for them to notice.
         assert_eq!(
-            status_verdict(StatusCode::FOUND, no_wait, ""),
+            status_verdict(StatusCode::FOUND, no_wait),
             ScrobbleVerdict::Retryable { after: None }
         );
     }

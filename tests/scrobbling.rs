@@ -9,14 +9,17 @@
 //! directly — which is the point of the trait: the drain knows five words and no
 //! providers, so the five words are what those tests drive.
 //!
-//! **Three are not.** `a_listen_reaches_the_destination_in_the_shape_it_documents`,
-//! `a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked` and
-//! `a_destination_that_refuses_the_token_breaks_the_link` stand a real HTTP
-//! server on loopback and let the ListenBrainz adapter talk to it, because what
-//! they check exists only on the wire: the `Token` scheme, the JSON shape, and
-//! the seconds-not-milliseconds timestamp. A double would prove none of it. They
-//! reach `127.0.0.1` and nothing else — no test in this file touches a network
-//! this machine does not own.
+//! **Every test that names `spawn_destination` is not.** Those stand a real
+//! HTTP server on loopback and let the ListenBrainz adapter talk to it, because
+//! what they check exists only on the wire: the `Token` scheme, the JSON shape,
+//! the seconds-not-milliseconds timestamp, and what a status line does to a row.
+//! A double would prove none of it. They reach `127.0.0.1` and nothing else — no
+//! test in this file touches a network this machine does not own.
+//!
+//! Stated as a rule rather than a list on purpose. This paragraph named three
+//! tests and was wrong within the hour, because the list went stale the moment
+//! another one was added — twice. A rule cannot drift from the code the way a
+//! count does.
 //!
 //! The accounts below are inserted with a placeholder in `password_hash` rather
 //! than hashed from a literal. They never log in — this target has no HTTP
@@ -748,6 +751,177 @@ async fn a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked() {
     assert!(
         next >= before + 3_600_000,
         "the wait must honour the destination's own answer, not our shorter backoff"
+    );
+}
+
+#[tokio::test]
+async fn a_token_that_cannot_be_a_header_is_refused_when_it_is_pasted() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "pasting-listener").await;
+
+    // A newline is what a copy out of a web page hands you, and a secret
+    // carrying one can never be spelled as an HTTP header — so it will never
+    // work against any destination. Refused at the only moment the person can
+    // fix it, rather than discovered hours later on a background drain.
+    assert!(state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb\nsecret")
+        .await
+        .is_err());
+    assert!(
+        state
+            .services
+            .scrobble_links(fixture.owner)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a refused token must leave no link behind to queue listens under"
+    );
+
+    // And the check is not so eager that it refuses an ordinary one.
+    assert!(state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .is_ok());
+}
+
+#[tokio::test]
+async fn a_credential_sealed_before_that_check_breaks_the_link_rather_than_going_uncertain() {
+    let destination = spawn_destination(200, None).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "sealed-badly-listener").await;
+
+    // Sealed and inserted by hand, because `link_scrobble` now refuses this
+    // through the front door — and rows sealed before it did are never
+    // revalidated. This is the case the adapter's own guard exists for, and
+    // without this test that claim would be prose.
+    let sealed = state.secret_box.encrypt(b"lb\nsecret").unwrap();
+    let now = now_ms();
+    sqlx::query(
+        "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
+         credential_ciphertext, created_at, updated_at) \
+         VALUES (?, ?, 'listenbrainz', 'active', ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(fixture.owner.to_string())
+    .bind(sealed.nonce.as_slice())
+    .bind(sealed.ciphertext.as_slice())
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+
+    // A stored secret that cannot be spelled as a header is a broken
+    // authorisation, and is named one.
+    assert_eq!(drained.broken, 1);
+    assert_eq!(
+        drained.uncertain, 0,
+        "bytes that never left must not become the one verdict a person cannot undo"
+    );
+    assert_eq!(rows(&state).await[0].1, "cancelled");
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken");
+
+    // And nothing was sent, because there was never a request to send.
+    assert_eq!(destination.bodies.lock().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn a_destination_cannot_park_a_listen_past_our_own_ceiling() {
+    // About thirty-one thousand years, which is the shape a hostile or merely
+    // broken destination takes. `after` is the only value in the whole
+    // scheduling path a third party chooses.
+    let destination = spawn_destination(429, Some(999_999_999_999)).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "absurd-wait-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let before = now_ms();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    let next: i64 =
+        sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox ORDER BY id LIMIT 1")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    // Clamped to the hour the backoff already calls the point past which
+    // waiting buys nothing, plus at most its own quarter of spread. Unclamped,
+    // this row would sit at a moment it never reaches — a third party deciding
+    // the listen dies, which is decision 10's concern arriving from the side
+    // nobody watches.
+    assert!(
+        next <= before + 3_600_000 + 900_000 + 10_000,
+        "a destination must not be able to schedule a listen beyond our own ceiling"
+    );
+    // And still a real wait: clamping is not ignoring.
+    assert!(next >= before + 3_600_000);
+}
+
+#[tokio::test]
+async fn two_rate_limited_listens_do_not_come_back_in_a_herd() {
+    let destination = spawn_destination(429, Some(3_600)).await;
+    let (_temp, config, state) = app_reaching(&destination.base).await;
+    let fixture = fixture(&config, &state, "herd-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        state
+            .services
+            .scrobble(fixture.owner, fixture.tagged, true, None)
+            .await
+            .unwrap();
+    }
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.retrying, 2);
+
+    // The *wait*, not the instant. `reschedule_scrobble` binds
+    // `next_attempt_at = now + wait` and `updated_at = now` from the same
+    // `now`, so their difference is exactly the wait it computed.
+    //
+    // Comparing `next_attempt_at` directly does not work, and an inversion is
+    // what proved it: that function takes its own `now_ms()` per row, so two
+    // rows settled a few milliseconds apart already differ by that drift. The
+    // assertion passed on wall-clock noise rather than on the spread, and
+    // removing the spread left it green — a test that could not fail for the
+    // reason it names.
+    let waits: Vec<i64> =
+        sqlx::query_scalar("SELECT next_attempt_at - updated_at FROM scrobble_outbox ORDER BY id")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(waits.len(), 2);
+    // Both honoured the hour the destination asked for...
+    for wait in &waits {
+        assert!(*wait >= 3_600_000, "the destination's own answer must win");
+    }
+    // ...and still came back apart. Folded into one value, the spread is lost
+    // exactly when it is most needed: both rows would return at the same
+    // millisecond, in a herd, at a destination that had just asked for room.
+    assert_ne!(
+        waits[0], waits[1],
+        "two rows told to wait the same hour must not return together"
     );
 }
 

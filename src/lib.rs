@@ -551,10 +551,15 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // Nothing leaves until both are true: an adapter with no authorisation
     // behind it is never handed a listen. RFC-010 decision 11.
     if let Some(base) = config.listenbrainz_url.as_deref() {
-        // Both were validated by `Config::from_env`, which refuses to boot on a
-        // malformed destination, so neither branch below is reachable from a
-        // running server — they are here because `for_data_dir` builds a
-        // `Config` without going through that gate.
+        // `Config::from_env` refuses to boot on a malformed destination, so the
+        // `validate_destination` half of this cannot fail on a real server —
+        // it is reachable only because `for_data_dir` builds a `Config` without
+        // going through that gate.
+        //
+        // The `outbound_client` half is a different matter and really can fail
+        // at runtime, for reasons that have nothing to do with the operator's
+        // URL. An earlier version of this comment claimed neither branch was
+        // reachable, which was one claim too many.
         let target = scrobblers::validate_destination(base, config.outbound_allow_plaintext)
             .and_then(|base| {
                 let client = scrobblers::outbound_client(config.scrobbling.request_timeout)?;

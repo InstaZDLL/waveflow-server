@@ -366,6 +366,20 @@ impl DomainServices {
         if secret.is_empty() || secret.len() > 512 {
             return Err(ServiceError::Invalid);
         }
+        // A secret carrying a control character can never be spelled as an HTTP
+        // header, so it will never work against any destination — this is a
+        // property of the credential rather than of whichever adapter carries
+        // it, which is why the check belongs here and not there.
+        //
+        // Refused at the moment it is pasted, because that is the only moment
+        // the person can fix it. Discovered instead on a background drain hours
+        // later, it would arrive as a broken link nobody could explain, which is
+        // the silent failure RFC-010 spends itself preventing. The adapter still
+        // guards its own construction: credentials sealed before this check
+        // existed are never revalidated.
+        if secret.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+            return Err(ServiceError::Invalid);
+        }
         let sealed = self.secret_box.encrypt(secret.as_bytes())?;
         let id = Uuid::new_v4();
         let now = now_ms();
@@ -1059,11 +1073,39 @@ impl DomainServices {
         }
         let now = now_ms();
         // The longer of the two, so a destination asking for room gets at least
-        // what it asked for and our own backoff is never shortened by it.
-        let asked = after.map_or(0, |after| {
-            i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
-        });
-        let wait = retry_delay(attempts, entry.id).max(asked);
+        // what it asked for and our own backoff is never shortened by it — but
+        // never longer than the backoff's own ceiling either.
+        //
+        // `after` is the only value in this whole scheduling path that a third
+        // party chooses, and without the clamp a single
+        // `x-ratelimit-reset-in: 999999999999` parks the row at a moment it
+        // never reaches. That is decision 10's concern arriving from the
+        // unexpected side: not somebody making this server call a URL, but
+        // somebody making it stop. One hour rather than a larger number of its
+        // own, because `RETRY_CEILING` is already documented as the point past
+        // which waiting buys nothing — a destination should not get to buy what
+        // our own backoff calls worthless — and because the attempt cap spans
+        // about a day, so a longer clamp would let one answer eat the entire
+        // budget and decide the listen dies.
+        //
+        // Clamping is not ignoring: past the ceiling this waits an hour, asks
+        // again, is refused again, and waits again. What it costs is one
+        // attempt per refusal, which is what the cap is for.
+        let ceiling = i64::try_from(RETRY_CEILING.as_millis()).unwrap_or(i64::MAX);
+        let asked = after
+            .map_or(0, |after| {
+                i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
+            })
+            .min(ceiling);
+        // The spread is applied *after* the two are compared, not folded into
+        // either of them. That is the whole reason `retry_base` and
+        // `retry_spread` are separate: a single function returning base plus
+        // spread, compared against `asked` with `max`, drops the spread
+        // precisely when `asked` wins — and every rate-limited row in the batch
+        // then comes back at the same millisecond, in a herd, at a destination
+        // that had just asked for room.
+        let base = retry_base(attempts).max(asked);
+        let wait = base.saturating_add(retry_spread(base, entry.id));
         let _writer = self.db.writer_guard().await;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
@@ -1140,26 +1182,28 @@ fn link_health(
     "healthy"
 }
 
-/// How long to wait before attempt number `attempts`.
+/// The growing half: doubling from a minute, capped at an hour.
 ///
-/// Doubling from a minute to an hour, spread by the row's own id. The spread
-/// exists so that a queue which failed together does not come back together;
-/// it has no reason to be unpredictable, which is why it costs no randomness —
-/// two rows that failed in the same second still return at different moments.
-fn retry_delay(attempts: i64, entry_id: i64) -> i64 {
+/// Apart from the spread so that a caller with its own floor to apply — a
+/// destination that asked for room — can take the larger of the two *bases* and
+/// still get a spread on the result. Folded together, the spread is lost in
+/// exactly the case that most needs it.
+fn retry_base(attempts: i64) -> i64 {
     let step = u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX);
     let base = RETRY_BASE
         .saturating_mul(2u32.saturating_pow(step.min(16)))
         .min(RETRY_CEILING);
-    let base_ms = i64::try_from(base.as_millis()).unwrap_or(i64::MAX);
-    // Up to a quarter of the wait, either side of nothing.
+    i64::try_from(base.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// The spreading half: up to a quarter of the wait, added.
+fn retry_spread(base_ms: i64, entry_id: i64) -> i64 {
     let spread = base_ms / 4;
-    let jitter = if spread > 0 {
+    if spread > 0 {
         entry_id.rem_euclid(spread)
     } else {
         0
-    };
-    base_ms.saturating_add(jitter)
+    }
 }
 
 #[cfg(test)]
@@ -1225,6 +1269,18 @@ mod tests {
         );
     }
 
+    /// The ordinary wait, composed the way the drain composes it.
+    ///
+    /// The two halves are separate in production so that a caller with a floor
+    /// of its own — a destination that asked for room — can take the larger of
+    /// the two *bases* and still get a spread on the result. A test that wants
+    /// the plain wait therefore has to put them back together rather than call
+    /// a third function that exists only for it to call.
+    fn wait(attempts: i64, entry_id: i64) -> i64 {
+        let base = retry_base(attempts);
+        base.saturating_add(retry_spread(base, entry_id))
+    }
+
     /// The attempt cap and the schedule beside it describe one span of time, so
     /// what the cap is *for* is checked here rather than asserted in prose.
     ///
@@ -1239,7 +1295,7 @@ mod tests {
         // One submission per attempt, and one wait between each pair of them,
         // so a cap of `n` spends `n - 1` waits. Without jitter: the spread only
         // ever adds.
-        let covered: i64 = (1..cap).map(|attempt| retry_delay(attempt, 0)).sum();
+        let covered: i64 = (1..cap).map(|attempt| wait(attempt, 0)).sum();
         let hours = covered / 3_600_000;
         assert!(
             (23..=26).contains(&hours),
@@ -1252,12 +1308,12 @@ mod tests {
         let minute = 60_000;
         // The first retry waits about a minute, the later ones about an hour,
         // and never more.
-        assert!((minute..minute + minute / 4).contains(&retry_delay(1, 0)));
-        assert!(retry_delay(40, 0) <= 3_600_000 + 3_600_000 / 4);
-        assert!(retry_delay(40, 0) >= 3_600_000);
+        assert!((minute..minute + minute / 4).contains(&wait(1, 0)));
+        assert!(wait(40, 0) <= 3_600_000 + 3_600_000 / 4);
+        assert!(wait(40, 0) >= 3_600_000);
         // Monotonic while it grows.
-        assert!(retry_delay(3, 0) > retry_delay(1, 0));
+        assert!(wait(3, 0) > wait(1, 0));
         // And two entries that failed in the same instant come back apart.
-        assert_ne!(retry_delay(2, 7), retry_delay(2, 8));
+        assert_ne!(wait(2, 7), wait(2, 8));
     }
 }
