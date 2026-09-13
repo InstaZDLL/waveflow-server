@@ -17,6 +17,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use waveflow_server::authentication::now_ms;
@@ -194,6 +195,93 @@ async fn make_everything_due(state: &AppState) {
         .execute(state.db.pool())
         .await
         .unwrap();
+}
+
+/// A destination that takes the submission and then simply never answers.
+///
+/// Not a refusal and not a network failure: the connection is good, the request
+/// is gone, and nothing comes back. It is the shape a stalled far end really
+/// has, and the one shape no verdict can describe.
+struct Stalls {
+    calls: Mutex<usize>,
+}
+
+impl ScrobbleTarget for Stalls {
+    fn submit<'a>(
+        &'a self,
+        _envelope: &'a ScrobbleEnvelope,
+        _secret: &'a str,
+    ) -> BoxFuture<'a, ScrobbleVerdict> {
+        Box::pin(async move {
+            *self.calls.lock().unwrap() += 1;
+            std::future::pending::<ScrobbleVerdict>().await
+        })
+    }
+}
+
+/// An app whose outbound deadline this test chose.
+///
+/// Tuned before `initialize`, never after: `DomainServices` copies these values
+/// out of `Config` when it is built, so shortening the deadline on the returned
+/// `Config` would silently exercise the old one.
+async fn app_with_deadline(
+    deadline: Duration,
+) -> (tempfile::TempDir, waveflow_server::Config, AppState) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.scrobbling.request_timeout = deadline;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    (temp, config, state)
+}
+
+#[tokio::test]
+async fn a_destination_that_never_answers_does_not_hold_the_queue_forever() {
+    let (_temp, config, state) = app_with_deadline(Duration::from_millis(150)).await;
+    let fixture = fixture(&config, &state, "stalling-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    let target = std::sync::Arc::new(Stalls {
+        calls: Mutex::new(0),
+    });
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+
+    // The first assertion is that this returns at all. The drain is a
+    // background task, so without the deadline it is held for the life of the
+    // process and nothing on the server ever says so — which is why the wait is
+    // bounded here rather than inside whichever adapter happens to be
+    // registered.
+    let drained = tokio::time::timeout(
+        Duration::from_secs(5),
+        state.services.drain_scrobble_outbox(),
+    )
+    .await
+    .expect("a destination that never answers must not hold the drain")
+    .unwrap();
+
+    assert_eq!(*target.calls.lock().unwrap(), 1);
+    // Uncertain rather than retrying: the request left and the answer did not
+    // come back, and those two are what decision 5 calls indistinguishable. The
+    // destination may already hold this listen, so sending it again is a
+    // decision that belongs to a person.
+    assert_eq!(drained.uncertain, 1);
+    assert_eq!(drained.retrying, 0);
+    assert_eq!(rows(&state).await[0].1, "uncertain");
+
+    // And the link says what happened, without echoing anything of the listen.
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].health, "degraded");
+    assert_eq!(links[0].last_failure.as_deref(), Some("ambiguous"));
 }
 
 #[tokio::test]

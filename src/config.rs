@@ -82,6 +82,15 @@ pub struct CanvasLimits {
 pub struct ScrobbleLimits {
     /// How often the drain walks the queue.
     pub drain_interval: Duration,
+    /// How long one submission may take before the drain stops waiting for it.
+    ///
+    /// A deployment setting rather than a constant because decision 9 says so,
+    /// and it is load-bearing: the drain is a background task, so a destination
+    /// that accepts a connection and then never answers would hold the queue
+    /// still for the life of the process — the silent failure `degraded` exists
+    /// to surface, arriving by the one route that would also stop `degraded`
+    /// from ever being computed.
+    pub request_timeout: Duration,
     /// How many times one listen may be submitted before it is abandoned and
     /// counted. Bounded because a queue that never empties is a fault and not a
     /// state — decision 6.
@@ -168,6 +177,7 @@ pub struct Config {
     /// How the server drains what it owes a third party.
     ///
     /// `WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS`,
+    /// `WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS`,
     /// `WAVEFLOW_SCROBBLE_MAX_ATTEMPTS`, `WAVEFLOW_SCROBBLE_STALE_AFTER_SECS`,
     /// `WAVEFLOW_SCROBBLE_BATCH`.
     ///
@@ -314,6 +324,14 @@ impl Config {
                 3_600u64,
             )?),
             batch: parse_positive_env("WAVEFLOW_SCROBBLE_BATCH", 50usize)?,
+            // Thirty seconds is far past any of the three destinations'
+            // ordinary latency and far short of a drain that has stopped. It
+            // bounds one submission, never the pass: the pass is bounded by
+            // `batch`.
+            request_timeout: Duration::from_secs(parse_positive_env(
+                "WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS",
+                30u64,
+            )?),
         };
         // Both refuse zero and negatives at startup rather than falling back:
         // every fallback for a bound is wrong, and the operator is turned away
@@ -459,6 +477,9 @@ impl Config {
             // pass themselves.
             scrobbling: ScrobbleLimits {
                 drain_interval: Duration::from_secs(60),
+                // Long enough that no test double ever meets it by accident;
+                // the one test that means to meet it shortens this first.
+                request_timeout: Duration::from_secs(30),
                 max_attempts: 3,
                 stale_after: Duration::from_secs(3600),
                 batch: 8,

@@ -623,7 +623,39 @@ impl DomainServices {
                     continue;
                 }
             };
-            let verdict = target.submit(&entry.envelope, &secret).await;
+            // Bounded, because nothing else bounds it. A destination that
+            // accepts the connection and then never answers would otherwise
+            // hold this background task for the life of the process — and the
+            // stopped queue that results is the very thing decision 12's
+            // `degraded` exists to report, arriving by the one route that also
+            // stops `degraded` from ever being recomputed.
+            //
+            // An expired wait is `Ambiguous`, never `Retryable`. The request
+            // left; what failed to come back is the answer, which is exactly
+            // the case decision 5 calls indistinguishable — the destination may
+            // already hold this listen, so the server does not get to decide to
+            // send it again. An adapter that knows better, because its own
+            // connection failed before anything was sent, answers `Retryable`
+            // itself and never reaches this deadline: the finer judgement
+            // belongs where the knowledge is, and this is only the backstop.
+            let verdict = match tokio::time::timeout(
+                self.scrobbling.request_timeout,
+                target.submit(&entry.envelope, &secret),
+            )
+            .await
+            {
+                Ok(verdict) => verdict,
+                // The entry and its destination, and nothing of the envelope
+                // or of the secret.
+                Err(_) => {
+                    tracing::warn!(
+                        entry = entry.id,
+                        provider = entry.provider.as_str(),
+                        "a scrobble submission passed its deadline and is now uncertain"
+                    );
+                    ScrobbleVerdict::Ambiguous
+                }
+            };
             match verdict {
                 ScrobbleVerdict::Accepted => {
                     self.settle_scrobble(&entry, "sent", None).await?;
