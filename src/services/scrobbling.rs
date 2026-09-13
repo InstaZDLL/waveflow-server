@@ -87,7 +87,17 @@ pub enum ScrobbleVerdict {
     /// The destination has it. Nothing further.
     Accepted,
     /// The destination did not get it, and saying so again later may work.
-    Retryable,
+    ///
+    /// `after` is what the destination itself asked for when it said so —
+    /// ListenBrainz answers `429` with `X-RateLimit-Reset-In`, in seconds.
+    /// Decision 6 promised to honour that and PR #191 had nowhere to put it, so
+    /// the verdict was opaque and the header was read by nobody.
+    ///
+    /// **It is honoured as a floor, never as a replacement.** Waiting *at
+    /// least* as long as asked is what honouring means; taking the destination's
+    /// twelve seconds in place of our own sixteen-minute backoff would answer a
+    /// request to slow down by speeding up.
+    Retryable { after: Option<Duration> },
     /// The authorisation is no longer good. The link is marked broken and its
     /// queue finishes, because every further attempt would fail identically.
     AuthBroken,
@@ -159,11 +169,22 @@ pub struct ScrobbleDrain {
     /// because they are not something this pass decided — they are what it
     /// found.
     pub recovered: usize,
-    /// Rows left exactly as they were because no adapter is registered for
-    /// their destination. Not an attempt: a server missing an adapter is a
-    /// misconfiguration, and spending the listen's retries on it would destroy
-    /// the queue the operator is about to fix.
+    /// Rows moved aside because no adapter is registered for their destination.
+    /// Not an attempt: a server missing an adapter is a misconfiguration, and
+    /// spending the listen's retries on it would destroy the queue the operator
+    /// is about to fix.
+    ///
+    /// This said "left exactly as they were" until a review noticed the path had
+    /// called `defer_scrobble` since the day it was written. The row keeps its
+    /// `attempts`; it does not keep its place.
     pub unserviced: usize,
+    /// Rows moved out of the way because their destination had just asked for
+    /// room, or gone silent. Not an attempt either — nothing was sent.
+    ///
+    /// Counted because without it a pass that defers forty-nine rows compares
+    /// equal to `default()` and logs nothing at all, which is a hole in a module
+    /// whose whole argument is that a queue which stops must say so.
+    pub rested: usize,
 }
 
 /// One row the drain is about to act on.
@@ -194,8 +215,15 @@ enum Rescheduled {
 
 /// The floor of the growing wait between two attempts.
 const RETRY_BASE: Duration = Duration::from_secs(60);
+/// Its ceiling in milliseconds.
+///
+/// One number, spelled twice from itself. Converting the `Duration` at each use
+/// needed a fallback that could never fire, in a file that argues a few hundred
+/// lines below that an unreachable branch is a case a later reader will mistake
+/// for one that happens.
+const RETRY_CEILING_MS: i64 = 60 * 60 * 1_000;
 /// Its ceiling. Past this, waiting longer buys nothing a restart would not.
-const RETRY_CEILING: Duration = Duration::from_secs(60 * 60);
+const RETRY_CEILING: Duration = Duration::from_millis(RETRY_CEILING_MS as u64);
 /// How far past the outbound deadline a claimed row must sit before it is read
 /// as abandoned rather than in flight.
 ///
@@ -354,6 +382,20 @@ impl DomainServices {
     ) -> Result<Uuid, ServiceError> {
         let secret = secret.trim();
         if secret.is_empty() || secret.len() > 512 {
+            return Err(ServiceError::Invalid);
+        }
+        // A secret carrying a control character can never be spelled as an HTTP
+        // header, so it will never work against any destination — this is a
+        // property of the credential rather than of whichever adapter carries
+        // it, which is why the check belongs here and not there.
+        //
+        // Refused at the moment it is pasted, because that is the only moment
+        // the person can fix it. Discovered instead on a background drain hours
+        // later, it would arrive as a broken link nobody could explain, which is
+        // the silent failure RFC-010 spends itself preventing. The adapter still
+        // guards its own construction: credentials sealed before this check
+        // existed are never revalidated.
+        if secret.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
             return Err(ServiceError::Invalid);
         }
         let sealed = self.secret_box.encrypt(secret.as_bytes())?;
@@ -606,7 +648,21 @@ impl DomainServices {
     /// use: a pass at boot, then one per interval.
     pub fn spawn_scrobble_drain(&self) {
         let services = self.clone();
-        let interval = services.scrobbling.drain_interval;
+        // Never zero, because `tokio::time::interval` panics on a zero period —
+        // here, inside a `tokio::spawn`ed task, where the unwind takes the queue
+        // with it and says nothing. The same shape as the `clamp` panic three
+        // commits ago, and the same answer.
+        //
+        // `parse_positive_env` refuses a zero interval from the environment, so
+        // this is unreachable from a configured server. It is reachable from a
+        // `Config` built in process, which is how every test builds one, and
+        // this is the only one of the seven background tasks whose period comes
+        // from an assignable field rather than a constant or a validated
+        // `Option`.
+        let interval = services
+            .scrobbling
+            .drain_interval
+            .max(Duration::from_millis(1));
         tokio::spawn(async move {
             services.drain_scrobbles_now().await;
             let mut ticker = tokio::time::interval(interval);
@@ -629,6 +685,7 @@ impl DomainServices {
                 uncertain = drained.uncertain,
                 broken = drained.broken,
                 unserviced = drained.unserviced,
+                rested = drained.rested,
                 recovered = drained.recovered,
                 "scrobble queue drained"
             ),
@@ -678,9 +735,69 @@ impl DomainServices {
         // sent. The ones behind it are not touched at all: they were never
         // emitted, so they stay `pending` and come back next pass, when one
         // further timeout will cost one further entry and no more.
-        let mut stalled_links: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        // Two reasons reach this set and they end in the same gesture: stop
+        // offering this link rows for the rest of the pass.
+        //
+        // A destination that went silent, and one that answered `429` with a
+        // delay. The second was missing until a review found it: the batch is
+        // chosen before the first verdict, so being told to slow down was
+        // followed by forty-nine more submissions on the same pass, each
+        // earning its own refusal and spending its own attempt. Answering
+        // "please wait" by sending the rest of the batch is the opposite of
+        // honouring it, and decision 6 is explicit that the delay is honoured.
+        // Carrying how long each one asked for, because skipping is not enough.
+        //
+        // A skipped row keeps its old `next_attempt_at`, already in the past, so
+        // it is due again the instant the next pass runs — and it sorts *ahead*
+        // of another link's newer rows. One row of the resting link drains per
+        // pass while the rest hold the head of the queue, and a link with a
+        // large backlog starves every other one for hours or for good. The file
+        // already makes this argument for the no-adapter case, twenty lines
+        // below; the resting path needed the same answer.
+        //
+        // Deferring by the delay that was actually asked is not a slower retry
+        // than skipping — a skipped row returns in one drain interval anyway —
+        // it is a *more* honouring one: right now the other rows sit due and are
+        // re-offered once a minute despite an hour having been requested.
+        let mut resting_links: std::collections::HashMap<Uuid, i64> =
+            std::collections::HashMap::new();
+        // The floor keeps a `429` that named no duration from deferring by
+        // nothing at all; the ceiling is the one the queue already refuses to
+        // let a third party exceed.
+        // The ceiling first, because the floor falls back to it.
+        //
+        // `unwrap_or(i64::MAX)` on the floor was the same park-a-row-forever
+        // hole this queue already refuses a destination, arriving by the other
+        // door — configuration. An interval this platform cannot represent in
+        // milliseconds is not a reason to defer a listen past the end of time.
+        let rest_ceiling = RETRY_CEILING_MS;
+        // At least a millisecond, which closes the literal zero and no more
+        // than that.
+        //
+        // An earlier version of this comment claimed it kept a rested row from
+        // going "straight back at the head of the queue". That is not true and
+        // a review said so: `due_scrobbles` selects `next_attempt_at <= now`,
+        // so nought and one are both due on the very next pass. What this
+        // actually prevents is a zero deferral being written at all.
+        //
+        // `parse_positive_env` refuses a zero interval from the environment; a
+        // `Config` built in process can carry one, and the tests build theirs
+        // that way. The sharper hazard of that value is not here but in
+        // `spawn_scrobble_drain`, where `tokio::time::interval` panics on a
+        // zero period — guarded there.
+        let rest_floor = i64::try_from(self.scrobbling.drain_interval.as_millis())
+            .unwrap_or(rest_ceiling)
+            .max(1);
         for entry in self.due_scrobbles(now_ms()).await? {
-            if broken_links.contains(&entry.link_id) || stalled_links.contains(&entry.link_id) {
+            if broken_links.contains(&entry.link_id) {
+                // Its waiting rows are already `cancelled`, so there is nothing
+                // left to defer and no place for them to be in the way of.
+                continue;
+            }
+            if let Some(rest) = resting_links.get(&entry.link_id).copied() {
+                if self.defer_scrobble(&entry, rest).await? {
+                    drained.rested += 1;
+                }
                 continue;
             }
             let Some(target) = self
@@ -699,8 +816,9 @@ impl DomainServices {
                 // *does* have an adapter would never be reached. That is
                 // starvation rather than slowness, and it is the reason this
                 // defers instead of merely counting.
-                self.defer_scrobble(&entry).await?;
-                drained.unserviced += 1;
+                if self.defer_scrobble(&entry, rest_floor).await? {
+                    drained.unserviced += 1;
+                }
                 continue;
             };
             let secret = match self.secret_box.decrypt(&entry.nonce, &entry.ciphertext) {
@@ -765,8 +883,9 @@ impl DomainServices {
                         "a scrobble submission passed its deadline and is now uncertain"
                     );
                     // Nothing else queued for this destination is offered on
-                    // this pass; see `stalled_links` above.
-                    stalled_links.insert(entry.link_id);
+                    // this pass; see `resting_links` above. No delay was named
+                    // here — silence asks for nothing — so the floor stands.
+                    resting_links.insert(entry.link_id, rest_floor);
                     ScrobbleVerdict::Ambiguous
                 }
             };
@@ -780,11 +899,37 @@ impl DomainServices {
                         drained.accepted += 1;
                     }
                 }
-                ScrobbleVerdict::Retryable => match self.reschedule_scrobble(&entry).await? {
-                    Rescheduled::Later => drained.retrying += 1,
-                    Rescheduled::Abandoned => drained.abandoned += 1,
-                    Rescheduled::NotOurs => {}
-                },
+                ScrobbleVerdict::Retryable { after } => {
+                    // Only when the destination actually asked. A refused
+                    // connection or a 5xx is a fault, not a request for room,
+                    // and resting the whole link on one of those would slow a
+                    // recovery nobody asked to slow.
+                    if let Some(after) = after {
+                        // `min` then `max`, never `clamp`: `Ord::clamp` panics
+                        // when its minimum exceeds its maximum, and nothing
+                        // stops an operator setting `WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS`
+                        // above the hour — `parse_positive_env` bounds it below
+                        // zero and nowhere above. That panic would unwind inside
+                        // a spawned task and stop the queue for the life of the
+                        // process: the silent stop this RFC exists to prevent,
+                        // reachable by one plausible setting.
+                        //
+                        // The order is also the right answer when the floor does
+                        // exceed the ceiling: if a pass runs every two hours,
+                        // deferring by one would have the row offered again
+                        // before the next pass anyway, so the floor should win.
+                        let asked = i64::try_from(after.as_millis())
+                            .unwrap_or(i64::MAX)
+                            .min(rest_ceiling)
+                            .max(rest_floor);
+                        resting_links.insert(entry.link_id, asked);
+                    }
+                    match self.reschedule_scrobble(&entry, after).await? {
+                        Rescheduled::Later => drained.retrying += 1,
+                        Rescheduled::Abandoned => drained.abandoned += 1,
+                        Rescheduled::NotOurs => {}
+                    }
+                }
                 ScrobbleVerdict::PermanentReject => {
                     if self
                         .settle_scrobble(&entry, "rejected", Some("rejected"))
@@ -1001,11 +1146,17 @@ impl DomainServices {
     /// Refusing the link instead would be the other way to prevent this, and it
     /// is the wrong one: a durable queue exists precisely so that a listen
     /// survives until the thing that carries it arrives.
-    async fn defer_scrobble(&self, entry: &DueEntry) -> Result<(), ServiceError> {
+    /// `wait` is how far out to push it: one drain interval for a row nothing
+    /// can carry, and the delay a destination asked for when the link is resting
+    /// under a rate limit. Never an attempt — this only moves a row out of the
+    /// way, and `attempts` is what says something was tried.
+    /// Answers whether the row really moved, on the same terms as every other
+    /// writer here: a pass counts what it wrote and not what it attempted, and a
+    /// row a concurrent pass has already taken is not this one's to report.
+    async fn defer_scrobble(&self, entry: &DueEntry, wait: i64) -> Result<bool, ServiceError> {
         let now = now_ms();
-        let wait = i64::try_from(self.scrobbling.drain_interval.as_millis()).unwrap_or(i64::MAX);
         let _writer = self.db.writer_guard().await;
-        sqlx::query(
+        let moved = sqlx::query(
             "UPDATE scrobble_outbox SET next_attempt_at=?, updated_at=? \
              WHERE id=? AND state='pending'",
         )
@@ -1014,7 +1165,22 @@ impl DomainServices {
         .bind(entry.id)
         .execute(self.db.pool())
         .await?;
-        Ok(())
+        if moved.rows_affected() != 1 {
+            // Said aloud, like every other "this row was not ours" path here.
+            // A pass that lost each of its deferrals to a concurrent one would
+            // otherwise count nothing and log nothing, which reads exactly like
+            // a pass with nothing to do.
+            //
+            // The tense matters and the first draft had it wrong: this fires on
+            // the branch where the row was *not* moved aside, so saying it was
+            // would report the very action that did not happen.
+            tracing::warn!(
+                entry = entry.id,
+                "a row could not be moved aside; it had been settled elsewhere"
+            );
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Pushes one entry out to its next attempt, or gives up on it.
@@ -1025,7 +1191,11 @@ impl DomainServices {
     /// Answers [`Rescheduled::NotOurs`] when the row had already been settled
     /// elsewhere, on the same terms and for the same reason as
     /// [`Self::settle_scrobble`].
-    async fn reschedule_scrobble(&self, entry: &DueEntry) -> Result<Rescheduled, ServiceError> {
+    async fn reschedule_scrobble(
+        &self,
+        entry: &DueEntry,
+        after: Option<Duration>,
+    ) -> Result<Rescheduled, ServiceError> {
         let attempts = entry.attempts.saturating_add(1);
         let exhausted =
             u64::try_from(attempts).unwrap_or(u64::MAX) >= u64::from(self.scrobbling.max_attempts);
@@ -1042,18 +1212,96 @@ impl DomainServices {
             );
         }
         let now = now_ms();
-        let wait = retry_delay(attempts, entry.id);
+        // The longer of the two, so a destination asking for room gets at least
+        // what it asked for and our own backoff is never shortened by it — but
+        // never longer than the backoff's own ceiling either.
+        //
+        // `after` is the only value in this whole scheduling path that a third
+        // party chooses, and without the clamp a single
+        // `x-ratelimit-reset-in: 999999999999` parks the row at a moment it
+        // never reaches. That is decision 10's concern arriving from the
+        // unexpected side: not somebody making this server call a URL, but
+        // somebody making it stop. One hour rather than a larger number of its
+        // own, because `RETRY_CEILING` is already documented as the point past
+        // which waiting buys nothing — a destination should not get to buy what
+        // our own backoff calls worthless — and because the attempt cap spans
+        // about a day, so a longer clamp would let one answer eat the entire
+        // budget and decide the listen dies.
+        //
+        // Clamping is not ignoring: past the ceiling this waits an hour, asks
+        // again, is refused again, and waits again. What it costs is one
+        // attempt per refusal, which is what the cap is for.
+        let ceiling = RETRY_CEILING_MS;
+        let asked = after
+            .map_or(0, |after| {
+                i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
+            })
+            .min(ceiling);
+        // The spread is applied *after* the two are compared, not folded into
+        // either of them. That is the whole reason `retry_base` and
+        // `retry_spread` are separate: a single function returning base plus
+        // spread, compared against `asked` with `max`, drops the spread
+        // precisely when `asked` wins — and every rate-limited row in the batch
+        // then comes back at the same millisecond, in a herd, at a destination
+        // that had just asked for room.
+        let base = retry_base(attempts).max(asked);
+        let wait = base.saturating_add(retry_spread(base, entry.id));
         let _writer = self.db.writer_guard().await;
+        // Two causes rather than one, because `ScrobbleLinkState::last_failure`
+        // is documented as carrying a *normalised* cause and named
+        // `rate_limited` among them — while nothing ever wrote it. A comment
+        // asserting a value the code never produces is the category this branch
+        // set out to be rid of, so the code now produces it.
+        let cause = if after.is_some() {
+            "rate_limited"
+        } else {
+            "retryable"
+        };
+        let mut tx = self.db.pool().begin().await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
-             last_failure='retryable', updated_at=? WHERE id=? AND state='sending'",
+             last_failure=?, updated_at=? WHERE id=? AND state='sending'",
         )
         .bind(attempts)
         .bind(now.saturating_add(wait))
+        .bind(cause)
         .bind(now)
         .bind(entry.id)
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await?;
+        // The link's own column as well, and this is the half that was missing.
+        //
+        // `ScrobbleLinkState::last_failure` is read from `scrobble_link`, never
+        // from the row — so writing the cause onto the outbox entry alone left
+        // decision 12's normalised `rate_limited` unreachable by anything that
+        // reports it. An earlier commit message in this branch claimed that gap
+        // was closed. It was not; this closes it.
+        //
+        // Only when the row really moved, on the same terms as every counter in
+        // the drain: a verdict about a row this pass no longer owns must not
+        // rewrite the link's state either.
+        if moved.rows_affected() == 1 {
+            sqlx::query("UPDATE scrobble_link SET last_failure=?, updated_at=? WHERE id=?")
+                .bind(cause)
+                .bind(now)
+                .bind(entry.link_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        // Rolled back rather than committed empty, on the same terms as
+        // `settle_scrobble`: a verdict about a row this pass no longer owns
+        // writes nothing, and an empty transaction that commits is a write a
+        // reader has to reason about before discovering it is not one.
+        //
+        // An earlier commit message in this branch said this was already done.
+        // It was not — the sentence was written from the plan instead of from
+        // the diff, which is the third time that has happened here, and naming
+        // it is cheaper than the review round it cost.
+        if moved.rows_affected() == 0 {
+            tx.rollback().await?;
+        } else {
+            tx.commit().await?;
+        }
         Ok(if moved.rows_affected() == 0 {
             tracing::warn!(
                 entry = entry.id,
@@ -1119,26 +1367,43 @@ fn link_health(
     "healthy"
 }
 
-/// How long to wait before attempt number `attempts`.
+/// The growing half: doubling from a minute, capped at an hour.
 ///
-/// Doubling from a minute to an hour, spread by the row's own id. The spread
-/// exists so that a queue which failed together does not come back together;
-/// it has no reason to be unpredictable, which is why it costs no randomness —
-/// two rows that failed in the same second still return at different moments.
-fn retry_delay(attempts: i64, entry_id: i64) -> i64 {
+/// Apart from the spread so that a caller with its own floor to apply — a
+/// destination that asked for room — can take the larger of the two *bases* and
+/// still get a spread on the result. Folded together, the spread is lost in
+/// exactly the case that most needs it.
+fn retry_base(attempts: i64) -> i64 {
     let step = u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX);
     let base = RETRY_BASE
         .saturating_mul(2u32.saturating_pow(step.min(16)))
         .min(RETRY_CEILING);
-    let base_ms = i64::try_from(base.as_millis()).unwrap_or(i64::MAX);
-    // Up to a quarter of the wait, either side of nothing.
+    i64::try_from(base.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// The spreading half: up to a quarter of the wait, added.
+///
+/// The id is **mixed** before it is folded into the interval, and that is the
+/// whole of what makes this worth having. Rowids are consecutive, so
+/// `entry_id % spread` put two neighbouring rows one millisecond apart inside a
+/// fifteen-minute window — a spread that existed, passed its test, and did
+/// nothing. A review caught it; the test could not, because `assert_ne!` tells
+/// "absent" from "present" and never "present and useless".
+///
+/// Multiplied by the odd golden-ratio constant and read from the high bits,
+/// because those are the bits a multiplicative hash actually scrambles — the low
+/// ones keep the input's own structure, which is the structure being escaped.
+/// Still no randomness: two rows must land apart, not unpredictably.
+fn retry_spread(base_ms: i64, entry_id: i64) -> i64 {
     let spread = base_ms / 4;
-    let jitter = if spread > 0 {
-        entry_id.rem_euclid(spread)
-    } else {
-        0
-    };
-    base_ms.saturating_add(jitter)
+    if spread <= 0 {
+        return 0;
+    }
+    let mixed = entry_id.unsigned_abs().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    // The shift leaves a value below 2^32, so both conversions are exact and
+    // there is no fallback branch — nothing unreachable for a later reader to
+    // mistake for a case that happens.
+    i64::from((mixed >> 32) as u32) % spread
 }
 
 #[cfg(test)]
@@ -1204,6 +1469,52 @@ mod tests {
         );
     }
 
+    /// The ordinary wait, composed the way the drain composes it.
+    ///
+    /// The two halves are separate in production so that a caller with a floor
+    /// of its own — a destination that asked for room — can take the larger of
+    /// the two *bases* and still get a spread on the result. A test that wants
+    /// the plain wait therefore has to put them back together rather than call
+    /// a third function that exists only for it to call.
+    fn wait(attempts: i64, entry_id: i64) -> i64 {
+        let base = retry_base(attempts);
+        base.saturating_add(retry_spread(base, entry_id))
+    }
+
+    /// Neighbouring rows must land *far* apart, not merely at different
+    /// milliseconds.
+    ///
+    /// This is the property an integration test could not hold. Rowids are
+    /// consecutive, so the unmixed spread put four rows at 1, 2, 3 and 4
+    /// milliseconds inside a fifteen-minute window — distinct, and a herd all
+    /// the same. `assert_ne!` tells "absent" from "present" and never "present
+    /// and useless", so it certified a property the code did not deliver until
+    /// a review read the arithmetic.
+    ///
+    /// A pure function, tested purely: dragging the drain, a database and an
+    /// HTTP server through this proved less and cost more.
+    #[test]
+    fn the_spread_scatters_neighbouring_rows_across_the_interval() {
+        let base = 3_600_000;
+        let mut offsets: Vec<i64> = (1..=4).map(|id| retry_spread(base, id)).collect();
+        for offset in &offsets {
+            assert!(
+                (0..base / 4).contains(offset),
+                "the spread never leaves its quarter of the wait"
+            );
+        }
+        offsets.sort_unstable();
+        let smallest = offsets
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .min()
+            .expect("four offsets have three gaps");
+        assert!(
+            smallest >= 1_000,
+            "neighbouring rows land {smallest}ms apart, which is still a herd"
+        );
+    }
+
     /// The attempt cap and the schedule beside it describe one span of time, so
     /// what the cap is *for* is checked here rather than asserted in prose.
     ///
@@ -1218,7 +1529,7 @@ mod tests {
         // One submission per attempt, and one wait between each pair of them,
         // so a cap of `n` spends `n - 1` waits. Without jitter: the spread only
         // ever adds.
-        let covered: i64 = (1..cap).map(|attempt| retry_delay(attempt, 0)).sum();
+        let covered: i64 = (1..cap).map(|attempt| wait(attempt, 0)).sum();
         let hours = covered / 3_600_000;
         assert!(
             (23..=26).contains(&hours),
@@ -1231,12 +1542,12 @@ mod tests {
         let minute = 60_000;
         // The first retry waits about a minute, the later ones about an hour,
         // and never more.
-        assert!((minute..minute + minute / 4).contains(&retry_delay(1, 0)));
-        assert!(retry_delay(40, 0) <= 3_600_000 + 3_600_000 / 4);
-        assert!(retry_delay(40, 0) >= 3_600_000);
+        assert!((minute..minute + minute / 4).contains(&wait(1, 0)));
+        assert!(wait(40, 0) <= 3_600_000 + 3_600_000 / 4);
+        assert!(wait(40, 0) >= 3_600_000);
         // Monotonic while it grows.
-        assert!(retry_delay(3, 0) > retry_delay(1, 0));
+        assert!(wait(3, 0) > wait(1, 0));
         // And two entries that failed in the same instant come back apart.
-        assert_ne!(retry_delay(2, 7), retry_delay(2, 8));
+        assert_ne!(wait(2, 7), wait(2, 8));
     }
 }
