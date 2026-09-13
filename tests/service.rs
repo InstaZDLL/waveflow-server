@@ -721,3 +721,110 @@ async fn a_caller_cannot_name_its_own_request_with_arbitrary_text() {
         );
     }
 }
+
+/// Every secret the CLI mints goes to standard output alone, prose elsewhere.
+///
+/// Through a subprocess because that is the only place the two streams are
+/// separable: `cli::execute` called in-process writes both into the test
+/// harness's own output, where nothing can tell them apart. This is the gap
+/// `the_cli_reads_a_queue_and_withdraws_an_authorisation` names and leaves open.
+///
+/// What it buys is not tidiness. `token create … > secret` now yields a file
+/// holding the token and nothing else, so the one copy of a freshly minted
+/// secret need never be lifted out of a terminal that keeps its scrollback.
+#[tokio::test]
+async fn a_minted_secret_leaves_on_standard_output_by_itself() {
+    let (temp, config, state) = test_app().await;
+    inserted_account(&state, "stream-split-admin", "admin").await;
+    inserted_account(&state, "stream-split-user", "user").await;
+    // Closed before the subprocess opens the same database: one writer at a
+    // time is this server's rule between threads, and it is no weaker between
+    // processes.
+    state.db.pool().close().await;
+
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"))
+        .current_dir(temp.path())
+        .env("WAVEFLOW_DATA_DIR", &config.data_dir)
+        .args([
+            "token",
+            "create",
+            "--actor",
+            "stream-split-admin",
+            "--username",
+            "stream-split-user",
+            "--name",
+            "a name for the listing",
+            "--scopes",
+            "library:read",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(run.stdout).unwrap();
+    let stderr = String::from_utf8(run.stderr).unwrap();
+    assert!(
+        run.status.success(),
+        "minting a token failed; its diagnostics were: {stderr}"
+    );
+
+    // One line, and that line is the token: nothing to cut off either end.
+    let token = stdout.trim_end_matches(['\r', '\n']);
+    assert!(
+        !token.is_empty() && !token.contains('\n'),
+        "standard output should hold the token on one line"
+    );
+    assert!(
+        token.starts_with("wfapi_"),
+        "standard output should hold the token itself, not a sentence about it"
+    );
+
+    // The prose is on the other stream, and — the point of the whole change —
+    // the secret is not repeated there. A split that announced the token on
+    // both streams would pass every assertion above and protect nobody.
+    assert!(
+        stderr.contains("stream-split-user"),
+        "the human-readable half should say whose token this is"
+    );
+    assert!(
+        !stderr.contains(token),
+        "standard error must not repeat the secret"
+    );
+
+    // The other site that mints a secret, split the same way — and reached
+    // through the same subprocess, which is also what lets the password arrive
+    // in an environment variable without racing the sibling threads that read
+    // the process environment in-process.
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"))
+        .current_dir(temp.path())
+        .env("WAVEFLOW_DATA_DIR", &config.data_dir)
+        .env("WAVEFLOW_SUBSONIC_PASSWORD", "a long enough password")
+        .args([
+            "credential",
+            "set",
+            "--actor",
+            "stream-split-admin",
+            "--username",
+            "stream-split-user",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(run.stdout).unwrap();
+    let stderr = String::from_utf8(run.stderr).unwrap();
+    assert!(
+        run.status.success(),
+        "setting a credential failed; its diagnostics were: {stderr}"
+    );
+    let api_key = stdout.trim_end_matches(['\r', '\n']);
+    assert!(
+        api_key.starts_with("wfsk_"),
+        "standard output should hold the API key itself"
+    );
+    assert!(
+        !stderr.contains(api_key),
+        "standard error must not repeat the API key"
+    );
+    // The password it was handed is a secret too, and nothing prints it.
+    assert!(
+        !stderr.contains("a long enough password") && !stdout.contains("a long enough password"),
+        "neither stream may echo the password it was given"
+    );
+}
