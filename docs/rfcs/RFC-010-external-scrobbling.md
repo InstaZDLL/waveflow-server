@@ -13,9 +13,11 @@
   routes natives et la CLI** : un compte pose et retire son autorisation
   lui-même, lit l'état de sa file, et répond des écoutes dont personne ne sait
   si elles sont arrivées — la décision 13 demandait ce choix à une personne sans
-  qu'aucune surface ne lui montre sur quoi. Un opérateur dispose des mêmes
-  gestes en ligne de commande, pour un serveur que nul n'a encore ouvert dans un
-  navigateur.
+  qu'aucune surface ne lui montre sur quoi. En ligne de commande, un opérateur
+  pose et retire une autorisation et lit l'état d'une file — trois gestes, pour
+  un serveur que nul n'a encore ouvert dans un navigateur ; répondre d'une
+  écoute incertaine reste une décision que son auteur prend, et n'existe que
+  sur la surface HTTP.
   Maloja puis Last.fm ensuite, par la décision 11. Le champ *Statut* ci-dessus
   ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
