@@ -976,6 +976,14 @@ pub struct DomainServices {
     /// no business happening while the process-wide gate is held — the same
     /// reason `upload_locks` exists.
     canvas_locks: Arc<dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    scrobbling: crate::config::ScrobbleLimits,
+    /// The destinations this process knows how to reach.
+    ///
+    /// Filled after construction rather than at it, which is what lets a test
+    /// drive the whole queue against a double and lets a server run with no
+    /// outbound adapter at all — the ordinary case, since RFC-010 decision 4
+    /// forbids shipping any provider credential in an AGPL binary.
+    scrobble_targets: scrobbling::ScrobbleTargets,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1024,12 +1032,21 @@ mod library_events;
 mod playback;
 mod playlists;
 mod scan;
+mod scrobbling;
 mod search;
 mod shares;
 mod songs;
 mod sync;
 mod track_metadata;
 mod uploads;
+
+/// The scrobbling vocabulary, which is the one thing in this module tree that
+/// has to be spoken outside it: an adapter implements [`ScrobbleTarget`]
+/// without being part of the domain, and the API reads the link states.
+pub use scrobbling::{
+    ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider, ScrobbleTarget,
+    ScrobbleVerdict,
+};
 
 impl DomainServices {
     pub fn new(
@@ -1056,6 +1073,8 @@ impl DomainServices {
             ffprobe_path: config.ffprobe_path.clone(),
             ffmpeg_path: config.ffmpeg_path.clone(),
             canvas_locks: Arc::new(dashmap::DashMap::new()),
+            scrobbling: config.scrobbling,
+            scrobble_targets: Arc::new(dashmap::DashMap::new()),
         }
     }
 

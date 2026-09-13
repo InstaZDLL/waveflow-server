@@ -38,6 +38,10 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     state.services.spawn_canvas_sweeper();
     state.services.spawn_artwork_sweeper();
     state.services.spawn_library_event_purge();
+    // Nothing to drain until an account links a destination, and no adapter is
+    // registered yet — a server that was merely upgraded makes no outbound
+    // request. RFC-010.
+    state.services.spawn_scrobble_drain();
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)
