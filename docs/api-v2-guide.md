@@ -33,12 +33,15 @@ SQLite access; scan progress and FFmpeg capability do not affect readiness.
 
 ### Correlating a request
 
-Every response carries `x-request-id`, and that value is what the server's own
-logs record for the request. Send the header yourself to carry a correlation id
-across a reverse proxy and it is kept — provided it is at most 64 characters of
-letters, digits, `-`, `_` or `.`. Anything else is replaced by an id the server
-mints, which the response then carries instead: what ends up in a log line is
-always an identifier, never arbitrary text a caller chose.
+Every response carries `x-request-id`, minted by the server, and that value is
+what its logs record for the request. Quote it when reporting a problem and an
+operator can find the request.
+
+An `x-request-id` you send is ignored — dropped before anything reads it, and
+replaced. Correlation across a reverse proxy still works, in the other
+direction: record the id the response came back with rather than imposing one,
+which is what a proxy in front of a server it does not name for should do
+anyway.
 
 ### First-run setup
 
