@@ -18,6 +18,12 @@
   un serveur que nul n'a encore ouvert dans un navigateur ; répondre d'une
   écoute incertaine reste une décision que son auteur prend, et n'existe que
   sur la surface HTTP.
+  Puis [#199](https://github.com/InstaZDLL/waveflow-server/pull/199), **le
+  correctif de la décision 13** : le joker se compte sur `retried_at`, une
+  colonne que l'entrée porte, et non sur la survie de la reprise qui l'a
+  consommé — que la rétention emporte. Les quatre lecteurs qui lisaient la
+  jointure lisent la colonne, et les bases déjà en service la reçoivent
+  remplie.
   Maloja puis Last.fm ensuite, par la décision 11. Le champ *Statut* ci-dessus
   ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
