@@ -144,6 +144,21 @@ install -m 600 /dev/null token
 cargo run -- token create --actor admin --username listener --name "Automation" > token
 ```
 
+`install` is a POSIX tool and has no PowerShell equivalent, so on Windows create
+the file, strip its inherited permissions, and redirect into it — the
+redirection truncates that file rather than making a new one, so the access
+control list set here survives:
+
+```powershell
+Remove-Item -ErrorAction Ignore token
+New-Item -ItemType File token | Out-Null
+icacls token /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+cargo run -- token create --actor admin --username listener --name "Automation" > token
+```
+
+Use PowerShell 7 or later. Windows PowerShell 5.1 writes UTF-16 through `>`,
+which is not what anything reading the token back will expect.
+
 ### Browser session
 
 Browser clients use `/api/v2/web/auth/login`, `/refresh` and `/logout`. Login
