@@ -134,23 +134,41 @@ impl ScrobbleTarget for Maloja {
             };
             let status = response.status();
             let retry_after = super::retry_after(&response);
-            // **The body is never read**, exactly as for ListenBrainz:
-            // decision 12 says what this server reports is a state and not an
-            // echo of the destination's own words, and a body that is never
-            // read is the tightest bound there is on one.
+            // **One word of the body is read, and this reverses what the first
+            // draft of this file said.** That draft called the body untouchable
+            // on the strength of decision 12 — what this server publishes is a
+            // state, never an echo. Decision 12 governs what reaches a
+            // *member*; it says nothing about what an adapter may read to reach
+            // a verdict, and the word below is published to nobody.
             //
-            // It costs something real here and it is still the right trade.
-            // Maloja answers `200` with `{"status": "failure", …}` for some
-            // refusals a status line does not distinguish, so those are read as
-            // accepted. The alternative is parsing a third party's error
-            // vocabulary into this server's five words and keeping the mapping
-            // true across versions of a destination nobody here controls — and
-            // getting *that* wrong turns a refusal into `Ambiguous`, which
-            // decision 13 makes a person answer, one listen at a time.
-            drop(response);
+            // What it buys: Maloja answers `200` with `{"status": "failure"}`
+            // for refusals a status line does not distinguish, and calling
+            // those `sent` is a silent gap in somebody's history — the exact
+            // failure this RFC spends itself making visible.
+            //
+            // The narrowness is the safeguard: one enumerated word, nothing
+            // textual, and a body that will not parse leaves the status line
+            // deciding.
+            let refused = response
+                .json::<Answer>()
+                .await
+                .is_ok_and(|answer| answer.status.as_deref() == Some("failure"));
+            if status.is_success() && refused {
+                tracing::warn!("maloja read the submission and refused it");
+                return ScrobbleVerdict::PermanentReject;
+            }
             status_verdict(status, retry_after)
         })
     }
+}
+
+/// The one word of Maloja's answer that changes a verdict.
+///
+/// Nothing else: the object beside it names what was submitted, and decision 12
+/// keeps a destination's own words out of this server entirely.
+#[derive(serde::Deserialize)]
+struct Answer {
+    status: Option<String>,
 }
 
 /// What a failure to get an answer at all means.

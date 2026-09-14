@@ -3712,6 +3712,10 @@ async fn a_return_to_a_destination_that_moved_creates_nothing() {
         &[(ScrobbleProvider::LastFm, "default", "http://127.0.0.1:4")],
     )
     .destinations;
+    // Dropped rather than shadowed: two `AppState`s over one database file
+    // would each hold their own writer gate, and this test is about what a
+    // *restart* does.
+    drop(state);
     let state = waveflow_server::initialize(&moved).await.unwrap();
     let exchange = ExchangesFor::key("a-session-key");
     state.services.register_lastfm_exchange(
@@ -3792,4 +3796,118 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
     let declared = state.services.scrobble_destinations();
     assert!(declared[0].available);
     assert!(declared[0].unavailable.is_none());
+}
+
+/// A destination answering `200` with a body of the test's choosing.
+///
+/// The recorder above always answers `{}`, which is the shape of a success.
+/// Two of the three destinations announce a refusal *inside* a `200`, and
+/// nothing but a body can say so.
+async fn spawn_answering(path: &'static str, body: &'static str) -> String {
+    let router = axum::Router::new().route(
+        path,
+        axum::routing::post(move || async move {
+            axum::response::Response::builder()
+                .status(axum::http::StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap()
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// A refusal Maloja announces inside a `200` is a refusal.
+///
+/// The first draft of that adapter read the status line alone, on the strength
+/// of decision 12 — what this server publishes is a state, never an echo. That
+/// governs what reaches a *member*; it says nothing about what an adapter may
+/// read to reach a verdict. The cost of the earlier reading was a silent gap:
+/// a listen Maloja refused, recorded here as `sent`.
+#[tokio::test]
+async fn a_refusal_maloja_announces_in_a_success_is_not_a_success() {
+    let base = spawn_answering(
+        "/apis/mlj_1/newscrobble",
+        r#"{"status":"failure","error":{"type":"nonexistent_track"}}"#,
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    maloja_reaching(&mut config, &base);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "refused-by-maloja-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 0);
+    assert_eq!(
+        rows(&state).await[0].1,
+        "rejected",
+        "a refusal announced in the body must not be recorded as sent"
+    );
+}
+
+/// A Last.fm session key that has stopped working breaks the link.
+///
+/// Last.fm answers `200` carrying `"error": 9` for it. Read by the status line
+/// alone, the link would stay `healthy` and every listen would be recorded as
+/// `sent` while nothing was recorded anywhere — a silent gap, which is the
+/// exact failure this RFC spends itself making visible.
+#[tokio::test]
+async fn a_last_fm_session_key_that_died_breaks_the_link_rather_than_looking_sent() {
+    let base = spawn_answering(
+        "/2.0/",
+        r#"{"error":9,"message":"Invalid session key - Please re-authenticate."}"#,
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = lastfm_app(&temp);
+    let url = waveflow_server::scrobblers::validate_destination(&base, true).unwrap();
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config.destinations = vec![waveflow_server::config::ScrobbleDestination {
+        provider: ScrobbleProvider::LastFm,
+        name: "default".to_owned(),
+        url,
+        fingerprint,
+    }];
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "stale-lastfm-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "a-session-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 0);
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken");
+    assert_eq!(links[0].last_failure.as_deref(), Some("auth_broken"));
 }

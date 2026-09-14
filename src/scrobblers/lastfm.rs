@@ -37,9 +37,21 @@ impl LastFm {
         base: &url::Url,
         application: LastFmApplication,
     ) -> Result<Self, OutboundError> {
+        // **The trailing slash is kept, and it is not decoration.** Last.fm
+        // documents its endpoint as `/2.0/`, answers `/2.0` with a redirect,
+        // and `outbound_client` follows none — so dropping it would make every
+        // call fail with an answer this adapter reads as "the destination
+        // moved". `endpoint` pops the empty segment a trailing slash leaves
+        // behind, which is right for the two destinations that do not want one,
+        // so it is put back here rather than by weakening that rule.
+        let mut submit = endpoint(base, "2.0")?;
+        submit
+            .path_segments_mut()
+            .map_err(|()| OutboundError::NotABareOrigin)?
+            .push("");
         Ok(Self {
             client,
-            endpoint: endpoint(base, "2.0/")?,
+            endpoint: submit,
             application,
         })
     }
@@ -126,8 +138,6 @@ impl ScrobbleTarget for LastFm {
             params.push(("api_key", self.application.api_key.clone()));
             let signed = signature(&params, &self.application.secret);
             params.push(("api_sig", signed));
-            // JSON for the answer's shape only; the verdict still comes from
-            // the status line, and the body is never read.
             params.push(("format", "json".to_owned()));
 
             let sent = self
@@ -142,20 +152,131 @@ impl ScrobbleTarget for LastFm {
             };
             let status = response.status();
             let retry_after = super::retry_after(&response);
-            // **The body is never read.** Decision 12 says what this server
-            // reports is a state and not an echo of the destination's own
-            // words, and a body that is never read is the tightest bound there
-            // is on one.
+            // **The status line is not enough here, and this reverses a
+            // decision taken three commits ago.** That one said the body is
+            // never read, on the strength of decision 12 — what this server
+            // publishes is a state, never an echo. Decision 12 governs what
+            // reaches a *member*; it says nothing about what an adapter may
+            // read to form a verdict, and reading the numbers below publishes
+            // nothing.
             //
-            // The cost is named rather than hidden, as for Maloja: Last.fm
-            // answers `200` carrying an `error` code for several refusals, so
-            // those read as accepted. Mapping a third party's error vocabulary
-            // onto this server's five words, and keeping it true, risks turning
-            // a refusal into `Ambiguous` — which decision 13 makes a person
-            // answer, one listen at a time.
-            drop(response);
-            status_verdict(status, retry_after)
+            // What the earlier reasoning missed is the cost. Last.fm answers
+            // `200` carrying `"error": 9` for a session key that has stopped
+            // working, so a link whose credential died would record every
+            // subsequent listen as `sent` while nothing was recorded anywhere
+            // — a silent gap, which is the exact failure this RFC spends itself
+            // making visible, and `AuthBroken` is the state it exists to reach.
+            // The same answer carries `accepted`/`ignored` counts, and an
+            // ignored listen is one the far end read and refused.
+            //
+            // The narrowness is the safeguard: a numeric code and two counts,
+            // nothing textual. A body that will not parse leaves the status
+            // line deciding, so a malformed answer cannot turn a success into
+            // the one verdict a person has to answer.
+            let answer = response.json::<ScrobbleAnswer>().await.ok();
+            match answer.as_ref().and_then(ScrobbleAnswer::verdict) {
+                Some(verdict) => verdict,
+                None => status_verdict(status, retry_after),
+            }
         })
+    }
+}
+
+/// Just enough of a `track.scrobble` answer to tell a refusal from a success.
+///
+/// **Numbers only.** `ignoredMessage` and `message` quote what was submitted
+/// back, and decision 12 keeps a destination's own words out of this server
+/// entirely — a field that could hold them is a field something would
+/// eventually log.
+#[derive(serde::Deserialize)]
+struct ScrobbleAnswer {
+    error: Option<u16>,
+    scrobbles: Option<Scrobbles>,
+}
+
+#[derive(serde::Deserialize)]
+struct Scrobbles {
+    #[serde(rename = "@attr")]
+    attr: Option<ScrobbleCounts>,
+}
+
+/// Last.fm has spelled these as numbers and as strings across versions of its
+/// own answer, so both are read and anything else counts as absent.
+#[derive(serde::Deserialize)]
+struct ScrobbleCounts {
+    accepted: Option<serde_json::Value>,
+    ignored: Option<serde_json::Value>,
+}
+
+fn count(value: Option<&serde_json::Value>) -> Option<u64> {
+    match value? {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(text) => text.parse().ok(),
+        _ => None,
+    }
+}
+
+impl ScrobbleAnswer {
+    /// The verdict this answer earns, or `None` to leave it to the status line.
+    fn verdict(&self) -> Option<ScrobbleVerdict> {
+        if let Some(code) = self.error {
+            return Some(error_verdict(code));
+        }
+        let attr = self.scrobbles.as_ref()?.attr.as_ref()?;
+        let accepted = count(attr.accepted.as_ref())?;
+        let ignored = count(attr.ignored.as_ref())?;
+        if accepted > 0 {
+            return Some(ScrobbleVerdict::Accepted);
+        }
+        if ignored > 0 {
+            // Read, understood, refused. No retry fixes a submission the far
+            // end will not have — a timestamp it considers too old, a title it
+            // refuses to index.
+            tracing::warn!("last.fm ignored the submission");
+            return Some(ScrobbleVerdict::PermanentReject);
+        }
+        None
+    }
+}
+
+/// What one of Last.fm's own error codes means for the queue.
+///
+/// The codes, and never the message beside them: that message quotes the
+/// submission — and on the authorisation path, the request token.
+fn error_verdict(code: u16) -> ScrobbleVerdict {
+    match code {
+        // 4 authentication failed, 9 invalid session key, 14 unauthorised
+        // token, 15 expired token, 26 suspended API key. Every listen behind
+        // this one would fail identically, which is what `AuthBroken` exists to
+        // stop — and the honest answer even when the fault is the operator's
+        // key rather than the member's.
+        4 | 9 | 14 | 15 | 26 => {
+            tracing::warn!(code, "last.fm refused the credentials");
+            ScrobbleVerdict::AuthBroken
+        }
+        // 2 invalid service, 3 invalid method, 5 invalid format, 6 invalid
+        // parameters, 7 invalid resource, 13 invalid signature. None of them is
+        // fixed by sending the same thing again.
+        2 | 3 | 5 | 6 | 7 | 13 => {
+            tracing::warn!(code, "last.fm refused the submission");
+            ScrobbleVerdict::PermanentReject
+        }
+        // 29 rate limit exceeded. The queue takes the larger of its own backoff
+        // and this, so zero adds nothing to the wait while still saying that
+        // room was asked for and no duration named.
+        29 => {
+            tracing::info!(code, "last.fm asked for room");
+            ScrobbleVerdict::Retryable {
+                after: Some(Duration::ZERO),
+            }
+        }
+        // 8 operation failed, 11 service offline, 16 temporarily unavailable,
+        // and whatever else they add. None says anything about the listen, so
+        // it waits.
+        _ => {
+            tracing::warn!(code, "last.fm answered with an error");
+            ScrobbleVerdict::Retryable { after: None }
+        }
     }
 }
 
@@ -403,6 +524,27 @@ mod tests {
                 "{absent} must not be sent"
             );
         }
+    }
+
+    /// The endpoint keeps the trailing slash Last.fm documents.
+    ///
+    /// `/2.0` answers a redirect, and this client follows none: without the
+    /// slash every call would fail, and the adapter would read that failure as
+    /// the destination having moved.
+    #[test]
+    fn the_endpoint_keeps_the_slash_last_fm_answers_on() {
+        let base = super::super::validate_destination("https://ws.audioscrobbler.com", false)
+            .expect("a valid destination");
+        let client = super::super::outbound_client(Duration::from_secs(5)).expect("a client");
+        let application = crate::config::LastFmApplication {
+            api_key: "a-key".to_owned(),
+            secret: "a-secret".to_owned(),
+        };
+        let target = LastFm::new(client, &base, application).expect("an adapter");
+        assert_eq!(
+            target.endpoint.as_str(),
+            "https://ws.audioscrobbler.com/2.0/"
+        );
     }
 
     /// A status line, and nothing else, decides.
