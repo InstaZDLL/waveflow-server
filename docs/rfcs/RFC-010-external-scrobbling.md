@@ -383,13 +383,26 @@ faire à la place de l'opérateur.
   `scrobble_outbox`, `retried_at` — l'invariant de la décision 13 ne peut pas se
   déduire d'une jointure que la purge dénoue — et l'instant de passage en état
   terminal sur lequel la rétention compte. Sur `scrobble_link`, le nom de la
-  destination et l'empreinte de son URL.
+  destination et l'empreinte de son URL — et, le jour où la décision 12 tiendra
+  sa promesse d'un dernier succès, celui-là aussi, pour la raison que la
+  rétention donne : un `MAX` sur des lignes purgeables reculerait tout seul.
 - **Et un rattrapage, qui est la partie qu'on oublie.** Les liens déjà écrits ne
   portent ni nom ni empreinte, et il n'existe qu'une destination par destinataire
   au moment où cette révision s'écrit : ils reçoivent celle-là, avec l'empreinte
   de l'URL alors configurée. Une valeur nulle laissée en place reviendrait à
   traiter tout lien ancien comme une destination disparue, et à casser au
   démarrage suivant des liens que rien n'a déplacés.
+
+
+  **Ce rattrapage affirme, il ne vérifie pas.** Il ne peut pas : rien en base ne
+  dit quelle URL était configurée hier, donc écrire l'empreinte courante revient
+  à déclarer que la destination d'aujourd'hui est bien celle que ces liens
+  visaient. C'est vrai tant qu'il n'y a qu'une réponse possible, et c'est le cas
+  au moment où ceci s'écrit. Si la configuration en déclare déjà plusieurs pour
+  un même destinataire lors de ce premier démarrage, il n'y a pas de réponse :
+  le serveur refuse de partir plutôt que d'en choisir une, parce que se tromper
+  ici enverrait des écoutes en attente sur le mauvais profil sans que rien ne le
+  signale. L'opérateur nomme alors lui-même la destination d'origine, ou délie.
 
   **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
   l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
@@ -539,10 +552,12 @@ ne le porte pas. Il vaut ce que vaut l'état, dure aussi peu, et se jette avec
 lui. Les cookies de session ne bougent pas : `Strict` est le bon réglage pour
 eux, et cette exception ne les concerne pas.
 
-**Ce que RFC-002 demande, cette route y répond autrement.** La règle est qu'une
-route ne peut pas exister sans dire quel `Access` elle exige. Celle-ci n'en
-exige aucun, et ce n'est pas un oubli : elle n'est pas appelée par un client
-mais par le navigateur d'une personne au retour d'un parcours qu'elle vient
+**Ce que RFC-002 demande, le retour y répond autrement.** La règle est qu'une
+route ne peut pas exister sans dire quel `Access` elle exige. `authorize` y
+répond comme les autres : le compte courant, et `Access::Write`, puisque poser
+une autorisation est une mutation. Le retour, lui, n'en exige aucun, et ce
+n'est pas un oubli : il n'est pas appelé par un client mais par le navigateur
+d'une personne au retour d'un parcours qu'elle vient
 d'ouvrir. Ce qui tient lieu de preuve est plus étroit qu'un `Access::Write` —
 un aléa à usage unique, une échéance de quelques minutes, un cookie qui ne vaut
 que pour ce chemin, et les trois doivent concorder. L'exception est nommée ici
