@@ -4055,3 +4055,81 @@ async fn an_instance_nobody_declared_cannot_be_linked() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].destination, "alice");
 }
+
+/// An ambiguous entry names the instance it was queued for, not just the
+/// recipient.
+///
+/// Decision 13 asks a person what to do with a listen whose fate is unknown,
+/// and decision 10 lets the operator declare several instances of one
+/// recipient — a household where everybody self-hosts a Maloja is the ordinary
+/// case, not a corner. An entry that said only `maloja` would put the question
+/// without saying which of the two servers may already hold the listen, which
+/// is the whole of what a person weighs before sending it again.
+///
+/// Both entries are made to be otherwise indistinguishable — same track, same
+/// verdict, same recipient — so the destination is the only thing that can
+/// tell them apart.
+#[tokio::test]
+async fn an_ambiguous_entry_names_which_instance_it_was_queued_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "two-instance-chooser").await;
+    for (destination, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
+        state
+            .services
+            .link_scrobble(
+                listener.owner,
+                ScrobbleProvider::Maloja,
+                destination,
+                secret,
+            )
+            .await
+            .unwrap();
+        state.services.register_scrobble_target(
+            ScrobbleProvider::Maloja,
+            destination,
+            Recorder::always(ScrobbleVerdict::Ambiguous) as std::sync::Arc<dyn ScrobbleTarget>,
+        );
+    }
+
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(
+        drained.uncertain, 2,
+        "one listen, two instances, two entries"
+    );
+
+    let waiting = state
+        .services
+        .uncertain_scrobbles(listener.owner)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 2);
+    assert!(
+        waiting
+            .iter()
+            .all(|entry| entry.provider == ScrobbleProvider::Maloja),
+        "the recipient alone cannot tell them apart, which is the point"
+    );
+    let mut instances = waiting
+        .iter()
+        .map(|entry| entry.destination.as_str())
+        .collect::<Vec<_>>();
+    instances.sort_unstable();
+    assert_eq!(
+        instances,
+        ["alice", "bob"],
+        "each entry names the instance whose queue it is in"
+    );
+}
