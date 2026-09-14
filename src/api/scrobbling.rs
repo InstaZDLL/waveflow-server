@@ -184,7 +184,7 @@ pub async fn discard_uncertain_scrobble(
 // generates a client from.
 //
 // This route used to declare a `409` as well. Nothing could produce one: the
-// service excludes anything already retried with `NOT EXISTS`, so a spent entry
+// service refuses anything already retried on `retried_at`, so a spent entry
 // stops being findable and answers 404 — and `db_error` maps every sqlx failure
 // to 503 rather than to a conflict, so even the unique index could not surface
 // as one. Removing the declaration was not enough on its own, because
