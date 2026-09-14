@@ -505,7 +505,8 @@ lui que le retour relira, plutôt que d'en deviner un. Le jour où quelqu'un
 déclare deux Last.fm — un compte de famille et le sien — rien n'aura à changer.
 
 **Le littéral vient avant le paramètre, et ce n'est pas une préférence de
-style.** Écrit `…/lastfm/{destination}/authorize`, une destination nommée
+style.** Si la route s'écrivait `…/lastfm/{destination}/authorize` — et c'est
+précisément pourquoi elle ne s'écrit pas ainsi — une destination nommée
 `callback` produirait `…/lastfm/callback/authorize`, que le retour
 `…/lastfm/callback/{state}` réclame tout autant — deux motifs de même forme, et
 un routeur qui doit trancher. Réserver le mot marcherait ; le déplacer supprime
@@ -564,7 +565,10 @@ savoir plus que « c'est lié ».
 **Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
 au redémarrage, au milieu du seul parcours qui ne supporte pas d'être repris.
 Une table minuscule, donc, avec une échéance — et la tâche de purge de la
-rétention passe dessus, puisqu'elle existera de toute façon. Une révision qui
+rétention y passe aussi, puisqu'elle existera de toute façon. Elle y applique
+l'échéance de chaque état et rien d'autre : la fenêtre de trente jours gouverne
+la file, pas un parcours qui dure un quart d'heure, et emprunter la mauvaise
+des deux garderait un état bien après qu'il aurait dû mourir. Une révision qui
 tranche la croissance sans fin d'une table ferait mauvaise figure en en
 introduisant une autre.
 
