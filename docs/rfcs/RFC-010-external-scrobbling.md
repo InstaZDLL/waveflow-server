@@ -593,6 +593,16 @@ index unique restent — ils disent la provenance, et refusent l'insertion en
 second rempart — mais plus rien d'observable ne dépend de la survie de la ligne
 qu'ils désignent.
 
+
+**Une reprise vérifie aussi où elle irait.** `retry_uncertain_scrobble` exige
+déjà un lien `active` — une écoute mise en file sous une autorisation retirée
+partirait sinon sur le profil de la suivante, ce que la décision 4 empêche. La
+règle d'identité ci-dessus ajoute la seconde moitié : l'empreinte de l'URL doit
+encore correspondre. Sans elle, l'entrée la plus dangereuse qui soit — une
+écoute que la personne accepte de risquer en double — serait celle qui part sur
+une machine que personne n'a choisie. La vérification précède l'UPDATE, dans la
+même transaction que lui.
+
 **Pas d'état `resolution` à côté de `state`.** Jeter écrit déjà
 `state = 'discarded'` sur l'entrée : une énumération qui redirait `discarded`
 placerait deux sources de vérité sur le même fait. Seule la reprise laisse
@@ -643,6 +653,18 @@ déploiement et une tâche de purge, sur le patron de
   être une colonne de `scrobble_link`, écrite au moment du succès. La règle
   vaut au-delà de lui : ce qu'un lien publie se tient sur le lien, ou sur des
   lignes qu'aucune purge ne touche.
+
+**Ce que cette borne ne borne pas, et pourquoi on l'accepte.** Une destination
+qui répond ambigu à chaque envoi produit une `uncertain` par écoute, et aucune
+ne s'en va : la table croît alors aussi vite que l'auditeur écoute, exactement
+ce que la rétention corrige ailleurs. La limite est réelle et elle est retenue
+telle quelle, parce que l'alternative demande de trancher ce qu'une entrée
+devient quand personne ne répond — et la décision 13 refuse justement de
+répondre à la place de quelqu'un. Ce qui rend le cas supportable est ailleurs :
+un lien dans cet état est `degraded` dès la première ambiguïté, donc la panne
+se voit avant que le volume ne compte. Si elle se voit sans être regardée, la
+question reviendra, et elle reviendra avec une mesure plutôt qu'avec une
+crainte.
 
 ## Ce qui reste ouvert
 
