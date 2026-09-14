@@ -142,6 +142,37 @@ pub const DEFAULT_SCROBBLE_MAX_ATTEMPTS: u32 = 30;
 /// adds a second instance does not invalidate the links the first one holds.
 pub const DEFAULT_SCROBBLE_DESTINATION: &str = "default";
 
+/// The Last.fm application an operator registered for this server.
+///
+/// `WAVEFLOW_SCROBBLE_LASTFM_API_KEY` and `WAVEFLOW_SCROBBLE_LASTFM_SECRET`,
+/// both or neither. Without them Last.fm is simply unavailable: RFC-010
+/// decision 4 forbids shipping any provider credential in an AGPL binary, so
+/// these belong to the deployment and to nobody else.
+///
+/// The operator also registers, at Last.fm, the callback URL their
+/// `WAVEFLOW_PUBLIC_URL` produces. Their documentation does not say whether the
+/// `cb` parameter is checked against the registered domain, and betting on a
+/// tolerance nobody promised is not a deployment step — nothing on this side
+/// can verify it either way.
+#[derive(Clone)]
+pub struct LastFmApplication {
+    pub api_key: String,
+    /// Signs every call. Written by hand below rather than derived, because a
+    /// `Config` is printed at startup under `RUST_LOG=debug` and this field is
+    /// the one thing in it that must never appear there.
+    pub secret: String,
+}
+
+impl std::fmt::Debug for LastFmApplication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LastFmApplication")
+            .field("api_key", &self.api_key)
+            .field("secret", &"[redacted]")
+            .finish()
+    }
+}
+
 /// One instance of one destination, as the operator declared it.
 #[derive(Debug, Clone)]
 pub struct ScrobbleDestination {
@@ -260,6 +291,17 @@ pub struct Config {
     /// which would need a separator nothing else in this file uses. A path with
     /// a comma in it is not a shape these three destinations have.
     pub destinations: Vec<ScrobbleDestination>,
+    /// The Last.fm application, when the operator registered one.
+    ///
+    /// Last.fm is unavailable without it, and unavailable without an `https`
+    /// `public_url` as well — the journey that brings the token back starts on
+    /// the internet and crosses a person's browser, so decision 10's plaintext
+    /// escape, which is about the operator's own network, does not reach it.
+    /// `normalize_public_url` still accepts `http`, deliberately: the public URL
+    /// also serves shares, where plaintext on a private network stays a
+    /// legitimate operator's choice. The condition belongs to switching Last.fm
+    /// on, not to the setting.
+    pub lastfm: Option<LastFmApplication>,
     /// Whether an outbound destination may be plain HTTP.
     ///
     /// `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT`, off by default. The escape exists
@@ -314,6 +356,7 @@ impl std::fmt::Debug for Config {
             .field("canvas", &self.canvas)
             .field("scrobbling", &self.scrobbling)
             .field("destinations", &self.destinations)
+            .field("lastfm", &self.lastfm)
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
@@ -478,6 +521,24 @@ impl Config {
             )?);
         }
 
+        // Both or neither, and said at boot rather than discovered when
+        // somebody tries to link: half an application is a typo, and a server
+        // that started with Last.fm quietly switched off because of one is the
+        // silent failure this whole RFC spends itself making visible.
+        let lastfm = match (
+            read_trimmed_env("WAVEFLOW_SCROBBLE_LASTFM_API_KEY"),
+            read_trimmed_env("WAVEFLOW_SCROBBLE_LASTFM_SECRET"),
+        ) {
+            (None, None) => None,
+            (Some(api_key), Some(secret)) => Some(LastFmApplication { api_key, secret }),
+            (Some(_), None) => anyhow::bail!(
+                "WAVEFLOW_SCROBBLE_LASTFM_API_KEY is set without WAVEFLOW_SCROBBLE_LASTFM_SECRET"
+            ),
+            (None, Some(_)) => anyhow::bail!(
+                "WAVEFLOW_SCROBBLE_LASTFM_SECRET is set without WAVEFLOW_SCROBBLE_LASTFM_API_KEY"
+            ),
+        };
+
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -547,6 +608,7 @@ impl Config {
             canvas,
             scrobbling,
             destinations,
+            lastfm,
             outbound_allow_plaintext,
             allowed_origins,
             pid,
@@ -633,6 +695,10 @@ impl Config {
             // themselves — over plain HTTP on loopback, which is why the
             // plaintext escape is on here and off in production.
             destinations: test_destinations(),
+            // No application, so the suite never reaches the real Last.fm and
+            // the destination declared above stays adapterless — which is what
+            // two tests here stand on.
+            lastfm: None,
             outbound_allow_plaintext: true,
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
@@ -681,6 +747,18 @@ fn validate_canvas(canvas: &CanvasLimits) -> anyhow::Result<()> {
         anyhow::bail!("invalid WAVEFLOW_CANVAS_MAX_BYTES: too large for this platform");
     }
     Ok(())
+}
+
+/// One environment variable, trimmed, with an empty value read as absent.
+///
+/// "Set to nothing" and "not set" are the same statement from an operator, and
+/// an `.env` file that keeps a commented-out key as `NAME=` is the ordinary way
+/// of making it.
+fn read_trimmed_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 /// The instance `Config::for_data_dir` declares. See the comment there.

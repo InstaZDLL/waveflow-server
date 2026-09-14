@@ -146,6 +146,17 @@ pub struct ScrobbleDestinationName {
     pub provider: ScrobbleProvider,
     /// The name to put in the path of `PUT /api/v2/scrobble-links/{provider}/{destination}`.
     pub destination: String,
+    /// Whether this server can actually link it right now.
+    pub available: bool,
+    /// And when it cannot, why — in words an operator can act on.
+    ///
+    /// Published here rather than left to be discovered: a link that fails
+    /// later with no explanation is the silent failure this whole RFC spends
+    /// itself preventing. Last.fm is the one recipient that can be declared and
+    /// still unusable, because its journey needs an application the operator
+    /// registered and an `https` address to bring a person back to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<&'static str>,
 }
 
 /// What one link's queue looks like from outside: counters, never content.
@@ -445,9 +456,16 @@ impl DomainServices {
         let mut named: Vec<ScrobbleDestinationName> = self
             .scrobble_destinations
             .keys()
-            .map(|(provider, name)| ScrobbleDestinationName {
-                provider: *provider,
-                destination: name.clone(),
+            .map(|(provider, name)| {
+                let unavailable = (*provider == ScrobbleProvider::LastFm)
+                    .then_some(self.lastfm_unavailable)
+                    .flatten();
+                ScrobbleDestinationName {
+                    provider: *provider,
+                    destination: name.clone(),
+                    available: unavailable.is_none(),
+                    unavailable,
+                }
             })
             .collect();
         // A `HashMap` has no order and an API that reorders itself between two
@@ -1072,10 +1090,21 @@ impl DomainServices {
     }
 
     async fn purge_scrobbles_now(&self) {
-        match self.purge_scrobble_outbox(now_ms()).await {
+        let now = now_ms();
+        match self.purge_scrobble_outbox(now).await {
             Ok(0) => {}
             Ok(removed) => tracing::info!(entries = removed, "finished scrobble entries trimmed"),
             Err(error) => tracing::warn!(%error, "could not trim the scrobble queue"),
+        }
+        // The same pass, because it exists anyway — and each journey's own
+        // expiry rather than the queue's thirty-day window. Borrowing the wrong
+        // one of the two would keep a fifteen-minute journey alive for a month.
+        match self.purge_lastfm_authorizations(now).await {
+            Ok(0) => {}
+            Ok(removed) => {
+                tracing::info!(journeys = removed, "expired last.fm authorisations dropped")
+            }
+            Err(error) => tracing::warn!(%error, "could not drop expired last.fm authorisations"),
         }
     }
 
