@@ -877,15 +877,19 @@ même transaction que lui.
 placerait deux sources de vérité sur le même fait. Seule la reprise laisse
 l'entrée en `uncertain`, et seule elle a besoin d'être notée.
 
-**Et tout ce qui lisait la jointure lit désormais la colonne.** Trois endroits
-demandaient « cette entrée a-t-elle déjà servi son joker » en cherchant une
-ligne qui la désigne : la liste des incertaines, le compteur du lien, et le
-refus d'une seconde reprise. Les trois passent à `retried_at IS NULL`. Le
-compteur surtout : `link_health` rend `degraded` dès qu'une incertaine est
-comptée, donc en oubliant un seul de ces trois endroits on obtient un lien
-définitivement en peine à cause d'une écoute à laquelle sa personne a déjà
-répondu — la panne que la décision 12 veut rendre visible, retournée en fausse
-alerte permanente.
+**Et tout ce qui lisait la jointure lit désormais la colonne.** Ce paragraphe a
+d'abord dit *trois* endroits — la liste des incertaines, le compteur du lien et
+le refus d'une seconde reprise. Ils sont **quatre** : le refus d'un *rejet*
+aussi, `discard_uncertain_scrobble`, qui porte la même exclusion depuis
+[#193](https://github.com/InstaZDLL/waveflow-server/pull/193). Le compte venait
+d'une relecture de la décision plutôt que du fichier ; c'est le fichier qui a
+raison. Les quatre passent à `retried_at IS NULL`. Le compteur surtout :
+`link_health` rend `degraded` dès qu'une incertaine est comptée, donc en
+oubliant un seul de ces quatre endroits on obtient un lien définitivement en
+peine à cause d'une écoute à laquelle sa personne a déjà répondu — la panne que
+la décision 12 veut rendre visible, retournée en fausse alerte permanente.
+Chacun des quatre est éprouvé à part, par une inversion qui ne remet que
+celui-là sur la jointure et fait tomber sa seule assertion.
 
 ## La rétention de la file
 
