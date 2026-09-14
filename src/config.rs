@@ -103,6 +103,18 @@ pub struct ScrobbleLimits {
     /// How many listens one drain pass takes. It bounds the pass, never the
     /// request: decision 11 sends one listen per request whatever this says.
     pub batch: usize,
+    /// How long a finished entry stays readable before the purge takes it.
+    ///
+    /// `sent`, `rejected`, `abandoned`, `cancelled` and `discarded` only.
+    /// `uncertain` is kept for as long as nobody has answered it, whatever this
+    /// says: taking away an entry that is still asking a person would be
+    /// deciding in their place, which is the one thing decision 13 refuses.
+    ///
+    /// No floor, unlike the library event feed. There, cutting the head off a
+    /// quiet library sends a device back to the snapshot; here nobody resumes a
+    /// cursor, and what a link publishes is read from `pending` and `uncertain`
+    /// rows that no purge touches.
+    pub retention_days: u32,
 }
 
 /// How many times a listen is offered before the queue gives up on it.
@@ -196,7 +208,7 @@ pub struct Config {
     /// `WAVEFLOW_SCROBBLE_DRAIN_INTERVAL_SECS`,
     /// `WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS`,
     /// `WAVEFLOW_SCROBBLE_MAX_ATTEMPTS`, `WAVEFLOW_SCROBBLE_STALE_AFTER_SECS`,
-    /// `WAVEFLOW_SCROBBLE_BATCH`.
+    /// `WAVEFLOW_SCROBBLE_BATCH`, `WAVEFLOW_SCROBBLE_RETENTION_DAYS`.
     ///
     /// None of these matter until an account links a destination: a server that
     /// has only been upgraded makes no outbound request at all.
@@ -365,6 +377,12 @@ impl Config {
                 3_600u64,
             )?),
             batch: parse_positive_env("WAVEFLOW_SCROBBLE_BATCH", 50usize)?,
+            // Thirty days: long enough to explain a failure somebody noticed
+            // last week, short enough that the queue does not become a second
+            // listening history. A setting, not a carved number — whoever
+            // diagnoses a three-month outage lengthens it, exactly as they
+            // widen the library event window.
+            retention_days: parse_positive_env("WAVEFLOW_SCROBBLE_RETENTION_DAYS", 30u32)?,
             // Thirty seconds is far past any of the three destinations'
             // ordinary latency and far short of a drain that has stopped. It
             // bounds one submission, never the pass: the pass is bounded by
@@ -544,6 +562,7 @@ impl Config {
                 max_attempts: 3,
                 stale_after: Duration::from_secs(3600),
                 batch: 8,
+                retention_days: 30,
             },
             // **No destination, so the suite cannot reach the real
             // ListenBrainz.** A test that means to exercise the adapter points

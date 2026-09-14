@@ -265,6 +265,19 @@ const RETRY_CEILING: Duration = Duration::from_millis(RETRY_CEILING_MS as u64);
 /// listen declared uncertain out from under it.
 const STALE_SENDING_MARGIN: Duration = Duration::from_secs(60);
 
+/// How often the finished end of the queue is trimmed.
+///
+/// Retention is measured in days, so a pass a day is the coarsest interval that
+/// still honours it: the oldest surviving entry is never more than a day past
+/// the bound. The other sweepers in this crate have the same shape.
+const SCROBBLE_PURGE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How many finished entries one turn of the writer gate takes.
+///
+/// A thousand is a delete that finishes in milliseconds on any disk this server
+/// runs on, and a backlog of a year's listening is a few dozen of them.
+const SCROBBLE_PURGE_CHUNK: i64 = 1_000;
+
 impl DomainServices {
     /// Queues one listen for every destination this account has linked.
     ///
@@ -505,9 +518,10 @@ impl DomainServices {
             return Ok(false);
         };
         sqlx::query(
-            "UPDATE scrobble_outbox SET state='cancelled', last_failure='unlinked', updated_at=? \
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure='unlinked', updated_at=?, terminal_at=? \
              WHERE link_id=? AND state='pending'",
         )
+        .bind(now)
         .bind(now)
         .bind(&link_id)
         .execute(&mut *connection)
@@ -673,14 +687,19 @@ impl DomainServices {
         user_id: Uuid,
         entry: Uuid,
     ) -> Result<(), ServiceError> {
+        // One instant, named once and written twice: `updated_at` and
+        // `terminal_at` describe the same write, and two `now_ms()` calls
+        // would make them disagree by whatever the gate took.
+        let discarded_at = now_ms();
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
-            "UPDATE scrobble_outbox SET state='discarded', updated_at=? \
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=?, terminal_at=? \
              WHERE public_id=? AND state='uncertain' AND retried_at IS NULL \
              AND link_id IN \
                (SELECT id FROM scrobble_link WHERE user_id=? AND status <> 'unlinked')",
         )
-        .bind(now_ms())
+        .bind(discarded_at)
+        .bind(discarded_at)
         .bind(entry.to_string())
         .bind(user_id.to_string())
         .execute(self.db.pool())
@@ -765,6 +784,80 @@ impl DomainServices {
         .await?;
         tx.commit().await?;
         Ok(public_id)
+    }
+
+    /// Trims the queue to what the RFC's retention section says it keeps.
+    ///
+    /// The eighth background task, and the same shape as the seven others: a
+    /// pass at boot, then one per interval. A server that has been down should
+    /// not wait a full day to catch up on what it owes.
+    pub fn spawn_scrobble_purge(&self) {
+        let services = self.clone();
+        tokio::spawn(async move {
+            services.purge_scrobbles_now().await;
+            let mut ticker = tokio::time::interval(SCROBBLE_PURGE_INTERVAL);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                services.purge_scrobbles_now().await;
+            }
+        });
+    }
+
+    async fn purge_scrobbles_now(&self) {
+        match self.purge_scrobble_outbox(now_ms()).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(entries = removed, "finished scrobble entries trimmed"),
+            Err(error) => tracing::warn!(%error, "could not trim the scrobble queue"),
+        }
+    }
+
+    /// One pass. Public so a test can run it rather than wait a day for it.
+    ///
+    /// **Only rows carrying a terminal instant, and that is the whole guard.**
+    /// `pending` and `sending` never have one, and neither does `uncertain` —
+    /// answered or not, it waits for a person, and taking it away after a month
+    /// would decide in their place. Nothing a link publishes is read from the
+    /// rows this takes: the counters and the oldest wait come from `pending`
+    /// and `uncertain`, and `last_success_at` is a column of `scrobble_link`.
+    ///
+    /// No floor, unlike the library event feed: nobody resumes a cursor here.
+    ///
+    /// `now_ms` is a parameter for the reason `purge_library_events` takes one:
+    /// the bound is exclusive, so a caller that cannot name the instant cannot
+    /// place a row *on* it, only a few milliseconds either side of it.
+    pub async fn purge_scrobble_outbox(&self, now_ms: i64) -> Result<u64, ServiceError> {
+        // Whole days in milliseconds, checked: a value large enough to overflow
+        // means "keep everything", which is what the absent cutoff below does.
+        let cutoff = i64::from(self.scrobbling.retention_days)
+            .checked_mul(24 * 60 * 60 * 1000)
+            .and_then(|window| now_ms.checked_sub(window));
+        let Some(cutoff) = cutoff else {
+            return Ok(0);
+        };
+        let mut removed = 0;
+        loop {
+            // One chunk per turn of the gate rather than one statement for the
+            // whole backlog. The writer gate is process-wide, and a server
+            // coming back to a year of finished entries would otherwise hold
+            // every other mutation still for the length of one delete.
+            let _writer = self.db.writer_guard().await;
+            let cut = sqlx::query(
+                "DELETE FROM scrobble_outbox WHERE id IN ( \
+                   SELECT id FROM scrobble_outbox \
+                    WHERE terminal_at IS NOT NULL AND terminal_at < ? \
+                    ORDER BY terminal_at LIMIT ?)",
+            )
+            .bind(cutoff)
+            .bind(SCROBBLE_PURGE_CHUNK)
+            .execute(self.db.pool())
+            .await?;
+            drop(_writer);
+            removed += cut.rows_affected();
+            if cut.rows_affected() < SCROBBLE_PURGE_CHUNK as u64 {
+                return Ok(removed);
+            }
+        }
     }
 
     /// Walks the queue on a timer. The shape the six other background tasks
@@ -1217,11 +1310,12 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
-             updated_at=? WHERE id=? AND state='sending'",
+             updated_at=?, terminal_at=? WHERE id=? AND state='sending'",
         )
         .bind(state)
         .bind(failure)
         .bind(now)
+        .bind(retention_instant(state, now))
         .bind(entry.id)
         .execute(&mut *tx)
         .await?;
@@ -1453,10 +1547,11 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=? \
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=?, terminal_at=? \
              WHERE link_id=? AND state='pending'",
         )
         .bind(cause)
+        .bind(now)
         .bind(now)
         .bind(link_id.to_string())
         .execute(&mut *tx)
@@ -1464,6 +1559,25 @@ impl DomainServices {
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// The five states retention counts from, named once.
+///
+/// `sent`, `rejected`, `abandoned`, `cancelled` and `discarded` are finished
+/// and eventually go. `uncertain` is terminal for the server and deliberately
+/// gets nothing: it is kept for as long as nobody has answered it, and an
+/// instant on it would be an invitation to start counting one day. `pending`
+/// and `sending` are not terminal at all.
+///
+/// A function rather than a `CASE` in each statement because there are four
+/// writers, and the one that forgot would leave a row no purge could ever see —
+/// the same shape of silent survival `retried_at` was added to close.
+fn retention_instant(state: &str, now: i64) -> Option<i64> {
+    matches!(
+        state,
+        "sent" | "rejected" | "abandoned" | "cancelled" | "discarded"
+    )
+    .then_some(now)
 }
 
 /// Where a link stands, from its status and the shape of its queue.

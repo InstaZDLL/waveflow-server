@@ -1760,4 +1760,134 @@ mod tests {
             "the retry spent nobody's joker; it is the one that was spent"
         );
     }
+
+    /// Rows that finished before the column knew when they finished.
+    ///
+    /// The purge counts from `terminal_at`, so a row written before
+    /// `20260914010000` would carry none and never be eligible: on a server
+    /// that has been running for months, retention would arrive and apply to
+    /// nothing it was added for. They take their `updated_at`, which is the
+    /// write that made them terminal — true because every `UPDATE`
+    /// `scrobble_outbox` knows requires a non-terminal starting state, so a
+    /// finished row's last write *is* its transition.
+    ///
+    /// `uncertain` and `pending` take none, and that is half the assertion:
+    /// an entry still asking a person must not become purgeable by a migration.
+    #[tokio::test]
+    async fn rows_that_finished_before_the_column_are_dated_by_their_last_write() {
+        use sqlx::migrate::Migrate;
+
+        /// The last migration before `scrobble_outbox.terminal_at`.
+        const BEFORE_THE_COLUMN: i64 = 20260914000000;
+
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let database = Database::open(&Config::for_data_dir(temp.path().join("data")))
+            .await
+            .expect("open database");
+
+        let mut connection = database.pool.acquire().await.expect("connection");
+        connection
+            .ensure_migrations_table(&MIGRATOR.table_name)
+            .await
+            .expect("migrations table");
+        for migration in MIGRATOR
+            .iter()
+            .filter(|migration| migration.version <= BEFORE_THE_COLUMN)
+        {
+            connection
+                .apply(&MIGRATOR.table_name, migration)
+                .await
+                .expect("earlier migration");
+        }
+
+        const ACCOUNT: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000021";
+        const LINK: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000022";
+        for (statement, binds) in [
+            (
+                "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+                   VALUES (?, 'archivist', 'this-account-never-authenticates', 'user', 0, 0)",
+                vec![ACCOUNT],
+            ),
+            (
+                "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
+                                            credential_ciphertext, created_at, updated_at) \
+                   VALUES (?, ?, 'listenbrainz', 'active', x'000000000000000000000000', \
+                           x'00', 0, 0)",
+                vec![LINK, ACCOUNT],
+            ),
+        ] {
+            let mut query = sqlx::query(statement);
+            for bind in binds {
+                query = query.bind(bind.to_owned());
+            }
+            query.execute(&mut *connection).await.expect("seed row");
+        }
+
+        // Every state the queue knows, each with its own `updated_at`, so an
+        // assertion cannot pass by reading a neighbour's instant. `created_at`
+        // is deliberately a different value throughout: a backfill that read
+        // *it* would date a listen from when it was queued rather than from
+        // when it stopped moving, which is the distinction the column exists
+        // for.
+        const QUEUED_AT: i64 = 1_700_000_000_000;
+        let expected = [
+            ("sent", 1_700_000_001_000_i64),
+            ("rejected", 1_700_000_002_000),
+            ("abandoned", 1_700_000_003_000),
+            ("cancelled", 1_700_000_004_000),
+            ("discarded", 1_700_000_005_000),
+        ];
+        let untouched = [
+            ("uncertain", 1_700_000_006_000_i64),
+            ("pending", 1_700_000_007_000),
+        ];
+        for (nth, (state, updated_at)) in expected.iter().chain(untouched.iter()).enumerate() {
+            sqlx::query(
+                "INSERT INTO scrobble_outbox (public_id, link_id, played_at, title, \
+                 artists_json, state, attempts, next_attempt_at, created_at, updated_at) \
+                 VALUES (?, ?, 0, 'Zenith', '[\"Nova Kern\"]', ?, 1, 0, ?, ?)",
+            )
+            .bind(format!("6f1d1b6e-0f1a-4a3d-9c21-0000000003{:02}", nth))
+            .bind(LINK)
+            .bind(*state)
+            .bind(QUEUED_AT)
+            .bind(*updated_at)
+            .execute(&mut *connection)
+            .await
+            .expect("seed outbox row");
+        }
+        drop(connection);
+
+        database
+            .migrate()
+            .await
+            .expect("a database with a finished queue migrates");
+
+        let mut connection = database.pool.acquire().await.expect("connection");
+        for (state, updated_at) in expected {
+            let terminal_at: Option<i64> =
+                sqlx::query_scalar("SELECT terminal_at FROM scrobble_outbox WHERE state = ?")
+                    .bind(state)
+                    .fetch_one(&mut *connection)
+                    .await
+                    .expect("the finished row");
+            assert_eq!(
+                terminal_at,
+                Some(updated_at),
+                "a {state} row must be dated by the write that finished it"
+            );
+        }
+        for (state, _) in untouched {
+            let terminal_at: Option<i64> =
+                sqlx::query_scalar("SELECT terminal_at FROM scrobble_outbox WHERE state = ?")
+                    .bind(state)
+                    .fetch_one(&mut *connection)
+                    .await
+                    .expect("the unfinished row");
+            assert_eq!(
+                terminal_at, None,
+                "a {state} row has not finished and must not become purgeable"
+            );
+        }
+    }
 }
