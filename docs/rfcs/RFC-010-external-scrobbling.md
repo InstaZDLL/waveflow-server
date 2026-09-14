@@ -414,13 +414,18 @@ la plus vraisemblable qu'un tel changement puisse prendre.
 
 Il faut donc une canonicalisation propre aux destinations : schéma, hôte, port
 et **chemin** sérialisés sans ambiguïté, la chaîne de requête et le fragment
-refusés comme ils le sont déjà, et une réponse tenue sur la barre finale — `/x`
-et `/x/` désignent la même chose ou ne la désignent pas, mais pas une fois l'un
-et une fois l'autre. La même normalisation sert au rattrapage, à la
-réconciliation et à la garde de reprise : trois lectures d'un même fait, qui ne
-valent que si elles le calculent pareil. Comparer des empreintes plutôt que des
-URL n'est pas une précaution contre un attaquant — personne d'hostile n'écrit
-cette configuration — mais la façon de n'avoir qu'une seule chose à comparer.
+refusés comme ils le sont déjà, et la barre finale tranchée plutôt que laissée
+au lecteur — `https://host/maloja` et `https://host/maloja/` sont **la même**
+destination, parce qu'un opérateur qui colle l'une ou l'autre veut la même
+machine, et qu'un lien cassé par une barre ajoutée en éditant un fichier serait
+une punition pour rien. La forme canonique est celle sans barre finale, la
+racine mise à part, où il n'y a pas de choix à faire. La même normalisation sert
+au rattrapage, à la réconciliation et à la garde de reprise : trois lectures
+d'un même fait, qui ne valent que si elles le calculent pareil — et les deux
+écritures d'une même URL sont ce qu'un test tient ensemble. Comparer des
+empreintes plutôt que des URL n'est pas une précaution contre un attaquant —
+personne d'hostile n'écrit cette configuration — mais la façon de n'avoir qu'une
+seule chose à comparer.
 
 C'est la décision 4 appliquée un étage plus haut. Là-bas, délier puis relier
 crée une génération qui n'hérite de rien, parce que le compte et la destination
@@ -489,16 +494,25 @@ faire à la place de l'opérateur.
   dit quelle URL était configurée hier, donc écrire l'empreinte courante revient
   à déclarer que la destination d'aujourd'hui est bien celle que ces liens
   visaient. C'est vrai tant qu'il n'y a qu'une réponse possible, et c'est le cas
-  au moment où ceci s'écrit. Si la configuration en déclare déjà plusieurs pour
-  un même destinataire lors de ce premier démarrage, il n'y a pas de réponse :
-  le serveur refuse de partir plutôt que d'en choisir une, parce que se tromper
-  ici enverrait des écoutes en attente sur le mauvais profil sans que rien ne le
-  signale. La sortie ne demande aucun mécanisme neuf : démarrer une fois avec une
-  seule destination par destinataire — celle que ces liens visaient — remplit les
-  colonnes, et les autres s'ajoutent au démarrage suivant. Le rattrapage n'a lieu
-  qu'une fois ; ce qui vient après passe par la réconciliation ordinaire. Et si
-  un destinataire a des liens sans qu'aucune destination ne soit déclarée pour
-  lui — une URL vidée de la configuration, ce qui est déjà une façon de le
+  au moment où ceci s'écrit. Si des liens hérités existent chez un destinataire
+  et que la configuration en déclare déjà plusieurs pour lui, il n'y a pas de
+  réponse : le serveur refuse de partir plutôt que d'en choisir une, parce que
+  se tromper ici enverrait des écoutes en attente sur le mauvais profil sans que
+  rien ne le signale. La sortie ne demande aucun mécanisme neuf : démarrer une
+  fois avec une seule destination par destinataire — celle que ces liens
+  visaient — remplit les colonnes, et les autres s'ajoutent au démarrage
+  suivant. Le rattrapage n'a lieu qu'une fois ; ce qui vient après passe par la
+  réconciliation ordinaire.
+
+  **Rien de tout cela ne concerne une installation neuve.** Le refus porte sur
+  l'ambiguïté d'un rattrapage, et sans lien hérité il n'y a rien à rattraper :
+  une base vide démarre avec autant de destinations que l'opérateur en déclare,
+  dès la première fois. Ne pas le dire aurait rendu la fonctionnalité
+  inatteignable à ceux qui n'ont rien à migrer — un garde-fou qui ferme la porte
+  qu'il protège.
+
+  **Et si un destinataire a des liens sans qu'aucune destination ne soit déclarée
+  pour lui** — une URL vidée de la configuration, ce qui est déjà une façon de le
   désactiver — il n'y a rien à inscrire : ces liens sont traités comme ceux d'une
   destination disparue, cassés et leur file terminée, plutôt que laissés avec
   deux colonnes vides que la réconciliation suivante ne saurait pas lire.
