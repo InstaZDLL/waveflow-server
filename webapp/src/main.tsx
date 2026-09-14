@@ -8,7 +8,7 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { StrictMode } from "react";
+import { type RefObject, StrictMode, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import { currentUser, ensureSession, logout } from "./api";
@@ -122,31 +122,148 @@ function Brand() {
   );
 }
 
+/**
+ * Whether this account may see an entry at all.
+ *
+ * The two flags are about authority and not about width, so they apply
+ * wherever the entry is rendered — bar or sheet. `primary` is the separate
+ * question of what fits on a phone.
+ */
+function permitted(
+  item: (typeof navigation)[number],
+  role: string | undefined,
+  library: Parameters<typeof mayUploadTo>[0],
+): boolean {
+  return (
+    (!item.admin || role === "admin") && (!item.upload || mayUploadTo(library))
+  );
+}
+
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const user = currentUser();
   const { active } = useLibraryScope();
   const { t } = useI18n();
+  const visible = navigation.filter((item) =>
+    permitted(item, user?.role, active),
+  );
+  // On a phone the bar holds the six things somebody reaches for while
+  // listening. Everything else used to be reachable by typing its address and
+  // by nothing else — the sidebar that carries it is `display: none` below
+  // 820px — so the seventh slot opens the rest rather than promoting one of
+  // it. Promoting one would have made the others more invisible by contrast.
+  const overflow = mobile ? visible.filter((item) => !item.primary) : [];
+  const sheet = useRef<HTMLDialogElement>(null);
   return (
-    <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
-      {navigation
-        .filter(
-          (item) =>
-            (!item.admin || user?.role === "admin") &&
-            (!item.upload || mayUploadTo(active)) &&
-            (!mobile || item.primary),
-        )
-        .map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            aria-label={mobile ? t(item.labelKey) : undefined}
-            activeOptions={{ exact: item.to === "/" }}
+    <>
+      <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
+        {visible
+          .filter((item) => !mobile || item.primary)
+          .map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              aria-label={mobile ? t(item.labelKey) : undefined}
+              activeOptions={{ exact: item.to === "/" }}
+            >
+              <Icon name={item.icon} />
+              <span>{t(item.labelKey)}</span>
+            </Link>
+          ))}
+        {overflow.length > 0 ? (
+          <button
+            type="button"
+            className="more-button"
+            aria-label={t("nav.more")}
+            onClick={() => sheet.current?.showModal()}
           >
-            <Icon name={item.icon} />
-            <span>{t(item.labelKey)}</span>
-          </Link>
-        ))}
-    </nav>
+            <Icon name="more" />
+            <span>{t("nav.more")}</span>
+          </button>
+        ) : null}
+      </nav>
+      {/* Beside the bar and not inside it. The sheet's own links would
+          otherwise count as the bar's, and a closed `<dialog>` is
+          `display: none` — so a test measuring how many rows the bar occupies
+          would read a zero-sized child as sitting on the first one, and could
+          not see a bar that had wrapped. */}
+      {overflow.length > 0 ? (
+        <MoreSheet sheet={sheet} entries={overflow} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * What the seventh slot opens.
+ *
+ * A native `<dialog>` opened with `showModal`, because that is where the focus
+ * trap, the Escape key and the inertness of the page behind come from. Writing
+ * those by hand is how an accessibility gate starts failing, and this one is
+ * measured — the suite runs axe over the sheet while it is open.
+ *
+ * Rendered only when there is something behind it: an account that may neither
+ * upload nor administer still has six entries hidden, but a listing with
+ * nothing in it would be a control that does nothing.
+ */
+function MoreSheet({
+  sheet,
+  entries,
+}: {
+  sheet: RefObject<HTMLDialogElement | null>;
+  entries: typeof navigation;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <>
+      {/* `onClick` on the dialog itself catches the backdrop: a click landing
+          on the element rather than on anything inside it is a click outside
+          the sheet, which is the only thing the backdrop can be.
+
+          The keyboard equivalent of dismissing by the backdrop is Escape, and
+          `<dialog>` already answers it — which is the whole reason the element
+          was chosen over a hand-built overlay. An `onKeyDown` here would
+          duplicate a behaviour the platform provides, and a second closer is a
+          second thing to get out of step. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: dismissing by keyboard is Escape, which <dialog> handles natively */}
+      <dialog
+        ref={sheet}
+        className="more-sheet"
+        aria-label={t("nav.moreTitle")}
+        onClick={(event) => {
+          if (event.target === sheet.current) sheet.current?.close();
+        }}
+      >
+        <header>
+          <div>
+            <h2>{t("nav.moreTitle")}</h2>
+            <p className="muted">{t("nav.moreDetail")}</p>
+          </div>
+          <button
+            type="button"
+            aria-label={t("nav.moreClose")}
+            onClick={() => sheet.current?.close()}
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+        <nav>
+          {entries.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              // Closed on the way out, not on arrival: the sheet would
+              // otherwise stay open over the page it just navigated to.
+              onClick={() => sheet.current?.close()}
+              activeOptions={{ exact: item.to === "/" }}
+            >
+              <Icon name={item.icon} />
+              <span>{t(item.labelKey)}</span>
+            </Link>
+          ))}
+        </nav>
+      </dialog>
+    </>
   );
 }
 

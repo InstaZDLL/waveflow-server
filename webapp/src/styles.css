@@ -1505,6 +1505,7 @@ button.danger {
      behind a selector that already outranks it. */
   .player-progress span,
   .mobile-navigation a span,
+  .mobile-navigation .more-button span,
   .mobile-header .library-picker span,
   .mobile-header .theme-picker span,
   .mobile-header .language-picker span,
@@ -1541,7 +1542,14 @@ button.danger {
     bottom: 0.6rem;
     left: 0.6rem;
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    /* As many equal columns as there are slots, counted by the browser.
+       This said `repeat(5, 1fr)` from the first design, and a sixth primary
+       entry was added later without touching it — so the bar had been
+       wrapping onto a second row ever since, which the suite could not see
+       because it measures horizontal overflow and a second row overflows
+       downwards. A number kept in a second place goes stale; this one cannot. */
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 0.4rem;
     border: 1px solid var(--line-strong);
     border-radius: 1rem;
@@ -1550,12 +1558,22 @@ button.danger {
     backdrop-filter: blur(1.5rem);
   }
 
-  .mobile-navigation a {
+  .mobile-navigation a,
+  .mobile-navigation .more-button {
     display: grid;
     min-height: 3rem;
     place-items: center;
     border-radius: 0.7rem;
     color: var(--muted);
+  }
+
+  /* The seventh slot is a button and not a link, so it has to be undressed
+     back to what the six beside it look like. */
+  .mobile-navigation .more-button {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
   }
 
   .mobile-navigation a[data-status="active"] {
@@ -2238,4 +2256,69 @@ button.danger {
   .scrobble-actions {
     justify-content: flex-start;
   }
+}
+
+/* The sheet the seventh slot of the mobile bar opens.
+   A native `<dialog>`: the focus trap, the Escape key and the inertness of
+   the page behind it come from the element rather than from code, which is
+   the difference between an accessibility gate that holds and one that has
+   to be rewritten each time the markup moves. */
+.more-sheet {
+  width: min(100%, 26rem);
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem 1rem 0 0;
+  margin: auto auto 0;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.more-sheet::backdrop {
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(0.3rem);
+}
+
+.more-sheet header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.1rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.more-sheet h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.more-sheet header p {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+}
+
+.more-sheet nav {
+  display: grid;
+  /* One column, and its own scroll: eight entries plus a header can outgrow a
+     short phone held in landscape, and a sheet whose last row cannot be
+     reached is the problem it was opened to solve. */
+  max-height: min(60dvh, 28rem);
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.more-sheet nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-height: 3rem;
+  padding: 0 0.7rem;
+  border-radius: 0.7rem;
+}
+
+.more-sheet nav a[data-status="active"] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
