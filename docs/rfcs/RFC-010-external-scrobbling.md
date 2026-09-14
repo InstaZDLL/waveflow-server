@@ -411,13 +411,21 @@ d'un fournisseur. Elle reste bonne pour un diagnostic, pas comme chemin normal.
 
 Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
 
-- `POST /api/v2/scrobble-links/lastfm/authorize` ouvre un état lié au compte et
-  rend l'URL où envoyer la personne : `/api/auth` chez Last.fm, portant la clé
-  d'application et un `cb` qui désigne la route ci-dessous.
+- `POST /api/v2/scrobble-links/lastfm/{destination}/authorize` ouvre un état lié
+  au compte et rend l'URL où envoyer la personne : `/api/auth` chez Last.fm,
+  portant la clé d'application et un `cb` qui désigne la route ci-dessous.
 - `GET /api/v2/scrobble-links/lastfm/callback/{state}` reçoit le `token` que
   Last.fm y ajoute, vérifie l'état que porte son chemin, appelle
   `auth.getSession` pour échanger le jeton contre la clé de session, la scelle
   et crée le lien.
+
+**La destination se nomme à l'aller et se retrouve au retour.** Last.fm n'ayant
+qu'une instance, il serait tentant de la sous-entendre — mais cette section
+vient de refuser tout défaut implicite, et une exception pour un destinataire
+serait la première marche vers le glissement qu'elle interdit. Le nom est donc
+demandé, vérifié contre les destinations déclarées, et rangé dans l'état : c'est
+lui que le retour relira, plutôt que d'en deviner un. Le jour où quelqu'un
+déclare deux Last.fm — un compte de famille et le sien — rien n'aura à changer.
 
 **C'est le parcours web, et il n'appelle pas `auth.getToken`.** Cette méthode
 appartient au parcours des applications de bureau, où le jeton se demande avant
