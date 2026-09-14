@@ -386,6 +386,17 @@ faire à la place de l'opérateur.
   destination et l'empreinte de son URL — et, le jour où la décision 12 tiendra
   sa promesse d'un dernier succès, celui-là aussi, pour la raison que la
   rétention donne : un `MAX` sur des lignes purgeables reculerait tout seul.
+
+  **Et `retried_at` se remplit lui aussi, sur les bases déjà en service.** Des
+  entrées retentées existent depuis [#191](https://github.com/InstaZDLL/waveflow-server/pull/191),
+  reconnaissables à la jointure que cette révision abandonne. Ajouter la colonne
+  vide les rendrait toutes répondables une seconde fois : la migration
+  réintroduirait, chez les seuls serveurs déjà en route, exactement le défaut
+  qu'elle vient corriger. Elle lit donc `retry_of` une dernière fois pour écrire
+  la colonne, et prend pour instant celui où la ligne de reprise fut créée, qui
+  est le moment où le joker a été consommé. Celle-là tient en SQL — aucune
+  configuration n'entre dans ce calcul — et un test sur une base peuplée avant
+  la colonne est ce qui le prouve, pas une relecture.
 - **Et un rattrapage, qui est la partie qu'on oublie.** Les liens déjà écrits ne
   portent ni nom ni empreinte, et il n'existe qu'une destination par destinataire
   au moment où cette révision s'écrit : ils reçoivent celle-là, avec l'empreinte
@@ -402,7 +413,10 @@ faire à la place de l'opérateur.
   un même destinataire lors de ce premier démarrage, il n'y a pas de réponse :
   le serveur refuse de partir plutôt que d'en choisir une, parce que se tromper
   ici enverrait des écoutes en attente sur le mauvais profil sans que rien ne le
-  signale. L'opérateur nomme alors lui-même la destination d'origine, ou délie.
+  signale. La sortie ne demande aucun mécanisme neuf : démarrer une fois avec une
+  seule destination par destinataire — celle que ces liens visaient — remplit les
+  colonnes, et les autres s'ajoutent au démarrage suivant. Le rattrapage n'a lieu
+  qu'une fois ; ce qui vient après passe par la réconciliation ordinaire.
 
   **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
   l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
