@@ -43,6 +43,11 @@ direction: record the id the response came back with rather than imposing one,
 which is what a proxy in front of a server it does not name for should do
 anyway.
 
+From a browser on another origin, do not send it at all. The header is exposed
+so that `fetch` can read the id off the response, and deliberately not allowed
+on the way in, so a request carrying it fails its preflight rather than being
+quietly ignored.
+
 ### First-run setup
 
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
@@ -129,12 +134,14 @@ has no refresh flow and must be revoked administratively when no longer needed.
 
 The token is written to standard output on its own, and everything else the
 command says goes to standard error — so it can be captured without being read
-off a terminal that would then keep it. Set the umask in the same subshell as
-the redirection: the shell creates the file before the command writes to it, so
-a default umask would leave a secret world-readable for as long as it exists.
+off a terminal that would then keep it. Create the file closed first: the shell
+opens it before the command writes anything, and a redirection into a file that
+already exists truncates it without touching its mode, so a `umask` alone would
+not rescue one left readable by an earlier run.
 
 ```bash
-(umask 077; cargo run -- token create --actor admin --username listener --name "Automation" > token)
+install -m 600 /dev/null token
+cargo run -- token create --actor admin --username listener --name "Automation" > token
 ```
 
 ### Browser session

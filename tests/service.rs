@@ -530,4 +530,18 @@ async fn a_caller_cannot_name_its_own_request() {
         uuid::Uuid::parse_str(&named).is_ok(),
         "a preflight carries a minted id like any other response, and carried: {named}"
     );
+
+    // Exposed on the way out and not allowed on the way in, which is the pair
+    // the guide describes: a browser may read the name this server gave, and a
+    // browser that sends one has its preflight refused rather than its value
+    // quietly dropped. Adding it to `allow_headers` would make the guide wrong,
+    // which is why this reads that list too.
+    let allowed = response.headers()["access-control-allow-headers"]
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(
+        !allowed.split(',').any(|name| name.trim() == "x-request-id"),
+        "a caller has no business sending this one: {allowed}"
+    );
 }
