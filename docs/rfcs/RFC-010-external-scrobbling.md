@@ -29,7 +29,8 @@
   d'une reprise se compte désormais sur l'entrée (décision 13), une destination
   peut exister en plusieurs instances nommées (décision 10), Last.fm obtient un
   protocole d'autorisation au lieu d'un secret collé (décision 11), et la
-  rétention de la file est tranchée. Rien de tout cela n'est encore écrit.
+  rétention de la file est tranchée. Ces décisions-ci sont écrites ; aucune
+  n'est encore implémentée.
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)
@@ -300,6 +301,23 @@ seul `provider`. Le compte choisit un nom dans la liste que le serveur publie ;
 il ne décrit toujours aucune URL, et la barrière de la décision 10 ne bouge pas
 d'un pouce.
 
+**La destination entre dans le chemin, elle aussi.** `PUT` et `DELETE`
+s'adressaient à `/api/v2/scrobble-links/{provider}`, ce qui ne désigne plus rien
+de précis dès qu'un destinataire a deux instances — et `DELETE` n'a pas de corps
+où la nommer. Les deux deviennent
+`/api/v2/scrobble-links/{provider}/{destination}`, et la liste publie le couple.
+Aucun défaut implicite : un chemin sans destination est refusé plutôt que
+rattaché à la première venue — le glissement que les deux paragraphes suivants
+interdisent. La surface date d'hier et personne ne s'y est encore adossé, donc
+ce contrat se corrige maintenant ou se traîne.
+
+**Un nom de destination s'écrit dans un chemin sans y être encodé.** Puisqu'il
+devient un segment d'URL, il se borne à ce qui traverse un chemin sans discussion
+— lettres ASCII, chiffres, `-`, `_` et `.`, et pas au-delà d'une longueur
+raisonnable. Refuser au démarrage un nom qui sort de là coûte un message clair à
+l'opérateur ; l'accepter coûterait un segment qui se décode autrement selon qui
+le lit. L'aléa du parcours Last.fm suit la même règle, pour la même raison.
+
 **Pas de table, pas d'administration à chaud.** Une destination reste un
 réglage de déploiement, pas une ligne que l'on ajoute en marche. Une table
 demanderait de réconcilier la configuration et la base à chaque démarrage, et
@@ -315,6 +333,22 @@ autre instance du même destinataire. Faire glisser `alice` vers `default`
 enverrait les écoutes d'une personne sur le profil d'une autre — la substitution
 que la décision 4 construit tout un étage d'identifiants pour empêcher.
 L'opérateur remet la destination, ou la personne délie et relie.
+
+**Un nom n'est pas une identité : l'URL en fait partie.** Retirer `maloja/alice`
+casse ses liens, mais lui donner une autre URL les enverrait ailleurs sans que
+rien ne change de nom — la même substitution, par la porte d'à côté, et la plus
+facile à commettre puisqu'elle ressemble à une correction de configuration. Un
+lien retient donc de quoi reconnaître la destination qu'il visait, empreinte de
+l'URL comprise ; si elle ne correspond plus au démarrage, il passe `broken`
+comme si le nom avait disparu.
+
+C'est la décision 4 appliquée un étage plus haut. Là-bas, délier puis relier
+crée une génération qui n'hérite de rien, parce que le compte et la destination
+peuvent être les mêmes sans que l'autorisation le soit. Ici, le nom peut être le
+même sans que la machine au bout le soit, et une file en attente ne doit pas
+découvrir la différence en la franchissant. Corriger une coquille dans une URL
+coûte alors de relier — le prix d'une distinction qu'aucune heuristique ne peut
+faire à la place de l'opérateur.
 
 ## Ce que cette RFC change ailleurs
 
@@ -364,7 +398,7 @@ ambigu devient — ce que cette RFC n'a pas à trancher pour un serveur personne
 ### Last.fm ne se colle pas, il s'autorise
 
 **Ajouté le 2026-09-14.** Toute la surface de la décision 9 tient dans un geste :
-présenter un secret déjà en main à `PUT /api/v2/scrobble-links/{provider}`.
+présenter un secret déjà en main à `PUT /api/v2/scrobble-links/{provider}/{destination}`.
 Last.fm n'en délivre pas. Il faut un aller-retour par le navigateur de la
 personne — un jeton de requête, une autorisation chez eux, puis la conversion du
 jeton en clé de session, laquelle dure jusqu'à révocation.
@@ -380,9 +414,10 @@ Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
 - `POST /api/v2/scrobble-links/lastfm/authorize` ouvre un état lié au compte et
   rend l'URL où envoyer la personne : `/api/auth` chez Last.fm, portant la clé
   d'application et un `cb` qui désigne la route ci-dessous.
-- `GET /api/v2/scrobble-links/lastfm/callback` reçoit le `token` que Last.fm y
-  ajoute, vérifie l'état, appelle `auth.getSession` pour l'échanger contre la
-  clé de session, la scelle et crée le lien.
+- `GET /api/v2/scrobble-links/lastfm/callback/{state}` reçoit le `token` que
+  Last.fm y ajoute, vérifie l'état que porte son chemin, appelle
+  `auth.getSession` pour échanger le jeton contre la clé de session, la scelle
+  et crée le lien.
 
 **C'est le parcours web, et il n'appelle pas `auth.getToken`.** Cette méthode
 appartient au parcours des applications de bureau, où le jeton se demande avant
@@ -396,11 +431,38 @@ les soixante que Last.fm accorde à son jeton : c'est nous qui refusons en
 premier, et jamais un jeton périmé qui nous surprend. Il porte de quoi se
 reconnaître sans rien deviner : un compte, un aléa, une échéance.
 
-**Où cet aléa voyage se choisit à l'écriture, et se vérifie.** Last.fm annonce
-qu'il ajoute le jeton en accolant `/?token=…` à la callback, ce qui ne dit rien
-de ce qu'il fait d'une callback qui porte déjà une chaîne de requête. Le mettre
-dans le chemin — `…/callback/{state}` — ne dépend d'aucune supposition sur cette
+**L'aléa voyage dans le chemin, et non dans une chaîne de requête.** Last.fm
+annonce qu'il remet le jeton en accolant `/?token=…` à la callback, ce qui ne
+dit rien de ce qu'il ferait d'une callback portant déjà un `?`. Le `cb` désigne
+donc `…/callback/{state}`, qui ne dépend d'aucune supposition sur cette
 concaténation.
+
+**Et l'état tient à deux choses, pas à une.** Le lier au seul compte suffirait
+si l'URL de retour ne sortait jamais du navigateur qui l'a demandée — or elle
+passe par Last.fm, et une URL qui voyage se retrouve dans un référent ou un
+historique. Qui l'obtiendrait pourrait terminer le parcours avec *son* jeton, et
+le compte de quelqu'un d'autre se mettrait à scrobbler sur son profil à lui.
+L'état porte donc aussi la session qui l'a ouvert, le retour vérifie les deux, et
+il se consomme avant l'échange du jeton plutôt qu'après la création du lien : ce
+qui a servi une fois ne peut pas resservir, même si le premier essai échoue plus
+loin.
+
+**Ce jeton arrive dans une URL, et une URL se garde.** Il vaut soixante minutes
+et vaut un profil : il n'a rien à faire dans un journal, un historique de
+navigateur ni un référent. Trois conséquences pour cette route, aucune
+facultative. Son chemin rejoint les préfixes que `trace_path` rédige, aux côtés
+des billets de flux et des jetons de partage, parce que la règle de `CLAUDE.md`
+ne souffre pas d'exception pour un secret d'une heure. La réponse porte
+`Cache-Control: no-store`. Et elle redirige aussitôt vers une adresse sans
+jeton, pour que ce soit celle-là que l'historique retienne — la page où la
+personne atterrit n'a pas besoin d'en savoir plus que « c'est lié ».
+
+**Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
+au redémarrage, au milieu du seul parcours qui ne supporte pas d'être repris.
+Une table minuscule, donc, avec une échéance — et la tâche de purge de la
+rétention passe dessus, puisqu'elle existera de toute façon. Une révision qui
+tranche la croissance sans fin d'une table ferait mauvaise figure en en
+introduisant une autre.
 
 **La destination de retour se dérive de `WAVEFLOW_PUBLIC_URL`**, qui dit déjà
 l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
@@ -429,9 +491,18 @@ Un lien expose son état et la forme de sa file, agrégés :
 **`healthy` ne peut pas vouloir dire « j'ai encore un jeton ».** Un lien valide
 avec trois mille écoutes en attente depuis six heures est en panne, et c'est
 précisément la panne silencieuse qu'une file durable existe pour rendre
-visible. D'où `degraded` : le lien répond, mais la file ne se vide pas — des
-reprises, des incertaines, ou une attente trop vieille. `broken` reste réservé
-à `AuthBroken` et à une configuration inutilisable.
+visible. D'où `degraded` : le lien répond, mais la file ne se vide pas — une
+incertaine qui attend une réponse, ou une entrée en attente depuis plus
+longtemps que le seuil. `broken` reste réservé à `AuthBroken` et à une
+configuration inutilisable.
+
+**Corrigé le 2026-09-14 :** cette phrase disait « des reprises, des incertaines,
+ou une attente trop vieille », et `link_health` ne regarde pas les reprises. Il
+avait raison de ne pas le faire — une ligne qui retente est une file qui
+fonctionne, et la compter dégraderait tout lien ayant croisé une panne
+passagère. C'est le texte qui promettait de travers, depuis l'origine. L'ordre
+des trois questions vit dans `link_health` et n'est pas recopié ici : deux
+écritures du même seuil divergeraient, et c'est le code que l'API rend.
 
 **Jamais le contenu de l'enveloppe, jamais la réponse brute du fournisseur.**
 La décision 10 interdit déjà l'écho ; ceci en est le corollaire du côté
@@ -497,6 +568,16 @@ qu'ils désignent.
 `state = 'discarded'` sur l'entrée : une énumération qui redirait `discarded`
 placerait deux sources de vérité sur le même fait. Seule la reprise laisse
 l'entrée en `uncertain`, et seule elle a besoin d'être notée.
+
+**Et tout ce qui lisait la jointure lit désormais la colonne.** Trois endroits
+demandaient « cette entrée a-t-elle déjà servi son joker » en cherchant une
+ligne qui la désigne : la liste des incertaines, le compteur du lien, et le
+refus d'une seconde reprise. Les trois passent à `retried_at IS NULL`. Le
+compteur surtout : `link_health` rend `degraded` dès qu'une incertaine est
+comptée, donc en oubliant un seul de ces trois endroits on obtient un lien
+définitivement en peine à cause d'une écoute à laquelle sa personne a déjà
+répondu — la panne que la décision 12 veut rendre visible, retournée en fausse
+alerte permanente.
 
 ## La rétention de la file
 
