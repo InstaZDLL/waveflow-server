@@ -232,8 +232,10 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
 
+### Un seizième, que poser le quinzième a révélé
+
 16. **Sur téléphone, huit écrans n'ont aucun lien.** Mesuré le 2026-09-14 en
-    posant le seizième : `.sidebar` passe à `display: none` sous 820 px
+    posant le quinzième : `.sidebar` passe à `display: none` sous 820 px
     (`styles.css`), et `Navigation({ mobile: true })` ne garde que les entrées
     marquées `primary`. Les huit autres — artistes, genres, aléatoire,
     historique, partages, téléversement, administration, et le scrobbling qui
