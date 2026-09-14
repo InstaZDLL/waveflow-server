@@ -1606,4 +1606,158 @@ mod tests {
             "unexpected error: {error:#}"
         );
     }
+
+    /// A retry queued before `retried_at` existed still counts as the joker
+    /// spent, once the column arrives.
+    ///
+    /// Retried entries exist on every database linked since #191, and until
+    /// `20260914000000` the only trace of one was a second row naming it
+    /// through `retry_of`. Adding the column empty would leave every one of
+    /// those originals unanswered again — the migration would reintroduce, on
+    /// the only servers that have anything to reintroduce it to, exactly the
+    /// defect it exists to correct. Reading it on a database populated at the
+    /// schema version before the column is what says otherwise; a rereading of
+    /// the SQL is not.
+    #[tokio::test]
+    async fn a_retry_queued_before_the_column_counts_as_the_joker_spent() {
+        use sqlx::migrate::Migrate;
+
+        /// The last migration before `scrobble_outbox.retried_at`.
+        const BEFORE_THE_COLUMN: i64 = 20260913000000;
+
+        /// When the ambiguous entry was last written, and when its retry was
+        /// queued. Distinct on purpose: the backfill takes the instant the
+        /// joker was spent, which is the retry's, and a test where the two
+        /// agreed could not tell one from the other.
+        const SETTLED_AT: i64 = 1_700_000_111_000;
+        const RETRIED_AT: i64 = 1_700_000_555_000;
+
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let database = Database::open(&Config::for_data_dir(temp.path().join("data")))
+            .await
+            .expect("open database");
+
+        let mut connection = database.pool.acquire().await.expect("connection");
+        connection
+            .ensure_migrations_table(&MIGRATOR.table_name)
+            .await
+            .expect("migrations table");
+        for migration in MIGRATOR
+            .iter()
+            .filter(|migration| migration.version <= BEFORE_THE_COLUMN)
+        {
+            connection
+                .apply(&MIGRATOR.table_name, migration)
+                .await
+                .expect("earlier migration");
+        }
+
+        // An account and one authorisation, inserted as rows rather than
+        // through the services: this test is about what the migration does to
+        // a shape, and `hash_password` on a literal is what the repository's
+        // code scanning refuses.
+        const ACCOUNT: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000011";
+        const LINK: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000012";
+        for (statement, binds) in [
+            (
+                "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+                   VALUES (?, 'listener', 'this-account-never-authenticates', 'user', 0, 0)",
+                vec![ACCOUNT],
+            ),
+            (
+                "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
+                                            credential_ciphertext, created_at, updated_at) \
+                   VALUES (?, ?, 'listenbrainz', 'active', x'000000000000000000000000', \
+                           x'00', 0, 0)",
+                vec![LINK, ACCOUNT],
+            ),
+        ] {
+            let mut query = sqlx::query(statement);
+            for bind in binds {
+                query = query.bind(bind.to_owned());
+            }
+            query.execute(&mut *connection).await.expect("seed row");
+        }
+
+        // Three rows in the shape #191 leaves behind: an ambiguous entry whose
+        // joker was spent, the retry that spent it, and a second ambiguous
+        // entry nobody has answered.
+        const ANSWERED: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000013";
+        const RETRY: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000014";
+        const UNANSWERED: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000015";
+        for (public_id, state, created_at, updated_at) in [
+            (ANSWERED, "uncertain", SETTLED_AT, SETTLED_AT),
+            (RETRY, "sent", RETRIED_AT, RETRIED_AT),
+            (UNANSWERED, "uncertain", SETTLED_AT, SETTLED_AT),
+        ] {
+            sqlx::query(
+                "INSERT INTO scrobble_outbox (public_id, link_id, played_at, title, \
+                 artists_json, state, attempts, next_attempt_at, created_at, updated_at) \
+                 VALUES (?, ?, 0, 'Zenith', '[\"Nova Kern\"]', ?, 1, 0, ?, ?)",
+            )
+            .bind(public_id)
+            .bind(LINK)
+            .bind(state)
+            .bind(created_at)
+            .bind(updated_at)
+            .execute(&mut *connection)
+            .await
+            .expect("seed outbox row");
+        }
+        // The link between them is written by lookup rather than by assuming
+        // the first row took rowid 1: `retry_of` speaks in rowids, and a
+        // fixture that guessed one would pass for a reason unrelated to the
+        // migration.
+        sqlx::query(
+            "UPDATE scrobble_outbox \
+                SET retry_of = (SELECT id FROM scrobble_outbox WHERE public_id = ?) \
+              WHERE public_id = ?",
+        )
+        .bind(ANSWERED)
+        .bind(RETRY)
+        .execute(&mut *connection)
+        .await
+        .expect("point the retry at what it retried");
+        drop(connection);
+
+        database
+            .migrate()
+            .await
+            .expect("a database with a queue migrates");
+
+        let mut connection = database.pool.acquire().await.expect("connection");
+        let answered: Option<i64> =
+            sqlx::query_scalar("SELECT retried_at FROM scrobble_outbox WHERE public_id = ?")
+                .bind(ANSWERED)
+                .fetch_one(&mut *connection)
+                .await
+                .expect("the answered entry");
+        assert_eq!(
+            answered,
+            Some(RETRIED_AT),
+            "an entry retried before the column must carry the instant its retry was queued"
+        );
+
+        let unanswered: Option<i64> =
+            sqlx::query_scalar("SELECT retried_at FROM scrobble_outbox WHERE public_id = ?")
+                .bind(UNANSWERED)
+                .fetch_one(&mut *connection)
+                .await
+                .expect("the unanswered entry");
+        assert_eq!(
+            unanswered, None,
+            "an entry nobody answered must still be asking"
+        );
+
+        let retry: Option<i64> =
+            sqlx::query_scalar("SELECT retried_at FROM scrobble_outbox WHERE public_id = ?")
+                .bind(RETRY)
+                .fetch_one(&mut *connection)
+                .await
+                .expect("the retry");
+        assert_eq!(
+            retry, None,
+            "the retry spent nobody's joker; it is the one that was spent"
+        );
+    }
 }

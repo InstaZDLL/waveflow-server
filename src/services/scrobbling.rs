@@ -537,20 +537,27 @@ impl DomainServices {
         for row in rows {
             let link_id: String = row.try_get("id")?;
             let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
-            // `SUM(CASE …)` rather than `COUNT(*) FILTER`: the aggregate filter
-            // needs a SQLite newer than the floor this crate builds against,
-            // and one query answering four counts is the point either way.
+            // `SUM(CASE …)` rather than `COUNT(*) FILTER`, because one query
+            // answering four counts is the point. An earlier note here gave a
+            // second reason — that the aggregate filter wanted a SQLite newer
+            // than this crate builds against — and it was simply untrue: the
+            // library is bundled, at 3.51, and the schema has asked for 3.37
+            // since the first `STRICT` table.
             //
             // The uncertain count excludes an entry a person has already
             // retried. It is still true and still readable; it has simply
             // stopped asking for a decision, and a counter that kept naming it
             // would ask for the same one forever.
+            //
+            // Read on `retried_at` rather than on a row naming this one through
+            // `retry_of`: the retry ends `sent`, so retention will eventually
+            // take it, and a count deduced from its survival would put this
+            // link back to `degraded` for a listen already answered.
             let counts = sqlx::query(
                 "SELECT \
                    SUM(CASE WHEN state='pending' AND attempts=0 THEN 1 ELSE 0 END) AS pending, \
                    SUM(CASE WHEN state='pending' AND attempts>0 THEN 1 ELSE 0 END) AS retrying, \
-                   SUM(CASE WHEN state='uncertain' AND id NOT IN \
-                     (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+                   SUM(CASE WHEN state='uncertain' AND retried_at IS NULL \
                      THEN 1 ELSE 0 END) AS uncertain, \
                    MIN(CASE WHEN state='pending' THEN created_at END) AS oldest_pending_at \
                  FROM scrobble_outbox WHERE link_id=?",
@@ -628,8 +635,7 @@ impl DomainServices {
                     o.last_failure, o.updated_at \
              FROM scrobble_outbox o JOIN scrobble_link l ON l.id = o.link_id \
              WHERE l.user_id=? AND l.status <> 'unlinked' AND o.state='uncertain' \
-               AND o.id NOT IN \
-                 (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+               AND o.retried_at IS NULL \
              ORDER BY o.played_at DESC, o.id DESC",
         )
         .bind(user_id.to_string())
@@ -658,6 +664,10 @@ impl DomainServices {
     /// Named by its `public_id`, never by its rowid: the sequential one would
     /// tell anyone holding a single entry of their own how many listens this
     /// whole server has queued.
+    ///
+    /// An entry already retried is refused here too, and on the same column the
+    /// other three readers use: it has stopped asking, so there is nothing left
+    /// to prefer a gap to.
     pub async fn discard_uncertain_scrobble(
         &self,
         user_id: Uuid,
@@ -666,8 +676,7 @@ impl DomainServices {
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
             "UPDATE scrobble_outbox SET state='discarded', updated_at=? \
-             WHERE public_id=? AND state='uncertain' \
-             AND id NOT IN (SELECT retry_of FROM scrobble_outbox WHERE retry_of IS NOT NULL) \
+             WHERE public_id=? AND state='uncertain' AND retried_at IS NULL \
              AND link_id IN \
                (SELECT id FROM scrobble_link WHERE user_id=? AND status <> 'unlinked')",
         )
@@ -692,6 +701,12 @@ impl DomainServices {
     ///
     /// The original stops being counted as uncertain, because it no longer asks
     /// the person for anything; it has not stopped being true.
+    ///
+    /// **The joker is spent on the entry, not on its descendant.** Whether this
+    /// gesture has already been made is `retried_at`, a fact the row carries,
+    /// and not the survival of a row naming it through `retry_of`. A retry ends
+    /// `sent`, so retention will take it, and every reader deducing the answer
+    /// from a join would then hand this listen a second joker.
     pub async fn retry_uncertain_scrobble(
         &self,
         user_id: Uuid,
@@ -700,31 +715,36 @@ impl DomainServices {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        // The link has to be live: a retry under a withdrawn authorisation
-        // would submit to whichever profile happens to be linked now, which is
-        // the very substitution generations exist to prevent.
+        // The conditional UPDATE comes first because it is the arbitration:
+        // spending the joker and refusing a second one are the same write, so
+        // two simultaneous calls cannot both find the entry unanswered.
         //
-        // And the entry must not already have been retried. The original stays
-        // `uncertain` for good — erasing it would falsify the only trace
-        // explaining why a duplicate exists — so nothing in the row itself says
-        // it has been answered, and without this clause a second call would
-        // queue a second copy, and a third a third. Decision 13 gives that
-        // acceptance once, for one listen, deliberately. The unique index on
-        // `retry_of` refuses the insert as well; this clause is what turns the
-        // refusal into an ordinary 404 instead of a constraint error.
-        // The rowid comes back from this lookup rather than from the caller:
-        // `retry_of`, the ordering and the jitter all speak in rowids, and the
-        // public name is resolved to one exactly here, once.
-        let rowid = sqlx::query_scalar::<_, i64>(
-            "SELECT o.id FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
-             WHERE o.public_id=? AND o.state='uncertain' AND l.user_id=? AND l.status='active' \
-               AND NOT EXISTS (SELECT 1 FROM scrobble_outbox r WHERE r.retry_of=o.id)",
+        // The link has to be live in the same breath: a retry under a withdrawn
+        // authorisation would submit to whichever profile happens to be linked
+        // now, which is the very substitution generations exist to prevent.
+        //
+        // `updated_at` is deliberately left alone. It is what
+        // `uncertain_scrobbles` publishes as the moment this listen became
+        // ambiguous, and answering it did not make it ambiguous again.
+        //
+        // `RETURNING` rather than a second lookup by `public_id`: `retry_of`,
+        // the ordering and the jitter all speak in rowids, and this hands back
+        // the rowid of the row the UPDATE itself took. A `SELECT` afterwards
+        // would name the same row today and would be a separate claim about
+        // which row that is.
+        let claimed = sqlx::query_scalar::<_, i64>(
+            "UPDATE scrobble_outbox SET retried_at=? \
+             WHERE public_id=? AND state='uncertain' AND retried_at IS NULL \
+               AND link_id IN \
+                 (SELECT id FROM scrobble_link WHERE user_id=? AND status='active') \
+             RETURNING id",
         )
+        .bind(now)
         .bind(entry.to_string())
         .bind(user_id.to_string())
         .fetch_optional(&mut *tx)
         .await?;
-        let Some(rowid) = rowid else {
+        let Some(rowid) = claimed else {
             return Err(ServiceError::NotFound);
         };
         let public_id = Uuid::new_v4();
