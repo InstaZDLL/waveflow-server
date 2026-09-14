@@ -212,6 +212,8 @@ let loseAcknowledgementOf: number | null = null;
  * would collapse. Last.fm is declared and unavailable, which is its real shape
  * on a server whose operator registered no application.
  */
+type Recipient = "listenbrainz" | "maloja" | "lastfm";
+
 const freshDestinations = () => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
   { provider: "maloja" as const, destination: "alice", available: true },
@@ -224,8 +226,18 @@ const freshDestinations = () => [
   },
 ];
 
-const linkState = (destination: string) => ({
-  provider: "maloja" as const,
+/**
+ * A link is named by the **pair**, here as on the server.
+ *
+ * The recipient was fixed at `maloja` and the mock matched on the destination
+ * alone, which works only while no two recipients share an instance name —
+ * and `default` is the name they all use. Unlinking `maloja/default` would
+ * have withdrawn `listenbrainz/default` beside it: the precise fault named in
+ * the migration that rebuilt `scrobble_link_live_idx`, reproduced in the mock
+ * that exists to catch it.
+ */
+const linkState = (provider: Recipient, destination: string) => ({
+  provider,
   destination,
   health: "degraded" as const,
   pending: 12,
@@ -425,10 +437,17 @@ async function mockAuthenticatedApi(page: Page) {
         path: url.pathname,
         body: method === "PUT" ? route.request().postDataJSON() : undefined,
       });
+      const recipient = provider as Recipient;
+      // Both gestures address the pair. `PUT` replaces rather than adds, as
+      // the route does: presenting a second token leaves one link, not two.
+      const others = scrobbleLinks.filter(
+        (link) =>
+          link.provider !== recipient || link.destination !== destination,
+      );
       scrobbleLinks =
         method === "PUT"
-          ? [...scrobbleLinks, { ...linkState(destination), provider: provider as "maloja" }]
-          : scrobbleLinks.filter((link) => link.destination !== destination);
+          ? [...others, linkState(recipient, destination)]
+          : others;
       await route.fulfill({ status: 204, body: "" });
       return;
     }
@@ -1686,7 +1705,7 @@ test("says so when the journey comes back, and names the instance", async ({
 test("names the track behind an ambiguous listen, and answers it once", async ({
   page,
 }) => {
-  scrobbleLinks = [linkState("alice")];
+  scrobbleLinks = [linkState("maloja", "alice")];
   await page.goto("/settings/scrobbling");
 
   const entry = page.locator(".scrobble-uncertain li");
@@ -1709,7 +1728,7 @@ test("names the track behind an ambiguous listen, and answers it once", async ({
 test("throws an ambiguous listen away when that is the answer", async ({
   page,
 }) => {
-  scrobbleLinks = [linkState("alice")];
+  scrobbleLinks = [linkState("maloja", "alice")];
   await page.goto("/settings/scrobbling");
 
   const entry = page.locator(".scrobble-uncertain li");
@@ -1719,5 +1738,39 @@ test("throws an ambiguous listen away when that is the answer", async ({
   await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
   expect(scrobbleWrites).toEqual([
     { method: "DELETE", path: "/api/v2/scrobble-queue/uncertain/entry-1" },
+  ]);
+});
+
+test("unlinks one instance and leaves a namesake at another recipient", async ({
+  page,
+}) => {
+  // `default` is the name every recipient uses, so the pair is the only thing
+  // that tells these two apart. A screen — or a mock — matching on the
+  // instance name alone withdraws both, which is the fault the unique index
+  // on `(user_id, provider, destination)` was rebuilt to make impossible.
+  destinations = [
+    { provider: "listenbrainz" as const, destination: "default", available: true },
+    { provider: "maloja" as const, destination: "default", available: true },
+  ];
+  scrobbleLinks = [
+    linkState("listenbrainz", "default"),
+    linkState("maloja", "default"),
+  ];
+
+  await page.goto("/settings/scrobbling");
+  await page
+    .getByRole("button", {
+      name: 'Unlink: ListenBrainz — instance “default”',
+    })
+    .click();
+
+  await expect(
+    page.getByRole("button", { name: 'Unlink: Maloja — instance “default”' }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel('API key: ListenBrainz — instance “default”'),
+  ).toBeVisible();
+  expect(scrobbleWrites).toEqual([
+    { method: "DELETE", path: "/api/v2/scrobble-links/listenbrainz/default" },
   ]);
 });
