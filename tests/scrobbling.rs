@@ -3804,14 +3804,30 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
 /// Two of the three destinations announce a refusal *inside* a `200`, and
 /// nothing but a body can say so.
 async fn spawn_answering(path: &'static str, body: &'static str) -> String {
+    spawn_answering_with(path, 200, body, None).await
+}
+
+/// The same, with a status line and a header of the test's choosing.
+///
+/// Two destinations announce refusals inside a `200`, and one of them also
+/// announces its own error codes beside a `429` — where the *header* is what
+/// says how long to wait, and the body must not be allowed to answer instead.
+async fn spawn_answering_with(
+    path: &'static str,
+    status: u16,
+    body: &'static str,
+    header: Option<(&'static str, &'static str)>,
+) -> String {
     let router = axum::Router::new().route(
         path,
         axum::routing::post(move || async move {
-            axum::response::Response::builder()
-                .status(axum::http::StatusCode::OK)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap()
+            let mut response = axum::response::Response::builder()
+                .status(axum::http::StatusCode::from_u16(status).unwrap())
+                .header(axum::http::header::CONTENT_TYPE, "application/json");
+            if let Some((name, value)) = header {
+                response = response.header(name, value);
+            }
+            response.body(axum::body::Body::from(body)).unwrap()
         }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3910,4 +3926,132 @@ async fn a_last_fm_session_key_that_died_breaks_the_link_rather_than_looking_sen
     let links = state.services.scrobble_links(listener.owner).await.unwrap();
     assert_eq!(links[0].health, "broken");
     assert_eq!(links[0].last_failure.as_deref(), Some("auth_broken"));
+}
+
+/// An app reaching one Last.fm instance at `base`, with an application.
+async fn lastfm_app_reaching(
+    temp: &tempfile::TempDir,
+    base: &str,
+) -> (waveflow_server::Config, AppState) {
+    let mut config = lastfm_app(temp);
+    let url = waveflow_server::scrobblers::validate_destination(base, true).unwrap();
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config.destinations = vec![waveflow_server::config::ScrobbleDestination {
+        provider: ScrobbleProvider::LastFm,
+        name: "default".to_owned(),
+        url,
+        fingerprint,
+    }];
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    (config, state)
+}
+
+/// A failing status line decides, and the body does not answer for it.
+///
+/// Last.fm names its own rate limit `error: 29` in the body of the `429` that
+/// carries `Retry-After`. Letting the body answer returns this adapter's own
+/// zero wait — which is not a shorter wait, it is the *header discarded*, and
+/// the header is the only thing that says how much room was asked for.
+///
+/// The number below separates the two readings: the queue takes the larger of
+/// its own backoff and what was asked, so a discarded header lands on the
+/// backoff — about a minute — and an honoured one lands past two.
+#[tokio::test]
+async fn a_rate_limit_is_read_from_the_header_and_not_from_the_body_beside_it() {
+    let base = spawn_answering_with(
+        "/2.0/",
+        429,
+        r#"{"error":29,"message":"Rate limit exceeded"}"#,
+        Some(("retry-after", "240")),
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let (config, state) = lastfm_app_reaching(&temp, &base).await;
+    let listener = fixture(&config, &state, "rate-limited-lastfm-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "a-session-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let before = now_ms();
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    let next: i64 = sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        next - before >= 240_000,
+        "the wait must honour the header, not the code beside it: {}ms",
+        next - before
+    );
+}
+
+/// An instance nobody declared cannot be linked, from any surface.
+///
+/// Decision 10's barrier seen from the service: a member picks a name the
+/// server published and never describes a URL, so a name it never published is
+/// a resource that is not there. Held here rather than only at the route,
+/// because the CLI reaches the same method — `scrobble link` cannot be driven
+/// with a secret in `tests/cli.rs`, which refuses to mutate the environment
+/// while sibling threads read it, so what both surfaces share is tested where
+/// it lives.
+///
+/// The declared name beside it is the control: without it this would pass on a
+/// server that refused *every* link.
+#[tokio::test]
+async fn an_instance_nobody_declared_cannot_be_linked() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "undeclared-listener").await;
+
+    assert!(
+        matches!(
+            state
+                .services
+                .link_scrobble(
+                    listener.owner,
+                    ScrobbleProvider::Maloja,
+                    "an-instance-nobody-declared",
+                    "a-secret",
+                )
+                .await
+                .unwrap_err(),
+            ServiceError::NotFound
+        ),
+        "a name the server never published is not a destination"
+    );
+    // The same recipient, the name it did publish: accepted.
+    assert!(state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "a-secret"
+        )
+        .await
+        .is_ok());
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .iter()
+        .all(|link| link.destination == "alice"));
 }
