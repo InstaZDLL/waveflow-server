@@ -687,10 +687,16 @@ pub fn app(config: &Config, state: AppState) -> Router {
         // Anything no API route claimed is served by the embedded web client:
         // a built asset, or the shell for a client-side route.
         .fallback(webui::handler)
-        .layer(DefaultBodyLimit::max(16 * 1024))
-        .layer(middleware);
+        .layer(DefaultBodyLimit::max(16 * 1024));
 
-    if config.allowed_origins.is_empty() {
+    // CORS goes on first so that the request-id and trace layers end up
+    // outside it. `CorsLayer` answers a preflight itself without calling the
+    // service under it, so anything applied inside it never runs for an
+    // `OPTIONS` — which would leave preflights unnamed, against what the API
+    // guide promises, and invisible in the traces. An origin rejected by
+    // `WAVEFLOW_ALLOWED_ORIGINS` is exactly the thing an operator has to
+    // diagnose, and it was the one request that left no record.
+    let cors = if config.allowed_origins.is_empty() {
         router
     } else {
         router.layer(
@@ -724,7 +730,9 @@ pub fn app(config: &Config, state: AppState) -> Router {
                     axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
                 ]),
         )
-    }
+    };
+
+    cors.layer(middleware)
 }
 
 /// Every prefix whose next path segment is a credential, and what a trace sink

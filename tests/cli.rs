@@ -59,6 +59,27 @@ async fn inserted_account(
     id
 }
 
+/// The binary, with nothing `WAVEFLOW_*` inherited from whoever ran the suite.
+///
+/// `Config::from_env` runs before anything else and verifies the FFmpeg paths
+/// it finds there, so one stray `WAVEFLOW_FFPROBE_PATH` on a developer's
+/// machine fails these commands before they reach a single assertion. A test
+/// that passes or fails on the environment of the person running it is
+/// measuring that, and not the code.
+///
+/// Not `env_clear`: on Windows that takes `SystemRoot` with it, and the process
+/// then cannot start at all. Only this server's own namespace is removed, and
+/// each caller puts back the variables its command actually needs.
+fn cli_command() -> std::process::Command {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"));
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("WAVEFLOW_") {
+            command.env_remove(name);
+        }
+    }
+    command
+}
+
 /// The CLI reads a queue and withdraws an authorisation, and says which
 /// variable it wanted when the token is not there.
 ///
@@ -300,7 +321,7 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
     // processes.
     state.db.pool().close().await;
 
-    let run = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"))
+    let run = cli_command()
         .current_dir(temp.path())
         .env("WAVEFLOW_DATA_DIR", &config.data_dir)
         .args([
@@ -355,7 +376,7 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
     // through the same subprocess, which is also what lets the password arrive
     // in an environment variable without racing the sibling threads that read
     // the process environment in-process.
-    let run = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"))
+    let run = cli_command()
         .current_dir(temp.path())
         .env("WAVEFLOW_DATA_DIR", &config.data_dir)
         .env("WAVEFLOW_SUBSONIC_PASSWORD", "a long enough password")

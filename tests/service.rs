@@ -487,6 +487,7 @@ async fn a_caller_cannot_name_its_own_request() {
     cors_config.allowed_origins = vec!["http://127.0.0.1:9180".parse().unwrap()];
     let cors_router = waveflow_server::app(&cors_config, state);
     let response = cors_router
+        .clone()
         .oneshot(
             Request::get("/health")
                 .header("origin", "http://127.0.0.1:9180")
@@ -502,5 +503,31 @@ async fn a_caller_cannot_name_its_own_request() {
     assert!(
         exposed.split(',').any(|name| name.trim() == "x-request-id"),
         "a browser client cannot read an id it is not allowed to see: {exposed}"
+    );
+
+    // And a preflight is a response too. `CorsLayer` answers one itself without
+    // calling the service beneath it, so for as long as the request-id layers
+    // sat inside it this was the one request nobody could name — and an origin
+    // this server rejects is precisely what an operator needs to find in a log.
+    let response = cors_router
+        .oneshot(
+            Request::builder()
+                .method(axum::http::Method::OPTIONS)
+                .uri("/api/v2/albums")
+                .header("origin", "http://127.0.0.1:9180")
+                .header("access-control-request-method", "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let named = response
+        .headers()
+        .get("x-request-id")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .expect("a preflight is answered by this server, so it is named by it");
+    assert!(
+        uuid::Uuid::parse_str(&named).is_ok(),
+        "a preflight carries a minted id like any other response, and carried: {named}"
     );
 }
