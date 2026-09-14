@@ -620,6 +620,28 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let openapi_for_route = openapi.clone();
     let request_id_header = axum::http::HeaderName::from_static(REQUEST_ID_HEADER);
     let middleware = ServiceBuilder::new()
+        // Before `SetRequestIdLayer`, which keeps whatever the caller sent and
+        // only forges an id when the header is absent. Dropping the inbound one
+        // unconditionally is what makes the layer below always mint, so the
+        // value in every `http_request` span is one this server chose.
+        //
+        // `CLAUDE.md` says no header reaches a trace sink, without exception,
+        // and an id narrow enough to look like an identifier is still a string
+        // a stranger picked: send a well-formed UUID that somebody else's
+        // requests are using and the trace record stops telling two callers
+        // apart. Validating the shape would have addressed the noise and left
+        // that.
+        //
+        // The correlation the header exists for is not lost, only reversed:
+        // `PropagateRequestIdLayer` returns the minted id on the response, so
+        // an upstream proxy records the name this server gave rather than
+        // imposing one. That is the ordinary arrangement wherever a server does
+        // not trust what is in front of it, and this one is routinely in front
+        // of nothing at all.
+        .map_request(|mut request: Request<_>| {
+            request.headers_mut().remove(REQUEST_ID_HEADER);
+            request
+        })
         .layer(SetRequestIdLayer::new(
             request_id_header.clone(),
             MakeRequestUuid,
@@ -665,10 +687,16 @@ pub fn app(config: &Config, state: AppState) -> Router {
         // Anything no API route claimed is served by the embedded web client:
         // a built asset, or the shell for a client-side route.
         .fallback(webui::handler)
-        .layer(DefaultBodyLimit::max(16 * 1024))
-        .layer(middleware);
+        .layer(DefaultBodyLimit::max(16 * 1024));
 
-    if config.allowed_origins.is_empty() {
+    // CORS goes on first so that the request-id and trace layers end up
+    // outside it. `CorsLayer` answers a preflight itself without calling the
+    // service under it, so anything applied inside it never runs for an
+    // `OPTIONS` — which would leave preflights unnamed, against what the API
+    // guide promises, and invisible in the traces. An origin rejected by
+    // `WAVEFLOW_ALLOWED_ORIGINS` is exactly the thing an operator has to
+    // diagnose, and it was the one request that left no record.
+    let cors = if config.allowed_origins.is_empty() {
         router
     } else {
         router.layer(
@@ -690,13 +718,21 @@ pub fn app(config: &Config, state: AppState) -> Router {
                     axum::http::HeaderName::from_static(api::OPERATION_ID_HEADER),
                     axum::http::HeaderName::from_static(api::DEVICE_ID_HEADER),
                 ])
+                // `x-request-id` is exposed and deliberately not allowed: a
+                // browser client should be able to read the name this server
+                // gave its request, which is what makes it quotable in a bug
+                // report, but it has no business sending one — an inbound value
+                // is dropped before anything reads it.
                 .expose_headers([
                     axum::http::header::ACCEPT_RANGES,
                     axum::http::header::CONTENT_LENGTH,
                     axum::http::header::CONTENT_RANGE,
+                    axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
                 ]),
         )
-    }
+    };
+
+    cors.layer(middleware)
 }
 
 /// Every prefix whose next path segment is a credential, and what a trace sink

@@ -522,8 +522,14 @@ async fn set_credential(
     let api_key_hash = security::token_hash(&api_key);
     db.set_subsonic_credential(actor.id, user.id, &encrypted, &api_key_hash, now_ms())
         .await?;
-    println!("Subsonic credential updated for {}", args.username);
-    println!("API key (shown once): {api_key}");
+    // The API key goes to standard output on its own, and everything a person
+    // reads goes to standard error. That way `set-credential … > key` yields the
+    // key and nothing else, and an operator never has to lift a secret out of a
+    // scrollback that then keeps it. Interactively both streams still land on
+    // the same terminal, so this reads the way it always did.
+    eprintln!("Subsonic credential updated for {}", args.username);
+    eprintln!("API key (shown once, on standard output):");
+    println!("{api_key}");
     Ok(())
 }
 
@@ -555,8 +561,10 @@ async fn create_token(state: &AppState, args: CreateTokenArgs) -> anyhow::Result
         .services
         .create_api_token(actor.id, &args.username, &args.name, &args.scopes)
         .await?;
-    println!("Created API token {} for {}", record.id, args.username);
-    println!("Token (shown once): {token}");
+    // Standard output carries the token alone; see `set_credential` for why.
+    eprintln!("Created API token {} for {}", record.id, args.username);
+    eprintln!("Token (shown once, on standard output):");
+    println!("{token}");
     Ok(())
 }
 
