@@ -70,10 +70,21 @@ async fn inserted_account(
 /// Not `env_clear`: on Windows that takes `SystemRoot` with it, and the process
 /// then cannot start at all. Only this server's own namespace is removed, and
 /// each caller puts back the variables its command actually needs.
+///
+/// Matched without regard to case, because Windows keeps the name as it was
+/// first spelled and resolves it case-insensitively: `set waveflow_ffprobe_path`
+/// stores that spelling, `std::env::var("WAVEFLOW_FFPROBE_PATH")` in the child
+/// still finds it, and an exact-case filter would walk straight past it. On Unix
+/// the two are different variables and only the upper one is ever read, so
+/// dropping the other costs nothing.
 fn cli_command() -> std::process::Command {
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"));
     for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("WAVEFLOW_") {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("WAVEFLOW_")
+        {
             command.env_remove(name);
         }
     }
