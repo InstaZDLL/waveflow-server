@@ -15,6 +15,7 @@ const en = {
   "nav.playlists": "Playlists",
   "nav.queue": "Queue",
   "nav.shares": "Shares",
+  "nav.scrobbling": "Scrobbling",
   "nav.admin": "Admin",
   "nav.signOut": "Sign out",
   "nav.skip": "Skip to content",
@@ -344,6 +345,76 @@ const en = {
   "admin.memberAdd": "Give access to",
   "admin.memberChoose": "Choose an account…",
   "admin.memberError": "That membership could not be changed.",
+  "scrobbling.title": "External scrobbling",
+  "scrobbling.detail":
+    "Forward what you listen to here to ListenBrainz, Maloja or Last.fm.",
+  "scrobbling.none":
+    "This server offers no destination. Its operator decides that.",
+  "scrobbling.provider.listenbrainz": "ListenBrainz",
+  "scrobbling.provider.maloja": "Maloja",
+  "scrobbling.provider.lastfm": "Last.fm",
+  "scrobbling.instance": "instance “{name}”",
+  "scrobbling.unavailable": "Unavailable here: {reason}",
+  "scrobbling.retired":
+    "This server no longer offers this instance. Nothing more will leave for it — you can still withdraw the authorisation.",
+  "scrobbling.notLinked": "Not linked.",
+  "scrobbling.secret": "API key",
+  "scrobbling.secretHint": "Taken from your account on that destination.",
+  "scrobbling.link": "Link",
+  "scrobbling.working": "Working…",
+  "scrobbling.linkError":
+    "That authorisation was refused. Check the key and try again.",
+  "scrobbling.unlink": "Unlink",
+  "scrobbling.unlinkError": "That link could not be withdrawn.",
+  "scrobbling.connect": "Connect to Last.fm",
+  "scrobbling.connectDetail":
+    "Last.fm hands out no key you can paste, so it asks you there and brings you back.",
+  "scrobbling.connectError": "The Last.fm journey could not be opened.",
+  "scrobbling.returned": "Last.fm is linked: {name}.",
+  "scrobbling.health.healthy": "Listens are leaving",
+  "scrobbling.health.degraded": "The queue is not moving",
+  "scrobbling.health.broken": "Broken",
+  "scrobbling.healthDetail.healthy": "Nothing is stuck here.",
+  "scrobbling.healthDetail.degraded":
+    "The link answers, but listens are not getting through — either one is waiting on you, or the oldest has waited too long.",
+  "scrobbling.healthDetail.broken":
+    "The credential was refused, or this server can no longer reach that instance under the name the link was made against.",
+  "scrobbling.pending": { one: "{count} waiting", other: "{count} waiting" },
+  "scrobbling.retrying": {
+    one: "{count} being retried",
+    other: "{count} being retried",
+  },
+  "scrobbling.uncertainCount": {
+    one: "{count} waiting on you",
+    other: "{count} waiting on you",
+  },
+  "scrobbling.oldest": "Oldest has waited since {when}.",
+  "scrobbling.lastSuccess": "Last accepted {when}.",
+  "scrobbling.lastFailure": "Last refusal: {reason}.",
+  "scrobbling.uncertain": "Listens only you can decide about",
+  "scrobbling.uncertainDetail":
+    "The connection broke after these left, so nobody knows whether the destination recorded them. Sending one again may put it twice in a listening history other people read; throwing it away leaves a gap. This server will not choose for you, and it will ask once.",
+  "scrobbling.uncertainNone": "Nothing is waiting on you.",
+  "scrobbling.playedAt": "Played {when}",
+  "scrobbling.attempts": { one: "{count} attempt", other: "{count} attempts" },
+  "scrobbling.retry": "Send it again",
+  "scrobbling.discard": "Throw it away",
+  "scrobbling.answered": "Answered.",
+  "scrobbling.answerError":
+    "That listen could not be answered. Reload the page before trying again.",
+  "scrobbling.unnamedTrack": "Not in the history this account still holds",
+  "scrobbling.reason.rate_limited": "the destination asked for room",
+  "scrobbling.reason.retryable": "the destination did not take it",
+  "scrobbling.reason.auth_broken": "the authorisation was refused",
+  "scrobbling.reason.rejected": "the destination read it and refused it",
+  "scrobbling.reason.destination_gone":
+    "this server no longer reaches that instance under that name",
+  "scrobbling.reason.credential_unreadable":
+    "this server could not read the stored credential",
+  "scrobbling.reason.attempts_exhausted": "it was tried too many times",
+  "scrobbling.reason.unlinked": "the link was withdrawn",
+  "scrobbling.reason.ambiguous": "the answer never arrived",
+  "scrobbling.reason.interrupted": "the server stopped mid-flight",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -357,6 +428,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.playlists": "Playlists",
   "nav.queue": "File d’attente",
   "nav.shares": "Partages",
+  "nav.scrobbling": "Scrobbling",
   "nav.admin": "Administration",
   "nav.signOut": "Se déconnecter",
   "nav.skip": "Aller au contenu",
@@ -688,6 +760,83 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.memberAdd": "Donner accès à",
   "admin.memberChoose": "Choisir un compte…",
   "admin.memberError": "Cette appartenance n’a pas pu être modifiée.",
+  "scrobbling.title": "Scrobbling externe",
+  "scrobbling.detail":
+    "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm.",
+  "scrobbling.none":
+    "Ce serveur ne propose aucune destination. C’est son exploitant qui en décide.",
+  "scrobbling.provider.listenbrainz": "ListenBrainz",
+  "scrobbling.provider.maloja": "Maloja",
+  "scrobbling.provider.lastfm": "Last.fm",
+  "scrobbling.instance": "instance « {name} »",
+  "scrobbling.unavailable": "Indisponible ici : {reason}",
+  "scrobbling.retired":
+    "Ce serveur ne propose plus cette instance. Plus rien ne partira vers elle — vous pouvez encore retirer l’autorisation.",
+  "scrobbling.notLinked": "Non liée.",
+  "scrobbling.secret": "Clé d’API",
+  "scrobbling.secretHint": "Prise sur votre compte chez cette destination.",
+  "scrobbling.link": "Lier",
+  "scrobbling.working": "En cours…",
+  "scrobbling.linkError":
+    "Cette autorisation a été refusée. Vérifiez la clé et recommencez.",
+  "scrobbling.unlink": "Délier",
+  "scrobbling.unlinkError": "Ce lien n’a pas pu être retiré.",
+  "scrobbling.connect": "Se connecter à Last.fm",
+  "scrobbling.connectDetail":
+    "Last.fm ne délivre aucune clé à recopier : il vous interroge chez lui et vous ramène ici.",
+  "scrobbling.connectError": "Le parcours Last.fm n’a pas pu s’ouvrir.",
+  "scrobbling.returned": "Last.fm est liée : {name}.",
+  "scrobbling.health.healthy": "Les écoutes partent",
+  "scrobbling.health.degraded": "La file n’avance pas",
+  "scrobbling.health.broken": "Rompu",
+  "scrobbling.healthDetail.healthy": "Rien n’est bloqué ici.",
+  "scrobbling.healthDetail.degraded":
+    "Le lien répond, mais les écoutes ne passent pas — soit l’une attend votre réponse, soit la plus ancienne attend depuis trop longtemps.",
+  "scrobbling.healthDetail.broken":
+    "L’autorisation a été refusée, ou ce serveur ne joint plus cette instance sous le nom qui a servi à créer le lien.",
+  "scrobbling.pending": {
+    one: "{count} en attente",
+    other: "{count} en attente",
+  },
+  "scrobbling.retrying": {
+    one: "{count} en reprise",
+    other: "{count} en reprise",
+  },
+  "scrobbling.uncertainCount": {
+    one: "{count} attend votre réponse",
+    other: "{count} attendent votre réponse",
+  },
+  "scrobbling.oldest": "La plus ancienne attend depuis {when}.",
+  "scrobbling.lastSuccess": "Dernière acceptée {when}.",
+  "scrobbling.lastFailure": "Dernier refus : {reason}.",
+  "scrobbling.uncertain": "Des écoutes que vous seul pouvez trancher",
+  "scrobbling.uncertainDetail":
+    "La connexion a été coupée après leur départ : personne ne sait si la destination les a enregistrées. La renvoyer peut la faire figurer deux fois dans un historique que d’autres lisent ; la jeter laisse un trou. Ce serveur ne choisira pas à votre place, et il ne le demandera qu’une fois.",
+  "scrobbling.uncertainNone": "Rien n’attend votre réponse.",
+  "scrobbling.playedAt": "Écoutée {when}",
+  "scrobbling.attempts": {
+    one: "{count} tentative",
+    other: "{count} tentatives",
+  },
+  "scrobbling.retry": "La renvoyer",
+  "scrobbling.discard": "La jeter",
+  "scrobbling.answered": "Répondu.",
+  "scrobbling.answerError":
+    "Cette écoute n’a pas pu être traitée. Rechargez la page avant de réessayer.",
+  "scrobbling.unnamedTrack":
+    "Absente de l’historique que ce compte conserve encore",
+  "scrobbling.reason.rate_limited": "la destination a demandé du répit",
+  "scrobbling.reason.retryable": "la destination ne l’a pas prise",
+  "scrobbling.reason.auth_broken": "l’autorisation a été refusée",
+  "scrobbling.reason.rejected": "la destination l’a lue et l’a refusée",
+  "scrobbling.reason.destination_gone":
+    "ce serveur ne joint plus cette instance sous ce nom",
+  "scrobbling.reason.credential_unreadable":
+    "ce serveur n’a pas pu lire l’identifiant enregistré",
+  "scrobbling.reason.attempts_exhausted": "elle a été tentée trop de fois",
+  "scrobbling.reason.unlinked": "le lien a été retiré",
+  "scrobbling.reason.ambiguous": "la réponse n’est jamais arrivée",
+  "scrobbling.reason.interrupted": "le serveur s’est arrêté en plein vol",
 };
 
 export type Locale = "en" | "fr";

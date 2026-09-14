@@ -204,6 +204,59 @@ let uploadSession = freshUploadSession();
  */
 let loseAcknowledgementOf: number | null = null;
 
+/**
+ * External scrobbling — RFC-010.
+ *
+ * Two instances of one recipient, because that is the case the whole named
+ * instances slice exists for and the one a screen keyed on the recipient alone
+ * would collapse. Last.fm is declared and unavailable, which is its real shape
+ * on a server whose operator registered no application.
+ */
+const freshDestinations = () => [
+  { provider: "listenbrainz" as const, destination: "default", available: true },
+  { provider: "maloja" as const, destination: "alice", available: true },
+  { provider: "maloja" as const, destination: "bob", available: true },
+  {
+    provider: "lastfm" as const,
+    destination: "default",
+    available: false,
+    unavailable: "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+  },
+];
+
+const linkState = (destination: string) => ({
+  provider: "maloja" as const,
+  destination,
+  health: "degraded" as const,
+  pending: 12,
+  retrying: 3,
+  uncertain: 1,
+  oldest_pending_at: 1_700_000_000_000,
+  last_success_at: 1_700_000_000_000,
+  last_failure: "rate_limited",
+});
+
+/** The one ambiguous listen, played when `t5` was, so history can name it. */
+const freshUncertain = () => [
+  {
+    id: "entry-1",
+    provider: "maloja" as const,
+    destination: "alice",
+    played_at: 1_000_000 - 5,
+    attempts: 1,
+    last_failure: "ambiguous",
+    updated_at: 1_700_000_000_000,
+  },
+];
+
+let destinations = freshDestinations();
+let scrobbleLinks: Array<ReturnType<typeof linkState>> = [];
+let uncertain = freshUncertain();
+/** Every link, unlink and answer the mock received, in order. */
+let scrobbleWrites: Array<{ method: string; path: string; body?: unknown }> = [];
+/** Where the Last.fm journey says to send the browser. */
+let lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
+
 /** The loop the mock holds for each track, as bytes. Absent is none. */
 let canvases = new Map<string, number[]>();
 /** Every placement and removal the mock received, in order. */
@@ -343,6 +396,58 @@ async function mockAuthenticatedApi(page: Page) {
           songs: albumDetail.songs,
         },
       });
+      return;
+    }
+    // Scrobbling — RFC-010. The order of these four matters: the authorise
+    // path and the retry path each sit where a destination name and an entry
+    // id would otherwise be read, which is why the server puts the literal
+    // before the parameter, and why the mock has to match in the same order.
+    if (url.pathname === "/api/v2/scrobble-destinations") {
+      await route.fulfill({ json: destinations });
+      return;
+    }
+    if (url.pathname === "/api/v2/scrobble-links") {
+      await route.fulfill({ json: scrobbleLinks });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/scrobble-links/lastfm/authorize/")) {
+      scrobbleWrites.push({ method: "POST", path: url.pathname });
+      await route.fulfill({
+        json: { authorize_url: lastFmAuthorizeUrl, expires_in: 720 },
+      });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/scrobble-links/")) {
+      const [, , , , provider, destination] = url.pathname.split("/");
+      const method = route.request().method();
+      scrobbleWrites.push({
+        method,
+        path: url.pathname,
+        body: method === "PUT" ? route.request().postDataJSON() : undefined,
+      });
+      scrobbleLinks =
+        method === "PUT"
+          ? [...scrobbleLinks, { ...linkState(destination), provider: provider as "maloja" }]
+          : scrobbleLinks.filter((link) => link.destination !== destination);
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+    if (url.pathname.endsWith("/retry")) {
+      const id = url.pathname.split("/")[5];
+      scrobbleWrites.push({ method: "POST", path: url.pathname });
+      uncertain = uncertain.filter((entry) => entry.id !== id);
+      await route.fulfill({ json: { id: "entry-2" } });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/scrobble-queue/uncertain/")) {
+      const id = url.pathname.split("/")[5];
+      scrobbleWrites.push({ method: "DELETE", path: url.pathname });
+      uncertain = uncertain.filter((entry) => entry.id !== id);
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+    if (url.pathname === "/api/v2/scrobble-queue/uncertain") {
+      await route.fulfill({ json: uncertain });
       return;
     }
     if (url.pathname === "/api/v2/history") {
@@ -546,6 +651,11 @@ test.beforeEach(async ({ page }) => {
   refuseCanvasWith = null;
   canvasStreamGate = Promise.resolve();
   slowAlbum = Promise.resolve();
+  destinations = freshDestinations();
+  scrobbleLinks = [];
+  uncertain = freshUncertain();
+  scrobbleWrites = [];
+  lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
   await mockAuthenticatedApi(page);
 });
 
@@ -1456,4 +1566,158 @@ test("plays a track's canvas over its cover, and steps aside for it", async ({
   release();
   await expect(video).toHaveCount(0);
   await expect(stage.locator(".cover")).toBeVisible();
+});
+
+/**
+ * External scrobbling — RFC-010, the four gestures a client owes.
+ *
+ * The path is the server's: `lastfm_callback` redirects to
+ * `/settings/scrobbling`, so a page anywhere else leaves the last step of the
+ * journey on the not-found screen.
+ */
+test("offers each instance by name, and says why one cannot be linked", async ({
+  page,
+}) => {
+  await page.goto("/settings/scrobbling");
+
+  await expect(
+    page.getByRole("heading", { name: "External scrobbling" }),
+  ).toBeVisible();
+  // Two instances of one recipient, each named. A screen keyed on the
+  // recipient would show "Maloja" once and hide whichever it linked second.
+  await expect(page.getByText('Maloja — instance “alice”')).toBeVisible();
+  await expect(page.getByText('Maloja — instance “bob”')).toBeVisible();
+  await expect(
+    page.getByText('ListenBrainz — instance “default”'),
+  ).toBeVisible();
+
+  // Declared and unusable is a real shape, and the reason is published so the
+  // person is not left to discover it when a link fails later.
+  await expect(
+    page.getByText(
+      "Unavailable here: last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Connect to Last.fm" }),
+  ).toHaveCount(0);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test("links one instance by its key, and leaves the other alone", async ({
+  page,
+}) => {
+  await page.goto("/settings/scrobbling");
+  await expect(page.getByText('Maloja — instance “alice”')).toBeVisible();
+
+  await page
+    .getByLabel('API key: Maloja — instance “alice”')
+    .fill("alice-api-key");
+  await page
+    .locator(".scrobble-row", { hasText: "alice" })
+    .getByRole("button", { name: "Link" })
+    .click();
+
+  await expect(
+    page.getByRole("button", { name: 'Unlink: Maloja — instance “alice”' }),
+  ).toBeVisible();
+  expect(scrobbleWrites).toEqual([
+    {
+      method: "PUT",
+      path: "/api/v2/scrobble-links/maloja/alice",
+      body: { secret: "alice-api-key" },
+    },
+  ]);
+  // The pair names the resource: bob is untouched and still offers its field.
+  await expect(
+    page.getByLabel('API key: Maloja — instance “bob”'),
+  ).toBeVisible();
+
+  // The queue behind the link is a state and four counters, never an echo of
+  // what was heard.
+  await expect(page.getByText("The queue is not moving")).toBeVisible();
+  await expect(page.getByText("12 waiting")).toBeVisible();
+  await expect(page.getByText("1 waiting on you")).toBeVisible();
+  await expect(
+    page.getByText("Last refusal: the destination asked for room."),
+  ).toBeVisible();
+});
+
+test("sends the browser to Last.fm rather than asking for a key", async ({
+  page,
+}) => {
+  // Last.fm hands out no secret a person can hold, so the only gesture is a
+  // journey. Declared *and* usable here, unlike the listing test.
+  destinations = [
+    { provider: "lastfm" as const, destination: "default", available: true },
+  ];
+  await page.route("https://www.last.fm/**", (route) =>
+    route.fulfill({ status: 200, body: "<title>last.fm</title>" }),
+  );
+
+  await page.goto("/settings/scrobbling");
+  await page.getByRole("button", { name: "Connect to Last.fm" }).click();
+
+  await page.waitForURL("https://www.last.fm/**");
+  expect(scrobbleWrites).toEqual([
+    {
+      method: "POST",
+      path: "/api/v2/scrobble-links/lastfm/authorize/default",
+      body: undefined,
+    },
+  ]);
+});
+
+test("says so when the journey comes back, and names the instance", async ({
+  page,
+}) => {
+  // What the callback redirects to once it has finished the link itself. The
+  // value is shown and nothing more: anybody can type this address, and the
+  // listing beside it is what actually says a link exists.
+  await page.goto("/settings/scrobbling?linked=lastfm&destination=default");
+
+  await expect(page.getByText("Last.fm is linked: default.")).toBeVisible();
+});
+
+test("names the track behind an ambiguous listen, and answers it once", async ({
+  page,
+}) => {
+  scrobbleLinks = [linkState("alice")];
+  await page.goto("/settings/scrobbling");
+
+  const entry = page.locator(".scrobble-uncertain li");
+  // The entry carries no title — decision 12 keeps the envelope out of the API
+  // — so the screen matches `played_at` against the account's own history,
+  // which is what that field is documented to be for. A bare timestamp would
+  // ask somebody to decide about a listen they cannot recognise.
+  await expect(entry.getByText("Track t5")).toBeVisible();
+  await expect(entry.getByText(/instance “alice”/)).toBeVisible();
+  await expect(entry.getByText(/the answer never arrived/)).toBeVisible();
+
+  await entry.getByRole("button", { name: "Send it again" }).click();
+
+  await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
+  expect(scrobbleWrites).toEqual([
+    { method: "POST", path: "/api/v2/scrobble-queue/uncertain/entry-1/retry" },
+  ]);
+});
+
+test("throws an ambiguous listen away when that is the answer", async ({
+  page,
+}) => {
+  scrobbleLinks = [linkState("alice")];
+  await page.goto("/settings/scrobbling");
+
+  const entry = page.locator(".scrobble-uncertain li");
+  await expect(entry.getByText("Track t5")).toBeVisible();
+  await entry.getByRole("button", { name: "Throw it away" }).click();
+
+  await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
+  expect(scrobbleWrites).toEqual([
+    { method: "DELETE", path: "/api/v2/scrobble-queue/uncertain/entry-1" },
+  ]);
 });
