@@ -7,6 +7,10 @@
   (le transfert). Le champ *Statut* ci-dessus ne bascule jamais dans ce projet :
   c'est cette ligne qui dit ce qui tourne.
 - **Date** : 2026-08-26
+- **Révisée** : 2026-09-15, après revue externe. La dernière question ouverte —
+  le partage d'un même blob entre bibliothèques — est tranchée par la
+  décision 9 ci-dessous, et par la négative. **Cette RFC n'a plus de question
+  ouverte.**
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md)
@@ -108,8 +112,8 @@ une déduplication globale serait exactement l'oracle que cette règle interdit.
 Elle laisserait aussi B croire qu'elle possède une piste qu'elle n'a pas.
 
 Le partage d'un même blob entre bibliothèques — rattachement, lien matériel,
-copie interne — n'est pas exclu pour toujours, mais il demande de décider ces
-frontières et il n'appartient pas à cette RFC.
+copie interne — a été laissé ouvert ici jusqu'au 2026-09-15. **La décision 9 le
+tranche, et par la négative** : deux bibliothèques, deux fichiers, deux quotas.
 
 ### La négociation se fait par lot
 
@@ -429,6 +433,71 @@ nettoyage d'une session expirée ou refusée est déjà une suppression que le
 serveur doit écrire de toute façon. Ce que cette RFC décide, c'est qu'elle
 n'ouvre pas de route de suppression. Pas qu'il n'y en aura jamais.
 
+## Décision 9 — deux bibliothèques, deux fichiers, deux quotas
+
+**Ajoutée le 2026-09-15, après revue externe.** C'était la dernière question
+ouverte de cette RFC, et la décision 2 la reportait en disant que le partage
+d'un blob « n'est pas exclu pour toujours, mais il demande de décider ces
+frontières ». Les voici, et la réponse est non.
+
+**Le même contenu dans A et dans B, ce sont deux fichiers sur le disque et deux
+dépenses de quota.** La négociation reste strictement bornée à la bibliothèque
+visée : même si le serveur sait par ailleurs que ces octets existent ailleurs,
+cela ne change ni le verdict, ni le transfert, ni la validation, ni ce qui est
+compté.
+
+### Pourquoi le canvas a pu et pourquoi l'audio ne peut pas
+
+La [RFC-009](RFC-009-track-canvas.md) partage ses blobs, et sa décision 11 dit
+exactement ce qu'on aimerait reprendre : les octets se partagent, l'existence de
+l'empreinte non, et chaque bibliothèque paie la sienne. Ce qui rend cela
+possible n'est pas une audace qui manquerait ici : c'est que le canvas a **un
+magasin global**, `canvas_dir`, sous le répertoire de données, et que rien n'y
+accède sans passer par `canvas_for_user`, qui vérifie l'appartenance.
+
+L'audio n'a pas de magasin. La décision 5 pose que le fichier reçu se range
+**dans l'arbre de sa bibliothèque** — `<racine>/.waveflow-managed/<empreinte>.<extension>`
+— précisément pour que le scan ordinaire le découvre, sans second modèle de
+stockage. Le lieu du fichier *est* son appartenance.
+
+Vouloir partager quand même laisse quatre voies, et chacune se ferme :
+
+- **Le lien matériel** demande un seul système de fichiers, ce que deux racines
+  choisies par un opérateur ne garantissent pas. Et il fait des deux chemins les
+  mêmes octets : une racine de bibliothèque est un répertoire que son opérateur
+  ouvre et modifie, donc retaguer le fichier de A retaguerait celui de B. C'est
+  la pire des frontières — invisible, et découverte par ses effets.
+- **Le lien symbolique** était déjà écarté par la décision 5 — « jamais un lien
+  symbolique, le parcours les refuse déjà » — et ce n'est pas une
+  recommandation : le scan marche en `follow_links(false)` et saute tout
+  `is_symlink()` (`src/scanner.rs`), donc un blob lié ne serait jamais indexé.
+  L'option portable et bon marché est donc fermée depuis le premier jour de
+  cette RFC, et non par la présente décision.
+- **Un magasin global adressé par contenu**, avec des références, reviendrait à
+  défaire la décision 5 et à apprendre au scanner un deuxième modèle de
+  stockage. C'est une autre RFC, pas une optimisation.
+- **Le reflink** serait le plus sain et dépend du système de fichiers. Il ne
+  peut pas devenir un invariant de ce serveur.
+
+### Et la déduplication avant transfert reste interdite
+
+Il resterait à ne pas transférer deux fois les mêmes octets. C'est justement
+l'oracle que la décision 2 ferme : une empreinte qui répondrait `present` parce
+qu'une *autre* bibliothèque la détient apprend à son annonceur l'existence d'un
+fichier qu'il ne peut pas voir, et lui fait croire qu'il possède une piste qu'il
+n'a pas. Le gain de bande passante ne paie pas la fuite.
+
+### La porte laissée ouverte, et sa serrure
+
+Une **déduplication physique transparente** reste possible plus tard — un
+reflink quand le système de fichiers le permet, avec repli sur la copie —
+**à trois conditions, toutes les trois** : qu'elle ne crée aucun oracle entre
+bibliothèques, qu'elle ne rende le fichier d'une bibliothèque dépendant de celui
+d'une autre, et qu'elle ne change rien au contrat d'API. C'est-à-dire : une
+optimisation de stockage, appliquée après validation, qu'aucun membre ne peut
+observer. Tout ce qui se remarque depuis une API est un changement de
+sémantique et relève d'une décision, pas d'une optimisation.
+
 ## Ce que cette RFC change ailleurs
 
 **`library_event` doit porter l'appareil d'origine.**
@@ -457,9 +526,12 @@ surprise à l'implémentation.
 
 ## Ce qui reste ouvert
 
-Une seule question, et les deux autres ont été tranchées en implémentant. C'est
-la ligne *Implémentée par* de l'en-tête qu'il faut lire, pas cette section :
-elle nomme des PR, et une PR se vérifie.
+**Rien, depuis le 2026-09-15.** Deux des trois questions ont été tranchées en
+implémentant, la troisième par la décision 9. Le titre de cette section est
+gardé tel quel plutôt que réécrit : ce qu'elle raconte maintenant, c'est
+comment chacune s'est fermée, et par quoi. C'est la ligne *Implémentée par* de
+l'en-tête qu'il faut lire pour le code, pas cette section : elle nomme des PR,
+et une PR se vérifie.
 
 - ~~**Les valeurs** : plafond par fichier, quota par bibliothèque, taille de
   fragment, taille d'un lot de négociation, sessions simultanées par compte,
@@ -482,10 +554,14 @@ elle nomme des PR, et une PR se vérifie.
   donc au plus deux fois la durée promise à sa session. Chaque session est
   balayée sous son propre verrou, et le fichier part avant sa ligne : l'ordre
   inverse laisse l'orphelin que ce balayage existe pour ramasser.
-- **Le partage d'un même blob entre bibliothèques**, qui demande d'abord de
-  décider ce que ces frontières signifient. Toujours ouvert, et personne ne l'a
-  demandé. La [RFC-009](RFC-009-track-canvas.md) a depuis tracé la même ligne
-  pour le canvas, dans sa décision 11 : les octets se partagent, l'existence de
-  l'empreinte non, et chaque bibliothèque paie la sienne. Cela dit ce qu'un
-  magasin adressé par contenu peut faire sans rien trancher de ce qu'une
-  bibliothèque a le droit d'apprendre d'une autre, qui reste la question.
+- ~~**Le partage d'un même blob entre bibliothèques**, qui demande d'abord de
+  décider ce que ces frontières signifient.~~ Tranché le 2026-09-15 par la
+  **décision 9**, et par la négative : deux bibliothèques, deux fichiers, deux
+  quotas. La question était restée ouverte parce que la
+  [RFC-009](RFC-009-track-canvas.md) semblait montrer la voie — sa décision 11
+  partage les octets d'un canvas sans partager l'existence de l'empreinte. La
+  revue a montré pourquoi l'audio ne peut pas la suivre : le canvas a un
+  magasin global, l'audio range son fichier dans l'arbre de sa bibliothèque
+  (décision 5), et le lieu du fichier *est* son appartenance. Ce qui se reprend
+  de la décision 11, c'est sa seule moitié confidentialité, que la décision 2
+  posait déjà ici.
