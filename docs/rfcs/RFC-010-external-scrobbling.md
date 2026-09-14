@@ -423,6 +423,16 @@ faire à la place de l'opérateur.
   destination disparue, cassés et leur file terminée, plutôt que laissés avec
   deux colonnes vides que la réconciliation suivante ne saurait pas lire.
 
+  **Conséquence de déploiement, dite plutôt que tue.** Qui change l'URL d'une
+  destination *puis* met à jour verra le rattrapage entériner ce changement :
+  l'empreinte inscrite sera la nouvelle, et les écoutes en attente partiront
+  vers la nouvelle machine sans que la garde d'identité, qui n'a pas connu
+  l'ancienne, ait rien à signaler. C'est le seul instant du cycle où cette garde
+  ne peut pas jouer, et c'est dans sa nature : elle compare à ce qui a été
+  inscrit, et ici rien ne l'a été. L'ordre à tenir est donc l'inverse — mettre à
+  jour d'abord, changer l'URL ensuite, et la garde fera son travail. Un opérateur
+  qui a déjà fait l'autre délie avant de mettre à jour.
+
   **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
   l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
   migration ne voit pas. Celle-ci ajoute donc les colonnes, nullables, et
@@ -578,6 +588,14 @@ navigation `GET` de premier plan le porte, une requête de fond d'un autre site
 ne le porte pas. Il vaut ce que vaut l'état, dure aussi peu, et se jette avec
 lui. Les cookies de session ne bougent pas : `Strict` est le bon réglage pour
 eux, et cette exception ne les concerne pas.
+**Un parcours à la fois.** Le cookie porte un nom fixe, donc en ouvrir un second
+remplace le premier : l'onglet resté en arrière ne pourra plus conclure, et son
+état expirera seul. C'est la limite retenue plutôt que corrigée — lier son
+compte à un service est un geste qu'on fait une fois, et un cookie par état
+échangerait cette petite surprise contre un mécanisme dont personne n'a besoin.
+Ce qu'il ne faut pas, c'est qu'un retour trouve un cookie qui ne lui correspond
+pas et l'accepte quand même : les deux se vérifient ensemble, ou le retour est
+refusé.
 
 **Ce que RFC-002 demande, le retour y répond autrement.** La règle est qu'une
 route ne peut pas exister sans dire quel `Access` elle exige. `authorize` y
@@ -619,7 +637,8 @@ Un lien expose son état et la forme de sa file, agrégés :
 
 - `healthy`, `degraded`, `broken` ;
 - combien de lignes attendent, combien retentent, combien sont `uncertain` ;
-- depuis quand attend la plus ancienne, et quand remonte le dernier succès ;
+- depuis quand attend la plus ancienne — et, plus tard seulement, quand remonte
+  le dernier succès, qui attend la colonne dont il est question plus bas ;
 - éventuellement une dernière cause normalisée — `rate_limited`, `auth_broken`.
 
 **`healthy` ne peut pas vouloir dire « j'ai encore un jeton ».** Un lien valide
