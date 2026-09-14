@@ -133,6 +133,8 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
             "cli-scrobble-user",
             "--provider",
             "listenbrainz",
+            "--destination",
+            "default",
             "--token-env",
             "WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET",
         ],
@@ -162,6 +164,8 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
             "b",
             "--provider",
             "listenbrainz",
+            "--destination",
+            "default",
         ])
         .expect("the scrobble link flags have to parse — that is what this pins")
         .command
@@ -176,6 +180,7 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
         .link_scrobble(
             user,
             waveflow_server::services::ScrobbleProvider::ListenBrainz,
+            "default",
             "lb-token-from-the-shell",
         )
         .await
@@ -212,6 +217,8 @@ async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
             "cli-scrobble-user",
             "--provider",
             "listenbrainz",
+            "--destination",
+            "default",
         ],
     )
     .await
@@ -247,6 +254,8 @@ async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
             "cli-refusing-user",
             "--provider",
             "spotify",
+            "--destination",
+            "default",
         ],
     )
     .await
@@ -298,6 +307,8 @@ async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
             "cli-refusing-user",
             "--provider",
             "listenbrainz",
+            "--destination",
+            "default",
             "--token-env",
             "WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET",
         ],

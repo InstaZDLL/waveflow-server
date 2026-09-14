@@ -984,6 +984,14 @@ pub struct DomainServices {
     /// outbound adapter at all — the ordinary case, since RFC-010 decision 4
     /// forbids shipping any provider credential in an AGPL binary.
     scrobble_targets: scrobbling::ScrobbleTargets,
+    /// Every instance of every destination the operator declared, by
+    /// `(provider, name)`, with the fingerprint of its URL.
+    ///
+    /// Copied out of `Config` like the limits beside it. It is what makes a
+    /// link's named destination checkable — at the moment it is posed, at
+    /// reconciliation, and before a retry leaves — without three readings of
+    /// the environment that could disagree.
+    scrobble_destinations: Arc<std::collections::HashMap<(ScrobbleProvider, String), String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1050,8 +1058,8 @@ mod uploads;
 /// decision 13 asks somebody to choose and nothing outside could see what
 /// about.
 pub use scrobbling::{
-    ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider, ScrobbleTarget,
-    ScrobbleVerdict, UncertainScrobble,
+    ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
+    ScrobbleTarget, ScrobbleVerdict, UncertainScrobble,
 };
 
 impl DomainServices {
@@ -1081,6 +1089,18 @@ impl DomainServices {
             canvas_locks: Arc::new(dashmap::DashMap::new()),
             scrobbling: config.scrobbling,
             scrobble_targets: Arc::new(dashmap::DashMap::new()),
+            scrobble_destinations: Arc::new(
+                config
+                    .destinations
+                    .iter()
+                    .map(|destination| {
+                        (
+                            (destination.provider, destination.name.clone()),
+                            destination.fingerprint.clone(),
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 

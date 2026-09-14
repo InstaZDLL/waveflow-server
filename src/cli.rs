@@ -184,6 +184,11 @@ pub struct LinkScrobbleArgs {
     /// `listenbrainz`, `maloja` or `lastfm`.
     #[arg(long)]
     provider: String,
+    /// Which declared instance of it. Named rather than defaulted: an operator
+    /// running two Maloja instances must say which one this account submits to,
+    /// and a silent default would pick one for them.
+    #[arg(long)]
+    destination: String,
     /// Environment variable containing the token. The value never appears in
     /// argv, for the same reason the account password does not: a shell history
     /// and a process list are both readable by people this credential is not
@@ -200,6 +205,9 @@ pub struct UnlinkScrobbleArgs {
     username: String,
     #[arg(long)]
     provider: String,
+    /// Which declared instance of it, for the same reason `link` takes one.
+    #[arg(long)]
+    destination: String,
 }
 
 #[derive(Debug, Args)]
@@ -595,12 +603,13 @@ async fn link_scrobble(state: &AppState, args: LinkScrobbleArgs) -> anyhow::Resu
     let secret = read_secret_env(&args.token_env)?;
     state
         .services
-        .link_scrobble(user.id, provider, &secret)
+        .link_scrobble(user.id, provider, &args.destination, &secret)
         .await?;
     println!(
-        "Linked {} to {} (any previous authorisation there is withdrawn)",
+        "Linked {} to {}/{} (any previous authorisation there is withdrawn)",
         args.username,
-        provider.as_str()
+        provider.as_str(),
+        args.destination
     );
     Ok(())
 }
@@ -615,10 +624,24 @@ async fn unlink_scrobble(state: &AppState, args: UnlinkScrobbleArgs) -> anyhow::
     let provider = scrobble_provider(&args.provider)?;
     // Saying so rather than failing: the caller asked for this account to hold
     // no authorisation there, and it holds none. The API answers the same way.
-    if state.services.unlink_scrobble(user.id, provider).await? {
-        println!("Unlinked {} from {}", args.username, provider.as_str());
+    if state
+        .services
+        .unlink_scrobble(user.id, provider, &args.destination)
+        .await?
+    {
+        println!(
+            "Unlinked {} from {}/{}",
+            args.username,
+            provider.as_str(),
+            args.destination
+        );
     } else {
-        println!("{} had no link to {}", args.username, provider.as_str());
+        println!(
+            "{} had no link to {}/{}",
+            args.username,
+            provider.as_str(),
+            args.destination
+        );
     }
     Ok(())
 }
@@ -639,8 +662,9 @@ async fn scrobble_status(state: &AppState, args: ScrobbleStatusArgs) -> anyhow::
         // Counters, never content: decision 12 governs what this prints exactly
         // as it governs what the route publishes.
         println!(
-            "{:<13} {:<9} pending {:<5} retrying {:<5} uncertain {:<5} {}",
+            "{:<13} {:<16} {:<9} pending {:<5} retrying {:<5} uncertain {:<5} {}",
             link.provider.as_str(),
+            link.destination,
             link.health,
             link.pending,
             link.retrying,

@@ -172,7 +172,16 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/now-playing", get(list_now_playing))
         .route("/api/v2/scrobble-links", get(list_scrobble_links))
         .route(
-            "/api/v2/scrobble-links/{provider}",
+            "/api/v2/scrobble-destinations",
+            get(list_scrobble_destinations),
+        )
+        // The instance is in the path, not implied. `/{provider}` named nothing
+        // precise the moment a recipient could have two, and `DELETE` has no
+        // body to name one in. No implicit default either: a path without an
+        // instance is refused rather than attached to whichever came first —
+        // that slide is the substitution decision 4 exists to prevent.
+        .route(
+            "/api/v2/scrobble-links/{provider}/{destination}",
             put(link_scrobble).delete(unlink_scrobble),
         )
         // Deliberately not under `scrobble-links/`: `uncertain` would sit in the

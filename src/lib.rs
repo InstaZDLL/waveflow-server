@@ -161,6 +161,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::list_history,
         api::list_now_playing,
         api::list_scrobble_links,
+        api::list_scrobble_destinations,
         api::link_scrobble,
         api::unlink_scrobble,
         api::list_uncertain_scrobbles,
@@ -238,6 +239,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::HistoryItem,
         services::ScrobbleProvider,
         services::ScrobbleLinkState,
+        services::ScrobbleDestinationName,
         services::UncertainScrobble,
         api::LinkScrobbleRequest,
         api::RetriedScrobbleResponse,
@@ -562,26 +564,32 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // operator naming a destination rather than by anybody linking an account.
     // Nothing leaves until both are true: an adapter with no authorisation
     // behind it is never handed a listen. RFC-010 decision 11.
-    if let Some(base) = config.listenbrainz_url.as_deref() {
+    for destination in &config.destinations {
         // `Config::from_env` refuses to boot on a malformed destination, so the
-        // `validate_destination` half of this cannot fail on a real server —
-        // it is reachable only because `for_data_dir` builds a `Config` without
-        // going through that gate.
+        // URL reaching here has already been through `validate_destination` —
+        // and `for_data_dir` builds an empty list rather than an unchecked one.
         //
-        // The `outbound_client` half is a different matter and really can fail
-        // at runtime, for reasons that have nothing to do with the operator's
-        // URL. An earlier version of this comment claimed neither branch was
-        // reachable, which was one claim too many.
-        let target = scrobblers::validate_destination(base, config.outbound_allow_plaintext)
-            .and_then(|base| {
-                let client = scrobblers::outbound_client(config.scrobbling.request_timeout)?;
-                scrobblers::listenbrainz::ListenBrainz::new(client, &base)
-            });
+        // Building the client is a different matter and really can fail at
+        // runtime, for reasons that have nothing to do with the operator's URL.
+        let target = match destination.provider {
+            services::ScrobbleProvider::ListenBrainz => {
+                scrobblers::outbound_client(config.scrobbling.request_timeout)
+                    .and_then(|client| {
+                        scrobblers::listenbrainz::ListenBrainz::new(client, &destination.url)
+                    })
+                    .map(|target| Arc::new(target) as Arc<dyn services::ScrobbleTarget>)
+            }
+            // Neither has an adapter on this commit. A destination declared for
+            // one is not an error — an account can link it and its listens
+            // queue — but nothing drains until the adapter lands, which
+            // `a_destination_with_no_adapter_does_not_starve_one_that_has_it`
+            // already holds still.
+            services::ScrobbleProvider::Maloja | services::ScrobbleProvider::LastFm => continue,
+        };
         match target {
-            Ok(target) => services.register_scrobble_target(
-                services::ScrobbleProvider::ListenBrainz,
-                Arc::new(target),
-            ),
+            Ok(target) => {
+                services.register_scrobble_target(destination.provider, &destination.name, target)
+            }
             Err(error) => {
                 // **Never the URL itself.** `validate_destination` refuses a
                 // destination that carries credentials, so the one thing this
@@ -590,10 +598,19 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
                 // a startup log, or a support paste, in full. The variant names
                 // the fault precisely enough without it, and this repository's
                 // rule about secrets has no exception for an error path.
-                anyhow::bail!("the configured ListenBrainz destination is unusable: {error}")
+                anyhow::bail!(
+                    "the configured {} destination {:?} is unusable: {error}",
+                    destination.provider.as_str(),
+                    destination.name
+                )
             }
         }
     }
+    // Catching up and reconciling, once, under the writer gate — and *before*
+    // `main` starts the drain. The order is half the rule: reconciling while
+    // the background task already runs leaves a window, short and sufficient,
+    // in which listens leave for yesterday's destination. RFC-010 decision 10.
+    services.reconcile_scrobble_links().await?;
     Ok(AppState {
         db,
         auth,

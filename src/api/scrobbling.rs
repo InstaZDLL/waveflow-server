@@ -107,34 +107,48 @@ pub async fn list_scrobble_links(
 /// leaves one link, not two. Listens already queued stay attached to the
 /// authorisation they were queued under, and are never submitted under the new
 /// one.
-#[utoipa::path(put, path = "/api/v2/scrobble-links/{provider}", tag = "scrobbling", params(("provider" = String, Path)), request_body = LinkScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(put, path = "/api/v2/scrobble-links/{provider}/{destination}", tag = "scrobbling", params(("provider" = String, Path), ("destination" = String, Path)), request_body = LinkScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn link_scrobble(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path((name, destination)): Path<(String, String)>,
     headers: HeaderMap,
     Json(request): Json<LinkScrobbleRequest>,
 ) -> Result<StatusCode, ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
     state
         .services
-        .link_scrobble(user.id, provider(&name)?, &request.secret)
+        .link_scrobble(user.id, provider(&name)?, &destination, &request.secret)
         .await
         .map_err(service_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Every instance this server knows, by recipient.
+///
+/// Decision 10's barrier from the inside: a member picks a name here and never
+/// describes a URL. The addresses are not published — nobody needs one, and a
+/// link holds none either.
+#[utoipa::path(get, path = "/api/v2/scrobble-destinations", tag = "scrobbling", responses((status = 200, body = [crate::services::ScrobbleDestinationName]), (status = 401, body = ErrorResponse)))]
+pub async fn list_scrobble_destinations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::ScrobbleDestinationName>>, ApiError> {
+    authenticated(&state, &headers, Access::Read).await?;
+    Ok(Json(state.services.scrobble_destinations()))
+}
+
 /// Unlinking a destination that is not linked succeeds: the caller asked for
 /// this account to have no authorisation there, and it has none.
-#[utoipa::path(delete, path = "/api/v2/scrobble-links/{provider}", tag = "scrobbling", params(("provider" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/scrobble-links/{provider}/{destination}", tag = "scrobbling", params(("provider" = String, Path), ("destination" = String, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn unlink_scrobble(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path((name, destination)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
     state
         .services
-        .unlink_scrobble(user.id, provider(&name)?)
+        .unlink_scrobble(user.id, provider(&name)?, &destination)
         .await
         .map_err(service_error)?;
     Ok(StatusCode::NO_CONTENT)
