@@ -386,10 +386,17 @@ faire à la place de l'opérateur.
   destination et l'empreinte de son URL.
 - **Et un rattrapage, qui est la partie qu'on oublie.** Les liens déjà écrits ne
   portent ni nom ni empreinte, et il n'existe qu'une destination par destinataire
-  au moment où cette révision s'écrit : la migration leur donne celle-là, avec
-  l'empreinte de l'URL alors configurée. Une valeur nulle laissée en place
-  reviendrait à traiter tout lien ancien comme une destination disparue, et à
-  casser au démarrage suivant des liens que rien n'a déplacés.
+  au moment où cette révision s'écrit : ils reçoivent celle-là, avec l'empreinte
+  de l'URL alors configurée. Une valeur nulle laissée en place reviendrait à
+  traiter tout lien ancien comme une destination disparue, et à casser au
+  démarrage suivant des liens que rien n'a déplacés.
+
+  **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
+  l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
+  migration ne voit pas. Celle-ci ajoute donc les colonnes, nullables, et
+  `initialize` les remplit — au même endroit et sous le même verrou que la
+  réconciliation décrite plus haut, dont ce rattrapage est le premier tour :
+  remplir puis comparer, une fois, avant que `spawn_scrobble_drain` ne parte.
 - **La documentation** : une section du guide d'API, et une ligne dans
   `docs/web-client-gap-analysis.md`, dont le point 15 attend celle-ci.
 
