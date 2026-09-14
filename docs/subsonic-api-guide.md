@@ -31,8 +31,8 @@ or `PUT /api/v2/admin/users/{username}/subsonic-credential` as documented in
 exactly once.
 
 The CLI writes the key to standard output by itself, with everything else it
-says on standard error, so `(umask 077; … > key)` captures the key and nothing
-more, in a file nobody else can read.
+says on standard error, so `install -m 600 /dev/null key` followed by
+`… > key` captures the key and nothing more, in a file nobody else can read.
 
 WaveFlow has been validated with Symfonium, Feishin, DSub, Substreamer and
 Juliet. See the compatibility matrix for exact versions and exercised features.
