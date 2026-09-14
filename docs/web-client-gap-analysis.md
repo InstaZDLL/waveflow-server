@@ -209,7 +209,9 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
     > La section « External scrobbling » du
     > [guide API](api-v2-guide.md#external-scrobbling) décrit les quatre.
     >
-    > **Les quatre sont faits, le 2026-09-14**, dans `webapp/src/scrobbling.ts`
+    > **Les quatre sont faits, le 2026-09-14** par la
+    > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), dans
+    > `webapp/src/scrobbling.ts`
     > et `scrobbling-page.tsx`. L'écran est à `/settings/scrobbling`, et ce
     > chemin n'est pas un choix : `lastfm_callback` y redirige une fois le lien
     > conclu, donc aucune autre orthographe ne marche — et tant qu'il n'existait
