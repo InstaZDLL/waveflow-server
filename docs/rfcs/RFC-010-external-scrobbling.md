@@ -312,11 +312,15 @@ interdisent. La surface date d'hier et personne ne s'y est encore adossé, donc
 ce contrat se corrige maintenant ou se traîne.
 
 **Un nom de destination s'écrit dans un chemin sans y être encodé.** Puisqu'il
-devient un segment d'URL, il se borne à ce qui traverse un chemin sans discussion
-— lettres ASCII, chiffres, `-`, `_` et `.`, et pas au-delà d'une longueur
-raisonnable. Refuser au démarrage un nom qui sort de là coûte un message clair à
-l'opérateur ; l'accepter coûterait un segment qui se décode autrement selon qui
-le lit. L'aléa du parcours Last.fm suit la même règle, pour la même raison.
+devient un segment d'URL, il se borne à ce qui traverse un chemin sans
+discussion — lettres ASCII, chiffres, `-`, `_` et `.`, au plus soixante-quatre
+caractères — et `.` comme `..` sont refusés, ces deux-là étant des instructions
+de navigation partout où un chemin se résout. Refuser au démarrage un nom qui
+sort de là coûte un message clair à l'opérateur ; l'accepter coûterait un
+segment qui se décode autrement selon qui le lit. L'aléa du parcours Last.fm
+suit la même règle, pour la même raison, et se tire d'un générateur
+cryptographique sur au moins cent vingt-huit bits : il est la seule chose qui
+sépare un retour légitime d'un retour fabriqué.
 
 **Pas de table, pas d'administration à chaud.** Une destination reste un
 réglage de déploiement, pas une ligne que l'on ajoute en marche. Une table
@@ -333,6 +337,14 @@ autre instance du même destinataire. Faire glisser `alice` vers `default`
 enverrait les écoutes d'une personne sur le profil d'une autre — la substitution
 que la décision 4 construit tout un étage d'identifiants pour empêcher.
 L'opérateur remet la destination, ou la personne délie et relie.
+
+**Et ses lignes en attente finissent, elles ne patientent pas.** Un lien
+`broken` dont la file reste `pending` est une file que rien ne videra jamais :
+`pending` échappe à la rétention, donc la table garde ces lignes sans fin, et
+`oldest_pending_at` tient le lien `degraded` pour toujours — un troisième
+exemplaire du défaut que cette révision corrige déjà deux fois. Elles passent
+donc dans un état terminal, comme le fait déjà le déliement à la décision 4 :
+même situation, même règle, et la rétention peut alors faire son travail.
 
 **Un nom n'est pas une identité : l'URL en fait partie.** Retirer `maloja/alice`
 casse ses liens, mais lui donner une autre URL les enverrait ailleurs sans que
@@ -445,6 +457,13 @@ dit rien de ce qu'il ferait d'une callback portant déjà un `?`. Le `cb` désig
 donc `…/callback/{state}`, qui ne dépend d'aucune supposition sur cette
 concaténation.
 
+**La barre finale n'est pas un détail de rédaction.** Last.fm annonce qu'il
+accole `/?token=…`, donc ce que le navigateur demandera est
+`…/callback/{state}/` et non `…/callback/{state}`. `axum` ne normalise pas les
+barres finales : une route déclarée sans elle ne répondrait pas, et le parcours
+échouerait à son dernier pas, chez tout le monde, pour un caractère. La route
+accepte donc les deux formes, et un test le tient — pas une relecture attentive.
+
 **Et l'état tient à deux choses, pas à une.** Le lier au seul compte suffirait
 si l'URL de retour ne sortait jamais du navigateur qui l'a demandée — or elle
 passe par Last.fm, et une URL qui voyage se retrouve dans un référent ou un
@@ -461,9 +480,11 @@ navigateur ni un référent. Trois conséquences pour cette route, aucune
 facultative. Son chemin rejoint les préfixes que `trace_path` rédige, aux côtés
 des billets de flux et des jetons de partage, parce que la règle de `CLAUDE.md`
 ne souffre pas d'exception pour un secret d'une heure. La réponse porte
-`Cache-Control: no-store`. Et elle redirige aussitôt vers une adresse sans
-jeton, pour que ce soit celle-là que l'historique retienne — la page où la
-personne atterrit n'a pas besoin d'en savoir plus que « c'est lié ».
+`Cache-Control: no-store` et `Referrer-Policy: no-referrer`, sans quoi le jeton
+voyagerait vers la page suivante dans un en-tête que personne ne relit. Et elle
+redirige aussitôt vers une adresse sans jeton, pour que ce soit celle-là que
+l'historique retienne — la page où la personne atterrit n'a pas besoin d'en
+savoir plus que « c'est lié ».
 
 **Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
 au redémarrage, au milieu du seul parcours qui ne supporte pas d'être repris.
@@ -626,8 +647,15 @@ déploiement et une tâche de purge, sur le patron de
 ## Ce qui reste ouvert
 
 Plus aucune décision d'architecture, et plus aucune question de rétention. Ce
-qui reste appartient à l'implémentation : le nom exact des routes, la forme
-précise du JSON, et le seuil au-delà duquel une file qui n'avance pas devient
-`degraded` — celui-là vit déjà dans `link_health`.
+qui reste appartient à l'implémentation : la forme précise du JSON, et le seuil
+au-delà duquel une file qui n'avance pas devient `degraded` — celui-là vit déjà
+dans `link_health`.
+
+**Les chemins écrits ci-dessus, eux, engagent.** La première version rangeait
+« le nom exact des routes » parmi les détails, ce qui était vrai tant qu'aucune
+route n'était décidée. Les décisions 10 et 11 en nomment désormais, et elles le
+font parce que la forme *est* la décision : une destination dans le chemin
+plutôt que sous-entendue, un aléa dans un segment plutôt que dans une chaîne de
+requête. Les renommer se peut, les reformer non.
 
 C'est la ligne *Implémentée par* de l'en-tête qu'il faut lire pour le reste.
