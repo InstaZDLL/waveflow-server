@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Play, ScrobbleDestination, ScrobbleLink } from "./api";
 import {
+  NAMED_UNCERTAIN,
   playsByInstant,
   returnedFrom,
   scrobbleRows,
@@ -167,5 +168,51 @@ describe("returnedFrom", () => {
     expect(
       returnedFrom(`?linked=lastfm&destination=${"a".repeat(65)}`),
     ).toBeNull();
+  });
+});
+
+describe("tracksToName, bounded", () => {
+  const entry = (id: string, played_at: number) => ({
+    id,
+    provider: "maloja" as const,
+    destination: "alice",
+    played_at,
+    attempts: 1,
+    last_failure: null,
+    updated_at: 0,
+  });
+
+  it("asks for no more names than the cap, however many entries there are", () => {
+    // A destination answering ambiguously to everything produces one entry per
+    // listen. Unbounded, opening this screen would fire one request per entry
+    // at a server already in trouble.
+    const many = Array.from({ length: 300 }, (_, index) =>
+      entry(`e${index}`, index),
+    );
+    const plays = playsByInstant(
+      many.map((one) => ({
+        track_id: `t${one.played_at}`,
+        submission: true,
+        played_at: one.played_at,
+      })),
+    );
+    expect(tracksToName(many, plays)).toHaveLength(NAMED_UNCERTAIN);
+  });
+
+  it("counts distinct tracks, not entries", () => {
+    // Two instances of one recipient hold the same listen twice, which is two
+    // entries and one name. A cap counting entries would stop at half the
+    // tracks it could have named.
+    const pairs = Array.from({ length: 2 * NAMED_UNCERTAIN }, (_, index) =>
+      entry(`e${index}`, Math.floor(index / 2)),
+    );
+    const plays = playsByInstant(
+      Array.from({ length: NAMED_UNCERTAIN }, (_, index) => ({
+        track_id: `t${index}`,
+        submission: true,
+        played_at: index,
+      })),
+    );
+    expect(tracksToName(pairs, plays)).toHaveLength(NAMED_UNCERTAIN);
   });
 });

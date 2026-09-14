@@ -1023,6 +1023,33 @@ impl DomainServices {
                     .await?;
                 }
                 [] => {
+                    // Named before it is broken, and named `default`.
+                    //
+                    // Not a guess: a link made under #191–#193 carried no name
+                    // because its recipient had exactly one instance, and
+                    // `DEFAULT_SCROBBLE_DESTINATION` is what a bare URL in the
+                    // configuration is still called. The link is broken either
+                    // way and nothing is remapped — what the name buys is that
+                    // the row can be spoken about.
+                    //
+                    // Left NULL, it came out of `scrobble_links` and
+                    // `uncertain_scrobbles` as the empty string, so the API
+                    // published a pair with no instance in it. Worse, the row
+                    // could not be withdrawn: `unlink_scrobble_on` matches
+                    // `destination=?`, and no comparison is ever true of NULL,
+                    // so the listing showed a broken link with a blank name
+                    // that no gesture could remove.
+                    //
+                    // The fingerprint stays NULL. It exists to be compared
+                    // against a declared URL, there is none, and a broken link
+                    // is never reconciled again — the second pass below reads
+                    // `status='active'` only.
+                    sqlx::query("UPDATE scrobble_link SET destination=?, updated_at=? WHERE id=?")
+                        .bind(crate::config::DEFAULT_SCROBBLE_DESTINATION)
+                        .bind(now)
+                        .bind(row.try_get::<String, _>("id")?)
+                        .execute(&mut *tx)
+                        .await?;
                     self.break_link_on(&mut tx, row.try_get("id")?, "destination_gone", now)
                         .await?;
                 }
