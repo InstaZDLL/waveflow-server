@@ -4047,11 +4047,11 @@ async fn an_instance_nobody_declared_cannot_be_linked() {
         )
         .await
         .is_ok());
-    assert!(state
-        .services
-        .scrobble_links(listener.owner)
-        .await
-        .unwrap()
-        .iter()
-        .all(|link| link.destination == "alice"));
+    // Counted, then named. `all` over an empty list is true, so the shape
+    // above it — "every link is alice's" — is satisfied by a server that
+    // linked nothing at all, which is the one outcome this half exists to rule
+    // out.
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].destination, "alice");
 }
