@@ -232,6 +232,25 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
 
+16. **Sur téléphone, huit écrans n'ont aucun lien.** Mesuré le 2026-09-14 en
+    posant le seizième : `.sidebar` passe à `display: none` sous 820 px
+    (`styles.css`), et `Navigation({ mobile: true })` ne garde que les entrées
+    marquées `primary`. Les huit autres — artistes, genres, aléatoire,
+    historique, partages, téléversement, administration, et le scrobbling qui
+    vient de s'ajouter — restent atteignables **en tapant leur adresse**, et par
+    rien d'autre. La suite de tests ne le voit pas : les cas mobiles naviguent
+    par `page.goto`, jamais en cliquant la barre.
+
+    Ce n'est pas un défaut de la #201, qui n'a fait qu'en révéler un huitième
+    cas : les sept autres sont là depuis le lot A. Et ce n'est pas non plus un
+    argument pour marquer `primary` l'écran du scrobbling — une barre de six
+    emplacements où l'on joue, cherche et met en file n'est pas l'endroit d'un
+    écran de réglages, et l'y pousser rendrait les sept autres encore plus
+    invisibles par contraste. Ce qui manque est un **débordement** : un geste
+    qui ouvre le reste. Sa forme se décide — menu, écran « plus », tiroir — et
+    c'est une décision d'interface, donc elle attend la sienne plutôt que de se
+    glisser dans une PR qui parle d'autre chose.
+
 ## 3. Le plan de redesign
 
 ### Le diagnostic, et pourquoi il n'est pas une affaire de goût
