@@ -473,6 +473,17 @@ faire à la place de l'opérateur.
   terminal rattrapé, les `uncertain` laissées vides, et un instant terminal
   qu'une écriture ultérieure ne rebouge pas.
 
+  **Pourquoi `updated_at` fait l'affaire ici**, alors qu'il ne la ferait pas pour
+  la suite. Les huit `UPDATE` que connaît `scrobble_outbox` exigent tous un état
+  de départ non terminal — `pending`, `sending` ou `uncertain` — dans leur
+  `WHERE`. Rien n'écrit sur une ligne déjà `sent`, `rejected`, `abandoned`,
+  `cancelled` ou `discarded` : sa dernière écriture *est* sa transition, et il
+  n'existe donc pas de ligne historique dont l'instant serait indéterminable.
+  C'est une propriété du code d'aujourd'hui, pas une garantie du schéma, et
+  c'est exactement pourquoi la colonne existe pour la suite plutôt que de
+  continuer à lire `updated_at` : le premier `UPDATE` écrit sans garde d'état la
+  ferait tomber sans bruit.
+
 
   **Ce rattrapage affirme, il ne vérifie pas.** Il ne peut pas : rien en base ne
   dit quelle URL était configurée hier, donc écrire l'empreinte courante revient
