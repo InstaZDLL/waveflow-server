@@ -468,7 +468,10 @@ faire à la place de l'opérateur.
   saurait pas à partir de quand les compter. Elles reçoivent leur `updated_at`,
   qui est l'écriture qui les a rendues terminales — rien ne les a touchées
   depuis. Les `uncertain` n'en reçoivent pas : elles ne se purgent pas, et leur
-  en donner un inviterait quelqu'un à s'en servir un jour pour les compter.
+  en donner un inviterait quelqu'un à s'en servir un jour pour les compter. Cela
+  s'éprouve comme le reste, sur une base peuplée avant la colonne : chaque état
+  terminal rattrapé, les `uncertain` laissées vides, et un instant terminal
+  qu'une écriture ultérieure ne rebouge pas.
 
 
   **Ce rattrapage affirme, il ne vérifie pas.** Il ne peut pas : rien en base ne
@@ -606,6 +609,14 @@ annonce qu'il remet le jeton en accolant `/?token=…` à la callback, ce qui ne
 dit rien de ce qu'il ferait d'une callback portant déjà un `?`. Le `cb` désigne
 donc `…/callback/{state}`, qui ne dépend d'aucune supposition sur cette
 concaténation.
+
+**Ce que le retour refuse avant d'appeler quoi que ce soit.** Un `token` absent,
+vide, ou présent deux fois ; et le cas où Last.fm revient en disant qu'il a
+échoué. Dans chacun, rien n'est échangé et aucun lien n'est créé — l'appel à
+`auth.getSession` vient après ces refus, pas avant. Le cas répété mérite d'être
+nommé : `?token=a&token=b` laisse un extracteur choisir, et un parcours dont
+l'issue dépend de quel doublon un lecteur retient n'est pas un parcours. Le
+refus ne journalise pas davantage que le succès.
 
 **La barre finale n'est pas un détail de rédaction.** Last.fm annonce qu'il
 accole `/?token=…`, donc ce que le navigateur demandera est
