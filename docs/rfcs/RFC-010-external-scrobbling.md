@@ -286,6 +286,15 @@ il existera un champ d'URL, et il ne peut pas être libre.
 - **Rien du corps de la réponse n'est renvoyé au client** : il va au journal, et
   ce que l'API montre est un état, pas un écho.
 
+**Une exception, et c'est Last.fm qui l'impose.** La règle ci-dessus envoie au
+journal ce que le fournisseur a répondu, parce qu'un corps d'erreur est ce qui
+explique une panne. La réponse d'`auth.getSession` n'est pas un corps d'erreur :
+elle contient la clé de session, qui vaut jusqu'à révocation. Elle ne va donc
+pas au journal — ni entière, ni tronquée. Ce qui s'y écrit est un verdict et une
+cause normalisée, comme pour toute autre soumission. La règle valait tant
+qu'aucune réponse ne portait de credential ; ce parcours en introduit une, et la
+règle se rétrécit d'autant plutôt que de la laisser passer.
+
 ### Plusieurs instances, nommées par l'opérateur
 
 **Révisé le 2026-09-14.** « Un membre choisit sa destination parmi celles que le
@@ -403,6 +412,14 @@ faire à la place de l'opérateur.
   de l'URL alors configurée. Une valeur nulle laissée en place reviendrait à
   traiter tout lien ancien comme une destination disparue, et à casser au
   démarrage suivant des liens que rien n'a déplacés.
+
+  **L'instant terminal se rattrape lui aussi**, et sur la même base déjà en
+  service : les lignes `sent`, `rejected`, `abandoned`, `cancelled` et
+  `discarded` écrites avant la colonne n'en portent aucun, et la purge ne
+  saurait pas à partir de quand les compter. Elles reçoivent leur `updated_at`,
+  qui est l'écriture qui les a rendues terminales — rien ne les a touchées
+  depuis. Les `uncertain` n'en reçoivent pas : elles ne se purgent pas, et leur
+  en donner un inviterait quelqu'un à s'en servir un jour pour les compter.
 
 
   **Ce rattrapage affirme, il ne vérifie pas.** Il ne peut pas : rien en base ne
