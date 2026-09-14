@@ -620,6 +620,15 @@ accepte aujourd'hui `http` comme `https`, et doit continuer — l'URL publique s
 aussi les partages, où le clair sur un réseau privé reste un choix d'opérateur
 légitime. La condition appartient à l'activation de Last.fm, pas au réglage.
 
+**Et cette URL s'enregistre chez eux.** Un compte d'application Last.fm porte
+une callback, que le paramètre `cb` sert à remplacer pour une autorisation
+donnée ; leur documentation ne dit pas si cette valeur est vérifiée contre le
+domaine enregistré. L'opérateur y inscrit donc l'URL que son
+`WAVEFLOW_PUBLIC_URL` produit, plutôt que de parier sur une tolérance que
+personne ne lui a promise. C'est un prérequis de déploiement au même titre que
+la clé d'application, et il vit au même endroit — rien ici ne peut le vérifier
+depuis ce côté-ci.
+
 Il en découle que **Last.fm est indisponible tant que `WAVEFLOW_PUBLIC_URL`
 n'est pas configuré** — le serveur avertit déjà à ce sujet au démarrage. Ce
 n'est pas un défaut à contourner mais une condition à dire : la liste des
