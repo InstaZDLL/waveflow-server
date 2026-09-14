@@ -340,10 +340,13 @@ export type AlbumSort =
   | "byYear";
 
 /**
- * Catalogue calls take the active library. `/api/v2/search` is the one that
- * cannot: it has no `library_id`, and giving it one would mean rewriting three
- * FTS queries in a service the frozen Subsonic façade shares. The search screen
- * says so rather than pretending to be scoped.
+ * Catalogue calls take the active library, search included since 2026-09-14.
+ *
+ * It used to be the one that could not, and the screen said so. The reason
+ * given was that scoping meant rewriting three FTS queries in a service the
+ * frozen Subsonic façade shares — true of the queries, wrong about the
+ * sharing: `search2`/`search3` reach a separate method with its own three,
+ * and what the two surfaces share is the index and the projections.
  */
 function scoped(
   libraryId: string | undefined,
@@ -362,8 +365,11 @@ export const listArtists = (libraryId?: string) =>
   collect<Artist>("/api/v2/artists", scoped(libraryId));
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
-export const search = (query: string) =>
-  call<SearchResult>(`/api/v2/search?q=${encodeURIComponent(query)}`);
+/** Search, scoped to `libraryId` when one is given. */
+export const search = (query: string, libraryId?: string) =>
+  call<SearchResult>(
+    `/api/v2/search?${new URLSearchParams(scoped(libraryId, { q: query }))}`,
+  );
 export const getTrack = (id: string) => call<Song>(`/api/v2/tracks/${id}`);
 
 /**

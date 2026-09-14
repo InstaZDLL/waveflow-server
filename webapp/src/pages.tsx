@@ -2109,19 +2109,28 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
 export function SearchPage() {
   const { t } = useI18n();
+  const { libraries, active } = useLibraryScope();
+  const scope = active?.id;
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const { value, error } = useAsync<SearchResult | null>(
-    () => (submitted ? search(submitted) : Promise.resolve(null)),
-    [submitted],
+    () => (submitted ? search(submitted, scope) : Promise.resolve(null)),
+    // The scope belongs in here: changing library while a result is on screen
+    // has to re-ask, or the page keeps answering for the library it left.
+    [submitted, scope],
   );
 
   return (
     <section>
       <PageHeader title={t("nav.search")} detail={t("search.detail")} />
-      {/* Said rather than hidden: `/api/v2/search` takes no `library_id`, so
-          this is the one screen the active library does not scope. */}
-      <p className="muted scope-note">{t("search.everyLibrary")}</p>
+      {/* Said only where it is a fact worth saying. This screen used to warn
+          that it covered every library, because it did; it is scoped like the
+          others now, and an account with one library is not choosing. */}
+      {libraries.length > 1 && active ? (
+        <p className="muted scope-note">
+          {t("search.thisLibrary", { library: active.name })}
+        </p>
+      ) : null}
       <form
         className="search"
         onSubmit={(event) => {
