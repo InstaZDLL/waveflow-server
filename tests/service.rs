@@ -1,11 +1,10 @@
-//! Probes, the embedded client, and the backup bundle.
+//! Probes, the embedded client, the backup bundle, and how a request is named.
 //!
-//! Split out of `v2_foundations.rs`.
+//! Split out of `v2_foundations.rs`; the command-line tests left for `cli.rs`.
 
 use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
-use clap::Parser;
 use tower::ServiceExt;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::database::AccountRole;
@@ -16,270 +15,6 @@ use waveflow_server::security;
 #[allow(dead_code)]
 mod support;
 use support::*;
-
-/// One command line, parsed the way a shell would hand it over.
-///
-/// Through `Cli::parse_from` rather than by building the argument struct: the
-/// fields are private, which is the hint, and this way the flag names and the
-/// defaults are part of what these tests hold still. A command surface gets
-/// those wrong far more easily than it gets the call wrong.
-async fn run_cli(state: &waveflow_server::AppState, argv: &[&str]) -> anyhow::Result<()> {
-    let mut full = vec!["waveflow-server"];
-    full.extend_from_slice(argv);
-    let cli = waveflow_server::cli::Cli::try_parse_from(full)?;
-    waveflow_server::cli::execute(cli.command.expect("a command was given"), state).await
-}
-
-/// An account inserted rather than created, with a placeholder where a hash
-/// would be.
-///
-/// These never authenticate: the CLI resolves them by username and checks a
-/// role, and nothing in this file logs in as one. Calling
-/// `security::hash_password` for them would add another occurrence of the
-/// repository's fixture password, which CodeQL raises as a hard-coded
-/// credential on every new one — there are already seventy-seven of those
-/// dismissed on `main`, and adding to that pile for accounts that cannot log in
-/// would be spending somebody else's attention.
-async fn inserted_account(
-    state: &waveflow_server::AppState,
-    username: &str,
-    role: &str,
-) -> uuid::Uuid {
-    let id = uuid::Uuid::new_v4();
-    let now = now_ms();
-    sqlx::query(
-        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
-         VALUES (?, ?, 'this-account-never-authenticates', ?, 0, ?, ?)",
-    )
-    .bind(id.to_string())
-    .bind(username)
-    .bind(role)
-    .bind(now)
-    .bind(now)
-    .execute(state.db.pool())
-    .await
-    .unwrap();
-    id
-}
-
-/// The CLI reads a queue and withdraws an authorisation, and says which
-/// variable it wanted when the token is not there.
-///
-/// **Named for what it does.** It was called `..._links_and_unlinks_...` while
-/// the link itself was posed through `DomainServices` — so it would have passed
-/// with `cli::link_scrobble` deleted, which is the defect class this file's
-/// commit set out to remove, reintroduced one file over.
-///
-/// What `link` *is* covered for: the admin check, the account lookup and the
-/// provider parse, all of which run before the secret is read, and which the
-/// absent-variable case below therefore traverses. What it is not covered for is
-/// the two lines after that — the successful `read_secret_env` and the service
-/// call. Driving those from here would need the process environment mutated
-/// while sibling threads read it, which is the race this test exists without.
-/// A subprocess against `CARGO_BIN_EXE_waveflow-server` would close it.
-#[tokio::test]
-async fn the_cli_reads_a_queue_and_withdraws_an_authorisation() {
-    let (_temp, _config, state) = test_app().await;
-    inserted_account(&state, "cli-scrobble-admin", "admin").await;
-    let user = inserted_account(&state, "cli-scrobble-user", "user").await;
-
-    // **No `set_var` here, and that is the whole design of this test.** A review
-    // pointed out that a unique variable name solves collision and not the
-    // race: `cargo test` runs these as threads in one process, and mutating the
-    // environment while a sibling thread reads it — `tempfile::tempdir()` reads
-    // `TMPDIR` on every one of them — is undefined behaviour, which is why
-    // edition 2024 made `set_var` unsafe. So `link` is exercised at the one
-    // seam that needs no environment at all: a variable that is *absent*, which
-    // is the default state of the process.
-    let missing = run_cli(
-        &state,
-        &[
-            "scrobble",
-            "link",
-            "--actor",
-            "cli-scrobble-admin",
-            "--username",
-            "cli-scrobble-user",
-            "--provider",
-            "listenbrainz",
-            "--token-env",
-            "WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET",
-        ],
-    )
-    .await
-    .unwrap_err();
-    // Naming the variable is the whole job of that message: the person who has
-    // to fix this cannot see which one the command looked for.
-    assert!(
-        missing
-            .to_string()
-            .contains("WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET"),
-        "{missing}"
-    );
-
-    // And the flag surface is pinned by parsing rather than by running, so the
-    // names and the default are held still without the process being touched.
-    let parsed = format!(
-        "{:?}",
-        waveflow_server::cli::Cli::try_parse_from([
-            "waveflow-server",
-            "scrobble",
-            "link",
-            "--actor",
-            "a",
-            "--username",
-            "b",
-            "--provider",
-            "listenbrainz",
-        ])
-        .expect("the scrobble link flags have to parse — that is what this pins")
-        .command
-        .unwrap()
-    );
-    assert!(parsed.contains("WAVEFLOW_SCROBBLE_TOKEN"), "{parsed}");
-
-    // The link itself is posed through the service, which is what the command
-    // calls anyway — the assertions below then read it back the same way.
-    state
-        .services
-        .link_scrobble(
-            user,
-            waveflow_server::services::ScrobbleProvider::ListenBrainz,
-            "lb-token-from-the-shell",
-        )
-        .await
-        .unwrap();
-
-    let links = state.services.scrobble_links(user).await.unwrap();
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0].provider.as_str(), "listenbrainz");
-    assert_eq!(links[0].health, "healthy");
-
-    // Reading the queue is a third gesture and must not need the secret.
-    run_cli(
-        &state,
-        &[
-            "scrobble",
-            "status",
-            "--actor",
-            "cli-scrobble-admin",
-            "--username",
-            "cli-scrobble-user",
-        ],
-    )
-    .await
-    .unwrap();
-
-    run_cli(
-        &state,
-        &[
-            "scrobble",
-            "unlink",
-            "--actor",
-            "cli-scrobble-admin",
-            "--username",
-            "cli-scrobble-user",
-            "--provider",
-            "listenbrainz",
-        ],
-    )
-    .await
-    .unwrap();
-    assert!(state
-        .services
-        .scrobble_links(user)
-        .await
-        .unwrap()
-        .is_empty());
-}
-
-/// What the command refuses, and who it refuses.
-///
-/// Both failures happen before any secret is read or sealed, which is the point
-/// of checking them: a destination this server cannot name and an actor who is
-/// not an administrator are both answered by the command rather than by the
-/// database refusing a `CHECK` afterwards.
-#[tokio::test]
-async fn the_cli_refuses_an_unknown_destination_and_a_non_administrator() {
-    let (_temp, _config, state) = test_app().await;
-    inserted_account(&state, "cli-refusing-admin", "admin").await;
-    inserted_account(&state, "cli-refusing-user", "user").await;
-
-    let unknown = run_cli(
-        &state,
-        &[
-            "scrobble",
-            "unlink",
-            "--actor",
-            "cli-refusing-admin",
-            "--username",
-            "cli-refusing-user",
-            "--provider",
-            "spotify",
-        ],
-    )
-    .await
-    .unwrap_err();
-    // The message names the three this server knows, because the person who
-    // typed the fourth cannot be expected to guess them.
-    let said = unknown.to_string();
-    assert!(said.contains("listenbrainz"), "{said}");
-    assert!(said.contains("maloja"), "{said}");
-    assert!(said.contains("lastfm"), "{said}");
-
-    // An ordinary account cannot pose an authorisation for somebody else, which
-    // is the whole difference between this surface and the self-scoped route.
-    let forbidden = run_cli(
-        &state,
-        &[
-            "scrobble",
-            "status",
-            "--actor",
-            "cli-refusing-user",
-            "--username",
-            "cli-refusing-user",
-        ],
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        forbidden.to_string().contains("administrator"),
-        "{forbidden}"
-    );
-
-    // **Admin before secret, and nothing else pins it.** `link` checks the
-    // admin, resolves the account, parses the provider, and only then reads the
-    // secret. The absent-variable case above traverses all four but asserts
-    // about the last, so hoisting `read_secret_env` to the top of
-    // `link_scrobble` would leave every CLI test green. This is what notices.
-    //
-    // It pins that one edge and not the whole order: moving the read between
-    // the admin check and the account lookup still fails the admin first, and
-    // this would stay green. Said plainly rather than claimed wider.
-    let too_early = run_cli(
-        &state,
-        &[
-            "scrobble",
-            "link",
-            "--actor",
-            "cli-refusing-user",
-            "--username",
-            "cli-refusing-user",
-            "--provider",
-            "listenbrainz",
-            "--token-env",
-            "WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET",
-        ],
-    )
-    .await
-    .unwrap_err();
-    let said = too_early.to_string();
-    assert!(said.contains("administrator"), "{said}");
-    assert!(
-        !said.contains("WAVEFLOW_TEST_TOKEN_THAT_IS_NEVER_SET"),
-        "the token lookup must not have happened yet"
-    );
-}
 
 #[tokio::test]
 async fn probes_and_openapi_are_available_without_scan_readiness() {
@@ -653,4 +388,160 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
         b"backup-subsonic-secret"
     );
     assert!(restored.db.integrity_check().await.unwrap());
+}
+
+/// A request is named by this server, whatever the caller proposed.
+///
+/// The name goes in every `http_request` span, and `CLAUDE.md` allows no header
+/// into a trace sink. A well-formed id is no safer than a malformed one for
+/// that purpose — reuse somebody else's and the trace record stops telling two
+/// callers apart — so the header is dropped on the way in and one is minted
+/// here, whatever arrived.
+///
+/// The round trip below is the only way to see which id the server actually
+/// used: `PropagateRequestIdLayer` puts it on the response, which is also what
+/// keeps correlation possible — an upstream records the name it was given.
+#[tokio::test]
+async fn a_caller_cannot_name_its_own_request() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let named = |value: Option<&str>| {
+        let router = router.clone();
+        let value = value.map(str::to_owned);
+        async move {
+            let mut request = Request::get("/health");
+            if let Some(value) = value.as_deref() {
+                request = request.header("x-request-id", value);
+            }
+            // Named rather than `unwrap`ed because every value below has to
+            // reach the router for its case to mean anything, and one of them
+            // is not ASCII. `http` accepts it: a header value may hold any byte
+            // from 0x20 up except 0x7f, so `café` builds — it is `to_str`, on
+            // the way back, that would refuse it, which is why the answer is
+            // read as bytes further down.
+            let request = request
+                .body(Body::empty())
+                .expect("every proposed id has to reach the router");
+            let response = router.oneshot(request).await.unwrap();
+            // Read as bytes, not as `&str`. A `HeaderValue` may hold any byte
+            // above 0x1f, `to_str` refuses the ones above 0x7f, and the point
+            // of the non-ASCII case below is that such a value is not kept — so
+            // reading it that way would panic instead of failing the assertion
+            // that says so, and only when the drop is removed. A test that
+            // crashes rather than fails proves nothing about the reason.
+            response
+                .headers()
+                .get("x-request-id")
+                .map(|value| value.as_bytes().to_vec())
+        }
+    };
+
+    // Every request carries one, minted here, when the caller offered nothing.
+    let unprompted = named(None).await.expect("a request is always named");
+    assert!(uuid::Uuid::parse_str(&String::from_utf8_lossy(&unprompted)).is_ok());
+
+    for proposed in [
+        // The case a shape check would have let through, and the reason there
+        // is no shape check: an id belonging to another caller's requests.
+        "550e8400-e29b-41d4-a716-446655440000",
+        // The one a proxy would plausibly mint, and equally not kept.
+        "01JD5X-trace_id.7f",
+        // Unbounded length.
+        "x".repeat(65).as_str(),
+        // A space, which reads as two fields wherever a trace is parsed.
+        "two words",
+        // Punctuation an identifier has no use for.
+        "id;drop",
+        // Non-ASCII, which a sink may re-encode.
+        "identifiant-café",
+        // Nothing at all, which would name a request the empty string.
+        "",
+    ] {
+        let answered = named(Some(proposed))
+            .await
+            .expect("a request is named even when the caller proposed nothing usable");
+        let shown = String::from_utf8_lossy(&answered);
+        assert_ne!(
+            answered.as_slice(),
+            proposed.as_bytes(),
+            "the server adopted a name the caller chose: {shown}"
+        );
+        // And what replaced it is a minted id, not an edited version of what
+        // arrived: a sanitiser would still be letting the caller choose most
+        // of it.
+        assert!(
+            uuid::Uuid::parse_str(&shown).is_ok(),
+            "the name a request carries is one this server minted, and was: {shown}"
+        );
+        assert_ne!(
+            answered, unprompted,
+            "each request is named once, not named the same thing twice"
+        );
+    }
+
+    // A browser reading a cross-origin response sees only the headers CORS
+    // exposes, so the id being on the response is not the same as the client
+    // being able to quote it. The API guide says it can; this is what makes
+    // that true.
+    let mut cors_config = config.clone();
+    cors_config.allowed_origins = vec!["http://127.0.0.1:9180".parse().unwrap()];
+    let cors_router = waveflow_server::app(&cors_config, state);
+    let response = cors_router
+        .clone()
+        .oneshot(
+            Request::get("/health")
+                .header("origin", "http://127.0.0.1:9180")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let exposed = response.headers()["access-control-expose-headers"]
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(
+        exposed.split(',').any(|name| name.trim() == "x-request-id"),
+        "a browser client cannot read an id it is not allowed to see: {exposed}"
+    );
+
+    // And a preflight is a response too. `CorsLayer` answers one itself without
+    // calling the service beneath it, so for as long as the request-id layers
+    // sat inside it this was the one request nobody could name — and an origin
+    // this server rejects is precisely what an operator needs to find in a log.
+    let response = cors_router
+        .oneshot(
+            Request::builder()
+                .method(axum::http::Method::OPTIONS)
+                .uri("/api/v2/albums")
+                .header("origin", "http://127.0.0.1:9180")
+                .header("access-control-request-method", "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let named = response
+        .headers()
+        .get("x-request-id")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .expect("a preflight is answered by this server, so it is named by it");
+    assert!(
+        uuid::Uuid::parse_str(&named).is_ok(),
+        "a preflight carries a minted id like any other response, and carried: {named}"
+    );
+
+    // Exposed on the way out and not allowed on the way in, which is the pair
+    // the guide describes: a browser may read the name this server gave, and a
+    // browser that sends one has its preflight refused rather than its value
+    // quietly dropped. Adding it to `allow_headers` would make the guide wrong,
+    // which is why this reads that list too.
+    let allowed = response.headers()["access-control-allow-headers"]
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(
+        !allowed.split(',').any(|name| name.trim() == "x-request-id"),
+        "a caller has no business sending this one: {allowed}"
+    );
 }

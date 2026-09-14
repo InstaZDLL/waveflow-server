@@ -31,6 +31,23 @@ curl https://music.example.com/ready
 `/health` proves that the process responds. `/ready` additionally verifies
 SQLite access; scan progress and FFmpeg capability do not affect readiness.
 
+### Correlating a request
+
+Every response carries `x-request-id`, minted by the server, and that value is
+what its logs record for the request. Quote it when reporting a problem and an
+operator can find the request.
+
+An `x-request-id` you send is ignored — dropped before anything reads it, and
+replaced. Correlation across a reverse proxy still works, in the other
+direction: record the id the response came back with rather than imposing one,
+which is what a proxy in front of a server it does not name for should do
+anyway.
+
+From a browser on another origin, do not send it at all. The header is exposed
+so that `fetch` can read the id off the response, and deliberately not allowed
+on the way in, so a request carrying it fails its preflight rather than being
+quietly ignored.
+
 ### First-run setup
 
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
@@ -114,6 +131,33 @@ cargo run -- token create --actor admin --username listener --name "Home automat
 
 The command prints the plaintext once. Use it directly as a Bearer token. It
 has no refresh flow and must be revoked administratively when no longer needed.
+
+The token is written to standard output on its own, and everything else the
+command says goes to standard error — so it can be captured without being read
+off a terminal that would then keep it. Create the file closed first: the shell
+opens it before the command writes anything, and a redirection into a file that
+already exists truncates it without touching its mode, so a `umask` alone would
+not rescue one left readable by an earlier run.
+
+```bash
+install -m 600 /dev/null token
+cargo run -- token create --actor admin --username listener --name "Automation" > token
+```
+
+`install` is a POSIX tool and has no PowerShell equivalent, so on Windows create
+the file, strip its inherited permissions, and redirect into it — the
+redirection truncates that file rather than making a new one, so the access
+control list set here survives:
+
+```powershell
+Remove-Item -ErrorAction Ignore token
+New-Item -ItemType File token | Out-Null
+icacls token /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+cargo run -- token create --actor admin --username listener --name "Automation" > token
+```
+
+Use PowerShell 7 or later. Windows PowerShell 5.1 writes UTF-16 through `>`,
+which is not what anything reading the token back will expect.
 
 ### Browser session
 
