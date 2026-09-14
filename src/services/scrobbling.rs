@@ -221,7 +221,17 @@ pub struct UncertainScrobble {
     /// When the listen happened, not when it was queued.
     pub played_at: i64,
     pub attempts: i64,
-    /// A normalised cause — `stalled`, `auth_broken` — or nothing.
+    /// A normalised cause. An entry reaches this listing two ways and each
+    /// writes its own: `ambiguous`, when the adapter could not tell whether
+    /// the submission arrived, and `interrupted`, when a previous process left
+    /// the row claimed and this one recovered it.
+    ///
+    /// It named `stalled` and `auth_broken` until 2026-09-14, and wrote
+    /// neither — `auth_broken` cancels an entry rather than leaving it
+    /// asking, and nothing has ever written `stalled` at all. The same
+    /// category as the `rate_limited` note further down this file, which was
+    /// answered by making the code produce the value; here the value was the
+    /// wrong one to promise.
     pub last_failure: Option<String>,
     pub updated_at: i64,
 }
