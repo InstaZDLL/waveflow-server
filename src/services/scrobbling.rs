@@ -208,6 +208,16 @@ pub struct UncertainScrobble {
     /// The entry's public name, and the only one this API will accept back.
     pub id: Uuid,
     pub provider: ScrobbleProvider,
+    /// Which instance of that recipient the listen was queued for.
+    ///
+    /// The recipient alone does not name it. Decision 10 lets an operator
+    /// declare several instances of one destination, and a household server
+    /// where everybody self-hosts a Maloja is the ordinary case — so an entry
+    /// that said only `maloja` would ask somebody to choose the fate of a
+    /// listen without telling them which of their two instances may already
+    /// hold it. Decision 13 refuses to make that choice for them; this is what
+    /// makes it a choice they can actually make.
+    pub destination: String,
     /// When the listen happened, not when it was queued.
     pub played_at: i64,
     pub attempts: i64,
@@ -751,7 +761,7 @@ impl DomainServices {
         // the join to `scrobble_link` is what makes another account's entry
         // unnameable rather than merely unreturned.
         let rows = sqlx::query(
-            "SELECT o.public_id, l.provider, o.played_at, o.attempts, \
+            "SELECT o.public_id, l.provider, l.destination, o.played_at, o.attempts, \
                     o.last_failure, o.updated_at \
              FROM scrobble_outbox o JOIN scrobble_link l ON l.id = o.link_id \
              WHERE l.user_id=? AND l.status <> 'unlinked' AND o.state='uncertain' \
@@ -770,6 +780,13 @@ impl DomainServices {
                     id: Uuid::parse_str(row.try_get("public_id")?)
                         .map_err(|_| ServiceError::Invalid)?,
                     provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                    // Defaulted for the reason `scrobble_links` defaults it:
+                    // `initialize` fills every legacy row before the server
+                    // answers anything, and a listing is not where a boot that
+                    // went wrong should be discovered.
+                    destination: row
+                        .try_get::<Option<String>, _>("destination")?
+                        .unwrap_or_default(),
                     played_at: row.try_get("played_at")?,
                     attempts: row.try_get("attempts")?,
                     last_failure: row.try_get("last_failure")?,
