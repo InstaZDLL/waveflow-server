@@ -42,6 +42,9 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // registered yet — a server that was merely upgraded makes no outbound
     // request. RFC-010.
     state.services.spawn_scrobble_drain();
+    // The eighth. A queue that never forgets grows by a row per listen and per
+    // destination, for ever — RFC-010's retention section.
+    state.services.spawn_scrobble_purge();
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)
