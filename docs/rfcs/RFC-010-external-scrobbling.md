@@ -24,8 +24,13 @@
   consommé — que la rétention emporte. Les quatre lecteurs qui lisaient la
   jointure lisent la colonne, et les bases déjà en service la reçoivent
   remplie.
-  Maloja puis Last.fm ensuite, par la décision 11. Le champ *Statut* ci-dessus
-  ne bascule pas — il ne bascule jamais dans ce projet.
+  Puis [#200](https://github.com/InstaZDLL/waveflow-server/pull/200), **le
+  reste** : la rétention de la file et sa huitième tâche de fond ; les
+  destinations nommées, avec l'empreinte d'URL qui en fait l'identité, le
+  rattrapage et la réconciliation au démarrage ; l'adaptateur Maloja, où
+  l'enveloppe se verse sans perdre un crédit ; et le parcours d'autorisation
+  Last.fm, deux routes et une table qui vit un quart d'heure. Le champ *Statut*
+  ci-dessus ne bascule pas — il ne bascule jamais dans ce projet.
 - **Date** : 2026-09-13
 - **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
@@ -35,8 +40,8 @@
   d'une reprise se compte désormais sur l'entrée (décision 13), une destination
   peut exister en plusieurs instances nommées (décision 10), Last.fm obtient un
   protocole d'autorisation au lieu d'un secret collé (décision 11), et la
-  rétention de la file est tranchée. Ces décisions-ci sont écrites ; aucune
-  n'est encore implémentée.
+  rétention de la file est tranchée. Ces quatre-là sont implémentées le même
+  jour, par #199 et #200 ci-dessus.
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)

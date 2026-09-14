@@ -172,8 +172,37 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/now-playing", get(list_now_playing))
         .route("/api/v2/scrobble-links", get(list_scrobble_links))
         .route(
-            "/api/v2/scrobble-links/{provider}",
+            "/api/v2/scrobble-destinations",
+            get(list_scrobble_destinations),
+        )
+        // The instance is in the path, not implied. `/{provider}` named nothing
+        // precise the moment a recipient could have two, and `DELETE` has no
+        // body to name one in. No implicit default either: a path without an
+        // instance is refused rather than attached to whichever came first —
+        // that slide is the substitution decision 4 exists to prevent.
+        .route(
+            "/api/v2/scrobble-links/{provider}/{destination}",
             put(link_scrobble).delete(unlink_scrobble),
+        )
+        // The literal before the parameter, so a destination named `callback`
+        // cannot produce a path the return route claims as well.
+        .route(
+            "/api/v2/scrobble-links/lastfm/authorize/{destination}",
+            post(authorize_lastfm),
+        )
+        // **Both spellings, and that is not a matter of tidiness.** Last.fm
+        // documents that it appends `/?token=…` to the callback, so what the
+        // browser asks for is `…/callback/{state}/` and not
+        // `…/callback/{state}`. `axum` does not normalise trailing slashes: a
+        // route declared without one would not answer, and the journey would
+        // fail at its last step, for everybody, over a single character.
+        .route(
+            "/api/v2/scrobble-links/lastfm/callback/{state}",
+            get(lastfm_callback),
+        )
+        .route(
+            "/api/v2/scrobble-links/lastfm/callback/{state}/",
+            get(lastfm_callback),
         )
         // Deliberately not under `scrobble-links/`: `uncertain` would sit in the
         // same position as `{provider}` and the two would be one segment read

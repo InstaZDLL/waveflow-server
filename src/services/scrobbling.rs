@@ -126,17 +126,46 @@ pub trait ScrobbleTarget: Send + Sync + 'static {
 }
 
 /// The registry `initialize` fills and the drain reads.
-pub(super) type ScrobbleTargets = Arc<dashmap::DashMap<ScrobbleProvider, Arc<dyn ScrobbleTarget>>>;
+///
+/// Keyed by the **pair**, never by the recipient alone. Decision 10 lets an
+/// operator declare several instances of one destination, and a registry keyed
+/// on `ScrobbleProvider` would hold one adapter for all of them — pointing at
+/// whichever URL happened to be registered last, and sending one member's
+/// listens to another member's instance.
+pub(super) type ScrobbleTargets =
+    Arc<dashmap::DashMap<(ScrobbleProvider, String), Arc<dyn ScrobbleTarget>>>;
 
 // Decision 12: what the API shows is a state, not an echo of the envelope nor
 // of the destination's own words. In a `//` because `ToSchema` publishes the
 // `///` verbatim as this schema's description, and "decision 12" names nothing
 // a client can look up.
 
+/// One instance a member may link to, named without its address.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ScrobbleDestinationName {
+    pub provider: ScrobbleProvider,
+    /// The name to put in the path of `PUT /api/v2/scrobble-links/{provider}/{destination}`.
+    pub destination: String,
+    /// Whether this server can actually link it right now.
+    pub available: bool,
+    /// And when it cannot, why — in words an operator can act on.
+    ///
+    /// Published here rather than left to be discovered: a link that fails
+    /// later with no explanation is the silent failure this whole RFC spends
+    /// itself preventing. Last.fm is the one recipient that can be declared and
+    /// still unusable, because its journey needs an application the operator
+    /// registered and an `https` address to bring a person back to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<&'static str>,
+}
+
 /// What one link's queue looks like from outside: counters, never content.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScrobbleLinkState {
     pub provider: ScrobbleProvider,
+    /// Which instance of it. An account may hold one link per instance, so the
+    /// recipient alone no longer names a row here.
+    pub destination: String,
     /// `healthy`, `degraded` or `broken`.
     ///
     /// **`healthy` cannot mean "the token is still good".** A valid link with
@@ -224,6 +253,9 @@ struct DueEntry {
     id: i64,
     link_id: Uuid,
     provider: ScrobbleProvider,
+    /// Which instance of it, so the drain picks the adapter this listen was
+    /// queued for rather than whichever one shares its recipient.
+    destination: String,
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
     attempts: i64,
@@ -264,6 +296,19 @@ const RETRY_CEILING: Duration = Duration::from_millis(RETRY_CEILING_MS as u64);
 /// container throttled — is never mistaken for a dead one and does not have a
 /// listen declared uncertain out from under it.
 const STALE_SENDING_MARGIN: Duration = Duration::from_secs(60);
+
+/// How often the finished end of the queue is trimmed.
+///
+/// Retention is measured in days, so a pass a day is the coarsest interval that
+/// still honours it: the oldest surviving entry is never more than a day past
+/// the bound. The other sweepers in this crate have the same shape.
+const SCROBBLE_PURGE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How many finished entries one turn of the writer gate takes.
+///
+/// A thousand is a delete that finishes in milliseconds on any disk this server
+/// runs on, and a backlog of a year's listening is a few dozen of them.
+const SCROBBLE_PURGE_CHUNK: i64 = 1_000;
 
 impl DomainServices {
     /// Queues one listen for every destination this account has linked.
@@ -394,24 +439,71 @@ impl DomainServices {
     pub fn register_scrobble_target(
         &self,
         provider: ScrobbleProvider,
+        destination: &str,
         target: Arc<dyn ScrobbleTarget>,
     ) {
-        self.scrobble_targets.insert(provider, target);
+        self.scrobble_targets
+            .insert((provider, destination.to_owned()), target);
+    }
+
+    /// Every instance a member may name, by recipient.
+    ///
+    /// Decision 10's barrier from the inside: an account picks among these and
+    /// describes no URL, so something has to publish the names. The addresses
+    /// are deliberately not here — a member never needs one, and a link never
+    /// holds one either.
+    pub fn scrobble_destinations(&self) -> Vec<ScrobbleDestinationName> {
+        let mut named: Vec<ScrobbleDestinationName> = self
+            .scrobble_destinations
+            .keys()
+            .map(|(provider, name)| {
+                let unavailable = (*provider == ScrobbleProvider::LastFm)
+                    .then_some(self.lastfm_unavailable)
+                    .flatten();
+                ScrobbleDestinationName {
+                    provider: *provider,
+                    destination: name.clone(),
+                    available: unavailable.is_none(),
+                    unavailable,
+                }
+            })
+            .collect();
+        // A `HashMap` has no order and an API that reorders itself between two
+        // identical calls is one nobody can diff.
+        named.sort_by(|left, right| {
+            (left.provider.as_str(), &left.destination)
+                .cmp(&(right.provider.as_str(), &right.destination))
+        });
+        named
     }
 
     /// Authorises this account to submit to one destination, in a new
     /// generation.
     ///
-    /// Any live generation for the same pair is unlinked first, and its queue
-    /// finishes with it — decision 4. The two happen under one transaction, so
-    /// there is no instant at which a waiting listen belongs to no
-    /// authorisation.
+    /// Any live generation for the same **triple** — account, recipient,
+    /// instance — is unlinked first, and its queue finishes with it — decision
+    /// 4. The two happen under one transaction, so there is no instant at which
+    /// a waiting listen belongs to no authorisation.
+    ///
+    /// **The instance is part of what is replaced, and that is not a detail.**
+    /// While this unlinked by recipient alone, linking `maloja/bob` withdrew
+    /// `maloja/alice` and cancelled her queue: the feature would have destroyed
+    /// itself on its second use.
+    ///
+    /// An instance the operator never declared answers `NotFound`. A member
+    /// picks among the names the server publishes; they do not describe one.
     pub async fn link_scrobble(
         &self,
         user_id: Uuid,
         provider: ScrobbleProvider,
+        destination: &str,
         secret: &str,
     ) -> Result<Uuid, ServiceError> {
+        let fingerprint = self
+            .scrobble_destinations
+            .get(&(provider, destination.to_owned()))
+            .ok_or(ServiceError::NotFound)?
+            .clone();
         let secret = secret.trim();
         if secret.is_empty() || secret.len() > 512 {
             return Err(ServiceError::Invalid);
@@ -435,15 +527,18 @@ impl DomainServices {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
-        self.unlink_scrobble_on(&mut tx, user_id, provider, now)
+        self.unlink_scrobble_on(&mut tx, user_id, provider, destination, now)
             .await?;
         sqlx::query(
-            "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
-             credential_ciphertext, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
+            "INSERT INTO scrobble_link (id, user_id, provider, destination, \
+             destination_fingerprint, status, credential_nonce, credential_ciphertext, \
+             created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
         )
         .bind(id.to_string())
         .bind(user_id.to_string())
         .bind(provider.as_str())
+        .bind(destination)
+        .bind(&fingerprint)
         .bind(sealed.nonce.as_slice())
         .bind(sealed.ciphertext.as_slice())
         .bind(now)
@@ -461,12 +556,13 @@ impl DomainServices {
         &self,
         user_id: Uuid,
         provider: ScrobbleProvider,
+        destination: &str,
     ) -> Result<bool, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
         let unlinked = self
-            .unlink_scrobble_on(&mut tx, user_id, provider, now)
+            .unlink_scrobble_on(&mut tx, user_id, provider, destination, now)
             .await?;
         tx.commit().await?;
         Ok(unlinked)
@@ -487,27 +583,44 @@ impl DomainServices {
     /// does not report an unlinked one. This is the same asymmetry the
     /// `AuthBroken` arm had to close, and the opposite answer is the right one
     /// here.
+    ///
+    /// **Scoped to one instance, and that is load-bearing.** It withdraws "this
+    /// account's live authorisation at this *instance*", not "at this
+    /// recipient". Keyed by recipient alone — which is how it was written while
+    /// there could only be one — `link_scrobble("maloja", "bob")` would have
+    /// withdrawn `maloja/alice` and cancelled her queue, so naming a second
+    /// instance destroyed the first. The index, the registry and this clause
+    /// are one change in three places: correcting two of the three gives a
+    /// server that accepts two instances and erases one.
+    ///
+    /// A legacy row whose destination `initialize` has not filled yet matches
+    /// nothing here, which is right: nothing can be linked before the catch-up
+    /// has run, because `initialize` runs before anything is served.
     async fn unlink_scrobble_on(
         &self,
         connection: &mut SqliteConnection,
         user_id: Uuid,
         provider: ScrobbleProvider,
+        destination: &str,
         now: i64,
     ) -> Result<bool, ServiceError> {
         let live = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM scrobble_link WHERE user_id=? AND provider=? AND status <> 'unlinked'",
+            "SELECT id FROM scrobble_link \
+             WHERE user_id=? AND provider=? AND destination=? AND status <> 'unlinked'",
         )
         .bind(user_id.to_string())
         .bind(provider.as_str())
+        .bind(destination)
         .fetch_optional(&mut *connection)
         .await?;
         let Some(link_id) = live else {
             return Ok(false);
         };
         sqlx::query(
-            "UPDATE scrobble_outbox SET state='cancelled', last_failure='unlinked', updated_at=? \
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure='unlinked', updated_at=?, terminal_at=? \
              WHERE link_id=? AND state='pending'",
         )
+        .bind(now)
         .bind(now)
         .bind(&link_id)
         .execute(&mut *connection)
@@ -526,8 +639,9 @@ impl DomainServices {
         user_id: Uuid,
     ) -> Result<Vec<ScrobbleLinkState>, ServiceError> {
         let rows = sqlx::query(
-            "SELECT id, provider, status, last_success_at, last_failure FROM scrobble_link \
-             WHERE user_id=? AND status <> 'unlinked' ORDER BY provider",
+            "SELECT id, provider, destination, status, last_success_at, last_failure \
+             FROM scrobble_link \
+             WHERE user_id=? AND status <> 'unlinked' ORDER BY provider, destination",
         )
         .bind(user_id.to_string())
         .fetch_all(self.db.pool())
@@ -537,6 +651,11 @@ impl DomainServices {
         for row in rows {
             let link_id: String = row.try_get("id")?;
             let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
+            // Never null by the time anything reads this: `initialize` fills
+            // every legacy row before the server answers, and breaks the ones it
+            // cannot fill. Defaulted rather than unwrapped all the same — a
+            // listing is not the place to discover a boot went wrong.
+            let destination: Option<String> = row.try_get("destination")?;
             // `SUM(CASE …)` rather than `COUNT(*) FILTER`, because one query
             // answering four counts is the point. An earlier note here gave a
             // second reason — that the aggregate filter wanted a SQLite newer
@@ -574,6 +693,7 @@ impl DomainServices {
             let broken: String = row.try_get("status")?;
             states.push(ScrobbleLinkState {
                 provider,
+                destination: destination.unwrap_or_default(),
                 health: link_health(
                     &broken,
                     uncertain,
@@ -673,14 +793,19 @@ impl DomainServices {
         user_id: Uuid,
         entry: Uuid,
     ) -> Result<(), ServiceError> {
+        // One instant, named once and written twice: `updated_at` and
+        // `terminal_at` describe the same write, and two `now_ms()` calls
+        // would make them disagree by whatever the gate took.
+        let discarded_at = now_ms();
         let _writer = self.db.writer_guard().await;
         let changed = sqlx::query(
-            "UPDATE scrobble_outbox SET state='discarded', updated_at=? \
+            "UPDATE scrobble_outbox SET state='discarded', updated_at=?, terminal_at=? \
              WHERE public_id=? AND state='uncertain' AND retried_at IS NULL \
              AND link_id IN \
                (SELECT id FROM scrobble_link WHERE user_id=? AND status <> 'unlinked')",
         )
-        .bind(now_ms())
+        .bind(discarded_at)
+        .bind(discarded_at)
         .bind(entry.to_string())
         .bind(user_id.to_string())
         .execute(self.db.pool())
@@ -707,6 +832,13 @@ impl DomainServices {
     /// and not the survival of a row naming it through `retry_of`. A retry ends
     /// `sent`, so retention will take it, and every reader deducing the answer
     /// from a join would then hand this listen a second joker.
+    ///
+    /// **And it checks where it would go.** A live link is not enough: the
+    /// instance that link names must still be declared, and its URL must still
+    /// be the one the link was made against. Without that, the most dangerous
+    /// entry in the whole design — a listen its owner accepts risking twice —
+    /// would be the one that leaves for a machine nobody chose. The check is
+    /// inside the same transaction as the UPDATE and precedes it.
     pub async fn retry_uncertain_scrobble(
         &self,
         user_id: Uuid,
@@ -715,6 +847,33 @@ impl DomainServices {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
+        // Read inside the transaction, before the claim, so the identity this
+        // answers for is the identity the row is claimed under. Outside it, a
+        // reconciliation could move between the two.
+        let addressed = sqlx::query(
+            "SELECT l.provider, l.destination, l.destination_fingerprint \
+             FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
+             WHERE o.public_id=? AND l.user_id=? AND l.status='active'",
+        )
+        .bind(entry.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(addressed) = addressed else {
+            return Err(ServiceError::NotFound);
+        };
+        let provider = ScrobbleProvider::from_str(addressed.try_get("provider")?)?;
+        let destination: Option<String> = addressed.try_get("destination")?;
+        let fingerprint: Option<String> = addressed.try_get("destination_fingerprint")?;
+        // A 404 rather than a distinct answer, like every other refusal on this
+        // path: "already answered", "not yours" and "the destination moved" are
+        // one reply, and the entry simply stops being findable.
+        let still_there = destination
+            .and_then(|destination| self.scrobble_destinations.get(&(provider, destination)))
+            .is_some_and(|declared| Some(declared) == fingerprint.as_ref());
+        if !still_there {
+            return Err(ServiceError::NotFound);
+        }
         // The conditional UPDATE comes first because it is the arbitration:
         // spending the joker and refusing a second one are the same write, so
         // two simultaneous calls cannot both find the entry unanswered.
@@ -765,6 +924,236 @@ impl DomainServices {
         .await?;
         tx.commit().await?;
         Ok(public_id)
+    }
+
+    /// Fills in what old links never carried, then checks every link still
+    /// points where it was made to point.
+    ///
+    /// Called once by `initialize`, under the writer gate, **before**
+    /// `spawn_scrobble_drain`. The order is half the rule: reconciling while
+    /// the drain already runs leaves a window — short, and quite sufficient —
+    /// in which listens leave for yesterday's destination. Nothing else needs
+    /// guarding, because once a link is `broken` the queueing writes nothing
+    /// more for it.
+    ///
+    /// **The catch-up asserts; it cannot verify.** Nothing in the database says
+    /// which URL was configured yesterday, so writing today's fingerprint onto
+    /// a legacy link declares that today's instance is the one it meant. That
+    /// is true while there is only one possible answer, which is the case when
+    /// this ships. Where a recipient has legacy links *and* the configuration
+    /// already declares several instances for it, there is no answer, and the
+    /// server refuses to start rather than pick one: guessing here would send
+    /// waiting listens to the wrong profile with nothing to show for it. The
+    /// way out needs no new machinery — boot once with a single instance
+    /// declared, the one those links meant, and add the others next boot.
+    ///
+    /// **None of that concerns a fresh install.** The refusal is about an
+    /// ambiguous catch-up, and with no legacy link there is nothing to catch
+    /// up: an empty database starts with as many instances as the operator
+    /// declares, the first time. Not saying so would have made the feature
+    /// unreachable to everyone with nothing to migrate.
+    ///
+    /// **A recipient with links and no declared instance at all** — a URL
+    /// emptied out of the configuration, which is already a way of switching it
+    /// off — has nothing to write. Those links are treated as a vanished
+    /// destination: broken, with their queue finished, rather than left holding
+    /// two empty columns the next reconciliation could not read.
+    ///
+    /// The deployment consequence, said rather than left to be discovered:
+    /// whoever changes an instance's URL *and then* updates will have the
+    /// catch-up ratify the change, because the guard compares against what was
+    /// written and nothing was. Update first, change the URL after.
+    pub async fn reconcile_scrobble_links(&self) -> Result<(), ServiceError> {
+        let now = now_ms();
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+
+        let legacy = sqlx::query(
+            "SELECT id, provider FROM scrobble_link \
+             WHERE destination IS NULL AND status <> 'unlinked'",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in &legacy {
+            let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
+            let declared: Vec<(&String, &String)> = self
+                .scrobble_destinations
+                .iter()
+                .filter(|((declared, _), _)| *declared == provider)
+                .map(|((_, name), fingerprint)| (name, fingerprint))
+                .collect();
+            match declared.as_slice() {
+                [(name, fingerprint)] => {
+                    sqlx::query(
+                        "UPDATE scrobble_link SET destination=?, destination_fingerprint=?, \
+                         updated_at=? WHERE id=?",
+                    )
+                    .bind(name.as_str())
+                    .bind(fingerprint.as_str())
+                    .bind(now)
+                    .bind(row.try_get::<String, _>("id")?)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                [] => {
+                    self.break_link_on(&mut tx, row.try_get("id")?, "destination_gone", now)
+                        .await?;
+                }
+                _ => {
+                    // Refused rather than guessed, and refused loudly: a
+                    // startup that picked one would hand somebody else's
+                    // instance a queue of listens and say nothing.
+                    return Err(ServiceError::Conflict);
+                }
+            }
+        }
+
+        // And then every link, legacy or not, against what is declared now.
+        let links = sqlx::query(
+            "SELECT id, provider, destination, destination_fingerprint FROM scrobble_link \
+             WHERE status='active'",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in &links {
+            let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
+            let destination: Option<String> = row.try_get("destination")?;
+            let fingerprint: Option<String> = row.try_get("destination_fingerprint")?;
+            let matches = destination
+                .and_then(|destination| self.scrobble_destinations.get(&(provider, destination)))
+                .is_some_and(|declared| Some(declared) == fingerprint.as_ref());
+            if !matches {
+                // One cause for both halves. A name that disappeared and a name
+                // pointing somewhere else are the same event for the account:
+                // the machine this authorisation was for is not reachable under
+                // it any more, and nothing is silently remapped onto a sibling.
+                self.break_link_on(&mut tx, row.try_get("id")?, "destination_gone", now)
+                    .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Breaks one link and finishes what was waiting under it.
+    ///
+    /// The queue has to finish, not wait. A `broken` link whose rows stay
+    /// `pending` is a queue nothing will ever empty: `pending` escapes
+    /// retention, so the table keeps those rows for ever, and
+    /// `oldest_pending_at` holds the link `degraded` for ever with them — the
+    /// same defect this slice corrects twice elsewhere. Unlinking already does
+    /// exactly this, for exactly this reason.
+    async fn break_link_on(
+        &self,
+        connection: &mut SqliteConnection,
+        link_id: String,
+        cause: &str,
+        now: i64,
+    ) -> Result<(), ServiceError> {
+        sqlx::query(
+            "UPDATE scrobble_link SET status='broken', last_failure=?, updated_at=? WHERE id=?",
+        )
+        .bind(cause)
+        .bind(now)
+        .bind(&link_id)
+        .execute(&mut *connection)
+        .await?;
+        sqlx::query(
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=?, \
+             terminal_at=? WHERE link_id=? AND state='pending'",
+        )
+        .bind(cause)
+        .bind(now)
+        .bind(now)
+        .bind(&link_id)
+        .execute(&mut *connection)
+        .await?;
+        Ok(())
+    }
+
+    /// Trims the queue to what the RFC's retention section says it keeps.
+    ///
+    /// The eighth background task, and the same shape as the seven others: a
+    /// pass at boot, then one per interval. A server that has been down should
+    /// not wait a full day to catch up on what it owes.
+    pub fn spawn_scrobble_purge(&self) {
+        let services = self.clone();
+        tokio::spawn(async move {
+            services.purge_scrobbles_now().await;
+            let mut ticker = tokio::time::interval(SCROBBLE_PURGE_INTERVAL);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                services.purge_scrobbles_now().await;
+            }
+        });
+    }
+
+    async fn purge_scrobbles_now(&self) {
+        let now = now_ms();
+        match self.purge_scrobble_outbox(now).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(entries = removed, "finished scrobble entries trimmed"),
+            Err(error) => tracing::warn!(%error, "could not trim the scrobble queue"),
+        }
+        // The same pass, because it exists anyway — and each journey's own
+        // expiry rather than the queue's thirty-day window. Borrowing the wrong
+        // one of the two would keep a fifteen-minute journey alive for a month.
+        match self.purge_lastfm_authorizations(now).await {
+            Ok(0) => {}
+            Ok(removed) => {
+                tracing::info!(journeys = removed, "expired last.fm authorisations dropped")
+            }
+            Err(error) => tracing::warn!(%error, "could not drop expired last.fm authorisations"),
+        }
+    }
+
+    /// One pass. Public so a test can run it rather than wait a day for it.
+    ///
+    /// **Only rows carrying a terminal instant, and that is the whole guard.**
+    /// `pending` and `sending` never have one, and neither does `uncertain` —
+    /// answered or not, it waits for a person, and taking it away after a month
+    /// would decide in their place. Nothing a link publishes is read from the
+    /// rows this takes: the counters and the oldest wait come from `pending`
+    /// and `uncertain`, and `last_success_at` is a column of `scrobble_link`.
+    ///
+    /// No floor, unlike the library event feed: nobody resumes a cursor here.
+    ///
+    /// `now_ms` is a parameter for the reason `purge_library_events` takes one:
+    /// the bound is exclusive, so a caller that cannot name the instant cannot
+    /// place a row *on* it, only a few milliseconds either side of it.
+    pub async fn purge_scrobble_outbox(&self, now_ms: i64) -> Result<u64, ServiceError> {
+        // Whole days in milliseconds, checked: a value large enough to overflow
+        // means "keep everything", which is what the absent cutoff below does.
+        let cutoff = i64::from(self.scrobbling.retention_days)
+            .checked_mul(24 * 60 * 60 * 1000)
+            .and_then(|window| now_ms.checked_sub(window));
+        let Some(cutoff) = cutoff else {
+            return Ok(0);
+        };
+        let mut removed = 0;
+        loop {
+            // One chunk per turn of the gate rather than one statement for the
+            // whole backlog. The writer gate is process-wide, and a server
+            // coming back to a year of finished entries would otherwise hold
+            // every other mutation still for the length of one delete.
+            let _writer = self.db.writer_guard().await;
+            let cut = sqlx::query(
+                "DELETE FROM scrobble_outbox WHERE id IN ( \
+                   SELECT id FROM scrobble_outbox \
+                    WHERE terminal_at IS NOT NULL AND terminal_at < ? \
+                    ORDER BY terminal_at LIMIT ?)",
+            )
+            .bind(cutoff)
+            .bind(SCROBBLE_PURGE_CHUNK)
+            .execute(self.db.pool())
+            .await?;
+            drop(_writer);
+            removed += cut.rows_affected();
+            if cut.rows_affected() < SCROBBLE_PURGE_CHUNK as u64 {
+                return Ok(removed);
+            }
+        }
     }
 
     /// Walks the queue on a timer. The shape the six other background tasks
@@ -925,7 +1314,7 @@ impl DomainServices {
             }
             let Some(target) = self
                 .scrobble_targets
-                .get(&entry.provider)
+                .get(&(entry.provider, entry.destination.clone()))
                 .map(|found| Arc::clone(found.value()))
             else {
                 // Stepped aside rather than left at the head of the queue.
@@ -1150,7 +1539,7 @@ impl DomainServices {
         let rows = sqlx::query(
             "SELECT o.id, o.link_id, o.attempts, o.played_at, o.title, o.artists_json, o.album, \
                     o.album_artist, o.duration_ms, o.musicbrainz_recording_id, \
-                    l.provider, l.credential_nonce, l.credential_ciphertext \
+                    l.provider, l.destination, l.credential_nonce, l.credential_ciphertext \
              FROM scrobble_outbox o JOIN scrobble_link l ON l.id=o.link_id \
              WHERE o.state='pending' AND o.next_attempt_at <= ? AND l.status='active' \
              ORDER BY o.next_attempt_at, o.id LIMIT ?",
@@ -1167,6 +1556,9 @@ impl DomainServices {
                 id: row.try_get("id")?,
                 link_id: parse_uuid(row.try_get("link_id")?)?,
                 provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                destination: row
+                    .try_get::<Option<String>, _>("destination")?
+                    .unwrap_or_default(),
                 nonce: row.try_get("credential_nonce")?,
                 ciphertext: row.try_get("credential_ciphertext")?,
                 attempts: row.try_get("attempts")?,
@@ -1217,11 +1609,12 @@ impl DomainServices {
         let mut tx = self.db.pool().begin().await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
-             updated_at=? WHERE id=? AND state='sending'",
+             updated_at=?, terminal_at=? WHERE id=? AND state='sending'",
         )
         .bind(state)
         .bind(failure)
         .bind(now)
+        .bind(retention_instant(state, now))
         .bind(entry.id)
         .execute(&mut *tx)
         .await?;
@@ -1453,10 +1846,11 @@ impl DomainServices {
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=? \
+            "UPDATE scrobble_outbox SET state='cancelled', last_failure=?, updated_at=?, terminal_at=? \
              WHERE link_id=? AND state='pending'",
         )
         .bind(cause)
+        .bind(now)
         .bind(now)
         .bind(link_id.to_string())
         .execute(&mut *tx)
@@ -1464,6 +1858,25 @@ impl DomainServices {
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// The five states retention counts from, named once.
+///
+/// `sent`, `rejected`, `abandoned`, `cancelled` and `discarded` are finished
+/// and eventually go. `uncertain` is terminal for the server and deliberately
+/// gets nothing: it is kept for as long as nobody has answered it, and an
+/// instant on it would be an invitation to start counting one day. `pending`
+/// and `sending` are not terminal at all.
+///
+/// A function rather than a `CASE` in each statement because there are four
+/// writers, and the one that forgot would leave a row no purge could ever see —
+/// the same shape of silent survival `retried_at` was added to close.
+fn retention_instant(state: &str, now: i64) -> Option<i64> {
+    matches!(
+        state,
+        "sent" | "rejected" | "abandoned" | "cancelled" | "discarded"
+    )
+    .then_some(now)
 }
 
 /// Where a link stands, from its status and the shape of its queue.

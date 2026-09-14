@@ -31,6 +31,24 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
             "WAVEFLOW_PUBLIC_URL is not configured; browser origin validation falls back to the request Host header and cookies cannot be marked Secure"
         );
     }
+    // Here rather than in `initialize`, with the other thing an operator is
+    // told at startup. `initialize` runs for every CLI command too, and one of
+    // those promises that a minted secret is alone on standard output — a
+    // promise `a_minted_secret_leaves_on_standard_output_by_itself` holds, and
+    // which this warning broke when it lived there.
+    //
+    // The listing already carries the reason for a client to show; this is for
+    // the operator who never opens one.
+    for destination in &config.destinations {
+        if destination.provider == waveflow_server::services::ScrobbleProvider::LastFm
+            && config.lastfm.is_none()
+        {
+            tracing::warn!(
+                destination = %destination.name,
+                "a last.fm destination is declared with no application; nothing will be sent to it"
+            );
+        }
+    }
     state.scanner.spawn_background(config.scan_interval);
     // Abandoned transfers hold the operator's disk, and nothing else would
     // reclaim it until somebody offered another file.
@@ -42,6 +60,9 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // registered yet — a server that was merely upgraded makes no outbound
     // request. RFC-010.
     state.services.spawn_scrobble_drain();
+    // The eighth. A queue that never forgets grows by a row per listen and per
+    // destination, for ever — RFC-010's retention section.
+    state.services.spawn_scrobble_purge();
     state.db.spawn_authorization_pruning();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)
