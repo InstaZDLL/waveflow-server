@@ -325,6 +325,26 @@ rattaché à la première venue — le glissement que les deux paragraphes suiva
 interdisent. La surface date d'hier et personne ne s'y est encore adossé, donc
 ce contrat se corrige maintenant ou se traîne.
 
+**Ce que ce couple déplace dans le code, dit ici pour qu'on ne le trouve pas
+après.** Trois endroits tiennent aujourd'hui un lien pour identifié par son seul
+destinataire, et aucun ne se contente d'une colonne de plus :
+
+- `register_scrobble_target` range un adaptateur par `ScrobbleProvider`, donc
+  deux instances Maloja n'en auraient qu'un, pointant sur une seule URL. Le
+  registre se range par le couple, et le drain choisit par le couple.
+- `unlink_scrobble_on` délie « le lien vivant de ce compte chez ce
+  destinataire » — appelé par `link_scrobble` avant chaque nouvelle
+  autorisation. Tel quel, lier `maloja/bob` délierait `maloja/alice` et
+  annulerait sa file. La clause prend la destination, faute de quoi la
+  fonctionnalité se détruirait elle-même au deuxième usage.
+- L'index unique `scrobble_link(user_id, provider) WHERE status <> 'unlinked'`
+  interdit tout simplement le cas : il devient `(user_id, provider,
+  destination)`.
+
+Ce n'est pas de l'implémentation laissée ouverte. C'est la forme que le couple
+impose, et les trois se tiennent : en corriger deux sur trois donne un serveur
+qui accepte deux destinations et en efface une.
+
 **Un nom de destination s'écrit dans un chemin sans y être encodé.** Puisqu'il
 devient un segment d'URL, il se borne à ce qui traverse un chemin sans
 discussion — lettres ASCII, chiffres, `-`, `_` et `.`, au plus soixante-quatre
@@ -423,9 +443,7 @@ faire à la place de l'opérateur.
   `scrobble_outbox`, `retried_at` — l'invariant de la décision 13 ne peut pas se
   déduire d'une jointure que la purge dénoue — et l'instant de passage en état
   terminal sur lequel la rétention compte. Sur `scrobble_link`, le nom de la
-  destination et l'empreinte de son URL — et, le jour où la décision 12 tiendra
-  sa promesse d'un dernier succès, celui-là aussi, pour la raison que la
-  rétention donne : un `MAX` sur des lignes purgeables reculerait tout seul.
+  destination et l'empreinte de son URL.
 
   **Et `retried_at` se remplit lui aussi, sur les bases déjà en service.** Des
   entrées retentées existent depuis [#191](https://github.com/InstaZDLL/waveflow-server/pull/191),
@@ -551,6 +569,16 @@ serait la première marche vers le glissement qu'elle interdit. Le nom est donc
 demandé, vérifié contre les destinations déclarées, et rangé dans l'état : c'est
 lui que le retour relira, plutôt que d'en deviner un. Le jour où quelqu'un
 déclare deux Last.fm — un compte de famille et le sien — rien n'aura à changer.
+
+**Et le retour revérifie la destination.** Un quart d'heure sépare l'aller du
+retour, et un serveur peut redémarrer entre les deux — c'est justement pour
+survivre à cela que l'état vit en base. Il porte donc aussi l'empreinte de la
+destination au moment de l'aller, et le retour la compare à celle d'après
+redémarrage avant d'appeler `auth.getSession` : destination disparue ou
+déplacée, le retour est refusé et rien n'est créé. Sans quoi le parcours
+fabriquerait un lien vers une machine que la personne n'a pas choisie — ce que
+la garde d'identité empêche partout ailleurs, et qui serait ici plus fâcheux
+puisque le lien naîtrait déjà faux.
 
 **Le littéral vient avant le paramètre, et ce n'est pas une préférence de
 style.** Si la route s'écrivait `…/lastfm/{destination}/authorize` — et c'est
@@ -705,8 +733,7 @@ Un lien expose son état et la forme de sa file, agrégés :
 
 - `healthy`, `degraded`, `broken` ;
 - combien de lignes attendent, combien retentent, combien sont `uncertain` ;
-- depuis quand attend la plus ancienne — et, plus tard seulement, quand remonte
-  le dernier succès, qui attend la colonne dont il est question plus bas ;
+- depuis quand attend la plus ancienne, et quand remonte le dernier succès ;
 - éventuellement une dernière cause normalisée — `rate_limited`, `auth_broken`.
 
 **`healthy` ne peut pas vouloir dire « j'ai encore un jeton ».** Un lien valide
@@ -725,14 +752,19 @@ passagère. C'est le texte qui promettait de travers, depuis l'origine. L'ordre
 des trois questions vit dans `link_health` et n'est pas recopié ici : deux
 écritures du même seuil divergeraient, et c'est le code que l'API rend.
 
-**Corrigé le 2026-09-14, seconde fois :** « quand remonte le dernier succès »
-est une promesse que rien ne tient encore, et que la rétention empêche de tenir
-naïvement — `MAX(updated_at)` sur des lignes `sent` reculerait le jour où la
-purge atteint trente et un jours, puis disparaîtrait sur un lien tranquille qui
-marche. Ce point de la liste attend donc une colonne sur `scrobble_link`, écrite
-au moment du succès, et il reste absent de l'API jusque-là plutôt que d'y entrer
-faux. Ce qu'un lien publie se tient sur le lien, ou sur des lignes qu'aucune
-purge ne touche.
+**Retiré le 2026-09-14 :** une révision de ce document a prétendu ici que « quand
+remonte le dernier succès » n'était tenu par rien, et qu'il faudrait un jour une
+colonne sur `scrobble_link` écrite au moment du succès. Cette colonne existe
+depuis [#191](https://github.com/InstaZDLL/waveflow-server/pull/191) :
+`scrobble_link.last_success_at`, écrite dans la transaction même qui règle une
+ligne, publiée par `scrobble_links`. La forme prescrite était déjà la forme en
+place.
+
+L'erreur vaut d'être gardée parce qu'elle a une cause nette : `link_health` ne
+prend pas ce champ, et j'en ai conclu qu'il n'existait pas. Il ne le prend pas
+parce que la santé n'en dépend pas — un lien qui n'a jamais rien envoyé n'est
+pas malade — et le champ voyage à côté, dans `ScrobbleLinkState`. **Lire la
+signature d'une fonction ne dit pas ce qu'une structure porte.**
 
 **Jamais le contenu de l'enveloppe, jamais la réponse brute du fournisseur.**
 La décision 10 interdit déjà l'écho ; ceci en est le corollaire du côté
@@ -856,14 +888,15 @@ un `UPDATE` de plus, donc elle est écrite : cet instant ne se réécrit pas.
   un moyen de livraison, pas une source de vérité. Ce que le lien publie —
   compteurs et santé — se lit sur les lignes vivantes, `pending` et `uncertain`,
   qu'aucune purge ne touche.
-- **Un champ promis que la purge rendrait faux.** La décision 12 annonce « quand
-  remonte le dernier succès ». Rien ne le publie encore, et c'est heureux :
-  calculé en `MAX(updated_at) WHERE state='sent'`, il reculerait tout seul le
-  jour où la purge emporte les envois d'il y a trente et un jours, puis
-  disparaîtrait sur un lien tranquille qui marche très bien. Ce jour-là il devra
-  être une colonne de `scrobble_link`, écrite au moment du succès. La règle
-  vaut au-delà de lui : ce qu'un lien publie se tient sur le lien, ou sur des
-  lignes qu'aucune purge ne touche.
+- **Ce que le lien publie ne dépend d'aucune ligne purgeable**, et c'est déjà
+  vrai : les compteurs et l'attente la plus ancienne se lisent sur `pending` et
+  `uncertain`, qu'aucune purge ne touche, et `last_success_at` est une colonne
+  de `scrobble_link` écrite au moment du succès. Une révision de ce document a
+  affirmé ici le contraire — que ce dernier champ n'existait pas et se
+  calculerait en `MAX(updated_at)` sur des lignes `sent` — ce qui aurait été un
+  vrai défaut si c'avait été vrai. Ce ne l'était pas : la colonne est là depuis
+  #191. Ce qu'il reste de la mise en garde, et qui vaut : rien de ce qu'un lien
+  publie ne doit se mettre à dépendre des lignes que la purge emporte.
 
 **Ce que cette borne ne borne pas, et pourquoi on l'accepte.** Une destination
 qui répond ambigu à chaque envoi produit une `uncertain` par écoute, et aucune
