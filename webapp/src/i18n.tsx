@@ -313,8 +313,7 @@ const en = {
   "player.unmute": "Unmute",
   "player.openAlbum": "Open the album",
   "library.active": "Library",
-  "search.everyLibrary":
-    "Search covers every library you can see, not only the active one.",
+  "search.thisLibrary": "Searching {library}.",
   "scan.connecting": "Waiting for the first reading…",
   "scan.queued": "Queued",
   "scan.running": "Scanning",
@@ -658,8 +657,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "player.unmute": "Rétablir le son",
   "player.openAlbum": "Ouvrir l’album",
   "library.active": "Bibliothèque",
-  "search.everyLibrary":
-    "La recherche porte sur toutes vos bibliothèques, pas seulement l’active.",
+  "search.thisLibrary": "Recherche dans {library}.",
   "scan.connecting": "En attente du premier relevé…",
   "scan.queued": "En attente",
   "scan.running": "Analyse en cours",

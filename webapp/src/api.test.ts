@@ -8,6 +8,7 @@ import {
   listLibraries,
   login,
   safeInternalPath,
+  search,
 } from "./api";
 
 afterEach(() => {
@@ -173,6 +174,63 @@ describe("listAlbums", () => {
 
     expect(urls).toHaveLength(1);
     expect(new URLSearchParams(urls[0]?.split("?")[1]).has("sort")).toBe(false);
+  });
+});
+
+/**
+ * Search became scopeable on 2026-09-14, and the screen stopped warning that
+ * it was not. Whether the scope actually travels is the whole of that change
+ * from here: a client that dropped `library_id` would show the same reassuring
+ * sentence over results from every library.
+ */
+describe("search", () => {
+  function stubOnce() {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        urls.push(url);
+        return Promise.resolve(
+          new Response(JSON.stringify({ artists: [], albums: [], songs: [] }), {
+            status: 200,
+          }),
+        );
+      }),
+    );
+    return urls;
+  }
+
+  it("carries the active library", async () => {
+    const urls = stubOnce();
+
+    await search("beacon", "lib-1");
+
+    const query = new URLSearchParams(urls[0]?.split("?")[1]);
+    expect(query.get("q")).toBe("beacon");
+    expect(query.get("library_id")).toBe("lib-1");
+  });
+
+  it("sends none when the account is not scoped to one", async () => {
+    // An account with no library, or a listing that could not be read: the
+    // route treats an absent `library_id` as every library it may see, so
+    // sending an empty one would be asking for a library named "".
+    const urls = stubOnce();
+
+    await search("beacon");
+
+    const query = new URLSearchParams(urls[0]?.split("?")[1]);
+    expect(query.get("q")).toBe("beacon");
+    expect(query.has("library_id")).toBe(false);
+  });
+
+  it("escapes a query the URL would otherwise read as structure", async () => {
+    const urls = stubOnce();
+
+    await search("rock & roll?a=b", "lib-1");
+
+    const query = new URLSearchParams(urls[0]?.split("?")[1]);
+    expect(query.get("q")).toBe("rock & roll?a=b");
+    expect(query.get("library_id")).toBe("lib-1");
   });
 });
 
