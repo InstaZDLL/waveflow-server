@@ -537,9 +537,12 @@ impl DomainServices {
         for row in rows {
             let link_id: String = row.try_get("id")?;
             let provider = ScrobbleProvider::from_str(row.try_get("provider")?)?;
-            // `SUM(CASE …)` rather than `COUNT(*) FILTER`: the aggregate filter
-            // needs a SQLite newer than the floor this crate builds against,
-            // and one query answering four counts is the point either way.
+            // `SUM(CASE …)` rather than `COUNT(*) FILTER`, because one query
+            // answering four counts is the point. An earlier note here gave a
+            // second reason — that the aggregate filter wanted a SQLite newer
+            // than this crate builds against — and it was simply untrue: the
+            // library is bundled, at 3.51, and the schema has asked for 3.37
+            // since the first `STRICT` table.
             //
             // The uncertain count excludes an entry a person has already
             // retried. It is still true and still readable; it has simply
@@ -723,28 +726,27 @@ impl DomainServices {
         // `updated_at` is deliberately left alone. It is what
         // `uncertain_scrobbles` publishes as the moment this listen became
         // ambiguous, and answering it did not make it ambiguous again.
-        let claimed = sqlx::query(
+        //
+        // `RETURNING` rather than a second lookup by `public_id`: `retry_of`,
+        // the ordering and the jitter all speak in rowids, and this hands back
+        // the rowid of the row the UPDATE itself took. A `SELECT` afterwards
+        // would name the same row today and would be a separate claim about
+        // which row that is.
+        let claimed = sqlx::query_scalar::<_, i64>(
             "UPDATE scrobble_outbox SET retried_at=? \
              WHERE public_id=? AND state='uncertain' AND retried_at IS NULL \
                AND link_id IN \
-                 (SELECT id FROM scrobble_link WHERE user_id=? AND status='active')",
+                 (SELECT id FROM scrobble_link WHERE user_id=? AND status='active') \
+             RETURNING id",
         )
         .bind(now)
         .bind(entry.to_string())
         .bind(user_id.to_string())
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        if claimed.rows_affected() == 0 {
+        let Some(rowid) = claimed else {
             return Err(ServiceError::NotFound);
-        }
-        // Resolved after the claim rather than before it: `retry_of`, the
-        // ordering and the jitter all speak in rowids, and `public_id` is
-        // unique, so this names the row the UPDATE just took and no other.
-        let rowid =
-            sqlx::query_scalar::<_, i64>("SELECT id FROM scrobble_outbox WHERE public_id=?")
-                .bind(entry.to_string())
-                .fetch_one(&mut *tx)
-                .await?;
+        };
         let public_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO scrobble_outbox (public_id, link_id, play_event_id, retry_of, played_at, \
