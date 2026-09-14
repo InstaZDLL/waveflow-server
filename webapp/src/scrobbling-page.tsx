@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   authorizeLastFm,
@@ -100,6 +100,21 @@ export function ScrobblingPage() {
   // Read once, on mount. It describes the navigation that brought us here, and
   // a later render is no longer that navigation.
   const returned = useMemo(() => returnedFrom(window.location.search), []);
+
+  // And spent once it is read. A reload is a later navigation, not this one,
+  // so leaving the pair in the address would re-announce a journey that did
+  // not just happen — and hand anyone who copies the URL the same claim about
+  // an account that is not theirs. `replaceState` rather than a navigation:
+  // the page is already rendering the answer, and the notice above is held in
+  // `returned`, not read back from here. Only the two the callback added are
+  // removed, so anything else in the query survives.
+  useEffect(() => {
+    if (!returned) return;
+    const address = new URL(window.location.href);
+    address.searchParams.delete("linked");
+    address.searchParams.delete("destination");
+    window.history.replaceState(window.history.state, "", address);
+  }, [returned]);
 
   const { value, error } = useAsync(async () => {
     const [destinations, links] = await Promise.all([

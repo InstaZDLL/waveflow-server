@@ -1697,9 +1697,19 @@ test("says so when the journey comes back, and names the instance", async ({
   // What the callback redirects to once it has finished the link itself. The
   // value is shown and nothing more: anybody can type this address, and the
   // listing beside it is what actually says a link exists.
-  await page.goto("/settings/scrobbling?linked=lastfm&destination=default");
+  await page.goto(
+    "/settings/scrobbling?linked=lastfm&destination=default&keep=me",
+  );
 
   await expect(page.getByText("Last.fm is linked: default.")).toBeVisible();
+
+  // Said once, then spent. A reload is a later navigation and not this one, so
+  // the pair leaves the address while the notice stays on the page — and a URL
+  // copied out of the bar no longer tells somebody else their Last.fm is
+  // linked. Anything else in the query is left where it was.
+  await expect(page).toHaveURL(/\/settings\/scrobbling\?keep=me$/);
+  await page.reload();
+  await expect(page.getByText("Last.fm is linked: default.")).toHaveCount(0);
 });
 
 test("names the track behind an ambiguous listen, and answers it once", async ({
