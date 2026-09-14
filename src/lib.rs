@@ -712,10 +712,16 @@ pub fn app(config: &Config, state: AppState) -> Router {
                     axum::http::HeaderName::from_static(api::OPERATION_ID_HEADER),
                     axum::http::HeaderName::from_static(api::DEVICE_ID_HEADER),
                 ])
+                // `x-request-id` is exposed and deliberately not allowed: a
+                // browser client should be able to read the name this server
+                // gave its request, which is what makes it quotable in a bug
+                // report, but it has no business sending one — an inbound value
+                // is dropped before anything reads it.
                 .expose_headers([
                     axum::http::header::ACCEPT_RANGES,
                     axum::http::header::CONTENT_LENGTH,
                     axum::http::header::CONTENT_RANGE,
+                    axum::http::HeaderName::from_static(REQUEST_ID_HEADER),
                 ]),
         )
     }
