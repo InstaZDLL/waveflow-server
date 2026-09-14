@@ -21,6 +21,11 @@ const en = {
   "nav.skip": "Skip to content",
   "nav.home": "WaveFlow home",
   "nav.server": "server",
+  "nav.more": "More",
+  "nav.moreTitle": "Everything else",
+  "nav.moreDetail":
+    "The bar below holds what you reach for while listening. The rest is here.",
+  "nav.moreClose": "Close",
   "preferences.theme": "Theme",
   "preferences.language": "Language",
   "common.loading": "Loading",
@@ -434,6 +439,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.skip": "Aller au contenu",
   "nav.home": "Accueil WaveFlow",
   "nav.server": "serveur",
+  "nav.more": "Plus",
+  "nav.moreTitle": "Tout le reste",
+  "nav.moreDetail":
+    "La barre du bas porte ce qu’on attrape en écoutant. Le reste est ici.",
+  "nav.moreClose": "Fermer",
   "preferences.theme": "Thème",
   "preferences.language": "Langue",
   "common.loading": "Chargement",
