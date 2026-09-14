@@ -371,6 +371,18 @@ lien retient donc de quoi reconnaître la destination qu'il visait, empreinte de
 l'URL comprise ; si elle ne correspond plus au démarrage, il passe `broken`
 comme si le nom avait disparu.
 
+**Ce qu'est cette empreinte, dit avant d'être écrite.** Elle porte sur l'URL
+*normalisée*, pas sur la chaîne que l'opérateur a tapée : sans cela,
+`https://maloja.example` et `https://maloja.example/` casseraient tous les
+liens d'un serveur au premier redémarrage après qu'un éditeur eut ajouté une
+barre. `normalize_public_url` fait déjà ce travail pour l'URL publique et
+donne la forme à suivre — un schéma, un hôte, un port, rien d'autre. La même
+normalisation sert au rattrapage, à la réconciliation et à la garde de
+reprise : trois lectures d'un même fait, qui ne valent que si elles le
+calculent pareil. Comparer des empreintes plutôt que des URL n'est pas une
+précaution contre un attaquant — personne d'hostile n'écrit cette
+configuration — mais la façon de n'avoir qu'une seule chose à comparer.
+
 C'est la décision 4 appliquée un étage plus haut. Là-bas, délier puis relier
 crée une génération qui n'hérite de rien, parce que le compte et la destination
 peuvent être les mêmes sans que l'autorisation le soit. Ici, le nom peut être le
@@ -579,6 +591,13 @@ une adresse sans jeton, pour que ce soit celle-là que l'historique retienne —
 page où la personne atterrit n'a pas besoin d'en
 savoir plus que « c'est lié ».
 
+**Et le journal d'accès du proxy n'est pas le nôtre.** Ce serveur ne retient
+aucune chaîne de requête, mais un reverse-proxy en écrit une par défaut, et le
+jeton s'y retrouverait entier. L'opérateur qui en pose un devant retire ou
+masque la chaîne de requête sur ce chemin — sans la retirer de la requête
+transmise, que le gestionnaire lit. Cela ne se vérifie pas d'ici, comme
+l'enregistrement de la callback ; cela se dit.
+
 **Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
 au redémarrage, au milieu du seul parcours qui ne supporte pas d'être repris.
 Une table minuscule, donc, avec une échéance — et la tâche de purge de la
@@ -675,9 +694,9 @@ Un lien expose son état et la forme de sa file, agrégés :
 avec trois mille écoutes en attente depuis six heures est en panne, et c'est
 précisément la panne silencieuse qu'une file durable existe pour rendre
 visible. D'où `degraded` : le lien répond, mais la file ne se vide pas — une
-incertaine qui attend une réponse, ou une entrée en attente depuis plus
-longtemps que le seuil. `broken` reste réservé à `AuthBroken` et à une
-configuration inutilisable.
+incertaine qui attend qu'une personne réponde d'elle, ou une entrée en attente
+depuis plus longtemps que le seuil. `broken` reste réservé à `AuthBroken` et à
+une configuration inutilisable.
 
 **Corrigé le 2026-09-14 :** cette phrase disait « des reprises, des incertaines,
 ou une attente trop vieille », et `link_health` ne regarde pas les reprises. Il
