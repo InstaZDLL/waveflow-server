@@ -184,7 +184,28 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
     > pas en file, les identifiants à deux étages, la frontière d'atomicité —
     > une file transactionnelle est atomique avec la nôtre, jamais avec un
     > tiers — et la surface sortante, la première de ce serveur. Révisée le
-    > jour même après revue externe. Rien n'est encore écrit.
+    > jour même après revue externe.
+    >
+    > **Et elle est implémentée depuis le 2026-09-14.** Les trois destinataires
+    > répondent, la file se purge, et une destination existe en plusieurs
+    > instances nommées par l'opérateur. Ce qu'un client web a désormais à
+    > faire — et que rien ne fait encore — tient en quatre gestes :
+    >
+    > - lire `GET /api/v2/scrobble-destinations` et proposer les noms, avec la
+    >   raison quand l'un d'eux est indisponible ;
+    > - poser et retirer une autorisation par
+    >   `PUT`/`DELETE /api/v2/scrobble-links/{provider}/{destination}` ;
+    > - ouvrir le parcours Last.fm par
+    >   `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` et envoyer
+    >   le navigateur à l'adresse rendue — le retour se conclut tout seul et
+    >   redirige ;
+    > - montrer l'état de la file, et surtout **demander à la personne** ce
+    >   qu'il faut faire des écoutes incertaines : la décision 13 refuse de
+    >   trancher à sa place, donc une interface qui ne les montre pas laisse ce
+    >   choix inatteignable.
+    >
+    > La section « External scrobbling » du
+    > [guide API](api-v2-guide.md#external-scrobbling) décrit les quatre.
 
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
