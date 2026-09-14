@@ -63,7 +63,7 @@ pub(super) fn secure_cookies(state: &AppState) -> bool {
     public_url_is_https(state.public_url.as_deref())
 }
 
-pub(super) fn public_url_is_https(public_url: Option<&str>) -> bool {
+pub fn public_url_is_https(public_url: Option<&str>) -> bool {
     public_url
         .and_then(|url| url::Url::parse(url).ok())
         .is_some_and(|url| url.scheme() == "https")

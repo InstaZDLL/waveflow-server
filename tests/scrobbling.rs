@@ -35,6 +35,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use tower::ServiceExt as _;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::catalog::LibraryRecord;
 use waveflow_server::config::ScrobbleLimits;
@@ -273,7 +274,12 @@ async fn a_destination_that_never_answers_does_not_hold_the_queue_forever() {
     let fixture = fixture(&config, &state, "stalling-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -286,6 +292,7 @@ async fn a_destination_that_never_answers_does_not_hold_the_queue_forever() {
     });
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -325,14 +332,29 @@ async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
     // queueing for a while.
     let (_temp, config, state) = tuned_app(|limits| limits.batch = 1).await;
     let fixture = fixture(&config, &state, "starving-listener").await;
+    // Last.fm is the one this process cannot reach: the suite's configuration
+    // declares an instance for it and no application credentials, so no adapter
+    // is built for it. Declared and adapterless is a shape a real deployment
+    // has, which is why the test stands on it rather than on a recipient that
+    // merely has no adapter yet.
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "lastfm-secret",
+        )
         .await
         .unwrap();
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::Maloja, "maloja-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-secret",
+        )
         .await
         .unwrap();
     state
@@ -340,8 +362,8 @@ async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
         .scrobble(fixture.owner, fixture.tagged, true, None)
         .await
         .unwrap();
-    // One listen, one row per authorisation, and the ListenBrainz row sorts
-    // first — which is what puts the unreachable destination at the head.
+    // One listen, one row per authorisation, and the Last.fm row sorts first —
+    // which is what puts the unreachable destination at the head.
     assert_eq!(rows(&state).await.len(), 2);
 
     // Only one of the two can be reached by this process. That is the ordinary
@@ -349,6 +371,7 @@ async fn a_destination_with_no_adapter_does_not_starve_one_that_has_it() {
     let target = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
         ScrobbleProvider::Maloja,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -371,6 +394,7 @@ async fn one_uncertain_entry(state: &AppState, fixture: &Fixture) -> uuid::Uuid 
     let target = Recorder::always(ScrobbleVerdict::Ambiguous);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state
@@ -401,7 +425,12 @@ async fn an_ambiguous_entry_can_be_found_before_it_is_answered() {
     let fixture = fixture(&config, &state, "choosing-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &fixture).await;
@@ -464,7 +493,12 @@ async fn one_account_never_sees_another_account_s_ambiguous_entries() {
     let stranger = fixture(&config, &state, "ambiguous-stranger").await;
     state
         .services
-        .link_scrobble(owner.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            owner.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &owner).await;
@@ -503,7 +537,12 @@ async fn an_entry_under_a_broken_link_can_be_discarded_but_not_retried() {
     let fixture = fixture(&config, &state, "broken-link-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &fixture).await;
@@ -513,6 +552,7 @@ async fn an_entry_under_a_broken_link_can_be_discarded_but_not_retried() {
     let refuses = Recorder::always(ScrobbleVerdict::AuthBroken);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&refuses) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     // The tagged track, not the bare one. `bare` carries no usable tags and is
@@ -587,7 +627,12 @@ async fn an_unlinked_generation_stops_asking_for_a_decision() {
     let fixture = fixture(&config, &state, "withdrawing-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &fixture).await;
@@ -603,7 +648,7 @@ async fn an_unlinked_generation_stops_asking_for_a_decision() {
 
     state
         .services
-        .unlink_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz)
+        .unlink_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "default")
         .await
         .unwrap();
 
@@ -637,7 +682,12 @@ async fn an_ambiguous_entry_may_be_retried_once_and_not_twice() {
     let fixture = fixture(&config, &state, "retrying-once-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &fixture).await;
@@ -680,7 +730,12 @@ async fn a_spent_joker_is_not_returned_when_the_retry_is_purged() {
     let fixture = fixture(&config, &state, "purged-retry-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let uncertain_id = one_uncertain_entry(&state, &fixture).await;
@@ -751,7 +806,12 @@ async fn a_refused_listen_is_not_offered_to_the_destination_again() {
     let fixture = fixture(&config, &state, "refused-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -762,6 +822,7 @@ async fn a_refused_listen_is_not_offered_to_the_destination_again() {
     let target = Recorder::always(ScrobbleVerdict::PermanentReject);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -790,7 +851,12 @@ async fn a_listen_interrupted_mid_flight_is_uncertain_rather_than_sent_again() {
     let fixture = fixture(&config, &state, "interrupted-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -811,6 +877,7 @@ async fn a_listen_interrupted_mid_flight_is_uncertain_rather_than_sent_again() {
     let target = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
@@ -839,7 +906,12 @@ async fn a_silent_destination_costs_one_entry_a_pass_and_not_the_whole_queue() {
     let fixture = fixture(&config, &state, "silent-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..4 {
@@ -856,6 +928,7 @@ async fn a_silent_destination_costs_one_entry_a_pass_and_not_the_whole_queue() {
     });
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
@@ -912,7 +985,12 @@ async fn a_verdict_that_arrives_after_its_row_was_settled_is_not_counted() {
     let fixture = fixture(&config, &state, "late-verdict-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -922,6 +1000,7 @@ async fn a_verdict_that_arrives_after_its_row_was_settled_is_not_counted() {
         .unwrap();
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::new(SettlesBehindYourBack {
             pool: state.db.pool().clone(),
         }) as std::sync::Arc<dyn ScrobbleTarget>,
@@ -978,37 +1057,54 @@ async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
 async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> Destination {
     let bodies = std::sync::Arc::new(Mutex::new(Vec::new()));
     let authorizations = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let router = axum::Router::new().route(
-        "/1/submit-listens",
-        axum::routing::post({
+    // Two paths, one recorder. ListenBrainz submits to the first and Maloja to
+    // the second, and a test that means to exercise one destination has no
+    // reason to also stand up a second server for it.
+    let handler = |bodies: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+                   authorizations: std::sync::Arc<Mutex<Vec<String>>>,
+                   delay: Option<(&'static str, String)>| {
+        axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
             let bodies = std::sync::Arc::clone(&bodies);
             let authorizations = std::sync::Arc::clone(&authorizations);
-            move |headers: axum::http::HeaderMap, body: String| {
-                let bodies = std::sync::Arc::clone(&bodies);
-                let authorizations = std::sync::Arc::clone(&authorizations);
-                let delay = delay.clone();
-                async move {
-                    authorizations.lock().unwrap().push(
-                        headers
-                            .get(axum::http::header::AUTHORIZATION)
-                            .and_then(|value| value.to_str().ok())
-                            .unwrap_or_default()
-                            .to_owned(),
-                    );
-                    bodies
-                        .lock()
-                        .unwrap()
-                        .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
-                    let mut response = axum::response::Response::builder()
-                        .status(axum::http::StatusCode::from_u16(status).unwrap());
-                    if let Some((header, value)) = delay {
-                        response = response.header(header, value);
-                    }
-                    response.body(axum::body::Body::from("{}")).unwrap()
+            let delay = delay.clone();
+            async move {
+                authorizations.lock().unwrap().push(
+                    headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+                bodies
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
+                let mut response = axum::response::Response::builder()
+                    .status(axum::http::StatusCode::from_u16(status).unwrap());
+                if let Some((header, value)) = delay {
+                    response = response.header(header, value);
                 }
+                response.body(axum::body::Body::from("{}")).unwrap()
             }
-        }),
-    );
+        })
+    };
+    let router = axum::Router::new()
+        .route(
+            "/1/submit-listens",
+            handler(
+                std::sync::Arc::clone(&bodies),
+                std::sync::Arc::clone(&authorizations),
+                delay.clone(),
+            ),
+        )
+        .route(
+            "/apis/mlj_1/newscrobble",
+            handler(
+                std::sync::Arc::clone(&bodies),
+                std::sync::Arc::clone(&authorizations),
+                delay,
+            ),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -1017,6 +1113,29 @@ async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> D
         bodies,
         authorizations,
     }
+}
+
+/// Points ListenBrainz's declared instance at `base`.
+///
+/// Replaces the unreachable loopback `Config::for_data_dir` declares for that
+/// recipient rather than adding beside it — two instances cannot share a name —
+/// and leaves the other recipients alone, because more than one test needs a
+/// second destination in the same queue.
+fn reaching(config: &mut waveflow_server::Config, base: &str) {
+    let url = waveflow_server::scrobblers::validate_destination(base, true)
+        .expect("a destination the suite chose");
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config
+        .destinations
+        .retain(|declared| declared.provider != ScrobbleProvider::ListenBrainz);
+    config
+        .destinations
+        .push(waveflow_server::config::ScrobbleDestination {
+            provider: ScrobbleProvider::ListenBrainz,
+            name: "default".to_owned(),
+            url,
+            fingerprint,
+        });
 }
 
 /// An app configured to reach that destination.
@@ -1028,58 +1147,9 @@ async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> D
 async fn app_reaching(base: &str) -> (tempfile::TempDir, waveflow_server::Config, AppState) {
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    config.listenbrainz_url = Some(base.to_owned());
+    reaching(&mut config, base);
     let state = waveflow_server::initialize(&config).await.unwrap();
     (temp, config, state)
-}
-
-/// A destination that cannot be used is never quoted back.
-///
-/// `validate_destination` refuses a URL carrying credentials, so the value this
-/// error branch is most likely to be holding is precisely the one that must not
-/// be printed — and a startup error goes to a log, a terminal, and whatever a
-/// person pastes into an issue. The repository's rule about secrets has no
-/// exception for an error path.
-///
-/// Here rather than nowhere because the guard is one line, and this branch has
-/// four times now found a guard that was in place, plausible, and reachable by
-/// nothing.
-#[tokio::test]
-async fn a_refused_destination_is_never_quoted_back_with_its_credentials() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    // A private host, so the plaintext rule lets this through and the
-    // credential rule is what refuses it. That is the path carrying a password.
-    config.listenbrainz_url = Some("http://wf-user:hunter2@10.0.0.2".to_owned());
-
-    let error = match waveflow_server::initialize(&config).await {
-        Ok(_) => panic!("a destination carrying credentials must refuse the boot"),
-        Err(error) => error,
-    };
-    let said = format!("{error:#}");
-
-    // **Named, never quoted.** The first version of this loop put `{secret:?}`
-    // and the whole error into the assertion message, and CodeQL was right to
-    // call that a cleartext write of a credential — in the one test whose
-    // entire subject is that credentials must not be written. What a failure
-    // here needs to say is *which* part came back, not the part itself.
-    for (part, secret) in [
-        ("the password", "hunter2"),
-        ("the account", "wf-user"),
-        ("the host", "10.0.0.2"),
-    ] {
-        assert!(
-            !said.contains(secret),
-            "the startup error quoted {part} back from the destination"
-        );
-    }
-    // And it still says enough to be fixed by the person who typed it. Printing
-    // `said` is safe here and only here: the loop above has just established
-    // that it carries none of the three.
-    assert!(
-        said.contains("credentials"),
-        "the error must name the fault: {said}"
-    );
 }
 
 #[tokio::test]
@@ -1089,7 +1159,12 @@ async fn a_listen_reaches_the_destination_in_the_shape_it_documents() {
     let fixture = fixture(&config, &state, "listenbrainz-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -1127,7 +1202,12 @@ async fn a_rate_limited_listen_waits_at_least_as_long_as_it_was_asked() {
     let fixture = fixture(&config, &state, "rate-limited-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let before = now_ms();
@@ -1181,7 +1261,12 @@ async fn a_rate_limit_named_only_by_the_standard_header_is_honoured_too() {
     let fixture = fixture(&config, &state, "proxied-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let before = now_ms();
@@ -1218,7 +1303,12 @@ async fn a_token_that_cannot_be_a_header_is_refused_when_it_is_pasted() {
     // fix it, rather than discovered hours later on a background drain.
     assert!(state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb\nsecret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb\nsecret"
+        )
         .await
         .is_err());
     assert!(
@@ -1234,7 +1324,12 @@ async fn a_token_that_cannot_be_a_header_is_refused_when_it_is_pasted() {
     // And the check is not so eager that it refuses an ordinary one.
     assert!(state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret"
+        )
         .await
         .is_ok());
 }
@@ -1251,13 +1346,24 @@ async fn a_credential_sealed_before_that_check_breaks_the_link_rather_than_going
     // without this test that claim would be prose.
     let sealed = state.secret_box.encrypt(b"lb\nsecret").unwrap();
     let now = now_ms();
+    // The instance is named here as `link_scrobble` would name it: the drain
+    // picks an adapter by `(provider, destination)`, so a row without one is
+    // not the case this test is about — it is a row nothing can carry at all.
+    let declared = config
+        .destinations
+        .iter()
+        .find(|declared| declared.provider == ScrobbleProvider::ListenBrainz)
+        .expect("the suite declares one");
     sqlx::query(
-        "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
-         credential_ciphertext, created_at, updated_at) \
-         VALUES (?, ?, 'listenbrainz', 'active', ?, ?, ?, ?)",
+        "INSERT INTO scrobble_link (id, user_id, provider, destination, \
+         destination_fingerprint, status, credential_nonce, credential_ciphertext, \
+         created_at, updated_at) \
+         VALUES (?, ?, 'listenbrainz', ?, ?, 'active', ?, ?, ?, ?)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(fixture.owner.to_string())
+    .bind(declared.name.clone())
+    .bind(declared.fingerprint.clone())
     .bind(sealed.nonce.as_slice())
     .bind(sealed.ciphertext.as_slice())
     .bind(now)
@@ -1298,7 +1404,12 @@ async fn a_destination_cannot_park_a_listen_past_our_own_ceiling() {
     let fixture = fixture(&config, &state, "absurd-wait-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     let before = now_ms();
@@ -1367,7 +1478,12 @@ async fn a_destination_that_asked_for_room_is_not_offered_the_rest_of_the_batch(
     let fixture = fixture(&config, &state, "resting-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..4 {
@@ -1406,7 +1522,7 @@ async fn a_drain_interval_longer_than_the_ceiling_does_not_kill_the_drain() {
     let destination = spawn_destination(429, Some(3_600)).await;
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    config.listenbrainz_url = Some(destination.base.clone());
+    reaching(&mut config, &destination.base);
     // Longer than `RETRY_CEILING`, which nothing forbids: `parse_positive_env`
     // bounds this below zero and nowhere above. That made the rest floor exceed
     // the rest ceiling, and `Ord::clamp` panics when its minimum exceeds its
@@ -1418,7 +1534,12 @@ async fn a_drain_interval_longer_than_the_ceiling_does_not_kill_the_drain() {
     let fixture = fixture(&config, &state, "slow-interval-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     // **Two**, and that is the whole difference between this test and the one
@@ -1475,7 +1596,12 @@ async fn a_rate_limit_that_names_no_delay_still_rests_the_link() {
     let fixture = fixture(&config, &state, "silent-limit-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..4 {
@@ -1505,14 +1631,19 @@ async fn a_rate_limited_backlog_does_not_starve_another_destination() {
     // and the other is not.
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    config.listenbrainz_url = Some(listenbrainz.base.clone());
+    reaching(&mut config, &listenbrainz.base);
     config.scrobbling.batch = 4;
     let state = waveflow_server::initialize(&config).await.unwrap();
     let fixture = fixture(&config, &state, "starved-listener").await;
 
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..4 {
@@ -1527,11 +1658,17 @@ async fn a_rate_limited_backlog_does_not_starve_another_destination() {
     let maloja = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
         ScrobbleProvider::Maloja,
+        "default",
         std::sync::Arc::clone(&maloja) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::Maloja, "maloja-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-secret",
+        )
         .await
         .unwrap();
     state
@@ -1572,7 +1709,12 @@ async fn the_spread_reaches_the_rows_the_drain_actually_reschedules() {
     let fixture = fixture(&config, &state, "scattered-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..4 {
@@ -1622,6 +1764,7 @@ async fn a_destination_that_refuses_the_token_breaks_the_link() {
         .link_scrobble(
             fixture.owner,
             ScrobbleProvider::ListenBrainz,
+            "default",
             "stale-secret",
         )
         .await
@@ -1673,7 +1816,12 @@ async fn a_listen_is_queued_with_what_was_heard_and_a_now_playing_is_not() {
     let fixture = fixture(&config, &state, "queueing-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-token")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-token",
+        )
         .await
         .unwrap();
 
@@ -1718,7 +1866,12 @@ async fn a_correction_after_the_listen_does_not_change_what_was_queued() {
     let fixture = fixture(&config, &state, "retagging-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-token")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-token",
+        )
         .await
         .unwrap();
     state
@@ -1763,7 +1916,12 @@ async fn a_track_the_server_cannot_name_is_never_queued() {
     let fixture = fixture(&config, &state, "untagged-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-token")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-token",
+        )
         .await
         .unwrap();
 
@@ -1790,9 +1948,17 @@ async fn a_track_the_server_cannot_name_is_never_queued() {
 async fn an_accepted_listen_leaves_the_queue_and_the_secret_arrives_intact() {
     let (_temp, config, state) = test_app().await;
     let fixture = fixture(&config, &state, "accepting-listener").await;
+    // Last.fm, because the first half of this test needs a destination this
+    // process has no adapter for, and a declared instance with no application
+    // credentials is exactly that.
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -1815,7 +1981,8 @@ async fn an_accepted_listen_leaves_the_queue_and_the_secret_arrives_intact() {
 
     let target = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
-        ScrobbleProvider::ListenBrainz,
+        ScrobbleProvider::LastFm,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -1851,7 +2018,12 @@ async fn an_ambiguous_answer_is_terminal_and_waits_for_a_person() {
     let fixture = fixture(&config, &state, "ambiguous-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -1862,6 +2034,7 @@ async fn an_ambiguous_answer_is_terminal_and_waits_for_a_person() {
     let target = Recorder::always(ScrobbleVerdict::Ambiguous);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -1895,7 +2068,12 @@ async fn a_retryable_answer_comes_back_until_the_attempts_run_out() {
     let fixture = fixture(&config, &state, "retrying-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -1906,6 +2084,7 @@ async fn a_retryable_answer_comes_back_until_the_attempts_run_out() {
     let target = Recorder::always(ScrobbleVerdict::Retryable { after: None });
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
 
@@ -1950,7 +2129,12 @@ async fn a_broken_authorisation_finishes_the_queue_rather_than_asking_again() {
     let fixture = fixture(&config, &state, "broken-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     for _ in 0..3 {
@@ -1965,6 +2149,7 @@ async fn a_broken_authorisation_finishes_the_queue_rather_than_asking_again() {
     let target = Recorder::always(ScrobbleVerdict::AuthBroken);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
@@ -1995,6 +2180,7 @@ async fn unlinking_leaves_its_queue_behind_and_a_new_link_does_not_inherit_it() 
         .link_scrobble(
             fixture.owner,
             ScrobbleProvider::ListenBrainz,
+            "default",
             "first-account",
         )
         .await
@@ -2009,7 +2195,7 @@ async fn unlinking_leaves_its_queue_behind_and_a_new_link_does_not_inherit_it() 
 
     assert!(state
         .services
-        .unlink_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz)
+        .unlink_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "default")
         .await
         .unwrap());
     // Cancelled rather than deleted: they record listens that really happened
@@ -2033,6 +2219,7 @@ async fn unlinking_leaves_its_queue_behind_and_a_new_link_does_not_inherit_it() 
         .link_scrobble(
             fixture.owner,
             ScrobbleProvider::ListenBrainz,
+            "default",
             "second-account",
         )
         .await
@@ -2046,6 +2233,7 @@ async fn unlinking_leaves_its_queue_behind_and_a_new_link_does_not_inherit_it() 
     let target = Recorder::always(ScrobbleVerdict::Accepted);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     let drained = state.services.drain_scrobble_outbox().await.unwrap();
@@ -2066,7 +2254,12 @@ async fn retrying_an_uncertain_entry_adds_to_the_history_instead_of_rewriting_it
     let fixture = fixture(&config, &state, "deciding-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -2077,6 +2270,7 @@ async fn retrying_an_uncertain_entry_adds_to_the_history_instead_of_rewriting_it
     let target = Recorder::always(ScrobbleVerdict::Ambiguous);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state.services.drain_scrobble_outbox().await.unwrap();
@@ -2118,7 +2312,12 @@ async fn discarding_an_uncertain_entry_stops_it_counting() {
     let fixture = fixture(&config, &state, "discarding-listener").await;
     state
         .services
-        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
         .await
         .unwrap();
     state
@@ -2129,6 +2328,7 @@ async fn discarding_an_uncertain_entry_stops_it_counting() {
     let target = Recorder::always(ScrobbleVerdict::Ambiguous);
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::clone(&target) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state.services.drain_scrobble_outbox().await.unwrap();
@@ -2151,4 +2351,1707 @@ async fn discarding_an_uncertain_entry_stops_it_counting() {
         .discard_uncertain_scrobble(fixture.owner, uncertain)
         .await
         .is_err());
+}
+
+/// A day in milliseconds, so the retention tests read as the dates they mean.
+const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+/// Retention takes what is finished, and never what is still asking.
+///
+/// The queue kept everything: one row per listen and per destination, for ever,
+/// on a server whose whole point is that somebody listens to music on it. The
+/// bound is thirty days by default, and it is counted from the instant a row
+/// became terminal — not from when it was queued, which would expire a listen
+/// that took three weeks to be abandoned three weeks early.
+///
+/// **The three exemptions are the assertion.** `pending` has not finished,
+/// `sending` is in flight, and `uncertain` is waiting for a person — taking
+/// that one away after a month would answer decision 13's question in their
+/// place.
+#[tokio::test]
+async fn retention_takes_what_is_finished_and_never_what_is_still_asking() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "retention-listener").await;
+    state
+        .services
+        .link_scrobble(
+            fixture.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
+        .await
+        .unwrap();
+
+    // One accepted, so it is `sent` and finished.
+    let accepting = Recorder::always(ScrobbleVerdict::Accepted);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        "default",
+        std::sync::Arc::clone(&accepting) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    // One ambiguous, so it is `uncertain` and still asking.
+    let ambiguous = Recorder::always(ScrobbleVerdict::Ambiguous);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        "default",
+        std::sync::Arc::clone(&ambiguous) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    // And one never drained, so it is `pending`.
+    state
+        .services
+        .scrobble(fixture.owner, fixture.tagged, true, None)
+        .await
+        .unwrap();
+
+    let states: Vec<String> = rows(&state).await.into_iter().map(|row| row.1).collect();
+    assert_eq!(states, ["sent", "uncertain", "pending"]);
+
+    // A day short of the bound takes nothing: the bound is on the finished
+    // row's own instant, and that row finished today.
+    let now = now_ms();
+    assert_eq!(
+        state
+            .services
+            .purge_scrobble_outbox(now + 29 * DAY_MS)
+            .await
+            .unwrap(),
+        0,
+        "nothing is old enough yet"
+    );
+    assert_eq!(rows(&state).await.len(), 3);
+
+    // A day past it takes the finished one, and only that one.
+    assert_eq!(
+        state
+            .services
+            .purge_scrobble_outbox(now + 31 * DAY_MS)
+            .await
+            .unwrap(),
+        1,
+        "the finished entry is past the bound"
+    );
+    let states: Vec<String> = rows(&state).await.into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        states,
+        ["uncertain", "pending"],
+        "a listen still asking, and one not yet tried, are not the purge's business"
+    );
+
+    // And what the link publishes did not move, because none of it is read
+    // from a row a purge can take.
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(links[0].pending, 1);
+    assert_eq!(links[0].uncertain, 1);
+    assert!(links[0].last_success_at.is_some(), "a column of the link");
+}
+
+/// A discarded entry carries the instant it was discarded.
+///
+/// One of four statements that finish a row, and each is checked on its own:
+/// `settle_scrobble` above, this, unlinking, and a refused token. The writer
+/// that forgot the instant would leave rows no purge could ever see — the same
+/// shape of silent survival `retried_at` exists to close — and a single test
+/// driving all four would stop at the first.
+#[tokio::test]
+async fn a_discarded_entry_records_when_it_was_discarded() {
+    let (_temp, config, state) = test_app().await;
+    let listener = fixture(&config, &state, "discarding-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
+        .await
+        .unwrap();
+    let uncertain_id = one_uncertain_entry(&state, &listener).await;
+    state
+        .services
+        .discard_uncertain_scrobble(listener.owner, uncertain_id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        state
+            .services
+            .purge_scrobble_outbox(now_ms() + 31 * DAY_MS)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(rows(&state).await.is_empty());
+}
+
+/// A queue cancelled by unlinking carries the instant it was cancelled.
+#[tokio::test]
+async fn an_unlinked_queue_records_when_it_was_cancelled() {
+    let (_temp, config, state) = test_app().await;
+    let listener = fixture(&config, &state, "unlinking-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    state
+        .services
+        .unlink_scrobble(listener.owner, ScrobbleProvider::ListenBrainz, "default")
+        .await
+        .unwrap();
+    assert_eq!(rows(&state).await[0].1, "cancelled");
+
+    assert_eq!(
+        state
+            .services
+            .purge_scrobble_outbox(now_ms() + 31 * DAY_MS)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+/// And so does a queue a refused token finished.
+///
+/// The fourth writer, and the one furthest from the other three: it runs inside
+/// `mark_link_broken` rather than beside a person's gesture. A link whose queue
+/// stayed unpurgeable would keep growing for as long as the operator left the
+/// bad token in place.
+#[tokio::test]
+async fn a_queue_a_refused_token_finished_records_when_it_finished() {
+    let (_temp, config, state) = test_app().await;
+    let listener = fixture(&config, &state, "broken-link-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::ListenBrainz,
+            "default",
+            "lb-secret",
+        )
+        .await
+        .unwrap();
+    let refusing = Recorder::always(ScrobbleVerdict::AuthBroken);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::ListenBrainz,
+        "default",
+        std::sync::Arc::clone(&refusing) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+    let states: Vec<String> = rows(&state).await.into_iter().map(|row| row.1).collect();
+    assert_eq!(states.len(), 2);
+    assert!(
+        states.iter().all(|state| state == "cancelled"),
+        "a broken authorisation finishes the whole queue: {states:?}"
+    );
+
+    assert_eq!(
+        state
+            .services
+            .purge_scrobble_outbox(now_ms() + 31 * DAY_MS)
+            .await
+            .unwrap(),
+        2,
+        "every row it finished carries when it finished"
+    );
+}
+
+/// A config over `temp`'s data directory declaring exactly these instances.
+///
+/// Called twice over one `TempDir` in the tests below, which is how a restart
+/// is played: the second `initialize` opens the same database under a different
+/// configuration, which is the only moment reconciliation runs.
+fn declaring(
+    temp: &tempfile::TempDir,
+    declared: &[(ScrobbleProvider, &str, &str)],
+) -> waveflow_server::Config {
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.destinations = declared
+        .iter()
+        .map(|(provider, name, base)| {
+            let url = waveflow_server::scrobblers::validate_destination(base, true)
+                .expect("a destination the suite chose");
+            let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+            waveflow_server::config::ScrobbleDestination {
+                provider: *provider,
+                name: (*name).to_owned(),
+                url,
+                fingerprint,
+            }
+        })
+        .collect();
+    config
+}
+
+/// Two instances of one recipient, and linking the second leaves the first
+/// exactly where it was.
+///
+/// **This is the assertion the whole slice stands on.** While a live link was
+/// identified by its recipient alone, `link_scrobble` withdrew "the live link
+/// at this recipient" before inserting — so naming `maloja/bob` unlinked
+/// `maloja/alice` and cancelled her queue. The feature would have destroyed
+/// itself on its second use, quietly, and the only trace would have been
+/// somebody's listens turning `cancelled`.
+///
+/// The unique index, the adapter registry and that clause are one change in
+/// three places; correcting two of the three gives a server that accepts two
+/// instances and erases one.
+#[tokio::test]
+async fn a_second_instance_does_not_withdraw_the_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "two-instance-listener").await;
+
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "alice-secret",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    assert_eq!(rows(&state).await.len(), 1);
+
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "bob",
+            "bob-secret",
+        )
+        .await
+        .unwrap();
+
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 2, "both instances are live");
+    assert_eq!(
+        links
+            .iter()
+            .map(|link| link.destination.as_str())
+            .collect::<Vec<_>>(),
+        ["alice", "bob"]
+    );
+    assert_eq!(
+        rows(&state).await[0].1,
+        "pending",
+        "the first instance's queue must not have been cancelled by the second"
+    );
+    assert_eq!(links[0].pending, 1, "and it is still counted as hers");
+}
+
+/// Each instance is drained through its own adapter.
+///
+/// A registry keyed by recipient would hold one adapter for both and hand
+/// alice's listens to bob's server — the substitution decision 4 builds a whole
+/// tier of identifiers to prevent, arriving one floor up.
+#[tokio::test]
+async fn each_instance_is_submitted_through_its_own_adapter() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "two-adapter-listener").await;
+    for (destination, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
+        state
+            .services
+            .link_scrobble(
+                listener.owner,
+                ScrobbleProvider::Maloja,
+                destination,
+                secret,
+            )
+            .await
+            .unwrap();
+    }
+
+    let to_alice = Recorder::always(ScrobbleVerdict::Accepted);
+    let to_bob = Recorder::always(ScrobbleVerdict::Accepted);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::Maloja,
+        "alice",
+        std::sync::Arc::clone(&to_alice) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state.services.register_scrobble_target(
+        ScrobbleProvider::Maloja,
+        "bob",
+        std::sync::Arc::clone(&to_bob) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 2);
+
+    // Each adapter saw exactly one submission, carrying the secret posed at it
+    // and no other.
+    assert_eq!(to_alice.seen().len(), 1);
+    assert_eq!(to_alice.seen()[0].1, "alice-secret");
+    assert_eq!(to_bob.seen().len(), 1);
+    assert_eq!(to_bob.seen()[0].1, "bob-secret");
+}
+
+/// An instance the configuration no longer names breaks its links, and nothing
+/// is remapped onto a sibling.
+///
+/// Sliding `alice` onto `bob` would send one person's listens to another
+/// person's profile. And the queue has to *finish* rather than wait: a
+/// `broken` link whose rows stay `pending` is a queue nothing empties —
+/// `pending` escapes retention, so the table keeps them for ever and
+/// `oldest_pending_at` holds the link `degraded` with them.
+#[tokio::test]
+async fn an_instance_that_disappears_breaks_its_link_and_finishes_its_queue() {
+    let temp = tempfile::tempdir().unwrap();
+    let before = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&before).await.unwrap();
+    let listener = fixture(&before, &state, "vanishing-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "alice-secret",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    assert_eq!(rows(&state).await[0].1, "pending");
+    drop(state);
+
+    // The operator takes `alice` out of the configuration and restarts.
+    let after = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2")],
+    );
+    let state = waveflow_server::initialize(&after).await.unwrap();
+
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].destination, "alice");
+    assert_eq!(links[0].health, "broken");
+    assert_eq!(links[0].last_failure.as_deref(), Some("destination_gone"));
+    assert_eq!(
+        rows(&state).await[0].1,
+        "cancelled",
+        "a broken link's queue must finish, or nothing will ever empty it"
+    );
+}
+
+/// A name is not an identity: moving an instance's URL breaks its links too.
+///
+/// The same substitution by the side door, and the easiest to commit because it
+/// looks like fixing a typo. Correcting an address therefore costs relinking —
+/// the price of a distinction no heuristic can make for the operator.
+#[tokio::test]
+async fn an_instance_that_moved_breaks_its_link_though_its_name_did_not_change() {
+    let temp = tempfile::tempdir().unwrap();
+    let before = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&before).await.unwrap();
+    let listener = fixture(&before, &state, "moving-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "alice-secret",
+        )
+        .await
+        .unwrap();
+    drop(state);
+
+    // Same name, different machine.
+    let after = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:2")],
+    );
+    let state = waveflow_server::initialize(&after).await.unwrap();
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken");
+}
+
+/// And a trailing slash is not a different machine.
+///
+/// A link broken by a slash an editor added while tidying a configuration file
+/// would be a punishment for nothing, so the canonical form settles it rather
+/// than leaving it to whoever reads the string.
+#[tokio::test]
+async fn a_trailing_slash_added_to_a_configuration_breaks_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let before = declaring(
+        &temp,
+        &[(
+            ScrobbleProvider::Maloja,
+            "alice",
+            "http://127.0.0.1:1/maloja",
+        )],
+    );
+    let state = waveflow_server::initialize(&before).await.unwrap();
+    let listener = fixture(&before, &state, "tidied-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "alice-secret",
+        )
+        .await
+        .unwrap();
+    drop(state);
+
+    let after = declaring(
+        &temp,
+        &[(
+            ScrobbleProvider::Maloja,
+            "alice",
+            "http://127.0.0.1:1/maloja/",
+        )],
+    );
+    let state = waveflow_server::initialize(&after).await.unwrap();
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(
+        links[0].health, "healthy",
+        "a trailing slash is the same machine"
+    );
+}
+
+/// Writes one link the way a server running before this slice wrote them.
+///
+/// No destination, no fingerprint — the two columns the catch-up exists to
+/// fill. Inserted rather than produced, because the code that produced them is
+/// the code this slice replaces.
+async fn one_legacy_link(state: &AppState, owner: uuid::Uuid, provider: &str) {
+    let sealed = state.secret_box.encrypt(b"a-secret-from-before").unwrap();
+    let now = now_ms();
+    sqlx::query(
+        "INSERT INTO scrobble_link (id, user_id, provider, status, credential_nonce, \
+         credential_ciphertext, created_at, updated_at) \
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(owner.to_string())
+    .bind(provider)
+    .bind(sealed.nonce.as_slice())
+    .bind(sealed.ciphertext.as_slice())
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+}
+
+/// A link written before instances had names takes the only one there is.
+///
+/// The catch-up asserts rather than verifies — nothing in the database says
+/// which URL was configured yesterday — and that is sound exactly while there
+/// is one possible answer.
+#[tokio::test]
+async fn a_link_from_before_this_slice_takes_the_only_instance_declared() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "house", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "legacy-listener").await;
+    one_legacy_link(&state, listener.owner, "maloja").await;
+    drop(state);
+
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].destination, "house");
+    assert_eq!(
+        links[0].health, "healthy",
+        "a link nothing moved must survive the catch-up"
+    );
+}
+
+/// Where the answer is ambiguous, the server refuses to start.
+///
+/// Picking one would send a queue of waiting listens to somebody else's profile
+/// with nothing to show for it. The way out needs no new machinery: boot once
+/// with a single instance declared — the one those links meant — and add the
+/// others next boot.
+#[tokio::test]
+async fn a_legacy_link_with_two_candidates_refuses_the_boot() {
+    let temp = tempfile::tempdir().unwrap();
+    let single = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&single).await.unwrap();
+    let listener = fixture(&single, &state, "ambiguous-listener").await;
+    one_legacy_link(&state, listener.owner, "maloja").await;
+    drop(state);
+
+    let both = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    assert!(
+        waveflow_server::initialize(&both).await.is_err(),
+        "an ambiguous catch-up must stop the boot rather than guess"
+    );
+
+    // And the way out works: one instance fills the columns, and the second may
+    // then be declared.
+    let state = waveflow_server::initialize(&single).await.unwrap();
+    drop(state);
+    let state = waveflow_server::initialize(&both).await.unwrap();
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links[0].destination, "alice");
+    assert_eq!(links[0].health, "healthy");
+}
+
+/// A fresh install has nothing to catch up, so it declares as many instances as
+/// it likes on the first boot.
+///
+/// Said out loud because the refusal above, left unqualified, would close the
+/// door it exists to protect: nobody with nothing to migrate could ever use the
+/// feature.
+#[tokio::test]
+async fn a_fresh_install_declares_several_instances_on_its_first_boot() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "fresh-listener").await;
+    for destination in ["alice", "bob"] {
+        state
+            .services
+            .link_scrobble(
+                listener.owner,
+                ScrobbleProvider::Maloja,
+                destination,
+                "a-secret",
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        state
+            .services
+            .scrobble_links(listener.owner)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+/// A recipient with links and no instance declared for it has nothing to
+/// inscribe, so those links are treated as a vanished destination.
+///
+/// Emptying a URL out of the configuration is already a way of switching a
+/// recipient off. Leaving the two columns empty instead would hand the next
+/// reconciliation a row it could not read.
+#[tokio::test]
+async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "switched-off-listener").await;
+    one_legacy_link(&state, listener.owner, "lastfm").await;
+    drop(state);
+
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].provider, ScrobbleProvider::LastFm);
+    assert_eq!(links[0].health, "broken");
+    assert_eq!(links[0].last_failure.as_deref(), Some("destination_gone"));
+}
+
+/// A retry checks where it would go, not only that it may go.
+///
+/// The link being live is the first half — decision 4 — and the instance still
+/// being the one it was made against is the second. Without it the most
+/// dangerous entry in the design, a listen its owner accepts risking twice,
+/// would be the one that leaves for a machine nobody chose.
+///
+/// The mismatch is written straight into the row rather than produced by a
+/// restart, because a restart would break the link and the *first* half would
+/// refuse — which would prove nothing about the second.
+#[tokio::test]
+async fn a_retry_refuses_an_instance_that_is_no_longer_the_one_it_was_made_against() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "misaddressed-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "alice-secret",
+        )
+        .await
+        .unwrap();
+    let ambiguous = Recorder::always(ScrobbleVerdict::Ambiguous);
+    state.services.register_scrobble_target(
+        ScrobbleProvider::Maloja,
+        "alice",
+        std::sync::Arc::clone(&ambiguous) as std::sync::Arc<dyn ScrobbleTarget>,
+    );
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    state.services.drain_scrobble_outbox().await.unwrap();
+    let uncertain_id = public_ids(&state).await[0];
+
+    // The link stays `active`; only the machine it names has changed under it.
+    sqlx::query("UPDATE scrobble_link SET destination_fingerprint='a-different-machine'")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(
+            state
+                .services
+                .retry_uncertain_scrobble(listener.owner, uncertain_id)
+                .await
+                .unwrap_err(),
+            ServiceError::NotFound
+        ),
+        "a retry must not leave for a destination nobody chose"
+    );
+    // And the joker is not spent by the refusal: the entry is still asking, so
+    // an operator who puts the address back has not cost anybody their one
+    // chance.
+    assert_eq!(
+        state
+            .services
+            .uncertain_scrobbles(listener.owner)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// Points Maloja's declared instance at `base`, leaving the others alone.
+fn maloja_reaching(config: &mut waveflow_server::Config, base: &str) {
+    let url = waveflow_server::scrobblers::validate_destination(base, true)
+        .expect("a destination the suite chose");
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config
+        .destinations
+        .retain(|declared| declared.provider != ScrobbleProvider::Maloja);
+    config
+        .destinations
+        .push(waveflow_server::config::ScrobbleDestination {
+            provider: ScrobbleProvider::Maloja,
+            name: "default".to_owned(),
+            url,
+            fingerprint,
+        });
+}
+
+/// A listen reaches Maloja in the shape its API documents, with every credit.
+///
+/// Through `initialize`, so it exercises the whole chain a real server walks —
+/// the destination is validated, the client is built, the adapter is registered
+/// and keyed by the pair — rather than registering a double by hand.
+///
+/// **The credits are the point.** ListenBrainz has one `artist_name` field, so
+/// its adapter joins them and lets the far end re-match; Maloja takes a list, so
+/// a duo stays a duo. An adapter that joined here would work, and would quietly
+/// invent a band in somebody's statistics.
+#[tokio::test]
+async fn a_listen_reaches_maloja_with_every_credit_it_was_heard_with() {
+    let destination = spawn_destination(200, None).await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    maloja_reaching(&mut config, &destination.base);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "maloja-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(
+            listener.owner,
+            listener.tagged,
+            true,
+            Some(1_700_000_000_123),
+        )
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 1);
+    assert_eq!(rows(&state).await[0].1, "sent");
+
+    let bodies = destination.bodies.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 1);
+    let body = &bodies[0];
+    assert_eq!(body["title"], "Matrix flac");
+    assert_eq!(body["artists"], serde_json::json!(["Alpha", "Beta"]));
+    // **Seconds.** The envelope holds epoch milliseconds like everything else
+    // here, and sending those unconverted would date this listen some fifty
+    // thousand years out — in a history that keeps it.
+    assert_eq!(body["time"], 1_700_000_000);
+    // And the key travels in the body, which is where every version of Maloja
+    // accepts it — so nothing went out in an `Authorization` header.
+    assert_eq!(body["key"], "maloja-key");
+    assert_eq!(
+        destination.authorizations.lock().unwrap().clone(),
+        vec![String::new()],
+        "the key must not also travel in a header"
+    );
+}
+
+/// A Last.fm application and an `https` address, which is what the journey
+/// needs beyond a declared destination.
+///
+/// The address is never dialled — no test here leaves the process — but it is
+/// what the callback URL is built from, and what decides whether Last.fm is
+/// available at all.
+fn lastfm_app(temp: &tempfile::TempDir) -> waveflow_server::Config {
+    let mut config = declaring(
+        temp,
+        &[(ScrobbleProvider::LastFm, "default", "http://127.0.0.1:3")],
+    );
+    config.public_url = Some("https://waveflow.example".to_owned());
+    config.lastfm = Some(waveflow_server::config::LastFmApplication {
+        api_key: "an-application-key".to_owned(),
+        secret: "an-application-secret".to_owned(),
+    });
+    config
+}
+
+/// A double for the half of the journey that would leave this machine.
+///
+/// Records the request token it was handed, so a test can assert that the one
+/// Last.fm appended is the one exchanged — and not, say, a second token this
+/// server asked for on its own, which is the shape of the `auth.getToken`
+/// mistake the RFC names.
+struct ExchangesFor {
+    session_key: Result<String, ()>,
+    tokens: Mutex<Vec<String>>,
+}
+
+impl ExchangesFor {
+    fn key(session_key: &str) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            session_key: Ok(session_key.to_owned()),
+            tokens: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn refusing() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            session_key: Err(()),
+            tokens: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn tokens(&self) -> Vec<String> {
+        self.tokens.lock().unwrap().clone()
+    }
+}
+
+impl waveflow_server::services::LastFmSessionExchange for ExchangesFor {
+    fn exchange<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<String, ServiceError>> {
+        Box::pin(async move {
+            self.tokens.lock().unwrap().push(token.to_owned());
+            self.session_key.clone().map_err(|()| ServiceError::Invalid)
+        })
+    }
+}
+
+/// The `state` segment out of an authorisation URL.
+fn state_of(authorize_url: &str) -> String {
+    let parsed = url::Url::parse(authorize_url).expect("an absolute authorisation URL");
+    let callback = parsed
+        .query_pairs()
+        .find(|(name, _)| name == "cb")
+        .map(|(_, value)| value.into_owned())
+        .expect("the authorisation URL names where to come back");
+    callback
+        .rsplit('/')
+        .next()
+        .expect("the state is the last segment")
+        .to_owned()
+}
+
+/// A person comes back from Last.fm and the link exists.
+///
+/// The whole journey, end to end, with only the half that would leave this
+/// machine replaced. The return is driven through the router rather than
+/// through the service, because everything this test is about — the trailing
+/// slash, the cookie, the query string, the headers on the answer — exists at
+/// that level and nowhere else.
+#[tokio::test]
+async fn a_person_who_comes_back_from_last_fm_ends_up_linked() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "lastfm-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    // The authorisation page carries this server's application key and the
+    // address to come back to — and the random travels in that address's
+    // *path*, because Last.fm documents that it appends `/?token=…` and says
+    // nothing about what it would do with a `cb` that already carried a `?`.
+    assert!(started
+        .authorize_url
+        .starts_with("https://www.last.fm/api/auth/"));
+    assert!(started.authorize_url.contains("api_key=an-application-key"));
+    assert!(started
+        .authorize_url
+        .contains("waveflow.example%2Fapi%2Fv2%2Fscrobble-links%2Flastfm%2Fcallback%2F"));
+    let journey = state_of(&started.authorize_url);
+
+    // **With the trailing slash**, which is what Last.fm actually sends the
+    // browser to. `axum` does not normalise it, so a route declared only
+    // without it would fail at the journey's last step for everybody.
+    let router = waveflow_server::app(&config, state.clone());
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri(format!(
+                    "/api/v2/scrobble-links/lastfm/callback/{journey}/?token=a-request-token"
+                ))
+                .header(
+                    axum::http::header::COOKIE,
+                    format!("waveflow_lastfm_journey={}", started.cookie),
+                )
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    // The token is worth an hour and worth a profile: the answer keeps nothing
+    // and sends nothing onward, and redirects at once to an address without it,
+    // which is the one a history keeps.
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .unwrap(),
+        "no-store"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::REFERRER_POLICY)
+            .unwrap(),
+        "no-referrer"
+    );
+    let landing = response
+        .headers()
+        .get(axum::http::header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(!landing.contains("a-request-token"), "{landing}");
+
+    // The token Last.fm appended is the one exchanged — not a second one this
+    // server asked for, which is the `auth.getToken` mistake.
+    assert_eq!(exchange.tokens(), vec!["a-request-token".to_owned()]);
+
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].provider, ScrobbleProvider::LastFm);
+    assert_eq!(links[0].destination, "default");
+    assert_eq!(links[0].health, "healthy");
+
+    // And the journey is spent: the same return, replayed, links nothing more.
+    let router = waveflow_server::app(&config, state.clone());
+    let replayed = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri(format!(
+                    "/api/v2/scrobble-links/lastfm/callback/{journey}/?token=a-request-token"
+                ))
+                .header(
+                    axum::http::header::COOKIE,
+                    format!("waveflow_lastfm_journey={}", started.cookie),
+                )
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replayed.status(), axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(exchange.tokens().len(), 1, "nothing was exchanged twice");
+}
+
+/// Which cookie the return is offered, in the loop below.
+enum Cookie {
+    /// The one `authorize` set for this journey.
+    Own,
+    /// None at all — refused by the route, before the service is reached.
+    None,
+    /// A well-formed one this server never issued — the case that reaches the
+    /// comparison, and the only one that proves it exists.
+    Wrong,
+}
+
+/// What the return refuses before it exchanges anything.
+///
+/// A missing token, an empty one, a repeated one, and a return with no cookie.
+/// In each the exchange is never called and no link is created, because the
+/// call comes after these refusals rather than before them.
+///
+/// **The repeated one deserves naming.** `?token=a&token=b` lets an extractor
+/// choose, and a journey whose outcome depends on which duplicate a reader
+/// keeps is not a journey.
+#[tokio::test]
+async fn the_return_refuses_before_it_exchanges_anything() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "refusing-lastfm-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    // **The wrong cookie and the missing cookie are two different cases**, and
+    // only the first reaches the comparison. An earlier version of this loop
+    // carried "no cookie at all" alone: the route refuses that before the
+    // service is called, so removing the comparison altogether left the test
+    // green. It is the pairing that this is about — a URL that travels through
+    // Last.fm lands in a referrer and a history, and whoever found it must not
+    // be able to finish the journey with their own token.
+    for (case, query, cookie) in [
+        ("no token at all", "", Cookie::Own),
+        ("an empty token", "?token=", Cookie::Own),
+        ("a repeated token", "?token=a&token=b", Cookie::Own),
+        ("no cookie at all", "?token=a-request-token", Cookie::None),
+        (
+            "a cookie from another browser",
+            "?token=a-request-token",
+            Cookie::Wrong,
+        ),
+    ] {
+        // A journey per case: each is opened fresh, so a refusal cannot pass
+        // because a previous case had already spent the state.
+        let started = state
+            .services
+            .begin_lastfm_authorization(listener.owner, "default")
+            .await
+            .unwrap();
+        let journey = state_of(&started.authorize_url);
+        let mut request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri(format!(
+                "/api/v2/scrobble-links/lastfm/callback/{journey}{query}"
+            ));
+        match cookie {
+            Cookie::Own => {
+                request = request.header(
+                    axum::http::header::COOKIE,
+                    format!("waveflow_lastfm_journey={}", started.cookie),
+                );
+            }
+            Cookie::Wrong => {
+                // Well formed, and never issued by this server.
+                request = request.header(
+                    axum::http::header::COOKIE,
+                    "waveflow_lastfm_journey=a-cookie-nobody-here-set",
+                );
+            }
+            Cookie::None => {}
+        }
+        let router = waveflow_server::app(&config, state.clone());
+        let response = router
+            .oneshot(request.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::NOT_FOUND,
+            "{case} must be refused"
+        );
+    }
+
+    assert!(
+        exchange.tokens().is_empty(),
+        "nothing may be exchanged before the refusals"
+    );
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// The state is spent before the exchange, not after the link.
+///
+/// What has served once cannot serve again, even when the attempt fails further
+/// on. Otherwise a person whose exchange failed would hold a return URL that
+/// still works — and that URL has by then travelled through Last.fm.
+#[tokio::test]
+async fn a_journey_whose_exchange_fails_is_still_spent() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "failing-lastfm-listener").await;
+    let exchange = ExchangesFor::refusing();
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    let journey = state_of(&started.authorize_url);
+
+    assert!(state
+        .services
+        .complete_lastfm_authorization(&journey, &started.cookie, "a-request-token")
+        .await
+        .is_err());
+    assert_eq!(
+        exchange.tokens().len(),
+        1,
+        "the exchange was attempted once"
+    );
+
+    // And the second attempt does not even reach it.
+    assert!(state
+        .services
+        .complete_lastfm_authorization(&journey, &started.cookie, "a-request-token")
+        .await
+        .is_err());
+    assert_eq!(
+        exchange.tokens().len(),
+        1,
+        "the state was spent the first time"
+    );
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// One journey at a time: opening a second replaces the first.
+///
+/// The cookie carries a fixed name, so the browser could not finish the earlier
+/// one anyway. Held in the database too, so "one journey" is a property of the
+/// data rather than of whoever remembers to delete the previous row.
+#[tokio::test]
+async fn opening_a_second_journey_replaces_the_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "impatient-lastfm-listener").await;
+    state.services.register_lastfm_exchange(
+        "default",
+        ExchangesFor::key("a-session-key")
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    let first = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    let second = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+
+    assert!(state
+        .services
+        .complete_lastfm_authorization(
+            &state_of(&first.authorize_url),
+            &first.cookie,
+            "a-request-token"
+        )
+        .await
+        .is_err());
+    assert!(state
+        .services
+        .complete_lastfm_authorization(
+            &state_of(&second.authorize_url),
+            &second.cookie,
+            "a-request-token"
+        )
+        .await
+        .is_ok());
+}
+
+/// An expired journey is refused, and the purge takes it.
+///
+/// Twelve minutes, well inside the sixty Last.fm grants its token: we refuse
+/// first, and an expired token never surprises us. The purge applies *this*
+/// expiry rather than the queue's thirty-day window — borrowing the wrong one
+/// would keep a quarter-hour journey alive for a month.
+#[tokio::test]
+async fn an_expired_journey_is_refused_and_then_purged() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "slow-lastfm-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+
+    // Aged by hand, because waiting a quarter of an hour is not a test.
+    sqlx::query("UPDATE lastfm_authorization SET expires_at = ?")
+        .bind(now_ms() - 1)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    assert!(state
+        .services
+        .complete_lastfm_authorization(
+            &state_of(&started.authorize_url),
+            &started.cookie,
+            "a-request-token"
+        )
+        .await
+        .is_err());
+    assert!(
+        exchange.tokens().is_empty(),
+        "an expired journey exchanges nothing"
+    );
+
+    // The row was spent by that attempt; a journey nobody returns from is what
+    // the purge is for.
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .services
+            .purge_lastfm_authorizations(now_ms())
+            .await
+            .unwrap(),
+        0,
+        "a live journey is not the purge's business"
+    );
+    let expired_at = now_ms() + 13 * 60 * 1_000;
+    assert_eq!(
+        state
+            .services
+            .purge_lastfm_authorizations(expired_at)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(state
+        .services
+        .complete_lastfm_authorization(
+            &state_of(&started.authorize_url),
+            &started.cookie,
+            "a-request-token"
+        )
+        .await
+        .is_err());
+}
+
+/// The return re-checks where the link would be made.
+///
+/// A quarter of an hour separates the two halves and a server can restart in
+/// between — which is why the state lives in a database at all. Destination
+/// gone or moved, the return is refused and nothing is created: otherwise the
+/// journey would manufacture a link to a machine the person never chose,
+/// already wrong at birth.
+#[tokio::test]
+async fn a_return_to_a_destination_that_moved_creates_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "moved-lastfm-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    let journey = state_of(&started.authorize_url);
+
+    // The operator points the same name at another machine and restarts.
+    let mut moved = lastfm_app(&temp);
+    moved.destinations = declaring(
+        &temp,
+        &[(ScrobbleProvider::LastFm, "default", "http://127.0.0.1:4")],
+    )
+    .destinations;
+    // Dropped rather than shadowed: two `AppState`s over one database file
+    // would each hold their own writer gate, and this test is about what a
+    // *restart* does.
+    drop(state);
+    let state = waveflow_server::initialize(&moved).await.unwrap();
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    assert!(state
+        .services
+        .complete_lastfm_authorization(&journey, &started.cookie, "a-request-token")
+        .await
+        .is_err());
+    assert!(
+        exchange.tokens().is_empty(),
+        "nothing is exchanged towards a machine nobody chose"
+    );
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// Last.fm says why it cannot be linked, rather than failing later.
+///
+/// Two conditions, and the listing names whichever is missing: an application
+/// the operator registered, and an `https` address to bring a person back to.
+/// Decision 10's plaintext escape is about the operator's own network and does
+/// not reach a journey that starts on the internet.
+#[tokio::test]
+async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
+    let temp = tempfile::tempdir().unwrap();
+
+    // No application at all.
+    let bare = declaring(
+        &temp,
+        &[(ScrobbleProvider::LastFm, "default", "http://127.0.0.1:3")],
+    );
+    let state = waveflow_server::initialize(&bare).await.unwrap();
+    let listener = fixture(&bare, &state, "unavailable-lastfm-listener").await;
+    let declared = state.services.scrobble_destinations();
+    assert_eq!(declared.len(), 1);
+    assert!(!declared[0].available);
+    assert!(declared[0].unavailable.unwrap().contains("application"));
+    assert!(matches!(
+        state
+            .services
+            .begin_lastfm_authorization(listener.owner, "default")
+            .await
+            .unwrap_err(),
+        ServiceError::Unavailable
+    ));
+    drop(state);
+
+    // An application, but a public address that is not `https`.
+    let mut plaintext = lastfm_app(&temp);
+    plaintext.public_url = Some("http://waveflow.example".to_owned());
+    let state = waveflow_server::initialize(&plaintext).await.unwrap();
+    let declared = state.services.scrobble_destinations();
+    assert!(!declared[0].available);
+    assert!(declared[0].unavailable.unwrap().contains("https"));
+    assert!(matches!(
+        state
+            .services
+            .begin_lastfm_authorization(listener.owner, "default")
+            .await
+            .unwrap_err(),
+        ServiceError::Unavailable
+    ));
+    drop(state);
+
+    // Both, and it is available.
+    let state = waveflow_server::initialize(&lastfm_app(&temp))
+        .await
+        .unwrap();
+    let declared = state.services.scrobble_destinations();
+    assert!(declared[0].available);
+    assert!(declared[0].unavailable.is_none());
+}
+
+/// A destination answering `200` with a body of the test's choosing.
+///
+/// The recorder above always answers `{}`, which is the shape of a success.
+/// Two of the three destinations announce a refusal *inside* a `200`, and
+/// nothing but a body can say so.
+async fn spawn_answering(path: &'static str, body: &'static str) -> String {
+    spawn_answering_with(path, 200, body, None).await
+}
+
+/// The same, with a status line and a header of the test's choosing.
+///
+/// Two destinations announce refusals inside a `200`, and one of them also
+/// announces its own error codes beside a `429` — where the *header* is what
+/// says how long to wait, and the body must not be allowed to answer instead.
+async fn spawn_answering_with(
+    path: &'static str,
+    status: u16,
+    body: &'static str,
+    header: Option<(&'static str, &'static str)>,
+) -> String {
+    let router = axum::Router::new().route(
+        path,
+        axum::routing::post(move || async move {
+            let mut response = axum::response::Response::builder()
+                .status(axum::http::StatusCode::from_u16(status).unwrap())
+                .header(axum::http::header::CONTENT_TYPE, "application/json");
+            if let Some((name, value)) = header {
+                response = response.header(name, value);
+            }
+            response.body(axum::body::Body::from(body)).unwrap()
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// A refusal Maloja announces inside a `200` is a refusal.
+///
+/// The first draft of that adapter read the status line alone, on the strength
+/// of decision 12 — what this server publishes is a state, never an echo. That
+/// governs what reaches a *member*; it says nothing about what an adapter may
+/// read to reach a verdict. The cost of the earlier reading was a silent gap:
+/// a listen Maloja refused, recorded here as `sent`.
+#[tokio::test]
+async fn a_refusal_maloja_announces_in_a_success_is_not_a_success() {
+    let base = spawn_answering(
+        "/apis/mlj_1/newscrobble",
+        r#"{"status":"failure","error":{"type":"nonexistent_track"}}"#,
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    maloja_reaching(&mut config, &base);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "refused-by-maloja-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 0);
+    assert_eq!(
+        rows(&state).await[0].1,
+        "rejected",
+        "a refusal announced in the body must not be recorded as sent"
+    );
+}
+
+/// A Last.fm session key that has stopped working breaks the link.
+///
+/// Last.fm answers `200` carrying `"error": 9` for it. Read by the status line
+/// alone, the link would stay `healthy` and every listen would be recorded as
+/// `sent` while nothing was recorded anywhere — a silent gap, which is the
+/// exact failure this RFC spends itself making visible.
+#[tokio::test]
+async fn a_last_fm_session_key_that_died_breaks_the_link_rather_than_looking_sent() {
+    let base = spawn_answering(
+        "/2.0/",
+        r#"{"error":9,"message":"Invalid session key - Please re-authenticate."}"#,
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = lastfm_app(&temp);
+    let url = waveflow_server::scrobblers::validate_destination(&base, true).unwrap();
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config.destinations = vec![waveflow_server::config::ScrobbleDestination {
+        provider: ScrobbleProvider::LastFm,
+        name: "default".to_owned(),
+        url,
+        fingerprint,
+    }];
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "stale-lastfm-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "a-session-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 0);
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links[0].health, "broken");
+    assert_eq!(links[0].last_failure.as_deref(), Some("auth_broken"));
+}
+
+/// An app reaching one Last.fm instance at `base`, with an application.
+async fn lastfm_app_reaching(
+    temp: &tempfile::TempDir,
+    base: &str,
+) -> (waveflow_server::Config, AppState) {
+    let mut config = lastfm_app(temp);
+    let url = waveflow_server::scrobblers::validate_destination(base, true).unwrap();
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config.destinations = vec![waveflow_server::config::ScrobbleDestination {
+        provider: ScrobbleProvider::LastFm,
+        name: "default".to_owned(),
+        url,
+        fingerprint,
+    }];
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    (config, state)
+}
+
+/// A failing status line decides, and the body does not answer for it.
+///
+/// Last.fm names its own rate limit `error: 29` in the body of the `429` that
+/// carries `Retry-After`. Letting the body answer returns this adapter's own
+/// zero wait — which is not a shorter wait, it is the *header discarded*, and
+/// the header is the only thing that says how much room was asked for.
+///
+/// The number below separates the two readings: the queue takes the larger of
+/// its own backoff and what was asked, so a discarded header lands on the
+/// backoff — about a minute — and an honoured one lands past two.
+#[tokio::test]
+async fn a_rate_limit_is_read_from_the_header_and_not_from_the_body_beside_it() {
+    let base = spawn_answering_with(
+        "/2.0/",
+        429,
+        r#"{"error":29,"message":"Rate limit exceeded"}"#,
+        Some(("retry-after", "240")),
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let (config, state) = lastfm_app_reaching(&temp, &base).await;
+    let listener = fixture(&config, &state, "rate-limited-lastfm-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::LastFm,
+            "default",
+            "a-session-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+
+    let before = now_ms();
+    state.services.drain_scrobble_outbox().await.unwrap();
+
+    let next: i64 = sqlx::query_scalar("SELECT next_attempt_at FROM scrobble_outbox")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        next - before >= 240_000,
+        "the wait must honour the header, not the code beside it: {}ms",
+        next - before
+    );
+}
+
+/// An instance nobody declared cannot be linked, from any surface.
+///
+/// Decision 10's barrier seen from the service: a member picks a name the
+/// server published and never describes a URL, so a name it never published is
+/// a resource that is not there. Held here rather than only at the route,
+/// because the CLI reaches the same method — `scrobble link` cannot be driven
+/// with a secret in `tests/cli.rs`, which refuses to mutate the environment
+/// while sibling threads read it, so what both surfaces share is tested where
+/// it lives.
+///
+/// The declared name beside it is the control: without it this would pass on a
+/// server that refused *every* link.
+#[tokio::test]
+async fn an_instance_nobody_declared_cannot_be_linked() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[(ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1")],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "undeclared-listener").await;
+
+    assert!(
+        matches!(
+            state
+                .services
+                .link_scrobble(
+                    listener.owner,
+                    ScrobbleProvider::Maloja,
+                    "an-instance-nobody-declared",
+                    "a-secret",
+                )
+                .await
+                .unwrap_err(),
+            ServiceError::NotFound
+        ),
+        "a name the server never published is not a destination"
+    );
+    // The same recipient, the name it did publish: accepted.
+    assert!(state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "alice",
+            "a-secret"
+        )
+        .await
+        .is_ok());
+    // Counted, then named. `all` over an empty list is true, so the shape
+    // above it — "every link is alice's" — is satisfied by a server that
+    // linked nothing at all, which is the one outcome this half exists to rule
+    // out.
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].destination, "alice");
 }

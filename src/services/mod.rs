@@ -984,6 +984,24 @@ pub struct DomainServices {
     /// outbound adapter at all — the ordinary case, since RFC-010 decision 4
     /// forbids shipping any provider credential in an AGPL binary.
     scrobble_targets: scrobbling::ScrobbleTargets,
+    /// Every instance of every destination the operator declared, by
+    /// `(provider, name)`, with the fingerprint of its URL.
+    ///
+    /// Copied out of `Config` like the limits beside it. It is what makes a
+    /// link's named destination checkable — at the moment it is posed, at
+    /// reconciliation, and before a retry leaves — without three readings of
+    /// the environment that could disagree.
+    scrobble_destinations: Arc<std::collections::HashMap<(ScrobbleProvider, String), String>>,
+    /// What one Last.fm journey needs beyond an account and a destination, or
+    /// `None` when this server cannot carry one at all.
+    lastfm_journey: Option<lastfm::LastFmJourney>,
+    /// Why not, in words an operator can act on. Published beside the
+    /// destination rather than discovered when somebody tries to link.
+    lastfm_unavailable: Option<&'static str>,
+    /// How a request token becomes a session key, by destination name. Filled
+    /// after construction like [`Self::register_scrobble_target`], and for the
+    /// same reason.
+    lastfm_exchanges: lastfm::LastFmExchanges,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1028,6 +1046,7 @@ mod canvas;
 mod catalog;
 mod credentials;
 mod favorites;
+mod lastfm;
 mod library_events;
 mod playback;
 mod playlists;
@@ -1049,9 +1068,12 @@ mod uploads;
 /// decision. `UncertainScrobble` joined it when the routes arrived, because
 /// decision 13 asks somebody to choose and nothing outside could see what
 /// about.
+pub use lastfm::{
+    LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX, LASTFM_JOURNEY_COOKIE,
+};
 pub use scrobbling::{
-    ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider, ScrobbleTarget,
-    ScrobbleVerdict, UncertainScrobble,
+    ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
+    ScrobbleTarget, ScrobbleVerdict, UncertainScrobble,
 };
 
 impl DomainServices {
@@ -1081,6 +1103,21 @@ impl DomainServices {
             canvas_locks: Arc::new(dashmap::DashMap::new()),
             scrobbling: config.scrobbling,
             scrobble_targets: Arc::new(dashmap::DashMap::new()),
+            scrobble_destinations: Arc::new(
+                config
+                    .destinations
+                    .iter()
+                    .map(|destination| {
+                        (
+                            (destination.provider, destination.name.clone()),
+                            destination.fingerprint.clone(),
+                        )
+                    })
+                    .collect(),
+            ),
+            lastfm_journey: lastfm::LastFmJourney::from_config(config),
+            lastfm_unavailable: lastfm::lastfm_unavailability(config),
+            lastfm_exchanges: Arc::new(dashmap::DashMap::new()),
         }
     }
 

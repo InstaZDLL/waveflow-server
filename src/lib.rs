@@ -161,8 +161,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::list_history,
         api::list_now_playing,
         api::list_scrobble_links,
+        api::list_scrobble_destinations,
         api::link_scrobble,
         api::unlink_scrobble,
+        api::authorize_lastfm,
+        api::lastfm_callback,
         api::list_uncertain_scrobbles,
         api::discard_uncertain_scrobble,
         api::retry_uncertain_scrobble,
@@ -238,6 +241,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::HistoryItem,
         services::ScrobbleProvider,
         services::ScrobbleLinkState,
+        services::ScrobbleDestinationName,
+        api::LastFmAuthorizationResponse,
         services::UncertainScrobble,
         api::LinkScrobbleRequest,
         api::RetriedScrobbleResponse,
@@ -358,6 +363,15 @@ const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v2/oauth/token", "post"),
     ("/api/v2/stream/{ticket}", "get"),
     ("/api/v2/canvas-stream/{ticket}", "get"),
+    // The Last.fm return, and the one entry here that is not a ticket. It is
+    // reached by a person's browser coming back from another site, with no
+    // `Authorization` header and — every cookie of this server being
+    // `SameSite=Strict` — no session cookie either. What stands in for proof is
+    // narrower than an `Access`: a single-use random, an expiry of a few
+    // minutes, and a cookie good for this path alone, all three of which must
+    // agree. Listed so the document says what the route does rather than
+    // advertising a requirement nothing checks.
+    ("/api/v2/scrobble-links/lastfm/callback/{state}", "get"),
 ];
 
 fn clear_security_on_public_operations(openapi: &mut utoipa::openapi::OpenApi) {
@@ -562,26 +576,58 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // operator naming a destination rather than by anybody linking an account.
     // Nothing leaves until both are true: an adapter with no authorisation
     // behind it is never handed a listen. RFC-010 decision 11.
-    if let Some(base) = config.listenbrainz_url.as_deref() {
+    for destination in &config.destinations {
         // `Config::from_env` refuses to boot on a malformed destination, so the
-        // `validate_destination` half of this cannot fail on a real server —
-        // it is reachable only because `for_data_dir` builds a `Config` without
-        // going through that gate.
+        // URL reaching here has already been through `validate_destination` —
+        // and `for_data_dir` builds an empty list rather than an unchecked one.
         //
-        // The `outbound_client` half is a different matter and really can fail
-        // at runtime, for reasons that have nothing to do with the operator's
-        // URL. An earlier version of this comment claimed neither branch was
-        // reachable, which was one claim too many.
-        let target = scrobblers::validate_destination(base, config.outbound_allow_plaintext)
-            .and_then(|base| {
-                let client = scrobblers::outbound_client(config.scrobbling.request_timeout)?;
-                scrobblers::listenbrainz::ListenBrainz::new(client, &base)
-            });
+        // Building the client is a different matter and really can fail at
+        // runtime, for reasons that have nothing to do with the operator's URL.
+        let target = match destination.provider {
+            services::ScrobbleProvider::ListenBrainz => {
+                scrobblers::outbound_client(config.scrobbling.request_timeout)
+                    .and_then(|client| {
+                        scrobblers::listenbrainz::ListenBrainz::new(client, &destination.url)
+                    })
+                    .map(|target| Arc::new(target) as Arc<dyn services::ScrobbleTarget>)
+            }
+            services::ScrobbleProvider::Maloja => {
+                scrobblers::outbound_client(config.scrobbling.request_timeout)
+                    .and_then(|client| scrobblers::maloja::Maloja::new(client, &destination.url))
+                    .map(|target| Arc::new(target) as Arc<dyn services::ScrobbleTarget>)
+            }
+            // **Last.fm needs more than a URL**, and a destination declared
+            // without it is not an error. Decision 4 forbids shipping any
+            // provider credential in an AGPL binary, so the application belongs
+            // to the operator; without one, the name stays listed — with the
+            // reason, which `GET /api/v2/scrobble-destinations` publishes — and
+            // nothing drains for it.
+            services::ScrobbleProvider::LastFm => {
+                let Some(application) = config.lastfm.clone() else {
+                    continue;
+                };
+                scrobblers::outbound_client(config.scrobbling.request_timeout)
+                    .and_then(|client| {
+                        scrobblers::lastfm::LastFm::new(client, &destination.url, application)
+                    })
+                    .map(|target| {
+                        let target = Arc::new(target);
+                        // The same object in both registries: submitting a
+                        // listen and exchanging a token are two calls to one
+                        // destination, signed by one application, and splitting
+                        // them would be two places for that to drift.
+                        services.register_lastfm_exchange(
+                            &destination.name,
+                            Arc::clone(&target) as Arc<dyn services::LastFmSessionExchange>,
+                        );
+                        target as Arc<dyn services::ScrobbleTarget>
+                    })
+            }
+        };
         match target {
-            Ok(target) => services.register_scrobble_target(
-                services::ScrobbleProvider::ListenBrainz,
-                Arc::new(target),
-            ),
+            Ok(target) => {
+                services.register_scrobble_target(destination.provider, &destination.name, target)
+            }
             Err(error) => {
                 // **Never the URL itself.** `validate_destination` refuses a
                 // destination that carries credentials, so the one thing this
@@ -590,10 +636,19 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
                 // a startup log, or a support paste, in full. The variant names
                 // the fault precisely enough without it, and this repository's
                 // rule about secrets has no exception for an error path.
-                anyhow::bail!("the configured ListenBrainz destination is unusable: {error}")
+                anyhow::bail!(
+                    "the configured {} destination {:?} is unusable: {error}",
+                    destination.provider.as_str(),
+                    destination.name
+                )
             }
         }
     }
+    // Catching up and reconciling, once, under the writer gate — and *before*
+    // `main` starts the drain. The order is half the rule: reconciling while
+    // the background task already runs leaves a window, short and sufficient,
+    // in which listens leave for yesterday's destination. RFC-010 decision 10.
+    services.reconcile_scrobble_links().await?;
     Ok(AppState {
         db,
         auth,
@@ -764,10 +819,19 @@ pub fn app(config: &Config, state: AppState) -> Router {
 /// spellings means already holding the ticket, so it is hardening rather than a
 /// disclosure route, and normalising here would put a second opinion about what
 /// a path means next to the router's.
-const CREDENTIAL_BEARING_PREFIXES: [(&str, &str); 3] = [
+const CREDENTIAL_BEARING_PREFIXES: [(&str, &str); 4] = [
     ("/api/v2/stream/", "/api/v2/stream/{redacted}"),
     ("/api/v2/canvas-stream/", "/api/v2/canvas-stream/{redacted}"),
     ("/share/", "/share/{redacted}"),
+    // The Last.fm return. Its `{state}` is a single-use random worth a
+    // profile for a quarter of an hour, and the `token` Last.fm appends is
+    // worth one for an hour — that one sits in the query string, which no
+    // trace of this server keeps. The rule in `CLAUDE.md` has no exception for
+    // a secret that only lasts an hour.
+    (
+        crate::services::LASTFM_CALLBACK_PREFIX,
+        "/api/v2/scrobble-links/lastfm/callback/{redacted}",
+    ),
 ];
 
 fn trace_path(path: &str) -> &str {
@@ -882,9 +946,9 @@ mod tests {
             }
         }
         assert_eq!(
-            checked, 4,
-            "two on the link, two on the queue — a count that falls if a route is added \
-             without deciding which protocol it belongs to"
+            checked, 5,
+            "two on the link, two on the queue, and the Last.fm authorisation — a count that \
+             falls if a route is added without deciding which protocol it belongs to"
         );
     }
 
@@ -981,7 +1045,15 @@ mod tests {
     #[test]
     fn every_public_ticket_route_has_a_redaction_prefix() {
         for (path, _) in super::PUBLIC_OPERATIONS {
-            let Some(prefix) = path.strip_suffix("{ticket}") else {
+            // `{state}` as well as `{ticket}`: the Last.fm return is the first
+            // public route whose path carries a credential under another name,
+            // and a check that knew only one spelling would have let it through
+            // — which is the shape of the canvas ticket this test was written
+            // for.
+            let Some(prefix) = path
+                .strip_suffix("{ticket}")
+                .or_else(|| path.strip_suffix("{state}"))
+            else {
                 continue;
             };
             assert!(
