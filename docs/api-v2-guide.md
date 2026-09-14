@@ -746,6 +746,107 @@ nothing. These are the same domain methods behind the Subsonic
 disagree, and bookmarks reach `/api/v2/sync/changes` under the `bookmark`
 entity type like every other piece of user data.
 
+## External scrobbling
+
+A listen recorded by `POST /api/v2/scrobbles` can also be forwarded to
+ListenBrainz, Maloja or Last.fm. Nothing leaves the server until two things are
+true at once: the operator has declared a destination, and the account has
+authorised one.
+
+**The operator names instances; the account picks a name.** A base URL is a
+deployment setting and never a member's, so a client never sends one.
+`GET /api/v2/scrobble-destinations` publishes what this server knows:
+
+```json
+[
+  { "provider": "listenbrainz", "destination": "default", "available": true },
+  { "provider": "maloja", "destination": "alice", "available": true },
+  { "provider": "maloja", "destination": "bob", "available": true },
+  { "provider": "lastfm", "destination": "default", "available": false,
+    "unavailable": "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address" }
+]
+```
+
+Several instances of one recipient are ordinary — Maloja self-hosts, and on a
+household server everybody has their own. Addresses are never published: a
+member does not need one, and no link stores one.
+
+**Linking and unlinking** name the pair:
+
+```bash
+curl -X PUT https://music.example.com/api/v2/scrobble-links/maloja/alice \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"secret":"THE-API-KEY"}'
+```
+
+`PUT` because the instance names the resource: presenting a second token leaves
+one link, not two. Listens already queued stay attached to the authorisation
+they were queued under and are never submitted under the new one.
+`DELETE /api/v2/scrobble-links/{provider}/{destination}` withdraws it and
+succeeds whether or not anything was linked. There is no implicit default: a
+path without an instance is refused rather than attached to the first one.
+
+**Last.fm authorises instead of pasting**, because it hands out no secret a
+person can hold. `POST /api/v2/scrobble-links/lastfm/authorize/{destination}`
+answers where to send them and sets the cookie the return is checked against:
+
+```json
+{ "authorize_url": "https://www.last.fm/api/auth/?api_key=…&cb=…", "expires_in": 720 }
+```
+
+Send the browser to `authorize_url`. Last.fm brings it back to
+`GET /api/v2/scrobble-links/lastfm/callback/{state}`, which finishes the link
+and redirects to an address carrying no token. The journey lasts twelve
+minutes, is good once, and needs both the address and the cookie — so it has to
+be completed in the browser that opened it. It requires an operator's Last.fm
+application and an `https` `WAVEFLOW_PUBLIC_URL`; without either, the
+destination listing says so rather than letting a link fail later. Pasting a
+session key to `PUT` still works, for a diagnosis.
+
+**What a link reports is a state, never an echo.**
+
+```bash
+curl https://music.example.com/api/v2/scrobble-links \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+```json
+[{ "provider": "maloja", "destination": "alice", "health": "degraded",
+   "pending": 12, "retrying": 3, "uncertain": 1,
+   "oldest_pending_at": 1757000000000, "last_success_at": 1756990000000,
+   "last_failure": "rate_limited" }]
+```
+
+`healthy` cannot mean "the token is still good": a valid link with three
+thousand listens waiting since this morning is broken in every sense that
+matters. `degraded` says the link answers but the queue is not moving — an
+ambiguous listen waiting for a person, or the oldest wait past the configured
+threshold. `broken` is a refused credential, or a destination this server can no
+longer reach under the name the link was made against.
+
+**An ambiguous listen is answered by its owner, not by the server.** A
+submission whose fate is unknown — the connection broke after the request left —
+is never retried automatically: a duplicate in a public listening history is
+worse than a gap, and only the person can weigh that.
+
+| Purpose | Routes |
+|---|---|
+| Listed | `GET /api/v2/scrobble-queue/uncertain` |
+| Thrown away | `DELETE /api/v2/scrobble-queue/uncertain/{entry_id}` |
+| Sent again | `POST /api/v2/scrobble-queue/uncertain/{entry_id}/retry` |
+
+Retrying is granted **once** per entry and returns the new entry's id. The
+ambiguous one stays in the record exactly as it happened: erasing it would
+falsify the only trace explaining why the destination may hold the listen
+twice. A second call answers `404`, and so does an entry belonging to somebody
+else — once the single acceptance is spent, the entry stops being findable at
+all.
+
+Finished entries — sent, rejected, abandoned, cancelled, discarded — are kept
+for thirty days by default and then purged. Entries still waiting, and ambiguous
+ones nobody has answered, are never purged.
+
 ## Administration and scans
 
 Admin Bearer tokens can manage:
