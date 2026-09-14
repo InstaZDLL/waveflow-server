@@ -478,11 +478,13 @@ loin.
 et vaut un profil : il n'a rien à faire dans un journal, un historique de
 navigateur ni un référent. Trois conséquences pour cette route, aucune
 facultative. Son chemin rejoint les préfixes que `trace_path` rédige, aux côtés
-des billets de flux et des jetons de partage, parce que la règle de `CLAUDE.md`
-ne souffre pas d'exception pour un secret d'une heure. La réponse porte
-`Cache-Control: no-store` et `Referrer-Policy: no-referrer`, sans quoi le jeton
-voyagerait vers la page suivante dans un en-tête que personne ne relit. Et elle
-redirige aussitôt vers une adresse sans jeton, pour que ce soit celle-là que
+des billets de flux et des jetons de partage, ce qui couvre le `{state}` ; le
+`token`, lui, est dans la chaîne de requête, qu'aucune trace de ce serveur ne
+retient déjà. La règle de `CLAUDE.md` ne souffre pas d'exception pour un secret
+d'une heure. La réponse porte `Cache-Control: no-store` et
+`Referrer-Policy: no-referrer`, sans quoi le jeton voyagerait vers la page
+suivante dans un en-tête que personne ne relit. Et elle redirige aussitôt vers
+une adresse sans jeton, pour que ce soit celle-là que
 l'historique retienne — la page où la personne atterrit n'a pas besoin d'en
 savoir plus que « c'est lié ».
 
@@ -496,6 +498,20 @@ introduisant une autre.
 **La destination de retour se dérive de `WAVEFLOW_PUBLIC_URL`**, qui dit déjà
 l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
 même chose serait une seconde vérité à tenir d'accord avec la première.
+
+**Le retour n'arrive pas avec un jeton de porteur.** C'est un navigateur qui
+revient de chez Last.fm, pas un client qui appelle l'API : aucun en-tête
+`Authorization` ne l'accompagne, et c'est l'exception dans une surface qui en
+demande un partout ailleurs. Ce qui l'autorise est la session web, celle-là même
+à laquelle l'état est lié — le retour est donc la vérification de l'état, et
+rien d'autre ne tiendrait lieu de preuve.
+
+**Et cette route veut `https`.** La décision 10 tolère le clair vers une cible
+que l'opérateur déclare sur son propre réseau ; l'échappatoire ne vaut pas ici,
+puisque le trajet qui rapporte le jeton part d'Internet et traverse le
+navigateur d'une personne. Un `WAVEFLOW_PUBLIC_URL` en `http` laisse donc
+Last.fm indisponible, au même titre qu'une valeur absente, et pour une raison
+que la liste des destinations dit aussi clairement.
 
 Il en découle que **Last.fm est indisponible tant que `WAVEFLOW_PUBLIC_URL`
 n'est pas configuré** — le serveur avertit déjà à ce sujet au démarrage. Ce
@@ -631,6 +647,8 @@ déploiement et une tâche de purge, sur le patron de
 - **Trente jours pour les états terminaux ordinaires** — `sent`, `rejected`,
   `abandoned`, `cancelled`, `discarded`. Assez pour comprendre une panne
   passée, trop court pour que la file devienne un second historique d'écoute.
+  C'est le défaut d'un réglage, pas une durée gravée : qui diagnostique une panne
+  de trois mois l'allonge, comme il règle la fenêtre de RFC-007.
 - **`uncertain` se garde indéfiniment**, qu'il porte `retried_at` ou non. Une
   entrée sans réponse attend une personne, et la lui retirer au bout d'un mois
   serait décider à sa place. Une entrée répondue pourrait s'en aller plus tard ;
