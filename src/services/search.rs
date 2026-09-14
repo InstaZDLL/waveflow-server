@@ -87,10 +87,22 @@ impl DomainServices {
     /// Each kind is paged independently, as `search3` has always allowed:
     /// a client that has read every matching song should be able to ask for
     /// the next page of songs without re-reading the artists beside them.
+    ///
+    /// `library_ids` narrows the three kinds exactly as [`Self::browse_all`]
+    /// narrows its own, and an empty slice means every library the account can
+    /// see. The FTS index is not consulted per library — it holds the whole
+    /// server — so the narrowing is applied to the rows the match resolves to,
+    /// which is where tenancy already lives on both surfaces.
+    ///
+    /// The frozen Subsonic façade is untouched by this: `search2`/`search3`
+    /// reach [`Self::catalog_search`] in `services/catalog.rs`, a separate path
+    /// with its own three queries. What the two share is the FTS index and the
+    /// projection macros, not this method.
     pub async fn search(
         &self,
         user_id: Uuid,
         query: &str,
+        library_ids: &[Uuid],
         artists: BrowsePage,
         albums: BrowsePage,
         songs: BrowsePage,
@@ -106,12 +118,16 @@ impl DomainServices {
                 songs: Vec::new(),
             });
         };
+        let folders = folder_filter(library_ids);
         let mut songs = sqlx::query(concat!(
             song_select!(),
+            song_folder_clause!(),
             " AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?) \
               ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
         .bind(&fts)
         .bind(songs.limit)
         .bind(songs.offset)
@@ -123,12 +139,15 @@ impl DomainServices {
         attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
-            " AND al.id IN (SELECT t.album_id FROM track t \
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
+              AND al.id IN (SELECT t.album_id FROM track t \
                 WHERE t.album_id IS NOT NULL \
                   AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
               ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
         .bind(&fts)
         .bind(albums.limit)
         .bind(albums.offset)
@@ -140,10 +159,13 @@ impl DomainServices {
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
         let artists = sqlx::query(concat!(
             artist_select!(),
-            " AND ar.id IN (SELECT artist_id FROM artist_fts WHERE artist_fts MATCH ?) \
+            " AND (? IS NULL OR ar.library_id IN (SELECT value FROM json_each(?))) \
+              AND ar.id IN (SELECT artist_id FROM artist_fts WHERE artist_fts MATCH ?) \
               ORDER BY ar.name COLLATE NOCASE, ar.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
         .bind(&fts)
         .bind(artists.limit)
         .bind(artists.offset)
