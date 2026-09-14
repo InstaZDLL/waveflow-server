@@ -1056,37 +1056,54 @@ async fn spawn_destination(status: u16, reset_in: Option<u64>) -> Destination {
 async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> Destination {
     let bodies = std::sync::Arc::new(Mutex::new(Vec::new()));
     let authorizations = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let router = axum::Router::new().route(
-        "/1/submit-listens",
-        axum::routing::post({
+    // Two paths, one recorder. ListenBrainz submits to the first and Maloja to
+    // the second, and a test that means to exercise one destination has no
+    // reason to also stand up a second server for it.
+    let handler = |bodies: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+                   authorizations: std::sync::Arc<Mutex<Vec<String>>>,
+                   delay: Option<(&'static str, String)>| {
+        axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
             let bodies = std::sync::Arc::clone(&bodies);
             let authorizations = std::sync::Arc::clone(&authorizations);
-            move |headers: axum::http::HeaderMap, body: String| {
-                let bodies = std::sync::Arc::clone(&bodies);
-                let authorizations = std::sync::Arc::clone(&authorizations);
-                let delay = delay.clone();
-                async move {
-                    authorizations.lock().unwrap().push(
-                        headers
-                            .get(axum::http::header::AUTHORIZATION)
-                            .and_then(|value| value.to_str().ok())
-                            .unwrap_or_default()
-                            .to_owned(),
-                    );
-                    bodies
-                        .lock()
-                        .unwrap()
-                        .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
-                    let mut response = axum::response::Response::builder()
-                        .status(axum::http::StatusCode::from_u16(status).unwrap());
-                    if let Some((header, value)) = delay {
-                        response = response.header(header, value);
-                    }
-                    response.body(axum::body::Body::from("{}")).unwrap()
+            let delay = delay.clone();
+            async move {
+                authorizations.lock().unwrap().push(
+                    headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+                bodies
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&body).expect("the adapter must send JSON"));
+                let mut response = axum::response::Response::builder()
+                    .status(axum::http::StatusCode::from_u16(status).unwrap());
+                if let Some((header, value)) = delay {
+                    response = response.header(header, value);
                 }
+                response.body(axum::body::Body::from("{}")).unwrap()
             }
-        }),
-    );
+        })
+    };
+    let router = axum::Router::new()
+        .route(
+            "/1/submit-listens",
+            handler(
+                std::sync::Arc::clone(&bodies),
+                std::sync::Arc::clone(&authorizations),
+                delay.clone(),
+            ),
+        )
+        .route(
+            "/apis/mlj_1/newscrobble",
+            handler(
+                std::sync::Arc::clone(&bodies),
+                std::sync::Arc::clone(&authorizations),
+                delay,
+            ),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -3099,5 +3116,85 @@ async fn a_retry_refuses_an_instance_that_is_no_longer_the_one_it_was_made_again
             .unwrap()
             .len(),
         1
+    );
+}
+
+/// Points Maloja's declared instance at `base`, leaving the others alone.
+fn maloja_reaching(config: &mut waveflow_server::Config, base: &str) {
+    let url = waveflow_server::scrobblers::validate_destination(base, true)
+        .expect("a destination the suite chose");
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config
+        .destinations
+        .retain(|declared| declared.provider != ScrobbleProvider::Maloja);
+    config
+        .destinations
+        .push(waveflow_server::config::ScrobbleDestination {
+            provider: ScrobbleProvider::Maloja,
+            name: "default".to_owned(),
+            url,
+            fingerprint,
+        });
+}
+
+/// A listen reaches Maloja in the shape its API documents, with every credit.
+///
+/// Through `initialize`, so it exercises the whole chain a real server walks —
+/// the destination is validated, the client is built, the adapter is registered
+/// and keyed by the pair — rather than registering a double by hand.
+///
+/// **The credits are the point.** ListenBrainz has one `artist_name` field, so
+/// its adapter joins them and lets the far end re-match; Maloja takes a list, so
+/// a duo stays a duo. An adapter that joined here would work, and would quietly
+/// invent a band in somebody's statistics.
+#[tokio::test]
+async fn a_listen_reaches_maloja_with_every_credit_it_was_heard_with() {
+    let destination = spawn_destination(200, None).await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    maloja_reaching(&mut config, &destination.base);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "maloja-listener").await;
+    state
+        .services
+        .link_scrobble(
+            listener.owner,
+            ScrobbleProvider::Maloja,
+            "default",
+            "maloja-key",
+        )
+        .await
+        .unwrap();
+    state
+        .services
+        .scrobble(
+            listener.owner,
+            listener.tagged,
+            true,
+            Some(1_700_000_000_123),
+        )
+        .await
+        .unwrap();
+
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(drained.accepted, 1);
+    assert_eq!(rows(&state).await[0].1, "sent");
+
+    let bodies = destination.bodies.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 1);
+    let body = &bodies[0];
+    assert_eq!(body["title"], "Matrix flac");
+    assert_eq!(body["artists"], serde_json::json!(["Alpha", "Beta"]));
+    // **Seconds.** The envelope holds epoch milliseconds like everything else
+    // here, and sending those unconverted would date this listen some fifty
+    // thousand years out — in a history that keeps it.
+    assert_eq!(body["time"], 1_700_000_000);
+    // And the key travels in the body, which is where every version of Maloja
+    // accepts it — so nothing went out in an `Authorization` header.
+    assert_eq!(body["key"], "maloja-key");
+    assert_eq!(
+        destination.authorizations.lock().unwrap().clone(),
+        vec![String::new()],
+        "the key must not also travel in a header"
     );
 }
