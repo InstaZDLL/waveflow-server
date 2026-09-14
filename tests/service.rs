@@ -413,10 +413,16 @@ async fn a_caller_cannot_name_its_own_request() {
             if let Some(value) = value.as_deref() {
                 request = request.header("x-request-id", value);
             }
-            let response = router
-                .oneshot(request.body(Body::empty()).unwrap())
-                .await
-                .unwrap();
+            // Named rather than `unwrap`ed because every value below has to
+            // reach the router for its case to mean anything, and one of them
+            // is not ASCII. `http` accepts it: a header value may hold any byte
+            // from 0x20 up except 0x7f, so `café` builds — it is `to_str`, on
+            // the way back, that would refuse it, which is why the answer is
+            // read as bytes further down.
+            let request = request
+                .body(Body::empty())
+                .expect("every proposed id has to reach the router");
+            let response = router.oneshot(request).await.unwrap();
             // Read as bytes, not as `&str`. A `HeaderValue` may hold any byte
             // above 0x1f, `to_str` refuses the ones above 0x7f, and the point
             // of the non-ASCII case below is that such a value is not kept — so
