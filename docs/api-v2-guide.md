@@ -227,8 +227,10 @@ curl https://music.example.com/api/v2/libraries \
 curl "https://music.example.com/api/v2/libraries/LIBRARY_UUID/tracks?q=bjork&offset=0&limit=100" \
   -H "Authorization: Bearer ACCESS_TOKEN"
 
-# Cross-library search
+# Search, across every library the account sees or narrowed to one
 curl "https://music.example.com/api/v2/search?q=bjork&offset=0&limit=100" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+curl "https://music.example.com/api/v2/search?q=bjork&library_id=LIBRARY_UUID" \
   -H "Authorization: Bearer ACCESS_TOKEN"
 
 # Details
@@ -250,6 +252,18 @@ every other genre filter, and both are the native form of a Subsonic method
 `artist_offset`, `album_offset` and `song_offset` to page one of them on its
 own — which is what a client that has exhausted the artists but not the songs
 needs, and what `search3` has always allowed.
+
+It also accepts `library_id`, since 2026-09-14, and narrows all three kinds
+with it. Absent means every library the account can see, so this parameter
+narrows without becoming mandatory. The index itself is server-wide: what the
+parameter restricts is the rows a match resolves to, which is where tenancy
+already lived.
+
+This brings the native surface level with the façade rather than ahead of it.
+`search2`/`search3` have honoured `musicFolderId` all along, through
+`catalog_search` — a separate path with its own three queries, sharing the
+index and the projections but not the method. The frozen contract is therefore
+untouched by this change.
 
 Browse and search pages accept `offset >= 0` and `1 <= limit <= 500`.
 `GET /api/v2/albums` and `/artists` additionally accept an optional
@@ -841,6 +855,28 @@ worse than a gap, and only the person can weigh that.
 | Listed | `GET /api/v2/scrobble-queue/uncertain` |
 | Thrown away | `DELETE /api/v2/scrobble-queue/uncertain/{entry_id}` |
 | Sent again | `POST /api/v2/scrobble-queue/uncertain/{entry_id}/retry` |
+
+```json
+[{ "id": "8f0e…", "provider": "maloja", "destination": "alice",
+   "played_at": 1757000000000, "attempts": 1,
+   "last_failure": "ambiguous", "updated_at": 1757000000500 }]
+```
+
+An entry names the **pair**, because the recipient alone does not identify
+where the listen may already be: a household server carries several instances
+of one destination, and a person cannot weigh a duplicate without knowing which
+of their profiles would hold it.
+
+It carries no title and no artists — what this API publishes is a state, never
+an echo of what was heard. `played_at` is what identifies the listen to a
+person, and it is the same instant `GET /api/v2/history` reports for that play,
+so a client resolves the track by matching the two. Two plays at one instant
+match nothing: guess there and the question is put about the wrong listen.
+
+`last_failure` is `ambiguous` when the adapter could not tell whether the
+submission arrived, and `interrupted` when a previous process left the row
+claimed and this one recovered it. Those are the only two an entry in this
+listing can carry.
 
 Retrying is granted **once** per entry and returns the new entry's id. The
 ambiguous one stays in the record exactly as it happened: erasing it would

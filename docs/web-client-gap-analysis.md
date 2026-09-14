@@ -58,13 +58,15 @@ Sur ce socle, l'écart n'est pas fonctionnel. Il est d'interface.
 
 ### Ce que Navidrome fait et que WaveFlow ne fait pas du tout
 
-Ces cinq points demandent du serveur, pas de l'écran. Aucun n'est commencé.
+Ces cinq points demandent du serveur, pas de l'écran. **Quatre ne sont toujours
+pas commencés ; le scrobbling externe est clos**, serveur et écran, depuis le
+2026-09-14 — voir le point 15.
 
 | | État dans WaveFlow |
 | --- | --- |
 | **Playlists intelligentes** (dynamiques, à la iTunes) | rien |
 | **Import automatique des `.m3u`** | rien |
-| **Scrobbling externe** — Last.fm, ListenBrainz, Maloja | rien ; `/api/v2/scrobbles` n'écrit que le journal interne |
+| **Scrobbling externe** — Last.fm, ListenBrainz, Maloja | fait, RFC-010 ; serveur et écran, voir le point 15 |
 | **Radio internet** | `getInternetRadioStations` répond un conteneur vide (`src/subsonic/mod.rs:404`) |
 | **Mode jukebox** | `jukeboxRole` est déclaré `false` (`src/subsonic/nodes.rs:319`) |
 
@@ -188,8 +190,8 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
     >
     > **Et elle est implémentée depuis le 2026-09-14.** Les trois destinataires
     > répondent, la file se purge, et une destination existe en plusieurs
-    > instances nommées par l'opérateur. Ce qu'un client web a désormais à
-    > faire — et que rien ne fait encore — tient en quatre gestes :
+    > instances nommées par l'opérateur. Ce qu'un client web avait alors à
+    > faire tenait en quatre gestes :
     >
     > - lire `GET /api/v2/scrobble-destinations` et proposer les noms, avec la
     >   raison quand l'un d'eux est indisponible ;
@@ -206,9 +208,50 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
     >
     > La section « External scrobbling » du
     > [guide API](api-v2-guide.md#external-scrobbling) décrit les quatre.
+    >
+    > **Les quatre sont faits, le 2026-09-14** par la
+    > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), dans
+    > `webapp/src/scrobbling.ts`
+    > et `scrobbling-page.tsx`. L'écran est à `/settings/scrobbling`, et ce
+    > chemin n'est pas un choix : `lastfm_callback` y redirige une fois le lien
+    > conclu, donc aucune autre orthographe ne marche — et tant qu'il n'existait
+    > pas, un parcours Last.fm mené à son terme atterrissait sur la page
+    > « introuvable ».
+    >
+    > Deux choses que la liste ci-dessus ne disait pas, et qui se sont révélées
+    > en écrivant l'écran. Un lien vers une instance que l'opérateur a retirée
+    > de sa configuration doit rester affiché : le serveur le rompt sans
+    > l'effacer, parce que la file derrière lui est celle de quelqu'un, et une
+    > liste construite sur les seules instances proposées le ferait disparaître
+    > avec l'explication et le moyen de le retirer. Et une écoute incertaine ne
+    > porte pas de titre — la décision 12 tient l'enveloppe hors de l'API — donc
+    > l'écran la nomme en recoupant `played_at` avec `GET /api/v2/history`, ce
+    > pour quoi ce champ est documenté. Deux écoutes au même instant ne nomment
+    > rien : deviner poserait la question sur la mauvaise.
 
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
+
+### Un seizième, que poser le quinzième a révélé
+
+16. **Sur téléphone, huit écrans n'ont aucun lien.** Mesuré le 2026-09-14 en
+    posant le quinzième : `.sidebar` passe à `display: none` sous 820 px
+    (`styles.css`), et `Navigation({ mobile: true })` ne garde que les entrées
+    marquées `primary`. Les huit autres — artistes, genres, aléatoire,
+    historique, partages, téléversement, administration, et le scrobbling qui
+    vient de s'ajouter — restent atteignables **en tapant leur adresse**, et par
+    rien d'autre. La suite de tests ne le voit pas : les cas mobiles naviguent
+    par `page.goto`, jamais en cliquant la barre.
+
+    Ce n'est pas un défaut de la #201, qui n'a fait qu'en révéler un huitième
+    cas : les sept autres sont là depuis le lot A. Et ce n'est pas non plus un
+    argument pour marquer `primary` l'écran du scrobbling — une barre de six
+    emplacements où l'on joue, cherche et met en file n'est pas l'endroit d'un
+    écran de réglages, et l'y pousser rendrait les sept autres encore plus
+    invisibles par contraste. Ce qui manque est un **débordement** : un geste
+    qui ouvre le reste. Sa forme se décide — menu, écran « plus », tiroir — et
+    c'est une décision d'interface, donc elle attend la sienne plutôt que de se
+    glisser dans une PR qui parle d'autre chose.
 
 ## 3. Le plan de redesign
 
@@ -394,6 +437,11 @@ que le lecteur du lot C existe.
 > données silencieuse.
 
 Le scrobbling externe ne rentre dans aucun lot. Il demande une RFC.
+
+> **Il l'a eue, et il est clos — 2026-09-14.** [RFC-010](rfcs/RFC-010-external-scrobbling.md),
+> écrite le 2026-09-13 et implémentée le lendemain côté serveur, puis côté
+> écran le même jour. Il n'a donc jamais rejoint un lot : il a suivi son propre
+> chemin, de la décision au bouton.
 
 ## Le contrat des corrections de tags
 

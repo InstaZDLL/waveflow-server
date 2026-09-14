@@ -25,6 +25,10 @@
   --accent: var(--accent-400);
   --accent-soft: color-mix(in srgb, var(--accent-500) 18%, transparent);
   --danger: #ef9a9a;
+  /* Between the two: a state that is not an error and is not fine either.
+     Added for the scrobbling queue's `degraded`, which reads as "nothing is
+     moving" and had no colour that said so. */
+  --warn: #e0bd7a;
   --shadow: 0 1.5rem 4rem color-mix(in srgb, var(--bg) 76%, transparent);
   --sidebar-width: 15.5rem;
 
@@ -60,6 +64,7 @@
   --accent: var(--accent-700);
   --accent-soft: color-mix(in srgb, var(--accent-300) 27%, transparent);
   --danger: #a53d3d;
+  --warn: #8a6314;
   --shadow: 0 1.5rem 4rem color-mix(in srgb, #59645d 19%, transparent);
 
   color-scheme: light;
@@ -2146,4 +2151,91 @@ button.danger {
 
 .canvas-actions p {
   margin: 0;
+}
+
+/* External scrobbling — RFC-010.
+   A row per instance: who it is, how its queue is doing, and the one gesture
+   it offers. The health word carries a colour of its own because three states
+   need three, and `--muted` would say "less important" about the one state
+   that is asking for attention. */
+.scrobble-row {
+  display: grid;
+  gap: 0.6rem;
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) auto;
+}
+
+.scrobble-identity,
+.scrobble-counters {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.scrobble-counters {
+  font-size: 0.85rem;
+}
+
+.scrobble-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* The form inside a row carries the list's own spacing, not the bottom margin
+   `.inline-form` gives a form standing alone above a list. */
+.scrobble-row .inline-form {
+  margin-bottom: 0;
+}
+
+.scrobble-row .inline-form input {
+  flex: 1 1 10rem;
+}
+
+.badge {
+  justify-self: start;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.health-healthy {
+  color: var(--accent);
+}
+
+.health-degraded {
+  color: var(--warn);
+}
+
+.health-broken {
+  color: var(--danger);
+}
+
+.scrobble-uncertain {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.scrobble-uncertain h3 {
+  margin: 0 0 0.5rem;
+}
+
+@media (width <= 60rem) {
+  /* One column on a phone. The three-column row would put a password field and
+     two buttons on the same line as the health word, and the buttons are what
+     the screen is for. */
+  .scrobble-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scrobble-actions {
+    justify-content: flex-start;
+  }
 }

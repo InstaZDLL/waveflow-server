@@ -48,6 +48,7 @@ import {
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
+import { ScrobblingPage } from "./scrobbling-page";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
 import "./styles.css";
@@ -65,6 +66,7 @@ const navigation: Array<{
     | "/playlists"
     | "/queue"
     | "/shares"
+    | "/settings/scrobbling"
     | "/upload"
     | "/admin";
   labelKey: TranslationKey;
@@ -95,6 +97,11 @@ const navigation: Array<{
   },
   { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
   { to: "/shares", labelKey: "nav.shares", icon: "shares" },
+  {
+    to: "/settings/scrobbling",
+    labelKey: "nav.scrobbling",
+    icon: "scrobbling",
+  },
   { to: "/upload", labelKey: "nav.upload", icon: "upload", upload: true },
   { to: "/admin", labelKey: "nav.admin", icon: "admin", admin: true },
 ];
@@ -349,6 +356,15 @@ const sharesRoute = createRoute({
   component: SharesPage,
 });
 
+// The path is the server's, not a preference. `lastfm_callback` redirects
+// here when a journey completes, so spelling it any other way puts the last
+// step of that journey on the not-found page.
+const scrobblingRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings/scrobbling",
+  component: ScrobblingPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/admin",
@@ -390,6 +406,7 @@ const routeTree = rootRoute.addChildren([
     playlistsRoute,
     queueRoute,
     sharesRoute,
+    scrobblingRoute,
     adminRoute,
     authorizeRoute,
     trackEditRoute,

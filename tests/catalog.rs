@@ -2228,3 +2228,154 @@ async fn a_cursor_at_the_watermark_is_acknowledged_even_with_the_feed_emptied() 
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
+
+/// The active library narrows a search, and narrows all three kinds of it.
+///
+/// `/api/v2/search` was the one catalogue route the scope did not reach, and
+/// the web client said so on the screen rather than pretending otherwise. The
+/// FTS index is server-wide and stays so — it is the rows a match resolves to
+/// that are narrowed, which is where tenancy already lived.
+///
+/// Two libraries, one word, and a deliberate hit of every kind in each: an
+/// assertion that only counted songs would pass against a server that scoped
+/// the song query alone, and the album and artist queries are separate
+/// statements that each had to be changed.
+///
+/// The account is inserted rather than created, and reaches HTTP through an
+/// API token rather than a password. `tests/scrobbling.rs` explains why the
+/// row is written by hand; what this adds is that the trick is not confined to
+/// targets without a surface — `wfapi_` authenticates on the same header a
+/// session does, so a test needing routes needs no fixture password either.
+#[tokio::test]
+async fn a_search_narrows_to_one_library_across_all_three_kinds() {
+    let (_temp, config, state) = test_app().await;
+    let owner = uuid::Uuid::new_v4();
+    let now = now_ms();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind("search-scope")
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+
+    // The same word in the title, the album and the artist of both, so all
+    // three kinds have something to answer on either side of the boundary.
+    let shelf = |name: &'static str, index: usize, title: &'static str, album, artist| {
+        let state = &state;
+        let config = &config;
+        async move {
+            let music = config.data_dir.join(name);
+            std::fs::create_dir_all(&music).unwrap();
+            let library = state
+                .db
+                .create_library(
+                    owner,
+                    name,
+                    &std::fs::canonicalize(&music).unwrap(),
+                    LibraryVisibility::Private,
+                    now,
+                )
+                .await
+                .unwrap();
+            let scan = state
+                .db
+                .create_scan_job(library, Some(owner), "manual")
+                .await
+                .unwrap();
+            state.db.start_scan_job(scan, 1, false).await.unwrap();
+            let input = browse_input(index, title, album, artist, Some(1), Some(1));
+            state
+                .db
+                .apply_catalog_track(library, scan, &input, None, false)
+                .await
+                .unwrap();
+            state
+                .db
+                .consolidate_catalog_derivations(library)
+                .await
+                .unwrap();
+            state.db.finish_scan_job(scan, 0).await.unwrap();
+            library
+        }
+    };
+    let near = shelf(
+        "near-shelf",
+        700,
+        "Beacon Hymn",
+        "Beacon Harbour",
+        "Beacon Wardens",
+    )
+    .await;
+    let far = shelf(
+        "far-shelf",
+        701,
+        "Beacon Echo",
+        "Beacon Foundry",
+        "Beacon Keepers",
+    )
+    .await;
+
+    let (_record, secret) = state
+        .services
+        .create_api_token(owner, "search-scope", "scoped search", &[])
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+    let names = |uri: String| {
+        let router = router.clone();
+        let secret = secret.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {secret}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let found = json_body(response).await;
+            let pluck = |kind: &str, field: &str| {
+                let mut values = found[kind]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{kind} is a list"))
+                    .iter()
+                    .map(|item| item[field].as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>();
+                values.sort();
+                values
+            };
+            (
+                pluck("artists", "name"),
+                pluck("albums", "title"),
+                pluck("songs", "title"),
+            )
+        }
+    };
+
+    // Unscoped, the search still answers for every library the account sees:
+    // this parameter narrows, it does not become mandatory.
+    let (artists, albums, songs) = names("/api/v2/search?q=Beacon".into()).await;
+    assert_eq!(artists, ["Beacon Keepers", "Beacon Wardens"]);
+    assert_eq!(albums, ["Beacon Foundry", "Beacon Harbour"]);
+    assert_eq!(songs, ["Beacon Echo", "Beacon Hymn"]);
+
+    let (artists, albums, songs) =
+        names(format!("/api/v2/search?q=Beacon&library_id={near}")).await;
+    assert_eq!(artists, ["Beacon Wardens"], "the artist query narrows");
+    assert_eq!(albums, ["Beacon Harbour"], "the album query narrows");
+    assert_eq!(songs, ["Beacon Hymn"], "the song query narrows");
+
+    // And the other way round, so the assertion above cannot be satisfied by a
+    // server that always answers the first library.
+    let (artists, albums, songs) = names(format!("/api/v2/search?q=Beacon&library_id={far}")).await;
+    assert_eq!(artists, ["Beacon Keepers"]);
+    assert_eq!(albums, ["Beacon Foundry"]);
+    assert_eq!(songs, ["Beacon Echo"]);
+}

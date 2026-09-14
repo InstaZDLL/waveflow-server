@@ -23,6 +23,7 @@ export type IconName =
   | "pause"
   | "next"
   | "edit"
+  | "scrobbling"
   | "upload";
 
 const paths: Record<IconName, ReactNode> = {
@@ -127,6 +128,13 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="8" r="3" />
       <path d="M6 20v-2c0-3.3 2.7-6 6-6s6 2.7 6 6v2M19 4v4M17 6h4" />
+    </>
+  ),
+  // Waves leaving a point: a listen going out to somewhere else.
+  scrobbling: (
+    <>
+      <circle cx="6" cy="18" r="2" />
+      <path d="M4 12a8 8 0 0 1 8 8M4 6a14 14 0 0 1 14 14" />
     </>
   ),
   logout: (
