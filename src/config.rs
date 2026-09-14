@@ -134,6 +134,30 @@ pub struct ScrobbleLimits {
 /// keeps this paragraph and the arithmetic from drifting apart again.
 pub const DEFAULT_SCROBBLE_MAX_ATTEMPTS: u32 = 30;
 
+/// The name an instance takes when the operator declared only an address.
+///
+/// It is written into the link like any other name, so the shorthand and the
+/// long form produce the same rows: `WAVEFLOW_SCROBBLE_MALOJA_URL=https://…`
+/// and `…=default=https://…` are one configuration, and an operator who later
+/// adds a second instance does not invalidate the links the first one holds.
+pub const DEFAULT_SCROBBLE_DESTINATION: &str = "default";
+
+/// One instance of one destination, as the operator declared it.
+#[derive(Debug, Clone)]
+pub struct ScrobbleDestination {
+    pub provider: crate::services::ScrobbleProvider,
+    /// What a member names in a path. Validated against the path alphabet at
+    /// boot — see `scrobblers::validate_destination_name`.
+    pub name: String,
+    /// Where it lives. Validated by `scrobblers::validate_destination`, so it
+    /// carries no credentials, no query and no fragment.
+    pub url: url::Url,
+    /// What a link keeps so it can tell this is still the same machine, even
+    /// when the name has not changed. See
+    /// `scrobblers::destination_fingerprint`.
+    pub fingerprint: String,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -213,16 +237,29 @@ pub struct Config {
     /// None of these matter until an account links a destination: a server that
     /// has only been upgraded makes no outbound request at all.
     pub scrobbling: ScrobbleLimits,
-    /// Where ListenBrainz lives, validated at startup.
+    /// Every instance of every destination this server knows, validated at
+    /// startup.
     ///
-    /// `WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL`, defaulting to the public instance.
-    /// Set it empty to register no adapter at all.
+    /// `WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL`, `WAVEFLOW_SCROBBLE_MALOJA_URL` and
+    /// `WAVEFLOW_SCROBBLE_LASTFM_URL`. Each takes either a bare URL — one
+    /// instance, named `default` — or a comma-separated list of `name=url`
+    /// pairs. Set one empty to register no adapter for that recipient at all.
     ///
     /// A destination is the operator's setting and never an account's —
-    /// RFC-010 decision 10 — so it is here rather than on `scrobble_link`. It
-    /// costs nothing while nobody has linked a token: an adapter with no
+    /// RFC-010 decision 10 — so it is here rather than on `scrobble_link`. A
+    /// member picks a *name* among these; they never describe a URL. It costs
+    /// nothing while nobody has linked a token: an adapter with no
     /// authorisation behind it is never handed a listen.
-    pub listenbrainz_url: Option<String>,
+    ///
+    /// **Plural because self-hosting is plural.** One field per recipient
+    /// assumed a singular Maloja does not have: on a family server everyone has
+    /// their own instance, and a single field forces them to share one or go
+    /// without.
+    ///
+    /// The one thing this spelling cannot express is a URL containing a comma,
+    /// which would need a separator nothing else in this file uses. A path with
+    /// a comma in it is not a shape these three destinations have.
+    pub destinations: Vec<ScrobbleDestination>,
     /// Whether an outbound destination may be plain HTTP.
     ///
     /// `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT`, off by default. The escape exists
@@ -276,7 +313,7 @@ impl std::fmt::Debug for Config {
             .field("canvas_dir", &self.canvas_dir)
             .field("canvas", &self.canvas)
             .field("scrobbling", &self.scrobbling)
-            .field("listenbrainz_url", &self.listenbrainz_url)
+            .field("destinations", &self.destinations)
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
@@ -411,17 +448,35 @@ impl Config {
         // itself making visible. An operator who wants no adapter says so by
         // setting this empty, which is a different thing from misspelling it.
         let outbound_allow_plaintext = parse_bool_env("WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT", false)?;
-        let listenbrainz_url = std::env::var("WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL")
-            .unwrap_or_else(|_| "https://api.listenbrainz.org".to_owned());
-        let listenbrainz_url = match listenbrainz_url.trim() {
-            "" => None,
-            raw => {
-                crate::scrobblers::validate_destination(raw, outbound_allow_plaintext).map_err(
-                    |error| anyhow::anyhow!("invalid WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL: {error}"),
-                )?;
-                Some(raw.to_owned())
-            }
-        };
+        let mut destinations = Vec::new();
+        for (provider, variable, default) in [
+            (
+                crate::services::ScrobbleProvider::ListenBrainz,
+                "WAVEFLOW_SCROBBLE_LISTENBRAINZ_URL",
+                "https://api.listenbrainz.org",
+            ),
+            (
+                crate::services::ScrobbleProvider::Maloja,
+                "WAVEFLOW_SCROBBLE_MALOJA_URL",
+                // No default: Maloja is self-hosted by nature, so there is no
+                // public instance to point at, and guessing one would be
+                // inventing a destination the operator never named.
+                "",
+            ),
+            (
+                crate::services::ScrobbleProvider::LastFm,
+                "WAVEFLOW_SCROBBLE_LASTFM_URL",
+                "https://ws.audioscrobbler.com",
+            ),
+        ] {
+            let configured = std::env::var(variable).unwrap_or_else(|_| default.to_owned());
+            destinations.extend(parse_destinations(
+                provider,
+                variable,
+                &configured,
+                outbound_allow_plaintext,
+            )?);
+        }
 
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
@@ -491,7 +546,7 @@ impl Config {
             canvas_dir,
             canvas,
             scrobbling,
-            listenbrainz_url,
+            destinations,
             outbound_allow_plaintext,
             allowed_origins,
             pid,
@@ -564,11 +619,20 @@ impl Config {
                 batch: 8,
                 retention_days: 30,
             },
-            // **No destination, so the suite cannot reach the real
-            // ListenBrainz.** A test that means to exercise the adapter points
-            // this at a server it started itself, over plain HTTP on loopback —
-            // which is why the escape is on here and off in production.
-            listenbrainz_url: None,
+            // One instance, declared and unreachable.
+            //
+            // **Declared**, because a member may only link a name the operator
+            // published, and a suite with an empty list could link nothing and
+            // would exercise none of the queue.
+            //
+            // **Unreachable**, because the suite must never reach the real
+            // ListenBrainz: port 1 on loopback is a port nothing binds. Every
+            // test that drives the queue replaces the adapter with a double
+            // through `register_scrobble_target`, and the handful that mean to
+            // exercise a real request point this at a server they started
+            // themselves — over plain HTTP on loopback, which is why the
+            // plaintext escape is on here and off in production.
+            destinations: test_destinations(),
             outbound_allow_plaintext: true,
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
@@ -617,6 +681,118 @@ fn validate_canvas(canvas: &CanvasLimits) -> anyhow::Result<()> {
         anyhow::bail!("invalid WAVEFLOW_CANVAS_MAX_BYTES: too large for this platform");
     }
     Ok(())
+}
+
+/// The instance `Config::for_data_dir` declares. See the comment there.
+fn test_destinations() -> Vec<ScrobbleDestination> {
+    // `expect` rather than a fallible signature: the literal is right here, and
+    // a `Config` builder that could fail would push the failure into every
+    // test's first line for no gain.
+    // All three recipients, because an account cannot link a name nobody
+    // declared, and more than one test drives a queue holding two of them —
+    // a destination this process cannot reach must not hold up one it can.
+    //
+    // Declaring a destination is not registering an adapter, and the difference
+    // is what those tests stand on: a Last.fm instance with no application
+    // credentials configured is declared and adapterless, which is a shape a
+    // real deployment has too.
+    [
+        (
+            crate::services::ScrobbleProvider::ListenBrainz,
+            "http://127.0.0.1:1",
+        ),
+        (
+            crate::services::ScrobbleProvider::Maloja,
+            "http://127.0.0.1:2",
+        ),
+        (
+            crate::services::ScrobbleProvider::LastFm,
+            "http://127.0.0.1:3",
+        ),
+    ]
+    .into_iter()
+    .map(|(provider, base)| {
+        let url = crate::scrobblers::validate_destination(base, true)
+            .expect("a loopback destination nothing is listening on");
+        let fingerprint = crate::scrobblers::destination_fingerprint(&url);
+        ScrobbleDestination {
+            provider,
+            name: DEFAULT_SCROBBLE_DESTINATION.to_owned(),
+            url,
+            fingerprint,
+        }
+    })
+    .collect()
+}
+
+/// Reads one recipient's declared instances.
+///
+/// Either a bare URL — one instance, named [`DEFAULT_SCROBBLE_DESTINATION`] —
+/// or a comma-separated list of `name=url`. The two forms produce the same
+/// rows, so adding a second instance later does not rename the first.
+///
+/// **Everything here is refused at boot rather than at the first submission.**
+/// A server that starts with scrobbling quietly switched off by a typo is
+/// exactly the silent failure RFC-010 spends itself making visible. An operator
+/// who wants no adapter for a recipient says so by setting the variable empty,
+/// which is a different thing from misspelling it.
+fn parse_destinations(
+    provider: crate::services::ScrobbleProvider,
+    variable: &str,
+    configured: &str,
+    allow_plaintext: bool,
+) -> anyhow::Result<Vec<ScrobbleDestination>> {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut destinations: Vec<ScrobbleDestination> = Vec::new();
+    for entry in configured
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        // Split on the first `=`, which cannot occur in a scheme: `https://…`
+        // has none before the colon, so a bare URL is never mistaken for a
+        // named one. A name may not contain `=` either — the alphabet refuses
+        // it — so the first separator is the only one.
+        let (name, raw) = match entry.split_once('=') {
+            Some((name, raw)) => (name.trim(), raw.trim()),
+            None => (DEFAULT_SCROBBLE_DESTINATION, entry),
+        };
+        crate::scrobblers::validate_destination_name(name)
+            .map_err(|error| anyhow::anyhow!("invalid {variable} entry {name:?}: {error}"))?;
+        // **Never the URL itself in the message.** `validate_destination`
+        // refuses a destination carrying credentials, so the one thing this
+        // branch is most likely to be handed is the one thing that must not be
+        // printed: `http://user:secret@host` would land in a startup log, or a
+        // support paste, in full. The name and the variant say enough.
+        let url = crate::scrobblers::validate_destination(raw, allow_plaintext)
+            .map_err(|error| anyhow::anyhow!("invalid {variable} entry {name:?}: {error}"))?;
+        if destinations.iter().any(|existing| existing.name == name) {
+            anyhow::bail!("{variable} declares {name:?} twice");
+        }
+        // Two names for one machine would give a member two ways to reach the
+        // same profile and two links to keep in step, and the second would look
+        // like a different destination in every counter.
+        let fingerprint = crate::scrobblers::destination_fingerprint(&url);
+        if let Some(twin) = destinations
+            .iter()
+            .find(|existing| existing.fingerprint == fingerprint)
+        {
+            anyhow::bail!(
+                "{variable} declares {name:?} and {:?} at the same address",
+                twin.name
+            );
+        }
+        destinations.push(ScrobbleDestination {
+            provider,
+            name: name.to_owned(),
+            url,
+            fingerprint,
+        });
+    }
+    Ok(destinations)
 }
 
 fn normalize_public_url(value: &str) -> anyhow::Result<String> {
@@ -730,6 +906,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 #[cfg(test)]
 mod tests {
     use super::normalize_public_url;
+    use super::{parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
     use super::{validate_canvas, CanvasLimits};
     use super::{validate_uploads, UploadLimits};
     use std::time::Duration;
@@ -812,6 +989,184 @@ mod tests {
             "https://music.example.com?token=secret",
         ] {
             assert!(normalize_public_url(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    /// A destination that cannot be used is never quoted back.
+    ///
+    /// `validate_destination` refuses a URL carrying credentials, so the value
+    /// this error branch is most likely to be holding is precisely the one that
+    /// must not be printed — and a startup error goes to a log, a terminal, and
+    /// whatever a person pastes into an issue. The repository's rule about
+    /// secrets has no exception for an error path.
+    ///
+    /// It used to live in `tests/scrobbling.rs` against `initialize`, which is
+    /// where the guard used to be. Named destinations moved the refusal here,
+    /// to the reading of the variable, and the test follows the guard rather
+    /// than staying where it was and passing for another reason.
+    #[test]
+    fn a_refused_destination_is_never_quoted_back_with_its_credentials() {
+        // A private host, so the plaintext rule lets this through and the
+        // credential rule is what refuses it. That is the path carrying a
+        // password.
+        let refused = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "house=http://wf-user:hunter2@10.0.0.2",
+            true,
+        )
+        .expect_err("a destination carrying credentials must be refused");
+        let said = format!("{refused:#}");
+
+        // **Named, never quoted.** An earlier version of this loop put the
+        // secret and the whole error into the assertion message, and CodeQL was
+        // right to call that a cleartext write of a credential — in the one
+        // test whose entire subject is that credentials must not be written.
+        // What a failure here needs to say is *which* part came back, not the
+        // part itself.
+        for (part, secret) in [
+            ("the password", "hunter2"),
+            ("the account", "wf-user"),
+            ("the host", "10.0.0.2"),
+        ] {
+            assert!(
+                !said.contains(secret),
+                "the startup error quoted {part} back from the destination"
+            );
+        }
+        // And it still says enough to be fixed by the person who typed it:
+        // which variable, which name, and what was wrong with it. Printing
+        // `said` is safe here and only here — the loop above has just
+        // established that it carries none of the three.
+        assert!(
+            said.contains("credentials"),
+            "the error must name the fault: {said}"
+        );
+        assert!(
+            said.contains("house") && said.contains("WAVEFLOW_SCROBBLE_MALOJA_URL"),
+            "the error must name the entry that is wrong: {said}"
+        );
+    }
+
+    /// Two spellings of one machine are one destination.
+    ///
+    /// The trailing slash is the one an editor adds without anybody deciding
+    /// to, and a fingerprint that moved with it would break every link on a
+    /// server at the first restart after a configuration tidy-up.
+    #[test]
+    fn a_trailing_slash_does_not_move_a_destination() {
+        let bare = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "https://host/maloja",
+            false,
+        )
+        .expect("a valid destination");
+        let slashed = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "https://host/maloja/",
+            false,
+        )
+        .expect("a valid destination");
+        assert_eq!(bare[0].fingerprint, slashed[0].fingerprint);
+
+        // And the path is *part* of the identity, unlike an origin. Two tenants
+        // on one host are two destinations, and giving them one fingerprint
+        // would let the identity guard wave through the likeliest move there
+        // is.
+        let other_tenant = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "https://host/maloja-two",
+            false,
+        )
+        .expect("a valid destination");
+        assert_ne!(bare[0].fingerprint, other_tenant[0].fingerprint);
+    }
+
+    /// A recipient may carry several instances, and neither name nor address
+    /// may repeat.
+    #[test]
+    fn a_recipient_carries_several_instances_each_named_once() {
+        let declared = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "alice=https://host/alice, bob=https://host/bob",
+            false,
+        )
+        .expect("two instances");
+        assert_eq!(declared.len(), 2);
+        assert_eq!(declared[0].name, "alice");
+        assert_eq!(declared[1].name, "bob");
+
+        // A bare URL is the shorthand for one instance called `default`, so the
+        // two spellings produce the same row and adding a second instance later
+        // does not rename the first.
+        let shorthand = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "https://host/alice",
+            false,
+        )
+        .expect("one instance");
+        assert_eq!(shorthand[0].name, DEFAULT_SCROBBLE_DESTINATION);
+
+        // Two names for one machine would give a member two links to keep in
+        // step with one profile, and each would look like a separate
+        // destination in every counter.
+        assert!(parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "alice=https://host/alice, ALICE=https://host/alice/",
+            false,
+        )
+        .is_err());
+
+        // And one name for two machines is not a configuration either.
+        assert!(parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "alice=https://host/alice, alice=https://host/bob",
+            false,
+        )
+        .is_err());
+    }
+
+    /// A name that cannot be a path segment is refused where it is written.
+    #[test]
+    fn a_destination_name_is_bounded_by_what_crosses_a_path() {
+        for refused in [
+            ".",
+            "..",
+            "al ice",
+            "alice/bob",
+            "alice%2f",
+            "",
+            &"a".repeat(65),
+        ] {
+            assert!(
+                parse_destinations(
+                    crate::services::ScrobbleProvider::Maloja,
+                    "WAVEFLOW_SCROBBLE_MALOJA_URL",
+                    &format!("{refused}=https://host/alice"),
+                    false,
+                )
+                .is_err(),
+                "{refused:?} must not become a path segment"
+            );
+        }
+        for accepted in ["alice", "a-b_c.d", "ALICE2", &"a".repeat(64)] {
+            assert!(
+                parse_destinations(
+                    crate::services::ScrobbleProvider::Maloja,
+                    "WAVEFLOW_SCROBBLE_MALOJA_URL",
+                    &format!("{accepted}=https://host/alice"),
+                    false,
+                )
+                .is_ok(),
+                "{accepted:?} must be usable"
+            );
         }
     }
 }

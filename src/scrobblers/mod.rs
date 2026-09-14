@@ -27,6 +27,97 @@ pub enum OutboundError {
     NotABareOrigin,
     #[error("the outbound client could not be built")]
     Unbuildable,
+    #[error(
+        "a destination name must be 1 to 64 characters of letters, digits, '-', '_' or '.', and neither '.' nor '..'"
+    )]
+    UnusableName,
+}
+
+/// The longest a destination's name may be.
+///
+/// It becomes a path segment, so it is bounded like one rather than left to
+/// whatever an operator pastes.
+const MAX_DESTINATION_NAME: usize = 64;
+
+/// Checks a name an operator gave one instance of a destination.
+///
+/// The name travels in a URL path — `PUT /api/v2/scrobble-links/maloja/alice` —
+/// so it is held to what crosses a path without discussion: ASCII letters,
+/// digits, `-`, `_` and `.`. Refusing at boot costs the operator a clear
+/// message; accepting would buy a segment that decodes differently depending on
+/// who reads it.
+///
+/// `.` and `..` are refused by name. They are navigation instructions wherever
+/// a path is resolved, and a destination called `..` is one nobody can address
+/// without arguing with an intermediary about it first.
+pub fn validate_destination_name(name: &str) -> Result<(), OutboundError> {
+    if name.is_empty() || name.len() > MAX_DESTINATION_NAME || name == "." || name == ".." {
+        return Err(OutboundError::UnusableName);
+    }
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(OutboundError::UnusableName);
+    }
+    Ok(())
+}
+
+/// The canonical spelling of a destination, as an identity rather than as an
+/// address.
+///
+/// **Not `normalize_public_url` (`src/config.rs`), and the difference is
+/// load-bearing.** That one answers an *origin* — scheme, host, port — and
+/// throws the path away, because that is what a share link needs. A
+/// destination is not an origin: [`validate_destination`] accepts a path, so
+/// `https://host/tenant-a` and `https://host/tenant-b` are two destinations,
+/// and reducing them to their origin would give them one identity. The guard
+/// would then wave through precisely the move it exists to catch — one tenant
+/// to another on the same machine, the likeliest shape such a change has.
+///
+/// The trailing slash is settled here rather than left to the reader:
+/// `https://host/maloja` and `https://host/maloja/` are the **same**
+/// destination, because an operator pasting either means the same machine, and
+/// a link broken by a slash an editor added would be a punishment for nothing.
+/// The canonical form is the one without it, the root apart, where there is no
+/// choice to make.
+///
+/// A query and a fragment cannot appear: `validate_destination` refuses both.
+/// Every caller hands this the `Url` that function returned.
+pub fn canonical_destination(url: &url::Url) -> String {
+    let mut canonical = String::with_capacity(url.as_str().len());
+    canonical.push_str(url.scheme());
+    canonical.push_str("://");
+    // `Url::host_str` is already lowercased and punycoded by the parser, and
+    // `port_or_known_default` restores the port an operator left implicit, so
+    // `https://host` and `https://host:443` are one destination.
+    if let Some(host) = url.host_str() {
+        canonical.push_str(host);
+    }
+    if let Some(port) = url.port_or_known_default() {
+        canonical.push(':');
+        canonical.push_str(&port.to_string());
+    }
+    let path = url.path().trim_end_matches('/');
+    canonical.push_str(if path.is_empty() { "/" } else { path });
+    canonical
+}
+
+/// What a link keeps so it can recognise the destination it meant.
+///
+/// A digest of [`canonical_destination`], hex. Comparing digests rather than
+/// URLs is not a precaution against an attacker — nobody hostile writes this
+/// configuration — it is the way to have exactly one thing to compare, and to
+/// keep `scrobble_link` free of destination addresses, which decision 10 says
+/// it holds none of.
+pub fn destination_fingerprint(url: &url::Url) -> String {
+    crate::security::bytes_hash(canonical_destination(url).as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// How much of the budget a connection may spend before the rest of the request

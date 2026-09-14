@@ -116,7 +116,7 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
 
     let response = send(
         Method::PUT,
-        "/api/v2/scrobble-links/listenbrainz".into(),
+        "/api/v2/scrobble-links/listenbrainz/default".into(),
         owner.clone(),
         Some(serde_json::json!({"secret": "lb-token"})),
     )
@@ -155,7 +155,7 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
     // sealed, and refused as a bad request rather than a missing one.
     let response = send(
         Method::PUT,
-        "/api/v2/scrobble-links/spotify".into(),
+        "/api/v2/scrobble-links/spotify/default".into(),
         owner.clone(),
         Some(serde_json::json!({"secret": "whatever"})),
     )
@@ -169,7 +169,7 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
     // trim rather than after it, and this one would not.
     let response = send(
         Method::PUT,
-        "/api/v2/scrobble-links/listenbrainz".into(),
+        "/api/v2/scrobble-links/listenbrainz/default".into(),
         owner.clone(),
         Some(serde_json::json!({"secret": "   "})),
     )
@@ -199,7 +199,7 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
 
     let response = send(
         Method::DELETE,
-        "/api/v2/scrobble-links/listenbrainz".into(),
+        "/api/v2/scrobble-links/listenbrainz/default".into(),
         owner.clone(),
         None,
     )
@@ -262,11 +262,12 @@ async fn an_uncertain_entry_is_listed_and_answered_over_http() {
 
     state
         .services
-        .link_scrobble(owner, ScrobbleProvider::ListenBrainz, "lb-token")
+        .link_scrobble(owner, ScrobbleProvider::ListenBrainz, "default", "lb-token")
         .await
         .unwrap();
     state.services.register_scrobble_target(
         ScrobbleProvider::ListenBrainz,
+        "default",
         std::sync::Arc::new(AlwaysAmbiguous) as std::sync::Arc<dyn ScrobbleTarget>,
     );
     state
