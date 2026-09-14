@@ -30,6 +30,13 @@ or `PUT /api/v2/admin/users/{username}/subsonic-credential` as documented in
 [the native API guide](api-v2-guide.md). Both paths print or return an API key
 exactly once.
 
+The CLI writes the key to standard output by itself, with everything else it
+says on standard error, so a redirection captures the key and nothing more —
+into a file created closed first, since redirecting into an existing one
+truncates it without changing who may read it. `install -m 600 /dev/null key`
+does that in a POSIX shell; the native API guide gives the PowerShell form,
+which the example above would need.
+
 WaveFlow has been validated with Symfonium, Feishin, DSub, Substreamer and
 Juliet. See the compatibility matrix for exact versions and exercised features.
 

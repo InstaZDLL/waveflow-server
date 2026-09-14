@@ -119,6 +119,10 @@ path = "tests/media.rs"
 name = "service"
 path = "tests/service.rs"
 
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
