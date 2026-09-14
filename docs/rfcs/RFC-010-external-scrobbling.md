@@ -377,13 +377,30 @@ d'un fournisseur. Elle reste bonne pour un diagnostic, pas comme chemin normal.
 
 Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
 
-- `POST /api/v2/scrobble-links/lastfm/authorize` demande un jeton, ouvre un état
-  lié au compte, et rend l'URL d'autorisation.
-- `GET /api/v2/scrobble-links/lastfm/callback` vérifie cet état, échange le
-  jeton contre la clé de session, la scelle et crée le lien.
+- `POST /api/v2/scrobble-links/lastfm/authorize` ouvre un état lié au compte et
+  rend l'URL où envoyer la personne : `/api/auth` chez Last.fm, portant la clé
+  d'application et un `cb` qui désigne la route ci-dessous.
+- `GET /api/v2/scrobble-links/lastfm/callback` reçoit le `token` que Last.fm y
+  ajoute, vérifie l'état, appelle `auth.getSession` pour l'échanger contre la
+  clé de session, la scelle et crée le lien.
 
-L'état est à usage unique et **expire en dix à quinze minutes**. Il porte de quoi
-se reconnaître sans rien deviner : un compte, un aléa, une échéance.
+**C'est le parcours web, et il n'appelle pas `auth.getToken`.** Cette méthode
+appartient au parcours des applications de bureau, où le jeton se demande avant
+d'ouvrir la page ; ici c'est Last.fm qui le remet, sur le retour. Les deux se
+ressemblent assez pour se mélanger — la première rédaction de ce paragraphe les
+avait mélangés — et une implémentation qui demanderait un jeton puis en
+recevrait un autre travaillerait avec le mauvais.
+
+L'état est à usage unique et **expire en dix à quinze minutes**, donc bien avant
+les soixante que Last.fm accorde à son jeton : c'est nous qui refusons en
+premier, et jamais un jeton périmé qui nous surprend. Il porte de quoi se
+reconnaître sans rien deviner : un compte, un aléa, une échéance.
+
+**Où cet aléa voyage se choisit à l'écriture, et se vérifie.** Last.fm annonce
+qu'il ajoute le jeton en accolant `/?token=…` à la callback, ce qui ne dit rien
+de ce qu'il fait d'une callback qui porte déjà une chaîne de requête. Le mettre
+dans le chemin — `…/callback/{state}` — ne dépend d'aucune supposition sur cette
+concaténation.
 
 **La destination de retour se dérive de `WAVEFLOW_PUBLIC_URL`**, qui dit déjà
 l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
