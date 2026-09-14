@@ -423,7 +423,14 @@ async function mockAuthenticatedApi(page: Page) {
       return;
     }
     if (url.pathname.startsWith("/api/v2/scrobble-links/lastfm/authorize/")) {
-      scrobbleWrites.push({ method: "POST", path: url.pathname });
+      // The verb as it arrived, not the verb expected. Written in, the
+      // recording agreed with the assertion whatever the client had sent, and
+      // the three branches that record a write could not fail for the reason
+      // they exist.
+      scrobbleWrites.push({
+        method: route.request().method(),
+        path: url.pathname,
+      });
       await route.fulfill({
         json: { authorize_url: lastFmAuthorizeUrl, expires_in: 720 },
       });
@@ -453,14 +460,20 @@ async function mockAuthenticatedApi(page: Page) {
     }
     if (url.pathname.endsWith("/retry")) {
       const id = url.pathname.split("/")[5];
-      scrobbleWrites.push({ method: "POST", path: url.pathname });
+      scrobbleWrites.push({
+        method: route.request().method(),
+        path: url.pathname,
+      });
       uncertain = uncertain.filter((entry) => entry.id !== id);
       await route.fulfill({ json: { id: "entry-2" } });
       return;
     }
     if (url.pathname.startsWith("/api/v2/scrobble-queue/uncertain/")) {
       const id = url.pathname.split("/")[5];
-      scrobbleWrites.push({ method: "DELETE", path: url.pathname });
+      scrobbleWrites.push({
+        method: route.request().method(),
+        path: url.pathname,
+      });
       uncertain = uncertain.filter((entry) => entry.id !== id);
       await route.fulfill({ status: 204, body: "" });
       return;

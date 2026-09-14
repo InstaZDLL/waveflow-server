@@ -3026,6 +3026,14 @@ async fn a_fresh_install_declares_several_instances_on_its_first_boot() {
 /// Emptying a URL out of the configuration is already a way of switching a
 /// recipient off. Leaving the two columns empty instead would hand the next
 /// reconciliation a row it could not read.
+///
+/// **That last sentence was the whole of this test's intent and none of its
+/// assertions** until 2026-09-14: it checked that the link broke and never
+/// that a name was written. The row kept a NULL destination, which came out of
+/// the API as the empty string — a published pair with no instance in it — and
+/// could not be withdrawn at all, because `unlink_scrobble_on` matches
+/// `destination=?` and no comparison is true of NULL. A broken link with a
+/// blank name and no way to remove it.
 #[tokio::test]
 async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_empty() {
     let temp = tempfile::tempdir().unwrap();
@@ -3044,6 +3052,30 @@ async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_e
     assert_eq!(links[0].provider, ScrobbleProvider::LastFm);
     assert_eq!(links[0].health, "broken");
     assert_eq!(links[0].last_failure.as_deref(), Some("destination_gone"));
+    // The name a link made under #191–#193 had: its recipient declared one
+    // instance and nobody had to name it, which is what `default` means.
+    assert_eq!(
+        links[0].destination, "default",
+        "a broken link is still a pair, and the empty string is not an instance"
+    );
+
+    // And so it can be withdrawn. This is what the name buys beyond looking
+    // right: the gesture addresses the pair, and a blank half addresses
+    // nothing.
+    assert!(
+        state
+            .services
+            .unlink_scrobble(listener.owner, ScrobbleProvider::LastFm, "default")
+            .await
+            .unwrap(),
+        "the listing named it, so the same name withdraws it"
+    );
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// A retry checks where it would go, not only that it may go.

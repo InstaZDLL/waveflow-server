@@ -102,7 +102,28 @@ export function playsByInstant(plays: Play[]): Map<number, string | null> {
   return found;
 }
 
-/** The distinct tracks an uncertain listing needs names for. */
+/**
+ * How many distinct tracks the ambiguous listing resolves names for.
+ *
+ * Each one costs a request, and they all leave at once. The list is usually
+ * short — an ambiguous listen needs a connection that broke mid-submission —
+ * but a destination answering ambiguously to everything produces one entry per
+ * listen, which RFC-010 says in as many words. Unbounded, opening this screen
+ * would then fire hundreds of requests at the server that is already having
+ * trouble.
+ *
+ * **What is capped is the naming, never the listing.** Every entry is shown
+ * whatever happens: each is a decision that is owed, and hiding one is the
+ * single outcome this screen exists to prevent. Past the cap an entry shows
+ * its time, its instance and its cause, which is what it would have shown
+ * anyway had the history not reached back that far.
+ *
+ * Fifty, like the recently-played screen, for the same reason and with the
+ * same shape.
+ */
+export const NAMED_UNCERTAIN = 50;
+
+/** The distinct tracks an uncertain listing needs names for, at most [`NAMED_UNCERTAIN`]. */
 export function tracksToName(
   entries: UncertainScrobble[],
   plays: Map<number, string | null>,
@@ -111,6 +132,7 @@ export function tracksToName(
   for (const entry of entries) {
     const track = plays.get(entry.played_at);
     if (track) wanted.add(track);
+    if (wanted.size === NAMED_UNCERTAIN) break;
   }
   return [...wanted];
 }
