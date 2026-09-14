@@ -25,6 +25,11 @@
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
   l'effacer. Une seconde passe le même jour a tranché les trois questions qui
   restaient : décisions 11 à 13.
+  Puis le 2026-09-14, après une seconde revue externe et une mesure : le joker
+  d'une reprise se compte désormais sur l'entrée (décision 13), une destination
+  peut exister en plusieurs instances nommées (décision 10), Last.fm obtient un
+  protocole d'autorisation au lieu d'un secret collé (décision 11), et la
+  rétention de la file est tranchée. Rien de tout cela n'est encore écrit.
 - **Auteurs** : projet WaveFlow
 - **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)
@@ -260,8 +265,9 @@ opérateur qui prépare un serveur sans navigateur, comme pour le mot de passe
 Subsonic.
 
 Ce qui reste au déploiement : les identifiants d'application de la décision 4, le
-délai d'attente sortant, le plafond de tentatives, l'intervalle de drainage, et
-la base d'URL des destinations auto-hébergées.
+délai d'attente sortant, le plafond de tentatives, l'intervalle de drainage, la
+fenêtre de rétention, et les destinations elles-mêmes — leur nom autant que leur
+URL, plusieurs par destinataire si l'opérateur le veut.
 
 ## Décision 10 — la surface sortante est bornée, et c'est la décision qui compte
 
@@ -279,6 +285,37 @@ il existera un champ d'URL, et il ne peut pas être libre.
 - **Rien du corps de la réponse n'est renvoyé au client** : il va au journal, et
   ce que l'API montre est un état, pas un écho.
 
+### Plusieurs instances, nommées par l'opérateur
+
+**Révisé le 2026-09-14.** « Un membre choisit sa destination parmi celles que le
+serveur connaît » supposait un pluriel que le réglage ne donnait pas : un champ
+d'URL par destinataire, donc une instance Maloja par serveur. ListenBrainz s'en
+accommode — presque tout le monde vise l'instance publique — mais Maloja
+s'auto-héberge par nature, et sur un serveur de famille chacun a la sienne. Un
+champ unique force à partager une instance ou à renoncer.
+
+L'opérateur déclare donc des destinations **nommées**, plusieurs par
+destinataire s'il le veut, et un lien porte `(provider, destination)` au lieu du
+seul `provider`. Le compte choisit un nom dans la liste que le serveur publie ;
+il ne décrit toujours aucune URL, et la barrière de la décision 10 ne bouge pas
+d'un pouce.
+
+**Pas de table, pas d'administration à chaud.** Une destination reste un
+réglage de déploiement, pas une ligne que l'on ajoute en marche. Une table
+demanderait de réconcilier la configuration et la base à chaque démarrage, et
+d'inventer une réponse pour un lien dont la destination a disparu de l'une mais
+pas de l'autre. Ajouter une instance coûte un redémarrage, ce qu'un serveur
+auto-hébergé supporte. Le jour où WaveFlow aura une console d'administration,
+cette colonne deviendra une table pour une raison qui se voit.
+
+**Une destination retirée casse le lien, elle n'en glisse pas un autre.** Si la
+configuration ne nomme plus `maloja/alice` au démarrage, les liens qui la
+visaient passent `broken`, plus rien ne part, et rien n'est remappé vers une
+autre instance du même destinataire. Faire glisser `alice` vers `default`
+enverrait les écoutes d'une personne sur le profil d'une autre — la substitution
+que la décision 4 construit tout un étage d'identifiants pour empêcher.
+L'opérateur remet la destination, ou la personne délie et relie.
+
 ## Ce que cette RFC change ailleurs
 
 - **Une dépendance sortante entre dans `Cargo.toml`** pour la première fois.
@@ -287,7 +324,10 @@ il existera un champ d'URL, et il ne peut pas être libre.
 - **Deux tables** : `scrobble_link` et `scrobble_outbox`, en migrations datées,
   comme toujours.
 - **Une septième tâche de fond**, démarrée dans `src/main.rs` avec les six
-  autres.
+  autres — puis une huitième, pour la purge, quand la rétention s'écrira.
+- **Une colonne de plus sur `scrobble_outbox`**, `retried_at`, en migration
+  datée comme les tables : l'invariant de la décision 13 ne peut pas se déduire
+  d'une jointure que la purge dénoue.
 - **La documentation** : une section du guide d'API, et une ligne dans
   `docs/web-client-gap-analysis.md`, dont le point 15 attend celle-ci.
 
@@ -320,6 +360,45 @@ retenter : le lot transforme une perte possible en cinquante pertes probables.
 Une ligne de file, une requête. Grouper redeviendra une décision le jour où le
 débit sera un problème mesuré, et ce jour-là il faudra dire ce qu'un lot
 ambigu devient — ce que cette RFC n'a pas à trancher pour un serveur personnel.
+
+### Last.fm ne se colle pas, il s'autorise
+
+**Ajouté le 2026-09-14.** Toute la surface de la décision 9 tient dans un geste :
+présenter un secret déjà en main à `PUT /api/v2/scrobble-links/{provider}`.
+Last.fm n'en délivre pas. Il faut un aller-retour par le navigateur de la
+personne — un jeton de requête, une autorisation chez eux, puis la conversion du
+jeton en clé de session, laquelle dure jusqu'à révocation.
+
+**Le serveur porte ce parcours.** L'autre voie — « obtenez une clé de session
+avec un outil tiers, puis collez-la » — était tentante parce qu'elle ne coûte
+rien : c'est aussi ce qui la disqualifie. Elle sort une seule destination du
+modèle où vivent les deux autres, et fait payer à la personne la particularité
+d'un fournisseur. Elle reste bonne pour un diagnostic, pas comme chemin normal.
+
+Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
+
+- `POST /api/v2/scrobble-links/lastfm/authorize` demande un jeton, ouvre un état
+  lié au compte, et rend l'URL d'autorisation.
+- `GET /api/v2/scrobble-links/lastfm/callback` vérifie cet état, échange le
+  jeton contre la clé de session, la scelle et crée le lien.
+
+L'état est à usage unique et **expire en dix à quinze minutes**. Il porte de quoi
+se reconnaître sans rien deviner : un compte, un aléa, une échéance.
+
+**La destination de retour se dérive de `WAVEFLOW_PUBLIC_URL`**, qui dit déjà
+l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
+même chose serait une seconde vérité à tenir d'accord avec la première.
+
+Il en découle que **Last.fm est indisponible tant que `WAVEFLOW_PUBLIC_URL`
+n'est pas configuré** — le serveur avertit déjà à ce sujet au démarrage. Ce
+n'est pas un défaut à contourner mais une condition à dire : la liste des
+destinations l'annonce, avec sa raison, plutôt que de laisser un lien échouer
+plus tard sans explication.
+
+**Pas de parcours sans navigateur dans ce lot.** Last.fm en documente un pour
+les applications de bureau, et il pourra venir. Deux parcours écrits ensemble,
+c'est deux fois l'occasion de se tromper sur l'état temporaire, et la CLI n'est
+ici que pour l'opérateur qui prépare un serveur.
 
 ## Décision 12 — ce que l'API montre : des compteurs, jamais un écho
 
@@ -368,26 +447,81 @@ trois cents incertaines transforme une décision consciente en accident. Il
 pourra s'ajouter plus tard, si quelqu'un le demande en sachant ce qu'il
 demande.
 
+### Le joker se compte sur l'entrée, pas sur sa descendance
+
+**Révisé le 2026-09-14.** La première écriture déduisait « déjà retentée » d'une
+jointure : une entrée était encore répondable tant qu'aucune autre ligne ne la
+désignait par `retry_of`. C'est faux dès qu'une ligne peut disparaître, et la
+rétention ci-dessous fait exactement disparaître des lignes — la reprise finit
+`sent`, donc purgeable, et l'original redevient alors répondable. Mesuré plutôt
+que craint : la reprise supprimée, l'entrée reparaît dans
+`uncertain_scrobbles`, `retry_uncertain_scrobble` l'accepte une seconde fois, et
+le compteur `uncertain` du lien le repasse `degraded` pour une écoute déjà
+répondue.
+
+Le joker devient donc un fait porté par l'entrée elle-même : **`retried_at`**,
+nul jusqu'à ce qu'il ne le soit plus. La reprise s'écrit en une transaction,
+l'UPDATE d'abord :
+
+```sql
+UPDATE scrobble_outbox SET retried_at = ?
+ WHERE id = ? AND state = 'uncertain' AND retried_at IS NULL;
+-- exactement une ligne modifiée, sinon le geste est refusé
+INSERT INTO scrobble_outbox (..., retry_of, ...) VALUES (..., ?, ...);
+```
+
+L'ordre compte : c'est l'UPDATE conditionnel qui arbitre, et deux demandes
+simultanées ne peuvent pas consommer deux fois le même joker. `retry_of` et son
+index unique restent — ils disent la provenance, et refusent l'insertion en
+second rempart — mais plus rien d'observable ne dépend de la survie de la ligne
+qu'ils désignent.
+
+**Pas d'état `resolution` à côté de `state`.** Jeter écrit déjà
+`state = 'discarded'` sur l'entrée : une énumération qui redirait `discarded`
+placerait deux sources de vérité sur le même fait. Seule la reprise laisse
+l'entrée en `uncertain`, et seule elle a besoin d'être notée.
+
+## La rétention de la file
+
+**Tranchée le 2026-09-14.** La question n'était pas posée par la première
+version de cette RFC : la file ne se purge jamais, donc la table grandit d'une
+ligne par écoute et par destination, sans fin, chez un auditeur actif. Cela n'a
+pas retenu [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), et
+n'appelle toujours aucune migration au-delà de `retried_at` : un réglage de
+déploiement et une tâche de purge, sur le patron de
+[RFC-007](RFC-007-library-event-stream.md) et la huitième tâche de fond.
+
+- **Trente jours pour les états terminaux ordinaires** — `sent`, `rejected`,
+  `abandoned`, `cancelled`, `discarded`. Assez pour comprendre une panne
+  passée, trop court pour que la file devienne un second historique d'écoute.
+- **`uncertain` se garde indéfiniment**, qu'il porte `retried_at` ou non. Une
+  entrée sans réponse attend une personne, et la lui retirer au bout d'un mois
+  serait décider à sa place. Une entrée répondue pourrait s'en aller plus tard ;
+  ce n'est pas le moment de le décider, parce que `retry_of` est déclaré
+  `ON DELETE SET NULL` et que l'index d'unicité `(play_event_id, link_id)` ne
+  vaut que `WHERE retry_of IS NULL` — supprimer l'original dénullifie la reprise
+  et la fait retomber sous cet index. Cela s'éprouve, et le gain se compte en
+  kilo-octets.
+- **Aucun plancher**, contrairement à RFC-007. Là-bas le flux sert une reprise
+  de synchronisation et couper la tête d'une bibliothèque tranquille renverrait
+  quelqu'un à l'instantané. Ici, personne ne reprend un curseur : l'outbox est
+  un moyen de livraison, pas une source de vérité. Ce que le lien publie —
+  compteurs et santé — se lit sur les lignes vivantes, `pending` et `uncertain`,
+  qu'aucune purge ne touche.
+- **Un champ promis que la purge rendrait faux.** La décision 12 annonce « quand
+  remonte le dernier succès ». Rien ne le publie encore, et c'est heureux :
+  calculé en `MAX(updated_at) WHERE state='sent'`, il reculerait tout seul le
+  jour où la purge emporte les envois d'il y a trente et un jours, puis
+  disparaîtrait sur un lien tranquille qui marche très bien. Ce jour-là il devra
+  être une colonne de `scrobble_link`, écrite au moment du succès. La règle
+  vaut au-delà de lui : ce qu'un lien publie se tient sur le lien, ou sur des
+  lignes qu'aucune purge ne touche.
+
 ## Ce qui reste ouvert
 
-Plus aucune décision d'architecture. Les trois questions que la première
-version laissait pendantes sont tranchées ci-dessus, et ce qui reste appartient
-à l'implémentation : le nom exact des routes, le seuil au-delà duquel une file
-qui n'avance pas devient `degraded`, et la forme précise du JSON.
-
-**Une question que cette RFC n'avait pas posée** est apparue en relisant le code
-de [#191](https://github.com/InstaZDLL/waveflow-server/pull/191) : la file ne se
-purge jamais. Une ligne terminale — `sent`, `rejected`, `abandoned`, `cancelled`,
-`discarded` — reste indéfiniment, donc la table grandit d'une ligne par écoute et
-par destination, sans fin, chez un auditeur actif. Ce n'est pas une décision
-d'architecture et cela n'a pas retenu #191, parce que la rétention ne demande
-aucune migration : un réglage de déploiement et une tâche de purge, sur le patron
-de [RFC-007](RFC-007-library-event-stream.md) — une fenêtre, un plancher, et la
-septième tâche de fond qui existe déjà.
-
-Une seule contrainte en sort, et elle vient d'ici : **`uncertain` ne se purge
-jamais.** Cette ligne-là attend la décision d'une personne, et la lui retirer
-au bout de trente jours, c'est décider à sa place — exactement ce que la
-décision 13 refuse.
+Plus aucune décision d'architecture, et plus aucune question de rétention. Ce
+qui reste appartient à l'implémentation : le nom exact des routes, la forme
+précise du JSON, et le seuil au-delà duquel une file qui n'avance pas devient
+`degraded` — celui-là vit déjà dans `link_health`.
 
 C'est la ligne *Implémentée par* de l'en-tête qu'il faut lire pour le reste.
