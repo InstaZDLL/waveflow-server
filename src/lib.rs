@@ -579,12 +579,17 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
                     })
                     .map(|target| Arc::new(target) as Arc<dyn services::ScrobbleTarget>)
             }
-            // Neither has an adapter on this commit. A destination declared for
-            // one is not an error — an account can link it and its listens
-            // queue — but nothing drains until the adapter lands, which
+            services::ScrobbleProvider::Maloja => {
+                scrobblers::outbound_client(config.scrobbling.request_timeout)
+                    .and_then(|client| scrobblers::maloja::Maloja::new(client, &destination.url))
+                    .map(|target| Arc::new(target) as Arc<dyn services::ScrobbleTarget>)
+            }
+            // Last.fm has no adapter on this commit. A destination declared for
+            // it is not an error — an account can link it and its listens queue
+            // — but nothing drains until the adapter lands, which
             // `a_destination_with_no_adapter_does_not_starve_one_that_has_it`
             // already holds still.
-            services::ScrobbleProvider::Maloja | services::ScrobbleProvider::LastFm => continue,
+            services::ScrobbleProvider::LastFm => continue,
         };
         match target {
             Ok(target) => {
