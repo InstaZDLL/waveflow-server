@@ -417,16 +417,22 @@ async fn a_caller_cannot_name_its_own_request() {
                 .oneshot(request.body(Body::empty()).unwrap())
                 .await
                 .unwrap();
+            // Read as bytes, not as `&str`. A `HeaderValue` may hold any byte
+            // above 0x1f, `to_str` refuses the ones above 0x7f, and the point
+            // of the non-ASCII case below is that such a value is not kept — so
+            // reading it that way would panic instead of failing the assertion
+            // that says so, and only when the drop is removed. A test that
+            // crashes rather than fails proves nothing about the reason.
             response
                 .headers()
                 .get("x-request-id")
-                .map(|value| value.to_str().unwrap().to_owned())
+                .map(|value| value.as_bytes().to_vec())
         }
     };
 
     // Every request carries one, minted here, when the caller offered nothing.
     let unprompted = named(None).await.expect("a request is always named");
-    assert!(uuid::Uuid::parse_str(&unprompted).is_ok());
+    assert!(uuid::Uuid::parse_str(&String::from_utf8_lossy(&unprompted)).is_ok());
 
     for proposed in [
         // The case a shape check would have let through, and the reason there
@@ -448,16 +454,18 @@ async fn a_caller_cannot_name_its_own_request() {
         let answered = named(Some(proposed))
             .await
             .expect("a request is named even when the caller proposed nothing usable");
+        let shown = String::from_utf8_lossy(&answered);
         assert_ne!(
-            answered, proposed,
-            "the server adopted a name the caller chose"
+            answered.as_slice(),
+            proposed.as_bytes(),
+            "the server adopted a name the caller chose: {shown}"
         );
         // And what replaced it is a minted id, not an edited version of what
         // arrived: a sanitiser would still be letting the caller choose most
         // of it.
         assert!(
-            uuid::Uuid::parse_str(&answered).is_ok(),
-            "the name a request carries is one this server minted"
+            uuid::Uuid::parse_str(&shown).is_ok(),
+            "the name a request carries is one this server minted, and was: {shown}"
         );
         assert_ne!(
             answered, unprompted,

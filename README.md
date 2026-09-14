@@ -93,7 +93,7 @@ export WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password'
 cargo run -- credential set --actor admin --username admin
 ```
 
-That prints an API key **once**, on standard output by itself — everything else the command says goes to standard error, so `… > key` captures the key alone. Point any Subsonic client at `http://your-host:4533` with the username and that password. For browser-hosted clients such as Feishin, list the trusted origins explicitly — wildcards are rejected, so credential-bearing requests can never be opened to arbitrary sites:
+That prints an API key **once**, on standard output by itself — everything else the command says goes to standard error, so `(umask 077; … > key)` captures the key alone, in a file nobody else can read. Point any Subsonic client at `http://your-host:4533` with the username and that password. For browser-hosted clients such as Feishin, list the trusted origins explicitly — wildcards are rejected, so credential-bearing requests can never be opened to arbitrary sites:
 
 ```bash
 WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com
