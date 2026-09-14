@@ -1045,7 +1045,15 @@ mod tests {
     #[test]
     fn every_public_ticket_route_has_a_redaction_prefix() {
         for (path, _) in super::PUBLIC_OPERATIONS {
-            let Some(prefix) = path.strip_suffix("{ticket}") else {
+            // `{state}` as well as `{ticket}`: the Last.fm return is the first
+            // public route whose path carries a credential under another name,
+            // and a check that knew only one spelling would have let it through
+            // — which is the shape of the canvas ticket this test was written
+            // for.
+            let Some(prefix) = path
+                .strip_suffix("{ticket}")
+                .or_else(|| path.strip_suffix("{state}"))
+            else {
                 continue;
             };
             assert!(

@@ -795,6 +795,12 @@ answers where to send them and sets the cookie the return is checked against:
 { "authorize_url": "https://www.last.fm/api/auth/?api_key=…&cb=…", "expires_in": 720 }
 ```
 
+That answer also sets an `HttpOnly` cookie scoped to the return path, and the
+return is refused without it. A client served from the same origin as the API —
+the built-in web client is — needs nothing more. One served from a different
+origin must make this call with `credentials: "include"`, or the browser will
+drop the cookie and the journey will fail at its last step.
+
 Send the browser to `authorize_url`. Last.fm brings it back to
 `GET /api/v2/scrobble-links/lastfm/callback/{state}`, which finishes the link
 and redirects to an address carrying no token. The journey lasts twelve
