@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+pub mod lastfm;
 pub mod listenbrainz;
 pub mod maloja;
 
@@ -112,13 +113,9 @@ pub fn canonical_destination(url: &url::Url) -> String {
 /// keep `scrobble_link` free of destination addresses, which decision 10 says
 /// it holds none of.
 pub fn destination_fingerprint(url: &url::Url) -> String {
-    crate::security::bytes_hash(canonical_destination(url).as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            use std::fmt::Write as _;
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+    hex::encode(crate::security::bytes_hash(
+        canonical_destination(url).as_bytes(),
+    ))
 }
 
 /// How much of the budget a connection may spend before the rest of the request
