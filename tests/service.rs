@@ -774,13 +774,17 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
         run.status.success(),
         "minting a token failed; its diagnostics were: {stderr}"
     );
-
-    // One line, and that line is the token: nothing to cut off either end.
-    let token = stdout.trim_end_matches(['\r', '\n']);
-    assert!(
-        !token.is_empty() && !token.contains('\n'),
-        "standard output should hold the token on one line"
+    // One line, and that line is the token. Counted before trimming: trimming
+    // first would fold `token\n\n` into `token` and call it one line, and a
+    // blank line after a secret is exactly the kind of stray output this is
+    // here to notice.
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "standard output should hold one line, and held: {lines:?}"
     );
+    let token = lines[0];
     assert!(
         token.starts_with("wfapi_"),
         "standard output should hold the token itself, not a sentence about it"
@@ -822,10 +826,16 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
         run.status.success(),
         "setting a credential failed; its diagnostics were: {stderr}"
     );
-    let api_key = stdout.trim_end_matches(['\r', '\n']);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "standard output should hold one line, and held: {lines:?}"
+    );
+    let api_key = lines[0];
     assert!(
-        api_key.starts_with("wfsk_") && !api_key.contains('\n'),
-        "standard output should hold the API key on one line and nothing else"
+        api_key.starts_with("wfsk_"),
+        "standard output should hold the API key and nothing else"
     );
     assert!(
         !stderr.contains(api_key),
