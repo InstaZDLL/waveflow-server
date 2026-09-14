@@ -379,9 +379,17 @@ faire à la place de l'opérateur.
   comme toujours.
 - **Une septième tâche de fond**, démarrée dans `src/main.rs` avec les six
   autres — puis une huitième, pour la purge, quand la rétention s'écrira.
-- **Une colonne de plus sur `scrobble_outbox`**, `retried_at`, en migration
-  datée comme les tables : l'invariant de la décision 13 ne peut pas se déduire
-  d'une jointure que la purge dénoue.
+- **Des colonnes de plus, en migrations datées comme les tables.** Sur
+  `scrobble_outbox`, `retried_at` — l'invariant de la décision 13 ne peut pas se
+  déduire d'une jointure que la purge dénoue — et l'instant de passage en état
+  terminal sur lequel la rétention compte. Sur `scrobble_link`, le nom de la
+  destination et l'empreinte de son URL.
+- **Et un rattrapage, qui est la partie qu'on oublie.** Les liens déjà écrits ne
+  portent ni nom ni empreinte, et il n'existe qu'une destination par destinataire
+  au moment où cette révision s'écrit : la migration leur donne celle-là, avec
+  l'empreinte de l'URL alors configurée. Une valeur nulle laissée en place
+  reviendrait à traiter tout lien ancien comme une destination disparue, et à
+  casser au démarrage suivant des liens que rien n'a déplacés.
 - **La documentation** : une section du guide d'API, et une ligne dans
   `docs/web-client-gap-analysis.md`, dont le point 15 attend celle-ci.
 
@@ -477,8 +485,8 @@ si l'URL de retour ne sortait jamais du navigateur qui l'a demandée — or elle
 passe par Last.fm, et une URL qui voyage se retrouve dans un référent ou un
 historique. Qui l'obtiendrait pourrait terminer le parcours avec *son* jeton, et
 le compte de quelqu'un d'autre se mettrait à scrobbler sur son profil à lui.
-L'état porte donc aussi la session qui l'a ouvert, le retour vérifie les deux, et
-il se consomme avant l'échange du jeton plutôt qu'après la création du lien : ce
+L'état s'apparie donc au cookie décrit plus bas, le retour exige les deux, et il
+se consomme avant l'échange du jeton plutôt qu'après la création du lien : ce
 qui a servi une fois ne peut pas resservir, même si le premier essai échoue plus
 loin.
 
@@ -507,19 +515,43 @@ introduisant une autre.
 l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
 même chose serait une seconde vérité à tenir d'accord avec la première.
 
-**Le retour n'arrive pas avec un jeton de porteur.** C'est un navigateur qui
-revient de chez Last.fm, pas un client qui appelle l'API : aucun en-tête
-`Authorization` ne l'accompagne, et c'est l'exception dans une surface qui en
-demande un partout ailleurs. Ce qui l'autorise est la session web, celle-là même
-à laquelle l'état est lié — le retour est donc la vérification de l'état, et
-rien d'autre ne tiendrait lieu de preuve.
+**Le retour n'arrive pas avec un jeton de porteur, et pas non plus avec la
+session ordinaire.** C'est un navigateur qui revient de chez Last.fm, pas un
+client qui appelle l'API : aucun en-tête `Authorization` ne l'accompagne. Et la
+session web ne suffit pas davantage, ce que la première rédaction de ce
+paragraphe affirmait à tort — les cookies de ce serveur sont tous
+`SameSite=Strict` (`src/api/web_session.rs`), donc un retour venu d'un autre
+site n'en porte aucun. Le parcours aurait échoué chez tout le monde, à son
+dernier pas, pour une raison invisible à la lecture.
+
+Ce qui autorise le retour est donc un **cookie propre à ce parcours**, posé par
+`authorize` et attendu par lui seul : `HttpOnly`, `Secure`, `Path` réduit au
+chemin du retour, et `SameSite=Lax`, qui est exactement ce qu'il faut — une
+navigation `GET` de premier plan le porte, une requête de fond d'un autre site
+ne le porte pas. Il vaut ce que vaut l'état, dure aussi peu, et se jette avec
+lui. Les cookies de session ne bougent pas : `Strict` est le bon réglage pour
+eux, et cette exception ne les concerne pas.
+
+**Ce que RFC-002 demande, cette route y répond autrement.** La règle est qu'une
+route ne peut pas exister sans dire quel `Access` elle exige. Celle-ci n'en
+exige aucun, et ce n'est pas un oubli : elle n'est pas appelée par un client
+mais par le navigateur d'une personne au retour d'un parcours qu'elle vient
+d'ouvrir. Ce qui tient lieu de preuve est plus étroit qu'un `Access::Write` —
+un aléa à usage unique, une échéance de quelques minutes, un cookie qui ne vaut
+que pour ce chemin, et les trois doivent concorder. L'exception est nommée ici
+plutôt que découverte dans un `authenticated` manquant.
 
 **Et cette route veut `https`.** La décision 10 tolère le clair vers une cible
 que l'opérateur déclare sur son propre réseau ; l'échappatoire ne vaut pas ici,
 puisque le trajet qui rapporte le jeton part d'Internet et traverse le
-navigateur d'une personne. Un `WAVEFLOW_PUBLIC_URL` en `http` laisse donc
+navigateur d'une personne. Un `WAVEFLOW_PUBLIC_URL` en `http` devra donc laisser
 Last.fm indisponible, au même titre qu'une valeur absente, et pour une raison
-que la liste des destinations dit aussi clairement.
+que la liste des destinations dira aussi clairement.
+
+C'est une exigence à écrire, pas un état constaté : `normalize_public_url`
+accepte aujourd'hui `http` comme `https`, et doit continuer — l'URL publique sert
+aussi les partages, où le clair sur un réseau privé reste un choix d'opérateur
+légitime. La condition appartient à l'activation de Last.fm, pas au réglage.
 
 Il en découle que **Last.fm est indisponible tant que `WAVEFLOW_PUBLIC_URL`
 n'est pas configuré** — le serveur avertit déjà à ce sujet au démarrage. Ce
@@ -648,9 +680,17 @@ alerte permanente.
 version de cette RFC : la file ne se purge jamais, donc la table grandit d'une
 ligne par écoute et par destination, sans fin, chez un auditeur actif. Cela n'a
 pas retenu [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), et
-n'appelle toujours aucune migration au-delà de `retried_at` : un réglage de
-déploiement et une tâche de purge, sur le patron de
-[RFC-007](RFC-007-library-event-stream.md) et la huitième tâche de fond.
+n'appelle pour elle-même qu'un réglage de déploiement et une tâche de purge, sur
+le patron de [RFC-007](RFC-007-library-event-stream.md) et la huitième tâche de
+fond. Les colonnes que cette révision ajoute viennent d'ailleurs, et sont
+énumérées plus bas.
+
+**Sur quel instant on purge.** Ni `created_at`, qui date la mise en file et ferait
+partir une ligne trente jours après avoir été écrite quelle que soit la date où
+elle a fini, ni un `updated_at` dont rien ne garantit qu'il ne rebougera plus.
+Une ligne retient l'instant où elle est devenue terminale, une fois, et la purge
+compte à partir de là. C'est le genre de propriété qui se perd entre une RFC et
+un `UPDATE` de plus, donc elle est écrite : cet instant ne se réécrit pas.
 
 - **Trente jours pour les états terminaux ordinaires** — `sent`, `rejected`,
   `abandoned`, `cancelled`, `discarded`. Assez pour comprendre une panne
