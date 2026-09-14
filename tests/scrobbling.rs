@@ -3026,6 +3026,14 @@ async fn a_fresh_install_declares_several_instances_on_its_first_boot() {
 /// Emptying a URL out of the configuration is already a way of switching a
 /// recipient off. Leaving the two columns empty instead would hand the next
 /// reconciliation a row it could not read.
+///
+/// **That last sentence was the whole of this test's intent and none of its
+/// assertions** until 2026-09-14: it checked that the link broke and never
+/// that a name was written. The row kept a NULL destination, which came out of
+/// the API as the empty string — a published pair with no instance in it — and
+/// could not be withdrawn at all, because `unlink_scrobble_on` matches
+/// `destination=?` and no comparison is true of NULL. A broken link with a
+/// blank name and no way to remove it.
 #[tokio::test]
 async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_empty() {
     let temp = tempfile::tempdir().unwrap();
@@ -3044,6 +3052,30 @@ async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_e
     assert_eq!(links[0].provider, ScrobbleProvider::LastFm);
     assert_eq!(links[0].health, "broken");
     assert_eq!(links[0].last_failure.as_deref(), Some("destination_gone"));
+    // The name a link made under #191–#193 had: its recipient declared one
+    // instance and nobody had to name it, which is what `default` means.
+    assert_eq!(
+        links[0].destination, "default",
+        "a broken link is still a pair, and the empty string is not an instance"
+    );
+
+    // And so it can be withdrawn. This is what the name buys beyond looking
+    // right: the gesture addresses the pair, and a blank half addresses
+    // nothing.
+    assert!(
+        state
+            .services
+            .unlink_scrobble(listener.owner, ScrobbleProvider::LastFm, "default")
+            .await
+            .unwrap(),
+        "the listing named it, so the same name withdraws it"
+    );
+    assert!(state
+        .services
+        .scrobble_links(listener.owner)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// A retry checks where it would go, not only that it may go.
@@ -4054,4 +4086,82 @@ async fn an_instance_nobody_declared_cannot_be_linked() {
     let links = state.services.scrobble_links(listener.owner).await.unwrap();
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].destination, "alice");
+}
+
+/// An ambiguous entry names the instance it was queued for, not just the
+/// recipient.
+///
+/// Decision 13 asks a person what to do with a listen whose fate is unknown,
+/// and decision 10 lets the operator declare several instances of one
+/// recipient — a household where everybody self-hosts a Maloja is the ordinary
+/// case, not a corner. An entry that said only `maloja` would put the question
+/// without saying which of the two servers may already hold the listen, which
+/// is the whole of what a person weighs before sending it again.
+///
+/// Both entries are made to be otherwise indistinguishable — same track, same
+/// verdict, same recipient — so the destination is the only thing that can
+/// tell them apart.
+#[tokio::test]
+async fn an_ambiguous_entry_names_which_instance_it_was_queued_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = declaring(
+        &temp,
+        &[
+            (ScrobbleProvider::Maloja, "alice", "http://127.0.0.1:1"),
+            (ScrobbleProvider::Maloja, "bob", "http://127.0.0.1:2"),
+        ],
+    );
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "two-instance-chooser").await;
+    for (destination, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
+        state
+            .services
+            .link_scrobble(
+                listener.owner,
+                ScrobbleProvider::Maloja,
+                destination,
+                secret,
+            )
+            .await
+            .unwrap();
+        state.services.register_scrobble_target(
+            ScrobbleProvider::Maloja,
+            destination,
+            Recorder::always(ScrobbleVerdict::Ambiguous) as std::sync::Arc<dyn ScrobbleTarget>,
+        );
+    }
+
+    state
+        .services
+        .scrobble(listener.owner, listener.tagged, true, None)
+        .await
+        .unwrap();
+    let drained = state.services.drain_scrobble_outbox().await.unwrap();
+    assert_eq!(
+        drained.uncertain, 2,
+        "one listen, two instances, two entries"
+    );
+
+    let waiting = state
+        .services
+        .uncertain_scrobbles(listener.owner)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 2);
+    assert!(
+        waiting
+            .iter()
+            .all(|entry| entry.provider == ScrobbleProvider::Maloja),
+        "the recipient alone cannot tell them apart, which is the point"
+    );
+    let mut instances = waiting
+        .iter()
+        .map(|entry| entry.destination.as_str())
+        .collect::<Vec<_>>();
+    instances.sort_unstable();
+    assert_eq!(
+        instances,
+        ["alice", "bob"],
+        "each entry names the instance whose queue it is in"
+    );
 }

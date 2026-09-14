@@ -208,10 +208,30 @@ pub struct UncertainScrobble {
     /// The entry's public name, and the only one this API will accept back.
     pub id: Uuid,
     pub provider: ScrobbleProvider,
+    /// Which instance of that recipient the listen was queued for.
+    ///
+    /// The recipient alone does not name it. Decision 10 lets an operator
+    /// declare several instances of one destination, and a household server
+    /// where everybody self-hosts a Maloja is the ordinary case — so an entry
+    /// that said only `maloja` would ask somebody to choose the fate of a
+    /// listen without telling them which of their two instances may already
+    /// hold it. Decision 13 refuses to make that choice for them; this is what
+    /// makes it a choice they can actually make.
+    pub destination: String,
     /// When the listen happened, not when it was queued.
     pub played_at: i64,
     pub attempts: i64,
-    /// A normalised cause — `stalled`, `auth_broken` — or nothing.
+    /// A normalised cause. An entry reaches this listing two ways and each
+    /// writes its own: `ambiguous`, when the adapter could not tell whether
+    /// the submission arrived, and `interrupted`, when a previous process left
+    /// the row claimed and this one recovered it.
+    ///
+    /// It named `stalled` and `auth_broken` until 2026-09-14, and wrote
+    /// neither — `auth_broken` cancels an entry rather than leaving it
+    /// asking, and nothing has ever written `stalled` at all. The same
+    /// category as the `rate_limited` note further down this file, which was
+    /// answered by making the code produce the value; here the value was the
+    /// wrong one to promise.
     pub last_failure: Option<String>,
     pub updated_at: i64,
 }
@@ -751,7 +771,7 @@ impl DomainServices {
         // the join to `scrobble_link` is what makes another account's entry
         // unnameable rather than merely unreturned.
         let rows = sqlx::query(
-            "SELECT o.public_id, l.provider, o.played_at, o.attempts, \
+            "SELECT o.public_id, l.provider, l.destination, o.played_at, o.attempts, \
                     o.last_failure, o.updated_at \
              FROM scrobble_outbox o JOIN scrobble_link l ON l.id = o.link_id \
              WHERE l.user_id=? AND l.status <> 'unlinked' AND o.state='uncertain' \
@@ -770,6 +790,13 @@ impl DomainServices {
                     id: Uuid::parse_str(row.try_get("public_id")?)
                         .map_err(|_| ServiceError::Invalid)?,
                     provider: ScrobbleProvider::from_str(row.try_get("provider")?)?,
+                    // Defaulted for the reason `scrobble_links` defaults it:
+                    // `initialize` fills every legacy row before the server
+                    // answers anything, and a listing is not where a boot that
+                    // went wrong should be discovered.
+                    destination: row
+                        .try_get::<Option<String>, _>("destination")?
+                        .unwrap_or_default(),
                     played_at: row.try_get("played_at")?,
                     attempts: row.try_get("attempts")?,
                     last_failure: row.try_get("last_failure")?,
@@ -996,6 +1023,33 @@ impl DomainServices {
                     .await?;
                 }
                 [] => {
+                    // Named before it is broken, and named `default`.
+                    //
+                    // Not a guess: a link made under #191–#193 carried no name
+                    // because its recipient had exactly one instance, and
+                    // `DEFAULT_SCROBBLE_DESTINATION` is what a bare URL in the
+                    // configuration is still called. The link is broken either
+                    // way and nothing is remapped — what the name buys is that
+                    // the row can be spoken about.
+                    //
+                    // Left NULL, it came out of `scrobble_links` and
+                    // `uncertain_scrobbles` as the empty string, so the API
+                    // published a pair with no instance in it. Worse, the row
+                    // could not be withdrawn: `unlink_scrobble_on` matches
+                    // `destination=?`, and no comparison is ever true of NULL,
+                    // so the listing showed a broken link with a blank name
+                    // that no gesture could remove.
+                    //
+                    // The fingerprint stays NULL. It exists to be compared
+                    // against a declared URL, there is none, and a broken link
+                    // is never reconciled again — the second pass below reads
+                    // `status='active'` only.
+                    sqlx::query("UPDATE scrobble_link SET destination=?, updated_at=? WHERE id=?")
+                        .bind(crate::config::DEFAULT_SCROBBLE_DESTINATION)
+                        .bind(now)
+                        .bind(row.try_get::<String, _>("id")?)
+                        .execute(&mut *tx)
+                        .await?;
                     self.break_link_on(&mut tx, row.try_get("id")?, "destination_gone", now)
                         .await?;
                 }

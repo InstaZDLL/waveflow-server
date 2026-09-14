@@ -35,6 +35,9 @@ pub struct GenreQuery {
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: String,
+    /// Narrows all three kinds to one library, as it does on every other
+    /// catalogue route. Absent means every library the account can see.
+    pub library_id: Option<Uuid>,
     /// Applied to every kind unless the per-kind offset below overrides it.
     pub offset: Option<i64>,
     pub limit: Option<i64>,
@@ -153,7 +156,7 @@ pub async fn get_artist(
         .map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("artist_offset" = Option<i64>, Query), ("album_offset" = Option<i64>, Query), ("song_offset" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 400, description = "q is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/search", tag = "catalog", params(("q" = String, Query), ("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("artist_offset" = Option<i64>, Query), ("album_offset" = Option<i64>, Query), ("song_offset" = Option<i64>, Query)), responses((status = 200, body = crate::services::SearchResult), (status = 400, description = "q is required"), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn search_catalog(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
@@ -167,11 +170,13 @@ pub async fn search_catalog(
         crate::services::BrowsePage::new(offset.or(query.offset), query.limit)
             .map_err(service_error)
     };
+    let libraries = query.library_id.into_iter().collect::<Vec<_>>();
     state
         .services
         .search(
             user.id,
             &query.q,
+            &libraries,
             page(query.artist_offset)?,
             page(query.album_offset)?,
             page(query.song_offset)?,

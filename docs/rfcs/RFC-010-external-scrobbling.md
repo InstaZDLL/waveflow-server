@@ -29,8 +29,22 @@
   destinations nommées, avec l'empreinte d'URL qui en fait l'identité, le
   rattrapage et la réconciliation au démarrage ; l'adaptateur Maloja, où
   l'enveloppe se verse sans perdre un crédit ; et le parcours d'autorisation
-  Last.fm, deux routes et une table qui vit un quart d'heure. Le champ *Statut*
-  ci-dessus ne bascule pas — il ne bascule jamais dans ce projet.
+  Last.fm, deux routes et une table qui vit un quart d'heure.
+  Enfin [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), **la
+  surface qui rend tout cela atteignable** : l'écran `/settings/scrobbling` du
+  client web, où se posent et se retirent les autorisations par paire, s'ouvre
+  le parcours Last.fm, et se répondent les écoutes que la décision 13 refuse de
+  trancher. Ce chemin n'est pas un choix : `lastfm_callback` y redirige, et
+  tant qu'il n'existait pas, un parcours mené à son terme atterrissait sur une
+  page « introuvable » — le lien fait, et rien pour le dire. Deux corrections
+  de serveur l'ont accompagné, toutes deux exigées par l'écran : une entrée
+  `uncertain` nomme désormais son **instance** et non son seul destinataire —
+  sans quoi la décision 13 pose sa question sans dire lequel des deux profils
+  détient peut-être l'écoute — et un lien hérité que la réconciliation rompt
+  reçoit un nom avant d'être rompu, au lieu de sortir de l'API avec une
+  instance vide qu'aucun geste ne pouvait retirer.
+  Le champ *Statut* ci-dessus ne bascule pas — il ne bascule jamais dans ce
+  projet.
 - **Date** : 2026-09-13
 - **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
   et chacune dit ce que la version antérieure affirmait de faux plutôt que de
