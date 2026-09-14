@@ -281,7 +281,12 @@ il existera un champ d'URL, et il ne peut pas être libre.
 - **L'URL de base est le réglage de l'opérateur**, jamais celui d'un compte. Un
   membre choisit sa destination parmi celles que le serveur connaît, et ne la
   décrit pas.
-- **Aucune redirection suivie** vers un autre hôte que celui demandé.
+- **Aucune redirection suivie**, pas même vers l'hôte demandé. La première
+  rédaction disait « vers un autre hôte », ce que le code ne fait pas : il pose
+  `Policy::none()` et s'arrête à la première. C'est le texte qui promettait
+  moins, et il avait tort de le promettre — un `302` vers le même hôte reste un
+  chemin que personne n'a choisi, et l'échange qui convertit un jeton Last.fm en
+  clé de session y enverrait une clé d'application et une signature.
 - **Délais et taille de réponse bornés**, comme toute autre entrée-sortie ici.
 - **Rien du corps de la réponse n'est renvoyé au client** : il va au journal, et
   ce que l'API montre est un état, pas un écho.
@@ -375,13 +380,27 @@ comme si le nom avait disparu.
 *normalisée*, pas sur la chaîne que l'opérateur a tapée : sans cela,
 `https://maloja.example` et `https://maloja.example/` casseraient tous les
 liens d'un serveur au premier redémarrage après qu'un éditeur eut ajouté une
-barre. `normalize_public_url` fait déjà ce travail pour l'URL publique et
-donne la forme à suivre — un schéma, un hôte, un port, rien d'autre. La même
-normalisation sert au rattrapage, à la réconciliation et à la garde de
-reprise : trois lectures d'un même fait, qui ne valent que si elles le
-calculent pareil. Comparer des empreintes plutôt que des URL n'est pas une
-précaution contre un attaquant — personne d'hostile n'écrit cette
-configuration — mais la façon de n'avoir qu'une seule chose à comparer.
+barre.
+
+**Et cette normalisation n'est pas celle de l'URL publique.**
+`normalize_public_url` rend une origine — schéma, hôte, port — et jette le
+chemin, parce qu'une origine est ce dont les partages ont besoin. Une
+destination, non : `validate_destination` accepte un chemin, donc
+`https://host/tenant-a` et `https://host/tenant-b` sont deux destinations, et
+les réduire à leur origine leur donnerait la même empreinte. La garde
+d'identité laisserait alors passer exactement le déplacement qu'elle existe
+pour voir — d'un locataire à un autre sur la même machine, ce qui est la forme
+la plus vraisemblable qu'un tel changement puisse prendre.
+
+Il faut donc une canonicalisation propre aux destinations : schéma, hôte, port
+et **chemin** sérialisés sans ambiguïté, la chaîne de requête et le fragment
+refusés comme ils le sont déjà, et une réponse tenue sur la barre finale — `/x`
+et `/x/` désignent la même chose ou ne la désignent pas, mais pas une fois l'un
+et une fois l'autre. La même normalisation sert au rattrapage, à la
+réconciliation et à la garde de reprise : trois lectures d'un même fait, qui ne
+valent que si elles le calculent pareil. Comparer des empreintes plutôt que des
+URL n'est pas une précaution contre un attaquant — personne d'hostile n'écrit
+cette configuration — mais la façon de n'avoir qu'une seule chose à comparer.
 
 C'est la décision 4 appliquée un étage plus haut. Là-bas, délier puis relier
 crée une génération qui n'hérite de rien, parce que le compte et la destination
