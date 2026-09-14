@@ -661,6 +661,90 @@ async fn an_ambiguous_entry_may_be_retried_once_and_not_twice() {
     assert_eq!(rows(&state).await.len(), 2);
 }
 
+/// The joker stays spent once the retry that spent it is gone.
+///
+/// Until `retried_at`, all four readers deduced "already answered" from a
+/// second row naming this one through `retry_of`. That holds only while rows
+/// are immortal, and RFC-010's retention makes them mortal: a retry ends
+/// `sent`, so it is the first thing a purge takes. The `DELETE` below is that
+/// purge, played by hand because the purge itself belongs to the next slice —
+/// what it does to this entry does not wait for it.
+///
+/// Four assertions rather than one because there were four readers, and the
+/// counter is the one that matters most: `link_health` answers `degraded` for a
+/// single counted `uncertain`, so a link would sit in permanent false alarm
+/// over a listen whose owner answered weeks ago.
+#[tokio::test]
+async fn a_spent_joker_is_not_returned_when_the_retry_is_purged() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = fixture(&config, &state, "purged-retry-listener").await;
+    state
+        .services
+        .link_scrobble(fixture.owner, ScrobbleProvider::ListenBrainz, "lb-secret")
+        .await
+        .unwrap();
+    let uncertain_id = one_uncertain_entry(&state, &fixture).await;
+    state
+        .services
+        .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+        .await
+        .unwrap();
+
+    // Retention, played by hand: the retry row leaves, the answered original
+    // stays. `uncertain` is never purged, so this is the shape a real purge
+    // leaves behind and not an invented one.
+    sqlx::query("DELETE FROM scrobble_outbox WHERE retry_of IS NOT NULL")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(&state).await.len(),
+        1,
+        "the purge must have taken the retry and left the original"
+    );
+
+    assert!(
+        state
+            .services
+            .uncertain_scrobbles(fixture.owner)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an answered entry must not come back asking"
+    );
+    let links = state.services.scrobble_links(fixture.owner).await.unwrap();
+    assert_eq!(
+        links[0].uncertain, 0,
+        "an answered entry must not be counted again"
+    );
+    assert_eq!(
+        links[0].health, "healthy",
+        "and the link must not be degraded by a listen already answered"
+    );
+    assert!(
+        matches!(
+            state
+                .services
+                .retry_uncertain_scrobble(fixture.owner, uncertain_id)
+                .await
+                .unwrap_err(),
+            ServiceError::NotFound
+        ),
+        "the joker was spent once and does not come back"
+    );
+    assert!(
+        matches!(
+            state
+                .services
+                .discard_uncertain_scrobble(fixture.owner, uncertain_id)
+                .await
+                .unwrap_err(),
+            ServiceError::NotFound
+        ),
+        "nor does the gesture it replaced"
+    );
+}
+
 #[tokio::test]
 async fn a_refused_listen_is_not_offered_to_the_destination_again() {
     let (_temp, config, state) = test_app().await;
