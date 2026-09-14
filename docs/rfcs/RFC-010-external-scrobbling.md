@@ -416,7 +416,12 @@ faire à la place de l'opérateur.
   signale. La sortie ne demande aucun mécanisme neuf : démarrer une fois avec une
   seule destination par destinataire — celle que ces liens visaient — remplit les
   colonnes, et les autres s'ajoutent au démarrage suivant. Le rattrapage n'a lieu
-  qu'une fois ; ce qui vient après passe par la réconciliation ordinaire.
+  qu'une fois ; ce qui vient après passe par la réconciliation ordinaire. Et si
+  un destinataire a des liens sans qu'aucune destination ne soit déclarée pour
+  lui — une URL vidée de la configuration, ce qui est déjà une façon de le
+  désactiver — il n'y a rien à inscrire : ces liens sont traités comme ceux d'une
+  destination disparue, cassés et leur file terminée, plutôt que laissés avec
+  deux colonnes vides que la réconciliation suivante ne saurait pas lire.
 
   **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
   l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
@@ -473,7 +478,7 @@ d'un fournisseur. Elle reste bonne pour un diagnostic, pas comme chemin normal.
 
 Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
 
-- `POST /api/v2/scrobble-links/lastfm/{destination}/authorize` ouvre un état lié
+- `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` ouvre un état lié
   au compte et rend l'URL où envoyer la personne : `/api/auth` chez Last.fm,
   portant la clé d'application et un `cb` qui désigne la route ci-dessous.
 - `GET /api/v2/scrobble-links/lastfm/callback/{state}` reçoit le `token` que
@@ -488,6 +493,14 @@ serait la première marche vers le glissement qu'elle interdit. Le nom est donc
 demandé, vérifié contre les destinations déclarées, et rangé dans l'état : c'est
 lui que le retour relira, plutôt que d'en deviner un. Le jour où quelqu'un
 déclare deux Last.fm — un compte de famille et le sien — rien n'aura à changer.
+
+**Le littéral vient avant le paramètre, et ce n'est pas une préférence de
+style.** Écrit `…/lastfm/{destination}/authorize`, une destination nommée
+`callback` produirait `…/lastfm/callback/authorize`, que le retour
+`…/lastfm/callback/{state}` réclame tout autant — deux motifs de même forme, et
+un routeur qui doit trancher. Réserver le mot marcherait ; le déplacer supprime
+la question. Une liste de noms interdits est une chose qu'il faut se rappeler de
+tenir à jour, et elle s'oublie au premier segment qu'on ajoute.
 
 **C'est le parcours web, et il n'appelle pas `auth.getToken`.** Cette méthode
 appartient au parcours des applications de bureau, où le jeton se demande avant
@@ -624,6 +637,15 @@ fonctionne, et la compter dégraderait tout lien ayant croisé une panne
 passagère. C'est le texte qui promettait de travers, depuis l'origine. L'ordre
 des trois questions vit dans `link_health` et n'est pas recopié ici : deux
 écritures du même seuil divergeraient, et c'est le code que l'API rend.
+
+**Corrigé le 2026-09-14, seconde fois :** « quand remonte le dernier succès »
+est une promesse que rien ne tient encore, et que la rétention empêche de tenir
+naïvement — `MAX(updated_at)` sur des lignes `sent` reculerait le jour où la
+purge atteint trente et un jours, puis disparaîtrait sur un lien tranquille qui
+marche. Ce point de la liste attend donc une colonne sur `scrobble_link`, écrite
+au moment du succès, et il reste absent de l'API jusque-là plutôt que d'y entrer
+faux. Ce qu'un lien publie se tient sur le lien, ou sur des lignes qu'aucune
+purge ne touche.
 
 **Jamais le contenu de l'enveloppe, jamais la réponse brute du fournisseur.**
 La décision 10 interdit déjà l'écho ; ceci en est le corollaire du côté
