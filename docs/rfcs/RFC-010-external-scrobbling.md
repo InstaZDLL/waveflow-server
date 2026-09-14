@@ -346,6 +346,14 @@ exemplaire du défaut que cette révision corrige déjà deux fois. Elles passen
 donc dans un état terminal, comme le fait déjà le déliement à la décision 4 :
 même situation, même règle, et la rétention peut alors faire son travail.
 
+**Et cela se fait avant que le drainage ne démarre.** L'ordre est la moitié de
+la règle : réconcilier les liens pendant que la tâche de fond tourne déjà laisse
+une fenêtre, courte et suffisante, où des écoutes partent vers la destination
+d'hier. `initialize` compare donc les identités et termine ce qui doit l'être
+sous le verrou d'écriture, et `spawn_scrobble_drain` ne commence qu'ensuite.
+Rien d'autre n'a besoin d'être gardé : une fois le lien `broken`, la mise en
+file n'écrit plus rien pour lui.
+
 **Un nom n'est pas une identité : l'URL en fait partie.** Retirer `maloja/alice`
 casse ses liens, mais lui donner une autre URL les enverrait ailleurs sans que
 rien ne change de nom — la même substitution, par la porte d'à côté, et la plus
@@ -484,8 +492,8 @@ retient déjà. La règle de `CLAUDE.md` ne souffre pas d'exception pour un secr
 d'une heure. La réponse porte `Cache-Control: no-store` et
 `Referrer-Policy: no-referrer`, sans quoi le jeton voyagerait vers la page
 suivante dans un en-tête que personne ne relit. Et elle redirige aussitôt vers
-une adresse sans jeton, pour que ce soit celle-là que
-l'historique retienne — la page où la personne atterrit n'a pas besoin d'en
+une adresse sans jeton, pour que ce soit celle-là que l'historique retienne — la
+page où la personne atterrit n'a pas besoin d'en
 savoir plus que « c'est lié ».
 
 **Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
