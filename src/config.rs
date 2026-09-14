@@ -830,11 +830,27 @@ fn parse_destinations(
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
     {
-        // Split on the first `=`, which cannot occur in a scheme: `https://…`
-        // has none before the colon, so a bare URL is never mistaken for a
-        // named one. A name may not contain `=` either — the alphabet refuses
-        // it — so the first separator is the only one.
-        let (name, raw) = match entry.split_once('=') {
+        // Split on the first `=` — but only when what precedes it could be a
+        // name at all.
+        //
+        // **The obvious version of this leaks a password.** It said the first
+        // `=` cannot occur inside a URL because a scheme has none, which is
+        // true of the scheme and false of everything after it:
+        // `https://wf:pa=ss@host` splits into `https://wf:pa` and `ss@host`,
+        // and the first half then fails the name check and is quoted back in
+        // the error — scheme, account and half the password, in a startup log.
+        // The paragraph below promises the URL never reaches a message, and
+        // this was the path that broke it.
+        //
+        // A name is letters, digits, `-`, `_` and `.`. Neither `:` nor `/` can
+        // appear in one, so their presence before the `=` means the separator
+        // was inside a URL, and the whole entry is read as a bare address. A
+        // mistyped *name* — `al ice=…` — has neither, so it is still reported
+        // by name, which is what an operator needs to see.
+        let named = entry
+            .split_once('=')
+            .filter(|(before, _)| !before.contains([':', '/']));
+        let (name, raw) = match named {
             Some((name, raw)) => (name.trim(), raw.trim()),
             None => (DEFAULT_SCROBBLE_DESTINATION, entry),
         };
@@ -1124,6 +1140,56 @@ mod tests {
             said.contains("house") && said.contains("WAVEFLOW_SCROBBLE_MALOJA_URL"),
             "the error must name the entry that is wrong: {said}"
         );
+
+        // **And a password containing `=` does not become the name.** The first
+        // version of the parser split on the first `=` wherever it fell, so
+        // this entry became the name `http://wf-user:pa` and the address
+        // `ss@10.0.0.2` — and the name is what the refusal quotes back. Half a
+        // password in a startup log, from the one paragraph that promises the
+        // opposite. Nothing about the shape of this entry is unusual; `=` is an
+        // ordinary character in a generated password.
+        let refused = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "http://wf-user:pa=ss@10.0.0.2",
+            true,
+        )
+        .expect_err("a destination carrying credentials must be refused");
+        let said = format!("{refused:#}");
+        for (part, secret) in [
+            ("the password", "pa=ss"),
+            ("part of the password", "pa"),
+            ("the account", "wf-user"),
+            ("the host", "10.0.0.2"),
+        ] {
+            assert!(
+                !said.contains(secret),
+                "the startup error quoted {part} back from the destination"
+            );
+        }
+        assert!(
+            said.contains("credentials"),
+            "the error must still name the fault"
+        );
+    }
+
+    /// A mistyped *name* is still reported by name.
+    ///
+    /// The guard above reads an entry as a bare address whenever the text
+    /// before the `=` could not be a name. That must not swallow the ordinary
+    /// typo it exists beside: a name with a space in it carries neither `:` nor
+    /// `/`, so it is still a name, and the operator is told which one.
+    #[test]
+    fn a_mistyped_name_is_still_named_in_the_refusal() {
+        let refused = parse_destinations(
+            crate::services::ScrobbleProvider::Maloja,
+            "WAVEFLOW_SCROBBLE_MALOJA_URL",
+            "al ice=https://host/alice",
+            false,
+        )
+        .expect_err("a name with a space must be refused");
+        let said = format!("{refused:#}");
+        assert!(said.contains("al ice"), "{said}");
     }
 
     /// Two spellings of one machine are one destination.

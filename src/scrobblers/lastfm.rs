@@ -173,6 +173,17 @@ impl ScrobbleTarget for LastFm {
             // nothing textual. A body that will not parse leaves the status
             // line deciding, so a malformed answer cannot turn a success into
             // the one verdict a person has to answer.
+            //
+            // **And the body only ever refines a success.** A failing status
+            // line already says everything the body could, and letting the
+            // body answer for it costs two real things: a `429` carrying
+            // `"error": 29` would return this adapter's own zero wait instead
+            // of the `Retry-After` the header gave — defeating the whole point
+            // of reading that header — and a `5xx` whose body happened to
+            // parse as accepted would be read as a listen that arrived.
+            if !status.is_success() {
+                return status_verdict(status, retry_after);
+            }
             let answer = response.json::<ScrobbleAnswer>().await.ok();
             match answer.as_ref().and_then(ScrobbleAnswer::verdict) {
                 Some(verdict) => verdict,
