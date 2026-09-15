@@ -3,6 +3,7 @@ import type {
   ScrobbleDestination,
   ScrobbleLink,
   ScrobbleProvider,
+  ScrobbleUnavailable,
   UncertainScrobble,
 } from "./api";
 
@@ -20,7 +21,7 @@ export type ScrobbleRow = {
   destination: string;
   /** `null` when the operator no longer declares this instance. */
   available: boolean | null;
-  unavailable?: string;
+  unavailable?: ScrobbleUnavailable;
   link: ScrobbleLink | null;
 };
 

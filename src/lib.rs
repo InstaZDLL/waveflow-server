@@ -242,6 +242,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::ScrobbleProvider,
         services::ScrobbleLinkState,
         services::ScrobbleDestinationName,
+        services::ScrobbleUnavailable,
         api::LastFmAuthorizationResponse,
         services::UncertainScrobble,
         api::LinkScrobbleRequest,
@@ -289,8 +290,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         sync::SyncPage,
         media::StreamTicketResponse,
         media::CanvasResponse,
-        api::LibraryEventAckRequest,
-        scanner::ScanProgress
+        api::LibraryEventAckRequest
     )),
     modifiers(&SecurityAddon),
     tags(

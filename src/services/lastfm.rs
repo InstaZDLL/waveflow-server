@@ -84,15 +84,16 @@ impl LastFmJourney {
     }
 }
 
-/// Why Last.fm cannot be linked on this server, in words an operator can act
-/// on.
+/// Why Last.fm cannot be linked on this server.
 ///
 /// Published beside the destination rather than discovered when somebody tries:
 /// a link that fails later without explanation is the silent failure this whole
 /// RFC spends itself preventing.
-pub(super) fn lastfm_unavailability(config: &crate::config::Config) -> Option<&'static str> {
+pub(super) fn lastfm_unavailability(
+    config: &crate::config::Config,
+) -> Option<super::ScrobbleUnavailable> {
     if config.lastfm.is_none() {
-        return Some("no last.fm application is configured on this server");
+        return Some(super::ScrobbleUnavailable::NoApplicationConfigured);
     }
     if !crate::api::public_url_is_https(config.public_url.as_deref()) {
         // Naming the other way out, since 2026-09-15. This said last.fm
@@ -101,10 +102,7 @@ pub(super) fn lastfm_unavailability(config: &crate::config::Config) -> Option<&'
         // all — it is true of *this* journey. A reason an operator can act on
         // has to name the action that still exists, or it reads as a dead end
         // where there is a door.
-        return Some(
-            "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; \
-             an operator can still link an account from this server's command line",
-        );
+        return Some(super::ScrobbleUnavailable::BrowserJourneyNeedsHttps);
     }
     None
 }

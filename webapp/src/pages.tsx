@@ -1168,7 +1168,7 @@ function Lyrics({ trackId }: { trackId: string }) {
     () => getLyrics(trackId),
     [trackId],
   );
-  const sheet = value?.structured_lyrics[0];
+  const sheet = value?.structuredLyrics[0];
   const active = sheet?.synced
     ? currentLyricLine(sheet.line, progress.position)
     : -1;

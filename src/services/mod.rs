@@ -995,9 +995,9 @@ pub struct DomainServices {
     /// What one Last.fm journey needs beyond an account and a destination, or
     /// `None` when this server cannot carry one at all.
     lastfm_journey: Option<lastfm::LastFmJourney>,
-    /// Why not, in words an operator can act on. Published beside the
+    /// Why not, as a code the caller words. Published beside the
     /// destination rather than discovered when somebody tries to link.
-    lastfm_unavailable: Option<&'static str>,
+    lastfm_unavailable: Option<ScrobbleUnavailable>,
     /// How a request token becomes a session key, by destination name. Filled
     /// after construction like [`Self::register_scrobble_target`], and for the
     /// same reason.
@@ -1077,7 +1077,7 @@ pub use lastfm::{
 };
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
-    ScrobbleTarget, ScrobbleVerdict, UncertainScrobble,
+    ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
 };
 
 impl DomainServices {

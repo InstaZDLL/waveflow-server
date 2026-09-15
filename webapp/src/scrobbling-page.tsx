@@ -4,6 +4,7 @@ import {
   authorizeLastFm,
   discardUncertainScrobble,
   getTrack,
+  type KnownScrobbleUnavailable,
   linkScrobble,
   listHistory,
   listScrobbleDestinations,
@@ -12,6 +13,7 @@ import {
   retryUncertainScrobble,
   type ScrobbleLink,
   type ScrobbleProvider,
+  type ScrobbleUnavailable,
   type UncertainScrobble,
   unlinkScrobble,
 } from "./api";
@@ -77,6 +79,44 @@ const REASONS = new Set([
   "ambiguous",
   "interrupted",
 ]);
+
+/**
+ * Why an instance cannot be linked, put into words.
+ *
+ * The server sent finished English prose here until 2026-09-15 and this page
+ * printed it, so a French reader was told in English what to change in a
+ * configuration file. It sends the case now and the wording is ours — which
+ * also means a case this client has not been taught must not become a blank:
+ * `unknown` says that much rather than nothing.
+ */
+const UNAVAILABLE_REASON = {
+  no_application_configured: "scrobbling.unavailable.no_application_configured",
+  browser_journey_needs_https:
+    "scrobbling.unavailable.browser_journey_needs_https",
+} as const satisfies Record<KnownScrobbleUnavailable, TranslationKey>;
+
+/**
+ * The same table, read by a key that may be anything.
+ *
+ * A `Map` rather than the object above, for the reason `REASONS` is a `Set`:
+ * once the key is a `string`, an object answers for names it was never given —
+ * `toString` and `constructor` come back off the prototype, truthy, and would
+ * be handed to `t()` as if they were a translation key. A `Map` holds only what
+ * was put in it.
+ */
+const UNAVAILABLE_WORDS = new Map<string, TranslationKey>(
+  Object.entries(UNAVAILABLE_REASON),
+);
+
+function unavailableReason(
+  code: ScrobbleUnavailable | undefined,
+): TranslationKey {
+  // `KnownScrobbleUnavailable` is exhaustive above, so nothing is forgotten;
+  // `ScrobbleUnavailable` is open here, so nothing newer is refused.
+  return (
+    (code && UNAVAILABLE_WORDS.get(code)) || "scrobbling.unavailable.unknown"
+  );
+}
 
 function when(instant: number, locale: Locale): string {
   return new Intl.DateTimeFormat(locale, {
@@ -241,7 +281,7 @@ function DestinationRow({
         ) : (
           <small className="muted">
             {t("scrobbling.unavailable", {
-              reason: row.unavailable ?? "",
+              reason: t(unavailableReason(row.unavailable)),
             })}
           </small>
         )}

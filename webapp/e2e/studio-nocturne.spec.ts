@@ -214,10 +214,14 @@ let loseAcknowledgementOf: number | null = null;
  */
 type Recipient = "listenbrainz" | "maloja" | "lastfm";
 
-/** Copied from `lastfm_unavailability`, which is what a real server answers. */
-const NO_PUBLIC_URL =
-  "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; " +
-  "an operator can still link an account from this server's command line";
+/**
+ * What `lastfm_unavailability` answers — a case, not a sentence.
+ *
+ * It used to be the server's own English prose, copied here and asserted
+ * verbatim below, so the test agreed with the server about a string neither of
+ * them should have been sending to a client that ships in two languages.
+ */
+const NO_PUBLIC_URL = "browser_journey_needs_https";
 
 const freshDestinations = () => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
@@ -273,6 +277,25 @@ let uncertain = freshUncertain();
 let scrobbleWrites: Array<{ method: string; path: string; body?: unknown }> = [];
 /** Where the Last.fm journey says to send the browser. */
 let lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
+
+/**
+ * The words the mock holds for each track. Absent is a track without any.
+ *
+ * Shaped like `src/lyrics.rs` answers, `camelCase` envelope included — written
+ * from the server rather than from `LyricsList` in `webapp/src/api.ts`, which
+ * is how that type spent a release claiming `structured_lyrics` while every
+ * read of it threw.
+ */
+let lyricSheets = new Map<
+  string,
+  Array<{
+    displayArtist: string | null;
+    displayTitle: string;
+    lang: string;
+    synced: boolean;
+    line: Array<{ start?: number; value: string }>;
+  }>
+>();
 
 /** The loop the mock holds for each track, as bytes. Absent is none. */
 let canvases = new Map<string, number[]>();
@@ -542,11 +565,15 @@ async function mockAuthenticatedApi(page: Page) {
       url.pathname.startsWith("/api/v2/tracks/") &&
       url.pathname.endsWith("/lyrics")
     ) {
-      // A track without words. The playing page asks for them, and the
-      // catch-all below would answer with a track, which is not a list of
-      // lyrics — no test visited that page before the canvas put a loop on it.
+      // The playing page asks for these, and the catch-all below would answer
+      // with a track, which is not a list of lyrics — no test visited that page
+      // before the canvas put a loop on it. Empty unless a test says otherwise.
+      const trackId = url.pathname.split("/")[4] as string;
       await route.fulfill({
-        json: { track_id: url.pathname.split("/")[4], structured_lyrics: [] },
+        json: {
+          trackId,
+          structuredLyrics: lyricSheets.get(trackId) ?? [],
+        },
       });
       return;
     }
@@ -683,6 +710,7 @@ test.beforeEach(async ({ page }) => {
   uploadCommits = [];
   uploadSession = freshUploadSession();
   loseAcknowledgementOf = null;
+  lyricSheets = new Map();
   canvases = new Map();
   canvasWrites = [];
   refuseCanvasWith = null;
@@ -799,6 +827,59 @@ test("sorts through the server and filters in the browser", async ({
   // A filter matching nothing says so instead of showing an empty grid.
   await page.getByLabel("Filter by title or artist").fill("zzz");
   await expect(page.getByText("Nothing matches that filter.")).toBeVisible();
+});
+
+/**
+ * Covers are asked for when they are about to be seen, not when the page mounts.
+ *
+ * `/api/v2/artwork/{hash}` needs an `Authorization` header, so each thumbnail
+ * costs a `fetch` of its own. A library of 164 tracks opened with 127 requests
+ * in half a second against a connection limit of six, and the covers below the
+ * fold were queued ahead of the ones being looked at.
+ *
+ * Asserted on one card at the far end rather than on a count: a count depends
+ * on the viewport and would have to be loosened until it stopped meaning
+ * anything. What this pins is the property — off screen is not asked for, and
+ * scrolling to it asks.
+ */
+test("asks for a cover when it comes into view, and not before", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  const shelf = Array.from({ length: 60 }, (_, index) => ({
+    id: `album-lazy-${index}`,
+    library_id: "library-1",
+    title: `Shelf ${String(index).padStart(2, "0")}`,
+    artist: "Rue Delacour",
+    artist_id: "artist-1",
+    artwork_hash: `hash-${index}`,
+    year: 2000 + index,
+    starred_at: null,
+    user_rating: null,
+  }));
+
+  // Registered after `mockAuthenticatedApi`, so these win: Playwright tries
+  // handlers newest first.
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    asked.push(new URL(route.request().url()).pathname.split("/").pop() ?? "");
+    // A 404 is enough: this is about which requests leave, not what comes back.
+    await route.fulfill({ status: 404, body: "" });
+  });
+
+  await page.goto("/");
+  const last = page.getByText("Shelf 59");
+  await expect(last).toBeVisible();
+
+  // The top of the shelf is on screen and has been asked for; the bottom is
+  // sixty cards away and has not.
+  await expect.poll(() => asked).toContain("hash-0");
+  expect(asked).not.toContain("hash-59");
+
+  await last.scrollIntoViewIfNeeded();
+  await expect.poll(() => asked).toContain("hash-59");
 });
 
 /**
@@ -1569,6 +1650,33 @@ test("offers removal but no new canvas where the library takes none", async ({
  * name. It steps aside when motion is reduced, and when the browser cannot play
  * it — the cover shows then, never an empty frame.
  */
+/**
+ * The playing page, reading what the server actually sends.
+ *
+ * Until 2026-09-15 `LyricsList` declared a `snake_case` envelope the server has
+ * never sent, so this page threw on its first property and showed nothing at
+ * all. Nothing caught it because the mock above was written from that type. An
+ * assertion on the words themselves is what tells the two shapes apart: an
+ * empty sheet renders the same "no lyrics" line under either name.
+ */
+test("shows the words a track travels with", async ({ page }) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: false,
+      line: [{ value: "the lamps come on along the quay" }],
+    },
+  ]);
+  await page.goto("/playing");
+  await expect(
+    page.getByRole("listitem").filter({
+      hasText: "the lamps come on along the quay",
+    }),
+  ).toBeVisible();
+});
+
 test("plays a track's canvas over its cover, and steps aside for it", async ({
   page,
 }) => {
@@ -1629,10 +1737,14 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   ).toBeVisible();
 
   // Declared and unusable is a real shape, and the reason is published so the
-  // person is not left to discover it when a link fails later.
+  // person is not left to discover it when a link fails later. Asserted on the
+  // words this client chose for `NO_PUBLIC_URL`, not on the code it was given:
+  // a case printed raw would satisfy any assertion made on the code itself.
   await expect(
     page.getByText(
-      `Unavailable here: ${NO_PUBLIC_URL}`,
+      "Unavailable here: the browser journey needs this server’s public " +
+        "address to be an https one — an operator can still link an account " +
+        "from the command line",
     ),
   ).toBeVisible();
   await expect(
@@ -1644,6 +1756,52 @@ test("offers each instance by name, and says why one cannot be linked", async ({
     .analyze();
   expect(results.violations).toEqual([]);
 });
+
+/**
+ * A server newer than the client reading it.
+ *
+ * `unavailable` carries a case rather than a sentence, so this client has a
+ * table of words for the cases it knows — and a case it does not know must not
+ * become a blank where a reason should be. The type is open for the same
+ * reason: a union naming only today's cases would be an assertion about the
+ * wire that the wire never made, which is the fault this whole change set
+ * exists to remove.
+ */
+test("says a reason it does not recognise is a reason, not a blank", async ({
+  page,
+}) => {
+  const lastfm = destinations.find((row) => row.provider === "lastfm");
+  if (lastfm) lastfm.unavailable = "a_case_from_a_later_release";
+
+  await page.goto("/settings/scrobbling");
+
+  await expect(
+    page.getByText("Unavailable here: this server did not say why"),
+  ).toBeVisible();
+});
+
+/**
+ * `toString` is not a translation key.
+ *
+ * Opening the union widened the lookup key to `string`, and a plain object
+ * answers for names nobody put in it: `toString` and `constructor` come back
+ * off the prototype, truthy, and would reach `t()` as if they were keys. Every
+ * inherited name is a case this client does not know, and must read as one.
+ */
+for (const inherited of ["toString", "constructor", "hasOwnProperty"]) {
+  test(`treats the inherited name ${inherited} as a case it does not know`, async ({
+    page,
+  }) => {
+    const lastfm = destinations.find((row) => row.provider === "lastfm");
+    if (lastfm) lastfm.unavailable = inherited;
+
+    await page.goto("/settings/scrobbling");
+
+    await expect(
+      page.getByText("Unavailable here: this server did not say why"),
+    ).toBeVisible();
+  });
+}
 
 test("links one instance by its key, and leaves the other alone", async ({
   page,
