@@ -177,6 +177,29 @@ function clearArtworkUrls(): void {
   artworkUrls.clear();
 }
 
+/**
+ * Things holding answers that belong to whoever is signed in.
+ *
+ * The object URLs above were the only one of these for a long time, and
+ * clearing them was written inline at each of the three moments a session
+ * begins or ends. There is a query cache now — albums, playlists, favourites,
+ * an administrator's list of accounts — and it lives outside this module, so
+ * it registers here instead of being reached for. Signing out and signing in
+ * as somebody else on a shared browser must not show them the last person's
+ * library, and a client-side navigation is all that happens between the two:
+ * the document is never reloaded, so nothing is forgotten on its own.
+ */
+const sessionScoped: Array<() => void> = [];
+
+export function forgetOnSessionChange(forget: () => void): void {
+  sessionScoped.push(forget);
+}
+
+function clearSessionState(): void {
+  clearArtworkUrls();
+  for (const forget of sessionScoped) forget();
+}
+
 function refresh(): Promise<boolean> {
   if (!pendingRefresh) {
     pendingRefresh = performRefresh().finally(() => {
@@ -212,6 +235,10 @@ async function performRefresh(): Promise<boolean> {
 
 function handleRefreshFailure(hadSession: boolean): void {
   session = null;
+  // A session that cannot be renewed has ended. The redirect below reloads the
+  // document and would clear this anyway — except when it does not fire,
+  // because the visitor is already on the sign-in screen.
+  clearSessionState();
   if (hadSession && window.location.pathname !== "/login") {
     window.location.assign("/login");
   }
@@ -253,7 +280,7 @@ export async function login(username: string, password: string): Promise<void> {
     throw new ApiError(response.status, "login failed");
   }
   session = await parse<WebSession>(response);
-  clearArtworkUrls();
+  clearSessionState();
 }
 
 export const setupRequired = () =>
@@ -284,7 +311,7 @@ export async function logout(): Promise<void> {
     });
   } finally {
     session = null;
-    clearArtworkUrls();
+    clearSessionState();
   }
 }
 

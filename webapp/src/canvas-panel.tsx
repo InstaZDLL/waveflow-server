@@ -1,16 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, useState } from "react";
 
-import {
-  ApiError,
-  canvasUrl,
-  placeCanvas,
-  removeCanvas,
-  type Song,
-} from "./api";
+import { ApiError, placeCanvas, removeCanvas, type Song } from "./api";
 import { canvasRefusal, usePrefersReducedMotion } from "./canvas";
 import { type TranslationKey, useI18n } from "./i18n";
 import { mayPlaceCanvas, useLibraryScope } from "./library-scope";
-import { useAsync } from "./pages";
+import { useReload } from "./pages";
+import { canvasQuery } from "./queries";
 
 /**
  * What the file picker offers. The server reads the bytes and trusts neither
@@ -39,22 +35,23 @@ export function CanvasPanel({ song }: { song: Song }) {
   const library = libraries.find(
     (candidate) => candidate.id === song.library_id,
   );
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(canvasQuery(song.id).queryKey);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{
     kind: "notice" | "error";
     text: string;
   } | null>(null);
-  // Wrapped, because `useAsync` answers null while it waits and a track that
-  // carries no canvas answers null too.
-  const { value: looked, error } = useAsync(
-    () => canvasUrl(song.id).then((ticket) => ({ ticket })),
-    [song.id, revision],
-  );
+  // No wrapper any more: a query tells "still waiting" from "answered null",
+  // which the hook this replaced could not, so a track carrying no canvas had
+  // to be handed back inside an object to be distinguished from a pending one.
+  const {
+    data: ticket = null,
+    error,
+    isPending,
+  } = useQuery(canvasQuery(song.id));
 
   if (library?.role === "listener") return null;
   const closed = library !== undefined && !mayPlaceCanvas(library);
-  const ticket = looked?.ticket ?? null;
 
   async function change(action: () => Promise<unknown>, done: TranslationKey) {
     setBusy(true);
@@ -71,7 +68,7 @@ export function CanvasPanel({ song }: { song: Song }) {
       setBusy(false);
       // Read back whatever happened. A refusal can still mean the link moved:
       // a 404 on removal is also a loop another client already took away.
-      setRevision((value) => value + 1);
+      reload();
     }
   }
 
@@ -90,7 +87,7 @@ export function CanvasPanel({ song }: { song: Song }) {
         <p className="error" role="alert">
           {t("canvas.unreadable")}
         </p>
-      ) : !looked ? (
+      ) : isPending ? (
         <p className="muted" role="status">
           {t("canvas.loading")}
         </p>
