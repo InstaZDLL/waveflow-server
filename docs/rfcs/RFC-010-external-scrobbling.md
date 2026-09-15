@@ -799,11 +799,11 @@ a permis de l'écrire en second sans rejouer la crainte.
 
 Deux commandes, là où le web a deux routes :
 
-- `waveflow scrobble authorize --username … --destination …` appelle
+- `waveflow-server scrobble authorize --username … --destination …` appelle
   `auth.getToken`, imprime l'adresse à ouvrir et le jeton à rapporter. **Elle
   n'écrit rien** : une autorisation que personne ne termine ne coûte rien au
   compte, et aucune ligne ne traîne qu'une purge devrait ramasser.
-- `waveflow scrobble exchange --username … --destination …` échange le jeton
+- `waveflow-server scrobble exchange --username … --destination …` échange le jeton
   approuvé contre la clé de session et crée le lien.
 
 **Il ne demande pas `WAVEFLOW_PUBLIC_URL`**, et c'est sa raison d'être. Le
@@ -812,10 +812,21 @@ que ce serveur répond ; ici rien ne revient. La seule condition est donc une
 application — ce qui fait de ce parcours celui d'un serveur sans façade
 publique, exactement la machine où la CLI est déjà le seul geste possible.
 
-**Le jeton sort par une variable d'environnement, pas par `argv`**, comme le
-secret de `link` et pour la même raison : un historique de shell et une liste de
-processus se lisent. Le sien mérite ce soin autant qu'une clé de session — qui
-l'échange le premier est celui à qui la session finit par appartenir.
+**Le jeton passe par `WAVEFLOW_LASTFM_TOKEN`, pas par `argv`** — nom que
+`--token-env` permet de changer, comme le secret de `link` et pour la même
+raison : un historique de shell et une liste de processus se lisent. Le sien
+mérite ce soin autant qu'une clé de session — qui l'échange le premier est
+celui à qui la session finit par appartenir.
+
+**Et `authorize` n'imprime pas de ligne prête à coller.** La première rédaction
+affichait `WAVEFLOW_LASTFM_TOKEN=… waveflow-server scrobble exchange …`, prête à
+copier — donc prête à atterrir dans l'historique que la variable existe pour
+éviter. Le jeton s'imprime seul, la commande nomme la variable, et **comment on
+la remplit appartient à l'opérateur et à son interpréteur** : une lecture
+silencieuse, un gestionnaire de secrets, un fichier sourcé puis effacé. Ce
+serveur tourne sur trois plateformes dont les réponses diffèrent, et n'a pas à
+choisir pour elles. Le [guide API](../api-v2-guide.md#external-scrobbling) en
+montre une par interpréteur, à titre d'exemple et non de prescription.
 
 **Et `auth.getToken` n'entre pas dans le parcours web pour autant.** Le
 paragraphe ci-dessus disait que les deux se ressemblent assez pour se mélanger ;
