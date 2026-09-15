@@ -483,6 +483,20 @@ export function SongTable({
   // the queue, and a list of the caches that could be wrong is a list with one
   // missing from it.
   const client = useQueryClient();
+  /**
+   * Everything the mutation could have made wrong, **except the draw**.
+   *
+   * This table is rendered on the shuffle page too, and that query is the one
+   * question here deliberately kept out of the cache: invalidating it would
+   * re-ask the server for a *different* sample, so starring a track pulled the
+   * list out from under the hand that starred it — and took the track with it.
+   * A star says something about one song and nothing about which songs were
+   * drawn.
+   */
+  const reloadAffected = () =>
+    client.invalidateQueries({
+      predicate: (query) => query.queryKey[0] !== "random-songs",
+    });
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const { libraries } = useLibraryScope();
@@ -498,7 +512,7 @@ export function SongTable({
     setStars((previous) => ({ ...previous, [song.id]: on }));
     try {
       await setFavorite("track", song.id, on);
-      await client.invalidateQueries();
+      await reloadAffected();
     } catch {
       setStars((previous) => ({ ...previous, [song.id]: !on }));
     }
@@ -509,7 +523,7 @@ export function SongTable({
     setRatings((current) => ({ ...current, [song.id]: rating }));
     try {
       await setRating("track", song.id, rating);
-      await client.invalidateQueries();
+      await reloadAffected();
     } catch {
       setRatings((current) => ({ ...current, [song.id]: previous }));
     }

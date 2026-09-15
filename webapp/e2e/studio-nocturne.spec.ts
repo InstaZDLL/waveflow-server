@@ -2362,3 +2362,43 @@ test("asks again for a cover that failed, and not for one that is absent", async
   await expect.poll(() => flaky).toBe(2);
   expect(absent).toBe(1);
 });
+
+/**
+ * Starring a track on the shuffle page does not redraw the shuffle.
+ *
+ * A mutation invalidates everything it could have made wrong, because a song
+ * appears in albums, genres, search, history, favourites, playlists and the
+ * queue. The draw is the exception: it is the one question deliberately kept
+ * out of the cache, so invalidating it asks the server for a *different*
+ * sample — and the list goes out from under the hand that starred it, taking
+ * the starred track with it.
+ */
+test("keeps the shuffle still when a track in it is favourited", async ({
+  page,
+}) => {
+  let drawn = 0;
+  await page.route("**/api/v2/songs/random*", async (route) => {
+    drawn += 1;
+    await route.fulfill({ json: [track] });
+  });
+  await page.route("**/api/v2/favorites/track/*", async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  });
+
+  await page.goto("/random");
+  await expect(page.getByText("Army of Me")).toBeVisible();
+  expect(drawn).toBe(1);
+
+  await page
+    .getByRole("button", { name: "Add favourite: Army of Me" })
+    .click();
+  // The button renames itself once the star is on, so the state is read from
+  // the label rather than from a locator that no longer matches.
+  await expect(
+    page.getByRole("button", { name: "Remove favourite: Army of Me" }),
+  ).toBeVisible();
+
+  // The same track, still there, and the server was not asked to draw again.
+  await expect(page.getByText("Army of Me")).toBeVisible();
+  expect(drawn).toBe(1);
+});
