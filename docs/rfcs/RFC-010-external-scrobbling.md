@@ -799,12 +799,16 @@ a permis de l'écrire en second sans rejouer la crainte.
 
 Deux commandes, là où le web a deux routes :
 
-- `waveflow-server scrobble authorize --username … --destination …` appelle
-  `auth.getToken`, imprime l'adresse à ouvrir et le jeton à rapporter. **Elle
-  n'écrit rien** : une autorisation que personne ne termine ne coûte rien au
-  compte, et aucune ligne ne traîne qu'une purge devrait ramasser.
-- `waveflow-server scrobble exchange --username … --destination …` échange le jeton
-  approuvé contre la clé de session et crée le lien.
+- `waveflow-server scrobble authorize --actor … --username … --destination …`
+  appelle `auth.getToken`, imprime l'adresse à ouvrir et le jeton à rapporter.
+  **Elle n'écrit rien** : une autorisation que personne ne termine ne coûte rien
+  au compte, et aucune ligne ne traîne qu'une purge devrait ramasser.
+- `waveflow-server scrobble exchange --actor … --username … --destination …`
+  échange le jeton approuvé contre la clé de session et crée le lien.
+
+`--actor` est l'administrateur qui exécute, `--username` le compte qui sera
+lié : les deux, comme partout dans cette CLI, parce qu'un opérateur prépare un
+serveur pour d'autres que lui.
 
 **Il ne demande pas `WAVEFLOW_PUBLIC_URL`**, et c'est sa raison d'être. Le
 parcours web l'exige parce que Last.fm doit ramener un navigateur à une adresse
