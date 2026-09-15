@@ -948,7 +948,30 @@ unaffected.
 
 Creating a library starts its first scan and returns both `library_id` and
 `scan_id`. The scan event route uses Server-Sent Events and still requires the
-Bearer token.
+Bearer token — so `EventSource`, which sends no headers, cannot open it; read
+the response body of a `fetch` instead.
+
+**Both of its frames carry the same object**, the one
+`GET /api/v2/scans/{scan_id}` answers: an opening `snapshot` event, then a
+`progress` event per step. A watcher replaces what it holds and never has to
+tell the two apart.
+
+```text
+event: snapshot
+data: {"id":"…","library_id":"…","status":"running","total_files":164,"processed_files":0,
+       "added":0,"updated":0,"moved":0,"skipped":0,"unavailable":0,"errors":0,
+       "current_path":null,"message":null}
+
+event: progress
+data: {"id":"…","library_id":"…","status":"running","total_files":164,"processed_files":61, …}
+```
+
+Builds before 2026-09-15 sent a different object for `progress`, naming
+those same three fields `scan_id`, `total` and `processed` while the ten
+counters beside them kept their names. A client bound to the snapshot therefore
+showed its totals as absent from the first progress frame on, and its
+per-outcome counters correctly — which reads as a display bug rather than as
+two shapes on one stream. There is one shape now.
 
 `GET /api/v2/libraries` answers, for each library the account belongs to, its
 `role` and `accepts_uploads`. The flag says whether the library takes files at

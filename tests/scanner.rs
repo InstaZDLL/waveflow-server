@@ -921,3 +921,91 @@ async fn an_unreferenced_cover_and_its_thumbnails_go_once_they_are_old_enough() 
         "the dead link is reported, not repaired"
     );
 }
+
+/// The event stream speaks one shape, and every counter lands where it belongs.
+///
+/// `/api/v2/scans/{id}/events` opens with a `snapshot` carrying a
+/// `ScanJobRecord` and then sends a `progress` per step. Those frames used to
+/// be two different types: `progress` carried the scanner's own `ScanProgress`,
+/// which names `id`, `total_files` and `processed_files` as `scan_id`, `total`
+/// and `processed`. A watcher bound to the snapshot read `undefined` from the
+/// first progress frame on, while the ten counters that happen to share a name
+/// kept working — which is why it read as a display bug rather than a shape.
+///
+/// That the frames agree is now a compile-time fact: `ScanProgress` is no
+/// longer `Serialize`, so the handler cannot yield it and has to convert. What
+/// the compiler cannot check is that the conversion puts each number where it
+/// belongs — eleven of the thirteen fields are `i64` or `Uuid`, so a transposed
+/// pair type-checks perfectly. That is what this pins.
+#[test]
+fn scan_progress_converts_into_the_shape_the_stream_sends() {
+    let scan = uuid::Uuid::new_v4();
+    let library = uuid::Uuid::new_v4();
+    let record = waveflow_server::scanner::ScanProgress {
+        scan_id: scan,
+        library_id: library,
+        status: "running".into(),
+        total: 97,
+        processed: 61,
+        added: 1,
+        updated: 2,
+        moved: 3,
+        skipped: 4,
+        unavailable: 5,
+        errors: 6,
+        current_path: Some("Rue Delacour/Nocturne.flac".into()),
+        message: Some("still reading".into()),
+    }
+    .record();
+
+    // Distinct values throughout, so a swap between any two shows up here
+    // rather than in a client six months later.
+    assert_eq!(
+        record.id, scan,
+        "the scan's own id, under the snapshot's name"
+    );
+    assert_eq!(record.library_id, library);
+    assert_eq!(record.status, "running");
+    assert_eq!(record.total_files, 97);
+    assert_eq!(record.processed_files, 61);
+    assert_eq!(record.added, 1);
+    assert_eq!(record.updated, 2);
+    assert_eq!(record.moved, 3);
+    assert_eq!(record.skipped, 4);
+    assert_eq!(record.unavailable, 5);
+    assert_eq!(record.errors, 6);
+    assert_eq!(
+        record.current_path.as_deref(),
+        Some("Rue Delacour/Nocturne.flac")
+    );
+    assert_eq!(record.message.as_deref(), Some("still reading"));
+
+    // And the names themselves, since they are the whole point: a client binds
+    // these thirteen and nothing else.
+    let json = serde_json::to_value(&record).unwrap();
+    let mut keys: Vec<&str> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "added",
+            "current_path",
+            "errors",
+            "id",
+            "library_id",
+            "message",
+            "moved",
+            "processed_files",
+            "skipped",
+            "status",
+            "total_files",
+            "unavailable",
+            "updated",
+        ]
+    );
+}
