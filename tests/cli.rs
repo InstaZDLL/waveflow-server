@@ -439,3 +439,161 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
         "neither stream may echo the password it was given"
     );
 }
+
+/// A double for the half of the Last.fm protocol that would leave this machine.
+///
+/// Small and local rather than shared with `tests/scrobbling.rs`: what this
+/// file needs is an exchange that exists, and a token it can recognise coming
+/// back out.
+struct Approves;
+
+impl waveflow_server::services::LastFmSessionExchange for Approves {
+    fn exchange<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<String, waveflow_server::services::ServiceError>>
+    {
+        Box::pin(async move { Ok(format!("session-for-{token}")) })
+    }
+
+    fn request_token<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<waveflow_server::services::LastFmApproval, waveflow_server::services::ServiceError>,
+    > {
+        Box::pin(async move {
+            Ok(waveflow_server::services::LastFmApproval {
+                authorize_url: "https://www.last.fm/api/auth/?api_key=k&token=t".to_owned(),
+                token: "t".to_owned(),
+            })
+        })
+    }
+}
+
+/// Last.fm, from a host with no browser on it — which is this file's premise.
+///
+/// `link` cannot serve here: Last.fm hands out no secret a person can paste,
+/// so the two commands split where the person has to leave and come back.
+/// `authorize` writes nothing down — the request token is Last.fm's, and it
+/// expires on Last.fm's clock — which is why this test can assert that running
+/// it leaves the account exactly as unlinked as it found it.
+///
+/// `exchange` is exercised at the seam that needs no environment, for the
+/// reason the test above gives at length: mutating the process environment
+/// while sibling threads read it is the race this file exists without.
+#[tokio::test]
+async fn the_cli_authorises_last_fm_without_a_browser() {
+    let (_temp, _config, state) = test_app().await;
+    inserted_account(&state, "cli-lastfm-admin", "admin").await;
+    let user = inserted_account(&state, "cli-lastfm-user", "user").await;
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::new(Approves)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    // The whole first command, end to end: it needs no secret from the
+    // environment, so nothing here has to be mutated for it to run.
+    run_cli(
+        &state,
+        &[
+            "scrobble",
+            "authorize",
+            "--actor",
+            "cli-lastfm-admin",
+            "--username",
+            "cli-lastfm-user",
+            "--destination",
+            "default",
+        ],
+    )
+    .await
+    .unwrap();
+
+    // And it left nothing behind. Asking Last.fm for a token is not half a
+    // link: an authorisation nobody completes has to cost this account
+    // nothing, and there is no row of ours for a purge to have to find.
+    assert!(state
+        .services
+        .scrobble_links(user)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // An instance nobody declared is refused, and by the command rather than
+    // by the service being lenient.
+    assert!(run_cli(
+        &state,
+        &[
+            "scrobble",
+            "authorize",
+            "--actor",
+            "cli-lastfm-admin",
+            "--username",
+            "cli-lastfm-user",
+            "--destination",
+            "not-declared",
+        ],
+    )
+    .await
+    .is_err());
+
+    let missing = run_cli(
+        &state,
+        &[
+            "scrobble",
+            "exchange",
+            "--actor",
+            "cli-lastfm-admin",
+            "--username",
+            "cli-lastfm-user",
+            "--destination",
+            "default",
+            "--token-env",
+            "WAVEFLOW_TEST_LASTFM_TOKEN_THAT_IS_NEVER_SET",
+        ],
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .contains("WAVEFLOW_TEST_LASTFM_TOKEN_THAT_IS_NEVER_SET"),
+        "{missing}"
+    );
+
+    // The flag surface, pinned by parsing rather than by running — including
+    // the default variable name, which is what an operator reads in `--help`
+    // and types into their shell.
+    let parsed = format!(
+        "{:?}",
+        waveflow_server::cli::Cli::try_parse_from([
+            "waveflow-server",
+            "scrobble",
+            "exchange",
+            "--actor",
+            "a",
+            "--username",
+            "b",
+            "--destination",
+            "default",
+        ])
+        .expect("the scrobble exchange flags have to parse — that is what this pins")
+        .command
+        .unwrap()
+    );
+    assert!(parsed.contains("WAVEFLOW_LASTFM_TOKEN"), "{parsed}");
+
+    // The second half, through the service the command calls: the token comes
+    // back, and the link is made under the session key it was exchanged for.
+    state
+        .services
+        .complete_lastfm_approval(user, "default", "t")
+        .await
+        .unwrap();
+    let links = state.services.scrobble_links(user).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].provider.as_str(), "lastfm");
+    assert_eq!(links[0].destination, "default");
+}

@@ -1059,6 +1059,9 @@ mod sync;
 mod track_metadata;
 mod uploads;
 
+/// Crate-visible only: the adapter builds the browser-less journey's address
+/// from it, and nothing outside this binary has a use for it.
+pub(crate) use lastfm::LASTFM_AUTHORIZE_URL;
 /// The scrobbling vocabulary, which is the one thing in this module tree that
 /// has to be spoken outside it: an adapter implements [`ScrobbleTarget`]
 /// without being part of the domain, and the API reads the link states and the
@@ -1069,7 +1072,8 @@ mod uploads;
 /// decision 13 asks somebody to choose and nothing outside could see what
 /// about.
 pub use lastfm::{
-    LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX, LASTFM_JOURNEY_COOKIE,
+    LastFmApproval, LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX,
+    LASTFM_JOURNEY_COOKIE,
 };
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,

@@ -24,6 +24,8 @@ export type IconName =
   | "next"
   | "edit"
   | "scrobbling"
+  | "more"
+  | "close"
   | "upload";
 
 const paths: Record<IconName, ReactNode> = {
@@ -137,6 +139,15 @@ const paths: Record<IconName, ReactNode> = {
       <path d="M4 12a8 8 0 0 1 8 8M4 6a14 14 0 0 1 14 14" />
     </>
   ),
+  // The ellipsis every phone uses for "there is more than fits".
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="19" cy="12" r="1.4" />
+    </>
+  ),
+  close: <path d="m6 6 12 12M18 6 6 18" />,
   logout: (
     <>
       <path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10" />
