@@ -101,6 +101,33 @@ WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com
 
 Behind a reverse proxy, set `WAVEFLOW_PUBLIC_URL=https://music.example.com` so a created share returns an absolute, externally usable URL.
 
+### One path whose query string must not reach your proxy's log
+
+If you link Last.fm **through a browser**, keep the query string out of the access log on this path — and only its log, since the token in it is what the route exists to receive:
+
+```text
+/api/v2/scrobble-links/lastfm/callback/
+```
+
+Last.fm returns the browser there with `?token=…` appended. That token is worth an hour and worth a profile: whoever holds it can exchange it for a session key and start receiving somebody else's listens. This server keeps none of it — traces record the path only, that path is redacted in them, the answer carries `no-store` and `no-referrer`, and it redirects at once to an address with no token in it. **A reverse proxy logs the full request line by default.** The component that keeps nothing sits behind the component that keeps everything, and only its operator can close that.
+
+On nginx, log that location with `$uri`, which is the path without the query, rather than `$request`, which includes it:
+
+```nginx
+log_format waveflow_no_query '$remote_addr - $remote_user [$time_local] '
+                             '"$request_method $uri $server_protocol" $status '
+                             '$body_bytes_sent "$http_referer" "$http_user_agent"';
+
+location /api/v2/scrobble-links/lastfm/callback/ {
+    access_log /var/log/nginx/access.log waveflow_no_query;
+    proxy_pass http://waveflow:4533;   # passes the URI on unchanged, query included
+}
+```
+
+Caddy can drop the parameter itself rather than the whole query, through its access log's `query` filter with a `delete token` action — see their log-filter documentation for the syntax your version takes. For anything else, the question to ask of its access-log format is whether the query string can be excluded; dropping the whole path field is blunt but valid.
+
+These are illustrations to adapt, not configuration this repository tests — nothing here can reach your proxy. **The command-line journey avoids the whole question**: no browser comes back, so no token ever travels in a URL. See the [native API guide](docs/api-v2-guide.md#external-scrobbling).
+
 ## Back up two files, together
 
 ```bash
