@@ -253,6 +253,20 @@ décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
     c'est une décision d'interface, donc elle attend la sienne plutôt que de se
     glisser dans une PR qui parle d'autre chose.
 
+    > **Tranché et fait le 2026-09-15**, par la
+    > [#202](https://github.com/InstaZDLL/waveflow-server/pull/202) : un
+    > septième emplacement « Plus » ouvre une feuille listant les huit autres.
+    > Une `<dialog>` native, parce que le piège de focus, la touche Échap et
+    > l'inertie de la page derrière viennent de l'élément et non d'un code à
+    > réécrire à chaque déplacement du balisage.
+    >
+    > **Et la barre débordait déjà.** Son grid disait `repeat(5, 1fr)` depuis le
+    > premier dessin, qui avait cinq entrées `primary` ; une sixième est arrivée
+    > plus tard sans y toucher, donc la barre passait à deux lignes depuis. La
+    > suite ne le voyait pas : elle mesure le débordement horizontal, et une
+    > seconde ligne déborde vers le bas. Le nombre de colonnes est désormais
+    > celui du navigateur, donc il ne peut plus se périmer.
+
 ## 3. Le plan de redesign
 
 ### Le diagnostic, et pourquoi il n'est pas une affaire de goût
