@@ -1677,6 +1677,46 @@ test("shows the words a track travels with", async ({ page }) => {
   ).toBeVisible();
 });
 
+/**
+ * Most tracks carry no loop, and minting a ticket is how the client asks — so
+ * most of the time the answer is 404. The playing screen asks from an effect on
+ * mount, which made that 404 a per-navigation cost with no end to it: measured
+ * in a real session as a burst in the console, one request per visit, for ever.
+ *
+ * Client-side navigation both ways, deliberately. `page.goto` loads a fresh
+ * document and empties everything the module remembers, so a test built on it
+ * would prove the reload rather than the fix.
+ */
+test("asks once whether a track carries a canvas, not once per visit", async ({
+  page,
+}) => {
+  // `canvases` is left empty, so every ticket answers 404 — the shape at issue.
+  const tickets: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/canvas-ticket")) tickets.push(path);
+  });
+
+  await page.goto("/playing");
+  await expect(page.locator(".canvas-stage .cover")).toBeVisible();
+  await expect.poll(() => tickets).toEqual([
+    "/api/v2/tracks/song-1/canvas-ticket",
+  ]);
+
+  for (const _visit of [1, 2]) {
+    await page.getByRole("link", { name: "Albums" }).click();
+    await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+    await page.getByRole("link", { name: "Now playing" }).click();
+    await expect(page.locator(".canvas-stage .cover")).toBeVisible();
+  }
+
+  // Waited for rather than asserted straight away: a request issued by the
+  // mount effect leaves after the frame that made the cover visible, so
+  // counting at that moment would pass whether or not one was on its way.
+  await page.waitForLoadState("networkidle");
+  expect(tickets).toHaveLength(1);
+});
+
 test("plays a track's canvas over its cover, and steps aside for it", async ({
   page,
 }) => {
