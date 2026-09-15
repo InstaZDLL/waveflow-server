@@ -15,21 +15,31 @@ use lofty::{
     file::TaggedFileExt,
     prelude::{Accessor, AudioFile, ItemKey},
 };
-use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::{
-    catalog::{ApplyOutcome, ArtworkInput, CatalogApply, CatalogTrackInput, LibraryRecord},
+    catalog::{
+        ApplyOutcome, ArtworkInput, CatalogApply, CatalogTrackInput, LibraryRecord, ScanJobRecord,
+    },
     database::Database,
     lyrics::{self, LyricsInput},
 };
 
 const MAX_LYRICS_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+/// One reading of a scan in flight, as it travels between the scanning task and
+/// whoever is watching.
+///
+/// Deliberately **not** `Serialize`. It used to be, and `/api/v2/scans/{id}/events`
+/// yielded it verbatim for every `progress` event while the opening `snapshot`
+/// carried a [`ScanJobRecord`] — two shapes of the same reading on one stream,
+/// disagreeing on three names out of thirteen. A watcher that bound `total_files`
+/// showed `undefined` from the first progress frame on. The stream now converts
+/// through [`ScanProgress::record`], and dropping the derive is what stops the
+/// other shape coming back: there is no way to put this type on a wire.
+#[derive(Debug, Clone)]
 pub struct ScanProgress {
     pub scan_id: Uuid,
     pub library_id: Uuid,
@@ -44,6 +54,28 @@ pub struct ScanProgress {
     pub errors: i64,
     pub current_path: Option<String>,
     pub message: Option<String>,
+}
+
+impl ScanProgress {
+    /// The same reading in the shape `GET /api/v2/scans/{id}` answers, which is
+    /// the one shape the event stream speaks.
+    pub fn record(&self) -> ScanJobRecord {
+        ScanJobRecord {
+            id: self.scan_id,
+            library_id: self.library_id,
+            status: self.status.clone(),
+            total_files: self.total as i64,
+            processed_files: self.processed as i64,
+            added: self.added,
+            updated: self.updated,
+            moved: self.moved,
+            skipped: self.skipped,
+            unavailable: self.unavailable,
+            errors: self.errors,
+            current_path: self.current_path.clone(),
+            message: self.message.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]

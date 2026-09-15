@@ -360,6 +360,11 @@ const en = {
   "scrobbling.provider.lastfm": "Last.fm",
   "scrobbling.instance": "instance “{name}”",
   "scrobbling.unavailable": "Unavailable here: {reason}",
+  "scrobbling.unavailable.no_application_configured":
+    "no Last.fm application is declared on this server",
+  "scrobbling.unavailable.browser_journey_needs_https":
+    "the browser journey needs this server’s public address to be an https one — an operator can still link an account from the command line",
+  "scrobbling.unavailable.unknown": "this server did not say why",
   "scrobbling.retired":
     "This server no longer offers this instance. Nothing more will leave for it — you can still withdraw the authorisation.",
   "scrobbling.notLinked": "Not linked.",
@@ -780,6 +785,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "scrobbling.provider.lastfm": "Last.fm",
   "scrobbling.instance": "instance « {name} »",
   "scrobbling.unavailable": "Indisponible ici : {reason}",
+  "scrobbling.unavailable.no_application_configured":
+    "aucune application Last.fm n’est déclarée sur ce serveur",
+  "scrobbling.unavailable.browser_journey_needs_https":
+    "le parcours par le navigateur exige que l’adresse publique de ce serveur soit en https — un exploitant peut encore lier un compte en ligne de commande",
+  "scrobbling.unavailable.unknown": "ce serveur n’a pas dit pourquoi",
   "scrobbling.retired":
     "Ce serveur ne propose plus cette instance. Plus rien ne partira vers elle — vous pouvez encore retirer l’autorisation.",
   "scrobbling.notLinked": "Non liée.",

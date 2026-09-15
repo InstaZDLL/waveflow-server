@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { Play, ScrobbleDestination, ScrobbleLink } from "./api";
+import type {
+  Play,
+  ScrobbleDestination,
+  ScrobbleLink,
+  ScrobbleUnavailable,
+} from "./api";
 import {
   NAMED_UNCERTAIN,
   playsByInstant,
@@ -13,7 +18,7 @@ function offered(
   provider: ScrobbleDestination["provider"],
   destination: string,
   available = true,
-  unavailable?: string,
+  unavailable?: ScrobbleUnavailable,
 ): ScrobbleDestination {
   return { provider, destination, available, unavailable };
 }
@@ -67,10 +72,10 @@ describe("scrobbleRows", () => {
 
   it("carries the reason an offered instance cannot be linked", () => {
     const rows = scrobbleRows(
-      [offered("lastfm", "default", false, "needs an https public URL")],
+      [offered("lastfm", "default", false, "browser_journey_needs_https")],
       [],
     );
-    expect(rows[0].unavailable).toBe("needs an https public URL");
+    expect(rows[0].unavailable).toBe("browser_journey_needs_https");
     expect(rows[0].link).toBeNull();
   });
 
