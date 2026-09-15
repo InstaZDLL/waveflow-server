@@ -290,14 +290,18 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     // A 404 is a definitive answer. Asserted on the content type rather than on
     // the status alone, because that is what the browser choked on — and this
     // holds whether or not a client build is embedded in the binary under test.
+    //
+    // Stated as what it *is* rather than as what it is not: "not HTML" is also
+    // satisfied by a header that never arrived, so it would pin nothing about
+    // the answer actually given.
     let icon = get("/favicon.ico").await;
     assert_eq!(icon.status(), StatusCode::NOT_FOUND);
-    assert!(!icon
+    assert!(icon
         .headers()
         .get("content-type")
         .map(|value| value.to_str().unwrap().to_owned())
         .unwrap_or_default()
-        .starts_with("text/html"));
+        .starts_with("application/json"));
 
     // A client route that merely starts like a reserved endpoint is not one.
     let lookalike = get("/reference-guide").await;
