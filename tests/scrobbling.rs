@@ -41,7 +41,8 @@ use waveflow_server::catalog::LibraryRecord;
 use waveflow_server::config::ScrobbleLimits;
 use waveflow_server::database::LibraryVisibility;
 use waveflow_server::services::{
-    ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleVerdict, ServiceError,
+    ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict,
+    ServiceError,
 };
 use waveflow_server::AppState;
 
@@ -3821,7 +3822,10 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
     let declared = state.services.scrobble_destinations();
     assert_eq!(declared.len(), 1);
     assert!(!declared[0].available);
-    assert!(declared[0].unavailable.unwrap().contains("application"));
+    assert_eq!(
+        declared[0].unavailable,
+        Some(ScrobbleUnavailable::NoApplicationConfigured)
+    );
     assert!(matches!(
         state
             .services
@@ -3838,7 +3842,10 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
     let state = waveflow_server::initialize(&plaintext).await.unwrap();
     let declared = state.services.scrobble_destinations();
     assert!(!declared[0].available);
-    assert!(declared[0].unavailable.unwrap().contains("https"));
+    assert_eq!(
+        declared[0].unavailable,
+        Some(ScrobbleUnavailable::BrowserJourneyNeedsHttps)
+    );
     assert!(matches!(
         state
             .services

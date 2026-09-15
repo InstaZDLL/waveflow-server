@@ -12,6 +12,7 @@ import {
   retryUncertainScrobble,
   type ScrobbleLink,
   type ScrobbleProvider,
+  type ScrobbleUnavailable,
   type UncertainScrobble,
   unlinkScrobble,
 } from "./api";
@@ -77,6 +78,30 @@ const REASONS = new Set([
   "ambiguous",
   "interrupted",
 ]);
+
+/**
+ * Why an instance cannot be linked, put into words.
+ *
+ * The server sent finished English prose here until 2026-09-15 and this page
+ * printed it, so a French reader was told in English what to change in a
+ * configuration file. It sends the case now and the wording is ours — which
+ * also means a case this client has not been taught must not become a blank:
+ * `unknown` says that much rather than nothing.
+ */
+const UNAVAILABLE_REASON = {
+  no_application_configured: "scrobbling.unavailable.no_application_configured",
+  browser_journey_needs_https:
+    "scrobbling.unavailable.browser_journey_needs_https",
+} as const satisfies Record<ScrobbleUnavailable, TranslationKey>;
+
+function unavailableReason(
+  code: ScrobbleUnavailable | undefined,
+): TranslationKey {
+  // Read through a wider type on purpose: the union above says what this build
+  // knows, and a server is free to be newer than the client reading it.
+  const known: Partial<Record<string, TranslationKey>> = UNAVAILABLE_REASON;
+  return (code && known[code]) || "scrobbling.unavailable.unknown";
+}
 
 function when(instant: number, locale: Locale): string {
   return new Intl.DateTimeFormat(locale, {
@@ -241,7 +266,7 @@ function DestinationRow({
         ) : (
           <small className="muted">
             {t("scrobbling.unavailable", {
-              reason: row.unavailable ?? "",
+              reason: t(unavailableReason(row.unavailable)),
             })}
           </small>
         )}
