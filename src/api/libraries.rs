@@ -202,12 +202,16 @@ pub async fn scan_events(
         .map_err(db_error)?
         .ok_or(ApiError::NotFound)?;
     let mut receiver = state.scanner.subscribe(scan_id);
+    // Both events carry a `ScanJobRecord`, so a watcher replaces what it holds
+    // and never has to tell the two frames apart. `progress` used to carry the
+    // scanner's own `ScanProgress`, which names three of the same fields
+    // differently — see `ScanProgress::record`.
     let output = async_stream::stream! {
         yield Ok(Event::default().event("snapshot").json_data(initial).expect("scan snapshot serializes"));
         if let Some(ref mut receiver) = receiver {
             loop {
                 match receiver.recv().await {
-                    Ok(progress) => yield Ok(Event::default().event("progress").json_data(progress).expect("scan progress serializes")),
+                    Ok(progress) => yield Ok(Event::default().event("progress").json_data(progress.record()).expect("scan progress serializes")),
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
