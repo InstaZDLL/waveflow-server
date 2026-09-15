@@ -42,7 +42,9 @@ pub const LASTFM_CALLBACK_PREFIX: &str = "/api/v2/scrobble-links/lastfm/callback
 /// is the **API endpoint** a session key will be used against, while this is
 /// Last.fm's *website*. They are two different hosts, and deriving one from the
 /// other would be a guess this server has no business making.
-const LASTFM_AUTHORIZE_URL: &str = "https://www.last.fm/api/auth/";
+/// `pub(crate)` since 2026-09-15: the browser-less journey builds this address
+/// in the adapter, which is the only place holding the application key.
+pub(crate) const LASTFM_AUTHORIZE_URL: &str = "https://www.last.fm/api/auth/";
 
 /// What one journey needs that neither the account nor the destination
 /// provides.
@@ -93,7 +95,16 @@ pub(super) fn lastfm_unavailability(config: &crate::config::Config) -> Option<&'
         return Some("no last.fm application is configured on this server");
     }
     if !crate::api::public_url_is_https(config.public_url.as_deref()) {
-        return Some("last.fm needs WAVEFLOW_PUBLIC_URL to be an https address");
+        // Naming the other way out, since 2026-09-15. This said last.fm
+        // "needs" an https address, which stopped being true of last.fm the
+        // day the command line could link one without any public address at
+        // all — it is true of *this* journey. A reason an operator can act on
+        // has to name the action that still exists, or it reads as a dead end
+        // where there is a door.
+        return Some(
+            "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; \
+             an operator can still link an account from this server's command line",
+        );
     }
     None
 }
@@ -106,6 +117,32 @@ pub(super) fn lastfm_unavailability(config: &crate::config::Config) -> Option<&'
 /// against a double, and a server with no application registers neither.
 pub trait LastFmSessionExchange: Send + Sync + 'static {
     fn exchange<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<String, ServiceError>>;
+
+    /// Asks Last.fm for a request token, for the journey that has no browser
+    /// on this machine.
+    ///
+    /// Both halves of Last.fm's protocol end at [`Self::exchange`], which is
+    /// why they share a trait: what differs is only where the request token
+    /// comes from. The web journey receives one on the return; here it is
+    /// asked for first, and a person carries it back by hand.
+    ///
+    /// **The address comes back with it.** It carries the application key, and
+    /// the service has no other way to reach one — `lastfm_journey` holds a
+    /// copy but exists only when a public `https` address is configured, which
+    /// is exactly the case this journey is for.
+    fn request_token<'a>(&'a self) -> BoxFuture<'a, Result<LastFmApproval, ServiceError>>;
+}
+
+/// What an operator has to do by hand, and what they must bring back.
+#[derive(Debug)]
+pub struct LastFmApproval {
+    /// Last.fm's own page, carrying the application key and the request token.
+    /// **It is not a public address**: whoever opens it first is who the
+    /// session ends up belonging to.
+    pub authorize_url: String,
+    /// The request token, which [`LastFmSessionExchange::exchange`] turns into
+    /// a session key once the person has approved it.
+    pub token: String,
 }
 
 /// The exchangers `initialize` fills, by destination name.
@@ -297,6 +334,78 @@ impl DomainServices {
         )
         .await?;
         Ok(destination)
+    }
+
+    /// Opens a Last.fm authorisation with no browser on this machine, and
+    /// writes nothing down.
+    ///
+    /// **This is the journey RFC-010 deferred, and it is deferred no longer.**
+    /// The reason it waited was that "writing two journeys at once is two
+    /// chances to get the temporary state wrong". This one has no temporary
+    /// state at all: the request token is Last.fm's, it expires on Last.fm's
+    /// clock, and the person carries it between the two commands. There is no
+    /// row, no cookie and no expiry of ours to get wrong — which is why it
+    /// could be written second and not first.
+    ///
+    /// **It needs no `WAVEFLOW_PUBLIC_URL`.** The web journey does, because
+    /// Last.fm has to bring a browser back to an address this server answers.
+    /// Nothing comes back here, so the only requirement is an application —
+    /// which is exactly what makes this the journey for a headless server.
+    ///
+    /// Answers the address to open and the token to bring back. Both carry the
+    /// same secret and neither is ever logged.
+    pub async fn begin_lastfm_approval(
+        &self,
+        destination: &str,
+    ) -> Result<LastFmApproval, ServiceError> {
+        // Declared, before anything leaves. A token asked for an instance this
+        // server does not offer could not be exchanged into a link anyway, and
+        // the refusal belongs before the network call rather than after it.
+        if !self
+            .scrobble_destinations
+            .contains_key(&(ScrobbleProvider::LastFm, destination.to_owned()))
+        {
+            return Err(ServiceError::NotFound);
+        }
+        let exchange = self
+            .lastfm_exchanges
+            .get(destination)
+            .map(|found| Arc::clone(found.value()))
+            .ok_or(ServiceError::Unavailable)?;
+        // Cloned out of the map first: the process-wide writer gate is never
+        // held across a network call, and neither is a shard lock.
+        exchange.request_token().await
+    }
+
+    /// Finishes it: exchanges the approved token and creates the link.
+    ///
+    /// The second half of [`Self::begin_lastfm_approval`], and stateless on
+    /// this side — it verifies nothing about *which* journey the token came
+    /// from, because there is no journey recorded. What guards it is that a
+    /// request token is only worth a session once its owner has approved it in
+    /// their own Last.fm account, and that this command names the account the
+    /// link is created for.
+    ///
+    /// Not the web journey's `state` and cookie: those exist because that
+    /// token travels back through a browser, through a referrer and through a
+    /// history. This one never leaves the operator's terminal.
+    pub async fn complete_lastfm_approval(
+        &self,
+        user_id: Uuid,
+        destination: &str,
+        token: &str,
+    ) -> Result<(), ServiceError> {
+        let exchange = self
+            .lastfm_exchanges
+            .get(destination)
+            .map(|found| Arc::clone(found.value()))
+            .ok_or(ServiceError::Unavailable)?;
+        let session_key = exchange.exchange(token).await?;
+        // `link_scrobble` refuses an instance this server does not declare, so
+        // the pair is checked there rather than twice here.
+        self.link_scrobble(user_id, ScrobbleProvider::LastFm, destination, &session_key)
+            .await?;
+        Ok(())
     }
 
     /// Drops the journeys that have run out.

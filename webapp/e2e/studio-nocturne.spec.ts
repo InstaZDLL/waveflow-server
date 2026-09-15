@@ -214,6 +214,11 @@ let loseAcknowledgementOf: number | null = null;
  */
 type Recipient = "listenbrainz" | "maloja" | "lastfm";
 
+/** Copied from `lastfm_unavailability`, which is what a real server answers. */
+const NO_PUBLIC_URL =
+  "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; " +
+  "an operator can still link an account from this server's command line";
+
 const freshDestinations = () => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
   { provider: "maloja" as const, destination: "alice", available: true },
@@ -222,7 +227,7 @@ const freshDestinations = () => [
     provider: "lastfm" as const,
     destination: "default",
     available: false,
-    unavailable: "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+    unavailable: NO_PUBLIC_URL,
   },
 ];
 
@@ -1627,7 +1632,7 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   // person is not left to discover it when a link fails later.
   await expect(
     page.getByText(
-      "Unavailable here: last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+      `Unavailable here: ${NO_PUBLIC_URL}`,
     ),
   ).toBeVisible();
   await expect(
@@ -1796,4 +1801,109 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
   expect(scrobbleWrites).toEqual([
     { method: "DELETE", path: "/api/v2/scrobble-links/listenbrainz/default" },
   ]);
+});
+
+/**
+ * The mobile bar holds six slots and the client has fourteen screens. Until
+ * 2026-09-15 the other eight were reachable by typing their address and by
+ * nothing else: the sidebar that carries them is `display: none` below 820px.
+ * Seven of the eight had been in that state since lot A, and no test saw it —
+ * every mobile case here navigates by `page.goto`.
+ */
+test("opens the rest of the client from the mobile bar", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "about the phone bar");
+  // An administrator of a library that takes files, so all eight are this
+  // account's to see. The default fixture takes none, which left `Upload` out
+  // of the list below while the comment on it claimed otherwise — and nothing
+  // then proved the sheet ever shows an upload entry at all. Its absence in
+  // the test beside this one is over-determined: that account is a listener
+  // *and* its library is closed, so it would pass against a sheet that had
+  // dropped the entry entirely.
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.goto("/");
+
+  const bar = page.locator(".mobile-navigation");
+  // Six links and the seventh slot, on one row. The grid counted five for as
+  // long as there were five, and a sixth primary entry added later had been
+  // wrapping onto a second row ever since.
+  await expect(bar.locator("a")).toHaveCount(6);
+  const rows = await bar.evaluate(
+    (element) =>
+      new Set(
+        [...element.children].map((child) =>
+          Math.round(child.getBoundingClientRect().top),
+        ),
+      ).size,
+  );
+  expect(rows).toBe(1);
+
+  // Asserted before it is clicked. Clicking a control that is not there fails
+  // by timing out, and a timeout in a CI log says a test was slow rather than
+  // that the seventh slot is missing.
+  const more = bar.getByRole("button", { name: "More" });
+  await expect(more).toBeVisible();
+  await more.click();
+
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+  // The eight the bar cannot hold — including the two this account is
+  // entitled to as an administrator of a library that takes files.
+  for (const name of [
+    "Artists",
+    "Genres",
+    "Random",
+    "Recently played",
+    "Shares",
+    "Scrobbling",
+    "Upload",
+    "Admin",
+  ]) {
+    await expect(sheet.getByRole("link", { name })).toBeVisible();
+  }
+  // Counted as well as named: a sheet that also offered something nobody asked
+  // for would satisfy every line above.
+  await expect(sheet.getByRole("link")).toHaveCount(8);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // Escape is the keyboard's way out, and it is the element's own rather than
+  // anything written here — which is why the sheet is a <dialog>.
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+
+  await bar.getByRole("button", { name: "More" }).click();
+  await sheet.getByRole("link", { name: "Scrobbling" }).click();
+  await expect(
+    page.getByRole("heading", { name: "External scrobbling" }),
+  ).toBeVisible();
+  // Closed on the way out: a sheet left open would sit over the page it just
+  // reached.
+  await expect(sheet).toBeHidden();
+});
+
+test("offers nothing in the sheet that the account may not reach", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "about the phone bar");
+  // A listener, in a library that takes no files: upload and admin are not
+  // hidden by width, they are not this account's to see at all.
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: { ...session, user: { ...session.user, role: "user" } },
+    }),
+  );
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+
+  await page.goto("/");
+  await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+
+  const sheet = page.getByRole("dialog");
+  await expect(sheet.getByRole("link", { name: "Shares" })).toBeVisible();
+  await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
+  await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
 });

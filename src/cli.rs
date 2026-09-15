@@ -168,6 +168,11 @@ pub enum ScrobbleCommand {
     /// Authorise an account at a destination, replacing any authorisation it
     /// already had there.
     Link(LinkScrobbleArgs),
+    /// Begin a Last.fm authorisation from a machine with no browser. Prints
+    /// the address to open and the token to bring back to `exchange`.
+    Authorize(AuthorizeLastFmArgs),
+    /// Finish one: turn the approved request token into a link.
+    Exchange(ExchangeLastFmArgs),
     /// Withdraw it. Listens already queued under it stay queued under it and
     /// are never sent to whatever is linked next.
     Unlink(UnlinkScrobbleArgs),
@@ -195,6 +200,43 @@ pub struct LinkScrobbleArgs {
     /// for.
     #[arg(long, default_value = "WAVEFLOW_SCROBBLE_TOKEN")]
     token_env: String,
+}
+
+/// Last.fm hands out no secret a person can paste, so `link` has nothing to be
+/// given for it. These two are `link` for that recipient, split where the
+/// person has to leave and come back.
+#[derive(Debug, Args)]
+pub struct AuthorizeLastFmArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    /// Which declared Last.fm instance, for the reason `link` takes one.
+    #[arg(long)]
+    destination: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ExchangeLastFmArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    username: String,
+    #[arg(long)]
+    destination: String,
+    /// Environment variable holding the token `authorize` printed. Out of
+    /// `argv` for the reason `link`'s secret is: a shell history and a process
+    /// list are both readable by people this is not for, and whoever exchanges
+    /// this token first is who the session ends up belonging to.
+    #[arg(long, default_value = ExchangeLastFmArgs::TOKEN_ENV)]
+    token_env: String,
+}
+
+impl ExchangeLastFmArgs {
+    /// Named once, because `authorize` prints it and this declares it — and a
+    /// default spelled in two places is a default that eventually disagrees
+    /// with the instructions for using it.
+    const TOKEN_ENV: &'static str = "WAVEFLOW_LASTFM_TOKEN";
 }
 
 #[derive(Debug, Args)]
@@ -288,6 +330,8 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
         },
         Command::Scrobble { command } => match command {
             ScrobbleCommand::Link(args) => link_scrobble(state, args).await,
+            ScrobbleCommand::Authorize(args) => authorize_lastfm(state, args).await,
+            ScrobbleCommand::Exchange(args) => exchange_lastfm(state, args).await,
             ScrobbleCommand::Unlink(args) => unlink_scrobble(state, args).await,
             ScrobbleCommand::Status(args) => scrobble_status(state, args).await,
         },
@@ -610,6 +654,75 @@ async fn link_scrobble(state: &AppState, args: LinkScrobbleArgs) -> anyhow::Resu
         args.username,
         provider.as_str(),
         args.destination
+    );
+    Ok(())
+}
+
+/// Asks Last.fm for a request token and prints what to do with it.
+///
+/// The account is resolved before anything leaves this machine: a token minted
+/// for a username that does not exist would be a call made for nothing, and
+/// the refusal is cheaper first.
+async fn authorize_lastfm(state: &AppState, args: AuthorizeLastFmArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let approval = state
+        .services
+        .begin_lastfm_approval(&args.destination)
+        .await?;
+    // The address and the token are the same secret twice — the token is in
+    // the address's query string. Both go to standard output because that is
+    // where the operator reads them, and nowhere else: nothing here is traced.
+    println!("Open this address as {}, and approve it:", args.username);
+    println!();
+    println!("  {}", approval.authorize_url);
+    println!();
+    println!("Then put this token in {}:", ExchangeLastFmArgs::TOKEN_ENV);
+    println!();
+    println!("  {}", approval.token);
+    println!();
+    println!("…and run:");
+    println!();
+    // **Deliberately not a line to paste with the token in it.** A first
+    // version printed `WAVEFLOW_LASTFM_TOKEN=… waveflow-server scrobble exchange …`,
+    // ready to copy — and a copied command line lands in a shell history,
+    // which is one of the two things `--token-env` exists to keep this token
+    // out of. Printing a recipe that undoes the flag's own reason would have
+    // been worse than having no flag.
+    //
+    // How the variable gets set is left to the operator and their shell: a
+    // silent `read`, a password manager, a file sourced and deleted. This
+    // server has no business choosing among those, and it runs on three
+    // platforms whose answers differ.
+    println!(
+        "  waveflow-server scrobble exchange --actor {} --username {} --destination {}",
+        args.actor, args.username, args.destination
+    );
+    println!();
+    println!("The token is Last.fm's and expires on their clock; this server wrote nothing down.");
+    Ok(())
+}
+
+/// Turns an approved request token into a link.
+async fn exchange_lastfm(state: &AppState, args: ExchangeLastFmArgs) -> anyhow::Result<()> {
+    require_admin(&state.db, &args.actor).await?;
+    let user = state
+        .db
+        .account_by_username(&args.username)
+        .await?
+        .with_context(|| format!("account not found: {}", args.username))?;
+    let token = read_secret_env(&args.token_env)?;
+    state
+        .services
+        .complete_lastfm_approval(user.id, &args.destination, &token)
+        .await?;
+    println!(
+        "Linked {} to lastfm/{} (any previous authorisation there is withdrawn)",
+        args.username, args.destination
     );
     Ok(())
 }
