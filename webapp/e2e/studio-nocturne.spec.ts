@@ -1780,6 +1780,29 @@ test("says a reason it does not recognise is a reason, not a blank", async ({
   ).toBeVisible();
 });
 
+/**
+ * `toString` is not a translation key.
+ *
+ * Opening the union widened the lookup key to `string`, and a plain object
+ * answers for names nobody put in it: `toString` and `constructor` come back
+ * off the prototype, truthy, and would reach `t()` as if they were keys. Every
+ * inherited name is a case this client does not know, and must read as one.
+ */
+for (const inherited of ["toString", "constructor", "hasOwnProperty"]) {
+  test(`treats the inherited name ${inherited} as a case it does not know`, async ({
+    page,
+  }) => {
+    const lastfm = destinations.find((row) => row.provider === "lastfm");
+    if (lastfm) lastfm.unavailable = inherited;
+
+    await page.goto("/settings/scrobbling");
+
+    await expect(
+      page.getByText("Unavailable here: this server did not say why"),
+    ).toBeVisible();
+  });
+}
+
 test("links one instance by its key, and leaves the other alone", async ({
   page,
 }) => {
