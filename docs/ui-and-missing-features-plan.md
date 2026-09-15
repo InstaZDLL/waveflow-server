@@ -69,6 +69,44 @@ l'intervalle et rendre la main à l'écran de connexion, pas boucler.
 
 ## 2. L'interface : ce que la séance demande
 
+### La marque du serveur n'est pas celle de WaveFlow
+
+Les deux identités ont divergé, et pas sur un détail. Le logo de référence est
+celui du dépôt voisin, `assets/logo.svg` de
+[InstaZDLL/WaveFlow](https://github.com/InstaZDLL/WaveFlow) :
+
+|  | Desktop (référence) | Serveur (actuel) |
+|---|---|---|
+| Barres | **cinq** | quatre |
+| Profil | **symétrique** (140/80/40/80/140) | asymétrique, montant puis redescendant |
+| Couleur | **dégradé diagonal** `#34D399` → `#10B981` → `#059669` | `#34d399` plat |
+| Contenant | **aucun**, les barres sont le logo | barres évidées d'un carré arrondi plein |
+
+**Et la marque du serveur est recopiée à trois endroits, dont aucun n'est un
+SVG** :
+
+- `webapp/src/styles.css:308` — `.brand-mark`, dessinée en CSS ;
+- `webapp/src/main.tsx:120` — les quatre `<i>` que ce CSS met en forme ;
+- `webapp/public/favicon.svg` — la seule version vectorielle, écrite à la main
+  d'après les deux précédentes.
+
+**Correctif attendu** : adopter l'identité du desktop, et surtout **cesser de
+la redessiner**. Un seul SVG, référencé par la barre latérale comme par
+l'onglet, supprime la possibilité même d'une nouvelle divergence.
+
+**Deux réserves à traiter, pas à ignorer** :
+
+1. **Ne pas copier le fichier tel quel pour le favicon.** Il est rendu à
+   16 px : cinq barres fines sans contenant, sur un dégradé, perdent leur
+   contraste sur une barre d'onglets claire. Le carré arrondi du serveur avait
+   cette raison-là — il rend la marque trouvable dans une rangée d'onglets. À
+   arbitrer : garder un contenant **pour le favicon seul**, en portant le
+   profil à cinq barres et le dégradé.
+2. **Le favicon est délibérément non thématisable** (voir le commentaire de
+   `webapp/public/favicon.svg`). Une icône qui change avec le thème du lecteur
+   est plus difficile à retrouver, pas plus facile. Le dégradé ne remet pas ce
+   choix en cause ; le contenant, si on le garde, reste plein.
+
 ### Regrouper les réglages, et y montrer les clients enregistrés
 
 La barre latérale empile treize entrées de navigation, puis le thème, puis la
@@ -213,8 +251,10 @@ optimisation.
 
 1. **Les deux défauts de la section 1.** Ce sont des comportements fautifs, pas
    des fonctions manquantes, et le second laisse une session morte à l'écran.
-2. **La recherche en direct** et **la liste « Titres »**. Peu de code, très
-   visibles, et la seconde a déjà son composant.
+2. **La marque**, **la recherche en direct** et **la liste « Titres »**. Peu de
+   code, très visibles ; la liste a déjà son composant, et la marque est le
+   seul point du document qui soit une divergence d'identité plutôt qu'un
+   manque.
 3. **La compression du serveur.** Une feature, une couche, un test.
 4. **La page Réglages**, clients enregistrés compris — elle range ce qui
    traîne et expose ce qui est aujourd'hui caché.
