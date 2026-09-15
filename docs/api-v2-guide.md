@@ -777,7 +777,7 @@ deployment setting and never a member's, so a client never sends one.
   { "provider": "maloja", "destination": "alice", "available": true },
   { "provider": "maloja", "destination": "bob", "available": true },
   { "provider": "lastfm", "destination": "default", "available": false,
-    "unavailable": "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address" }
+    "unavailable": "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; an operator can still link an account from this server's command line" }
 ]
 ```
 
@@ -823,6 +823,14 @@ be completed in the browser that opened it. It requires an operator's Last.fm
 application and an `https` `WAVEFLOW_PUBLIC_URL`; without either, the
 destination listing says so rather than letting a link fail later. Pasting a
 session key to `PUT` still works, for a diagnosis.
+
+**That `https` address is this route's requirement, not Last.fm's.** A server
+without one can still link an account, from its own command line:
+`waveflow scrobble authorize` prints an address to open and a token to bring
+back, and `waveflow scrobble exchange` turns the approved token into the link.
+Nothing comes back to the server, so no public address is needed — only the
+application. The listing keeps saying `available: false`, which is the truth
+about *this* API and the reason it is worded as the journey's precondition.
 
 **What a link reports is a state, never an echo.**
 

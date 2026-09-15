@@ -214,6 +214,11 @@ let loseAcknowledgementOf: number | null = null;
  */
 type Recipient = "listenbrainz" | "maloja" | "lastfm";
 
+/** Copied from `lastfm_unavailability`, which is what a real server answers. */
+const NO_PUBLIC_URL =
+  "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; " +
+  "an operator can still link an account from this server's command line";
+
 const freshDestinations = () => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
   { provider: "maloja" as const, destination: "alice", available: true },
@@ -222,7 +227,7 @@ const freshDestinations = () => [
     provider: "lastfm" as const,
     destination: "default",
     available: false,
-    unavailable: "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+    unavailable: NO_PUBLIC_URL,
   },
 ];
 
@@ -1627,7 +1632,7 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   // person is not left to discover it when a link fails later.
   await expect(
     page.getByText(
-      "Unavailable here: last.fm needs WAVEFLOW_PUBLIC_URL to be an https address",
+      `Unavailable here: ${NO_PUBLIC_URL}`,
     ),
   ).toBeVisible();
   await expect(
