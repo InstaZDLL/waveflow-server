@@ -167,27 +167,100 @@ async function parse<T>(response: Response): Promise<T> {
  * already retired and the whole session is dropped. Callers await one operation
  * instead.
  */
-let pendingRefresh: Promise<boolean> | null = null;
+let pendingRefresh: {
+  generation: number;
+  result: Promise<boolean>;
+} | null = null;
 const artworkUrls = new Map<string, Promise<string | null>>();
+
+/**
+ * The same answers, once they have arrived, readable without awaiting.
+ *
+ * The map above holds promises, so nothing in it can be read during a render —
+ * and a cover component therefore started every mount with no image and put the
+ * grey placeholder on screen for a frame, even for a cover whose bytes were
+ * already in memory. Leaving a page and coming back flashed the whole grid.
+ */
+const settledArtworkUrls = new Map<string, string | null>();
+
+/** What is already held for this artwork, or `null` if nothing is yet. */
+export function cachedArtworkUrl(id: string | null): string | null {
+  return id ? (settledArtworkUrls.get(id) ?? null) : null;
+}
 
 function clearArtworkUrls(): void {
   for (const pending of artworkUrls.values()) {
     void pending.then((url) => url && URL.revokeObjectURL(url));
   }
   artworkUrls.clear();
+  settledArtworkUrls.clear();
+}
+
+/**
+ * Things holding answers that belong to whoever is signed in.
+ *
+ * The object URLs above were the only one of these for a long time, and
+ * clearing them was written inline at each of the three moments a session
+ * begins or ends. There is a query cache now — albums, playlists, favourites,
+ * an administrator's list of accounts — and it lives outside this module, so
+ * it registers here instead of being reached for. Signing out and signing in
+ * as somebody else on a shared browser must not show them the last person's
+ * library, and a client-side navigation is all that happens between the two:
+ * the document is never reloaded, so nothing is forgotten on its own.
+ */
+const sessionScoped: Array<() => void> = [];
+
+export function forgetOnSessionChange(forget: () => void): void {
+  sessionScoped.push(forget);
+}
+
+/**
+ * Which session the answers below belong to.
+ *
+ * Bumped every time one begins or ends, so work already in flight can tell
+ * whether it still speaks for the account that started it. A refresh takes a
+ * round trip, and a sign-out during that round trip used to be undone by it:
+ * `logout` set the session to null, the answer arrived afterwards, and the
+ * assignment put the previous account's token straight back. The visitor was
+ * on the sign-in screen and still authenticated.
+ */
+let sessionGeneration = 0;
+
+function clearSessionState(): void {
+  sessionGeneration += 1;
+  clearArtworkUrls();
+  for (const forget of sessionScoped) forget();
 }
 
 function refresh(): Promise<boolean> {
-  if (!pendingRefresh) {
-    pendingRefresh = performRefresh().finally(() => {
-      pendingRefresh = null;
-    });
+  // Shared only with callers of the same session. A renewal that outlived the
+  // account it was started for now answers `false` on purpose, and handing that
+  // answer to somebody who asked after a new session began would fail their
+  // request for a reason that no longer applies.
+  if (pendingRefresh && pendingRefresh.generation === sessionGeneration) {
+    return pendingRefresh.result;
   }
-  return pendingRefresh;
+  const attempt: { generation: number; result: Promise<boolean> } = {
+    generation: sessionGeneration,
+    result: performRefresh().finally(() => {
+      // Only if nothing newer has taken its place: clearing unconditionally
+      // would throw away a renewal that is still out.
+      if (pendingRefresh === attempt) pendingRefresh = null;
+    }),
+  };
+  pendingRefresh = attempt;
+  return attempt.result;
 }
 
 async function performRefresh(): Promise<boolean> {
   const hadSession = session !== null;
+  // Whose session this renewal speaks for. Read before the round trip and
+  // checked after it: anything that began or ended a session in between makes
+  // this answer somebody else's, and it is then worth nothing — neither its
+  // token, which would undo a sign-out, nor its failure, which would sign out
+  // whoever signed in while it was away.
+  const generation = sessionGeneration;
+  const stale = () => generation !== sessionGeneration;
   const csrf = cookieValue("waveflow-csrf");
   if (!csrf) {
     handleRefreshFailure(hadSession);
@@ -198,13 +271,17 @@ async function performRefresh(): Promise<boolean> {
       method: "POST",
       headers: { "x-waveflow-csrf": csrf },
     });
+    if (stale()) return false;
     if (!response.ok) {
       handleRefreshFailure(hadSession);
       return false;
     }
-    session = await parse<WebSession>(response);
+    const renewed = await parse<WebSession>(response);
+    if (stale()) return false;
+    session = renewed;
     return true;
   } catch {
+    if (stale()) return false;
     handleRefreshFailure(hadSession);
     return false;
   }
@@ -212,6 +289,10 @@ async function performRefresh(): Promise<boolean> {
 
 function handleRefreshFailure(hadSession: boolean): void {
   session = null;
+  // A session that cannot be renewed has ended. The redirect below reloads the
+  // document and would clear this anyway — except when it does not fire,
+  // because the visitor is already on the sign-in screen.
+  clearSessionState();
   if (hadSession && window.location.pathname !== "/login") {
     window.location.assign("/login");
   }
@@ -253,7 +334,7 @@ export async function login(username: string, password: string): Promise<void> {
     throw new ApiError(response.status, "login failed");
   }
   session = await parse<WebSession>(response);
-  clearArtworkUrls();
+  clearSessionState();
 }
 
 export const setupRequired = () =>
@@ -284,7 +365,7 @@ export async function logout(): Promise<void> {
     });
   } finally {
     session = null;
-    clearArtworkUrls();
+    clearSessionState();
   }
 }
 
@@ -588,7 +669,19 @@ async function loadArtworkUrl(
   if (response.status === 401 && retry && (await refresh())) {
     return loadArtworkUrl(id, false);
   }
-  if (!response.ok) return null;
+  // The same distinction `canvasUrl` makes above, and for the same reason: a
+  // 404 is the server saying it holds no such artwork, which is an answer; any
+  // other failure is a server that could not answer, which is not one. They
+  // collapsed into the same `null` here and were then held for the session, so
+  // a single blip left a cover grey until the tab was reloaded.
+  //
+  // An id here is a content hash — every caller passes `artwork_hash` — so a
+  // 404 is about immutable content and is worth keeping. Re-asking it on every
+  // mount would put back the request storm lazy loading exists to prevent.
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new ApiError(response.status, `GET /api/v2/artwork/${id}`);
+  }
   return URL.createObjectURL(await response.blob());
 }
 
@@ -597,7 +690,23 @@ export function artworkUrl(id: string | null): Promise<string | null> {
   if (!id) return Promise.resolve(null);
   const cached = artworkUrls.get(id);
   if (cached) return cached;
-  const pending = loadArtworkUrl(id).catch(() => null);
+  const pending: Promise<string | null> = loadArtworkUrl(id).then(
+    (url) => {
+      // Only while this is still the request being waited on. A session change
+      // empties both maps and revokes the object URLs, and a load started for
+      // the account that left would otherwise land here afterwards — putting a
+      // revoked URL back under a key the next account reads.
+      if (artworkUrls.get(id) === pending) settledArtworkUrls.set(id, url);
+      return url;
+    },
+    () => {
+      // Not an answer, so nothing is remembered: the entry is dropped and the
+      // next mount asks again. `null` is returned rather than rethrown because
+      // a cover that could not be fetched is a placeholder, not a broken page.
+      if (artworkUrls.get(id) === pending) artworkUrls.delete(id);
+      return null;
+    },
+  );
   artworkUrls.set(id, pending);
   return pending;
 }
