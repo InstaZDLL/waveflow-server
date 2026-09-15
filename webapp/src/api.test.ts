@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   canvasUrl,
@@ -12,7 +12,36 @@ import {
   search,
 } from "./api";
 
+/**
+ * Where the module sent the browser.
+ *
+ * A session that ends navigates to the sign-in screen, and jsdom implements no
+ * navigation — left alone it prints "Not implemented" over the run. Only
+ * `assign` is stood in for: `pathname` still reads the real location, because
+ * the tests below drive it with `history.replaceState` and the module decides
+ * whether to navigate by reading it.
+ */
+const realLocation = window.location;
+let navigate: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  navigate = vi.fn();
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: {
+      get pathname() {
+        return realLocation.pathname;
+      },
+      assign: navigate,
+    },
+  });
+});
+
 afterEach(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: realLocation,
+  });
   vi.unstubAllGlobals();
   // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
   document.cookie = "waveflow-csrf=; Max-Age=0; Path=/";
@@ -364,6 +393,12 @@ describe("canvasUrl", () => {
     return urls;
   }
 
+  // A track per case, deliberately. What the module remembers about a track
+  // outlives a test here — this file imports it once rather than reloading it —
+  // and a 404 is now remembered, so sharing an identifier would make each of
+  // these depend on the ones before it. What that memory does is covered in
+  // `session.test.ts`, where a fresh module per test can show it.
+
   it("mints a ticket for the track and hands back its URL", async () => {
     const urls = answer(
       new Response(
@@ -372,22 +407,24 @@ describe("canvasUrl", () => {
       ),
     );
 
-    await expect(canvasUrl("track-1")).resolves.toEqual({
+    await expect(canvasUrl("has-one")).resolves.toEqual({
       url: "/api/v2/canvas-stream/sealed",
       expiresAt: 42,
     });
-    expect(urls).toEqual(["/api/v2/tracks/track-1/canvas-ticket"]);
+    expect(urls).toEqual(["/api/v2/tracks/has-one/canvas-ticket"]);
   });
 
   it("reads a 404 as a track without a canvas", async () => {
     answer(new Response(null, { status: 404 }));
 
-    await expect(canvasUrl("track-1")).resolves.toBeNull();
+    await expect(canvasUrl("has-none")).resolves.toBeNull();
   });
 
   it("throws a failure rather than calling it no canvas", async () => {
     answer(new Response(null, { status: 503 }));
 
-    await expect(canvasUrl("track-1")).rejects.toMatchObject({ status: 503 });
+    await expect(canvasUrl("unanswerable")).rejects.toMatchObject({
+      status: 503,
+    });
   });
 });

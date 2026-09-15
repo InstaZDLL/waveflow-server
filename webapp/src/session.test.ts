@@ -27,10 +27,23 @@ async function freshApi() {
 }
 
 let fetchStub: FetchStub;
+/** Where the module sent the browser, for the tests that care. */
+let navigate: FetchStub;
+const realLocation = window.location;
 
 beforeEach(() => {
   fetchStub = vi.fn();
   vi.stubGlobal("fetch", fetchStub);
+  // A session that ends sends the browser to the sign-in screen, and jsdom
+  // implements no navigation: left alone it prints "Not implemented" over the
+  // run and the destination cannot be asserted. Stood in for every test in
+  // this file rather than the one that reads it, so no other has to know that
+  // ending a session navigates.
+  navigate = vi.fn();
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { pathname: "/albums", assign: navigate },
+  });
   // The refresh path reads the CSRF cookie, so a test has to plant one. The
   // Cookie Store API the rule suggests is not implemented in jsdom.
   // biome-ignore lint/suspicious/noDocumentCookie: seeding a cookie is the point
@@ -38,6 +51,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: realLocation,
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -160,5 +177,132 @@ describe("session refresh", () => {
       (call) => !String(call[0]).includes("/auth/refresh"),
     );
     expect(requests).toHaveLength(2);
+  });
+
+  it("ends the session when a renewal cannot make a 401 go away", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/auth/refresh")
+        ? jsonResponse({
+            access_token: "second-token",
+            user: { id: "u1", username: "dev", role: "admin" },
+            device_id: "d1",
+          })
+        : jsonResponse({}, 401),
+    );
+    expect(api.hasSession()).toBe(true);
+
+    await expect(api.getTrack("t1")).rejects.toThrow();
+
+    // Rejecting and stopping there is what let a poll outlive its own session:
+    // a query on `refetchInterval` keeps its schedule through an error, so
+    // `now-playing` asked again every thirty seconds while the screen sat on a
+    // library it could no longer read. The server spends 401 on a credential
+    // it will not accept and nothing else — an authorisation refusal is 403,
+    // or blurred into 404 — so there is nothing left to wait for.
+    expect(api.hasSession()).toBe(false);
+    expect(navigate).toHaveBeenCalledWith("/login");
+  });
+
+  it("ends it too on the one route that cannot go through `call`", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/auth/refresh")
+        ? jsonResponse({
+            access_token: "second-token",
+            user: { id: "u1", username: "dev", role: "admin" },
+            device_id: "d1",
+          })
+        : jsonResponse({}, 401),
+    );
+
+    // A canvas goes whole, with its own content type, so `placeCanvas` does
+    // its own renewal rather than borrowing the one above — and so it has to
+    // leave the same dead end the same way. Covered here because inverting
+    // that branch alone left every other test green.
+    await expect(
+      api.placeCanvas("t1", new Blob(["loop"], { type: "video/mp4" })),
+    ).rejects.toThrow();
+
+    expect(api.hasSession()).toBe(false);
+    expect(navigate).toHaveBeenCalledWith("/login");
+  });
+});
+
+/**
+ * What the client remembers about a track that carries no loop.
+ *
+ * Minting a ticket is how the question is asked, so a track without a canvas
+ * answers 404 to it. Both callers were right to distrust a *ticket* — it
+ * expires — and neither kept the absence, so an ordinary library produced one
+ * 404 per navigation without end.
+ */
+describe("a canvas the server says is not there", () => {
+  const ticketRequests = () =>
+    fetchStub.mock.calls.filter((call) =>
+      String(call[0]).includes("/canvas-ticket"),
+    );
+
+  it("is asked about once, however many times a screen mounts", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+
+    expect(ticketRequests()).toHaveLength(1);
+  });
+
+  it("is still asked about for a different track", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    await expect(api.canvasUrl("t2")).resolves.toBeNull();
+
+    expect(ticketRequests()).toHaveLength(2);
+  });
+
+  it("is asked about again once this client places one", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/blob", hash: "h", format: "mp4", byte_size: 1 }),
+    );
+    await api.placeCanvas("t1", new Blob(["loop"], { type: "video/mp4" }));
+
+    // Without forgetting, the panel that just placed a loop would read back
+    // the answer from before it did.
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+    );
+    await expect(api.canvasUrl("t1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+  });
+
+  it("is forgotten when the session ends", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    expect(ticketRequests()).toHaveLength(1);
+
+    fetchStub.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await api.logout();
+
+    // Signing in as somebody else on a shared browser must not inherit what
+    // the last account was told, here as everywhere else in this module.
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    expect(ticketRequests()).toHaveLength(2);
   });
 });

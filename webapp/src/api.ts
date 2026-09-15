@@ -197,6 +197,35 @@ function clearArtworkUrls(): void {
 }
 
 /**
+ * Tracks the server has already said carry no loop.
+ *
+ * Minting a ticket is how the question is asked, and a track without a canvas
+ * answers 404 to it. That answer is stable for as long as nothing here changes
+ * the track's canvas — so asking again learns nothing, and asking again is
+ * exactly what happened: the playing screen asks from an effect on every
+ * mount, and the editor's panel holds a query deliberately kept uncached,
+ * because a live ticket expires and must never be served from memory. Both
+ * were right about the ticket and wrong about its absence, and a library of
+ * ordinary tracks therefore produced a 404 per navigation, for ever.
+ *
+ * Kept here rather than in either caller, so one memory answers both. Emptied
+ * when a session ends, with everything else that belongs to whoever was
+ * signed in.
+ *
+ * What this deliberately does not see: a canvas placed by *another* client
+ * during this session. Placing or removing one here forgets the track, so the
+ * screen that did it reads back the truth; elsewhere, the page has to be
+ * reloaded. That is the same bargain the artwork above already strikes, and it
+ * is worth saying rather than discovering.
+ */
+const canvaslessTracks = new Set<string>();
+
+/** Ask the server again about this track's loop, whatever it said before. */
+function forgetCanvas(trackId: string): void {
+  canvaslessTracks.delete(trackId);
+}
+
+/**
  * Things holding answers that belong to whoever is signed in.
  *
  * The object URLs above were the only one of these for a long time, and
@@ -229,6 +258,7 @@ let sessionGeneration = 0;
 function clearSessionState(): void {
   sessionGeneration += 1;
   clearArtworkUrls();
+  canvaslessTracks.clear();
   for (const forget of sessionScoped) forget();
 }
 
@@ -263,7 +293,7 @@ async function performRefresh(): Promise<boolean> {
   const stale = () => generation !== sessionGeneration;
   const csrf = cookieValue("waveflow-csrf");
   if (!csrf) {
-    handleRefreshFailure(hadSession);
+    endSession(hadSession);
     return false;
   }
   try {
@@ -273,7 +303,7 @@ async function performRefresh(): Promise<boolean> {
     });
     if (stale()) return false;
     if (!response.ok) {
-      handleRefreshFailure(hadSession);
+      endSession(hadSession);
       return false;
     }
     const renewed = await parse<WebSession>(response);
@@ -282,16 +312,33 @@ async function performRefresh(): Promise<boolean> {
     return true;
   } catch {
     if (stale()) return false;
-    handleRefreshFailure(hadSession);
+    endSession(hadSession);
     return false;
   }
 }
 
-function handleRefreshFailure(hadSession: boolean): void {
+/**
+ * The session is over, and nothing on screen may go on acting as though it is
+ * not.
+ *
+ * Reached from two places. A renewal that failed is the obvious one. The other
+ * is a 401 that *survived* a renewal: `call` renews once and asks again, and
+ * when the second answer is 401 too there is nothing left to try — the server
+ * spends that status on `InvalidCredentials` and `InvalidRefreshToken` alone,
+ * and refuses an authorisation with 403 or by blurring it into 404. It used to
+ * throw and stop there, which is how a poll outlived its own session: a query
+ * on `refetchInterval` keeps its schedule through an error, so `now-playing`
+ * asked again every thirty seconds, indefinitely, while the screen sat on a
+ * library it could no longer read and the visitor was never told.
+ *
+ * `hadSession` is read before the round trip by the renewal path, because a
+ * sign-out during that round trip must not be reported as an expiry.
+ */
+function endSession(hadSession: boolean): void {
   session = null;
-  // A session that cannot be renewed has ended. The redirect below reloads the
-  // document and would clear this anyway — except when it does not fire,
-  // because the visitor is already on the sign-in screen.
+  // The redirect below reloads the document and would clear this anyway —
+  // except when it does not fire, because the visitor is already on the
+  // sign-in screen.
   clearSessionState();
   if (hadSession && window.location.pathname !== "/login") {
     window.location.assign("/login");
@@ -314,6 +361,11 @@ async function call<T>(
   if (response.status === 401 && retry && (await refresh())) {
     return call<T>(path, init, false);
   }
+  // Refused again, on the attempt that a renewal had already paid for. A
+  // failed renewal has ended the session itself by now; this is the other
+  // way out of the same dead end, and without it the caller only got a
+  // rejected promise to ignore.
+  if (response.status === 401 && !retry) endSession(session !== null);
   if (!response.ok) {
     throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
   }
@@ -620,6 +672,11 @@ export async function placeCanvas(
   retry = true,
 ): Promise<CanvasBlob> {
   const path = `/api/v2/tracks/${trackId}/canvas`;
+  // Whatever comes back, what this track carries is no longer what was
+  // remembered about it. Forgotten before the request rather than after its
+  // success, because a refusal is not proof either: a 404 here can mean
+  // another client moved the loop while this one was looking at it.
+  forgetCanvas(trackId);
   const headers = new Headers({
     "content-type": file.type || "application/octet-stream",
   });
@@ -628,12 +685,17 @@ export async function placeCanvas(
   if (response.status === 401 && retry && (await refresh())) {
     return placeCanvas(trackId, file, false);
   }
+  // The same dead end `call` handles, on the one route that cannot go through
+  // it — a body labelled as JSON would be refused here.
+  if (response.status === 401 && !retry) endSession(session !== null);
   if (!response.ok) throw new ApiError(response.status, `PUT ${path}`);
   return parse<CanvasBlob>(response);
 }
 
-export const removeCanvas = (trackId: string) =>
-  call<void>(`/api/v2/tracks/${trackId}/canvas`, { method: "DELETE" });
+export const removeCanvas = (trackId: string) => {
+  forgetCanvas(trackId);
+  return call<void>(`/api/v2/tracks/${trackId}/canvas`, { method: "DELETE" });
+};
 
 /**
  * A URL a `<video>` can play for the loop a track carries, or `null` when it
@@ -645,6 +707,7 @@ export const removeCanvas = (trackId: string) =>
  * because a server that could not answer has not said there is no canvas.
  */
 export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
+  if (canvaslessTracks.has(trackId)) return null;
   try {
     const ticket = await call<{ url: string; expires_at: number }>(
       `/api/v2/tracks/${trackId}/canvas-ticket`,
@@ -652,7 +715,10 @@ export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
     );
     return { url: ticket.url, expiresAt: ticket.expires_at };
   } catch (cause) {
-    if (cause instanceof ApiError && cause.status === 404) return null;
+    if (cause instanceof ApiError && cause.status === 404) {
+      canvaslessTracks.add(trackId);
+      return null;
+    }
     throw cause;
   }
 }
