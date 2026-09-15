@@ -346,6 +346,53 @@ describe("a canvas the server says is not there", () => {
     });
   });
 
+  it("is asked about once by callers that ask at the same moment", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+
+    // `StrictMode` invokes an effect twice on mount, so the playing screen asks
+    // twice for every loop in development — two questions in flight, neither
+    // able to see the other's answer.
+    const [first, second] = await Promise.all([
+      api.canvasUrl("t1"),
+      api.canvasUrl("t1"),
+    ]);
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(ticketRequests()).toHaveLength(1);
+  });
+
+  it("is not recorded from an answer older than the session", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    let releaseTicket = () => {};
+    const heldTicket = new Promise<Response>((resolve) => {
+      releaseTicket = () => resolve(jsonResponse({}, 404));
+    });
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/canvas-ticket")
+        ? heldTicket
+        : new Response(null, { status: 204 }),
+    );
+
+    const asking = api.canvasUrl("t1");
+    await api.logout();
+    releaseTicket();
+    await expect(asking).resolves.toBeNull();
+
+    // A 404 also means "none you may see". Keeping one account's refusal for
+    // the next would hide a canvas the next account can read.
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+    );
+    await expect(api.canvasUrl("t1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+  });
+
   it("is not recorded from an answer older than a placement", async () => {
     const api = await freshApi();
     await signIn(api);

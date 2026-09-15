@@ -221,28 +221,27 @@ function clearArtworkUrls(): void {
 const canvaslessTracks = new Set<string>();
 
 /**
- * How many times this client has changed each track's canvas.
+ * Tickets being minted right now, one entry per track.
  *
- * Read before a ticket is asked for and again when the answer comes back, so
- * an absence is only recorded if nothing changed the track in between. Without
- * it a question already in flight could land after a loop was placed and file
- * the track as carrying none — the placement would have looked lost, and the
- * panel that made it would have read back the state from before.
+ * The same shape as `artworkUrls` above, and it earns its place twice over.
+ * `StrictMode` invokes an effect twice on mount, so the playing screen asked
+ * for every loop in duplicate throughout development; and the entry doubles as
+ * the proof that an answer still belongs to the question. Recording an absence
+ * happens only while the entry is still this request's — a session change
+ * empties the map, and so does placing a loop — so an answer that outlived
+ * either cannot be filed.
  *
- * The same shape as `sessionGeneration` below, per track instead of per
- * account, and for the same reason: an answer is only worth what it was asked
- * about.
+ * That is the whole guard. It replaced a per-track counter that said the same
+ * thing less directly, and it says the session half too: a 404 means "no loop
+ * **or** none you may see", so keeping one account's refusal for the next
+ * would hide a canvas the next account can read.
  */
-const canvasChanges = new Map<string, number>();
-
-function canvasGeneration(trackId: string): number {
-  return canvasChanges.get(trackId) ?? 0;
-}
+const canvasTickets = new Map<string, Promise<StreamUrl | null>>();
 
 /** Ask the server again about this track's loop, whatever it said before. */
 function forgetCanvas(trackId: string): void {
   canvaslessTracks.delete(trackId);
-  canvasChanges.set(trackId, canvasGeneration(trackId) + 1);
+  canvasTickets.delete(trackId);
 }
 
 /**
@@ -279,7 +278,7 @@ function clearSessionState(): void {
   sessionGeneration += 1;
   clearArtworkUrls();
   canvaslessTracks.clear();
-  canvasChanges.clear();
+  canvasTickets.clear();
   for (const forget of sessionScoped) forget();
 }
 
@@ -748,26 +747,39 @@ export const removeCanvas = (trackId: string) => {
  * does not tell those apart, and neither can this. Any other failure is thrown,
  * because a server that could not answer has not said there is no canvas.
  */
-export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
-  if (canvaslessTracks.has(trackId)) return null;
-  // What this question is about. Checked again below, because a placement can
-  // land while it is out.
-  const generation = canvasGeneration(trackId);
-  try {
-    const ticket = await call<{ url: string; expires_at: number }>(
-      `/api/v2/tracks/${trackId}/canvas-ticket`,
-      { method: "POST" },
-    );
-    return { url: ticket.url, expiresAt: ticket.expires_at };
-  } catch (cause) {
-    if (cause instanceof ApiError && cause.status === 404) {
-      if (generation === canvasGeneration(trackId)) {
-        canvaslessTracks.add(trackId);
+export function canvasUrl(trackId: string): Promise<StreamUrl | null> {
+  if (canvaslessTracks.has(trackId)) return Promise.resolve(null);
+  const inFlight = canvasTickets.get(trackId);
+  if (inFlight) return inFlight;
+  const pending: Promise<StreamUrl | null> = mintCanvasTicket(trackId)
+    .catch((cause: unknown) => {
+      if (cause instanceof ApiError && cause.status === 404) {
+        // Only while this is still the request being waited on. Placing a loop
+        // drops the entry, and so does a session change — either way this
+        // answer is about a track, or an account, that has moved on since it
+        // was asked.
+        if (canvasTickets.get(trackId) === pending) {
+          canvaslessTracks.add(trackId);
+        }
+        return null;
       }
-      return null;
-    }
-    throw cause;
-  }
+      throw cause;
+    })
+    .finally(() => {
+      // Never cached, only deduplicated: a live ticket expires, so the entry
+      // exists for the moment the request is out and not a moment longer.
+      if (canvasTickets.get(trackId) === pending) canvasTickets.delete(trackId);
+    });
+  canvasTickets.set(trackId, pending);
+  return pending;
+}
+
+async function mintCanvasTicket(trackId: string): Promise<StreamUrl> {
+  const ticket = await call<{ url: string; expires_at: number }>(
+    `/api/v2/tracks/${trackId}/canvas-ticket`,
+    { method: "POST" },
+  );
+  return { url: ticket.url, expiresAt: ticket.expires_at };
 }
 
 async function loadArtworkUrl(
