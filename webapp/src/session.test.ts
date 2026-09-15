@@ -205,6 +205,21 @@ describe("session refresh", () => {
     expect(navigate).toHaveBeenCalledWith("/login");
   });
 
+  it("leaves it alone for a caller that never asked for a renewal", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 401));
+
+    // `setupRequired` runs before anyone is signed in and switches the retry
+    // off for that reason, so its 401 says nothing about a session. Reading
+    // "the retry is off" as "a renewal was already spent" would have ended one
+    // here — harmless while no session exists, and wrong all the same.
+    await expect(api.setupRequired()).rejects.toThrow();
+
+    expect(api.hasSession()).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("ends it too on the one route that cannot go through `call`", async () => {
     const api = await freshApi();
     await signIn(api);

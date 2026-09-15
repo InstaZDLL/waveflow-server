@@ -353,19 +353,26 @@ async function call<T>(
   path: string,
   init: RequestInit = {},
   retry = true,
+  /** Set only by the attempt a renewal has already paid for. */
+  renewed = false,
 ): Promise<T> {
   const headers = new Headers(init.headers);
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   if (init.body) headers.set("content-type", "application/json");
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && retry && (await refresh())) {
-    return call<T>(path, init, false);
+    return call<T>(path, init, false, true);
   }
   // Refused again, on the attempt that a renewal had already paid for. A
   // failed renewal has ended the session itself by now; this is the other
   // way out of the same dead end, and without it the caller only got a
   // rejected promise to ignore.
-  if (response.status === 401 && !retry) endSession(session !== null);
+  //
+  // Read from `renewed` and not from `retry`: they are not the same question.
+  // `setupRequired` asks with the retry switched off because it runs before
+  // anyone is signed in and has no session to renew — a 401 there is not a
+  // session ending, and saying so would be wrong even where it is harmless.
+  if (response.status === 401 && renewed) endSession(session !== null);
   if (!response.ok) {
     throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
   }
@@ -670,6 +677,8 @@ export async function placeCanvas(
   trackId: string,
   file: Blob,
   retry = true,
+  /** Set only by the attempt a renewal has already paid for. */
+  renewed = false,
 ): Promise<CanvasBlob> {
   const path = `/api/v2/tracks/${trackId}/canvas`;
   // Whatever comes back, what this track carries is no longer what was
@@ -683,11 +692,11 @@ export async function placeCanvas(
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   const response = await fetch(path, { method: "PUT", headers, body: file });
   if (response.status === 401 && retry && (await refresh())) {
-    return placeCanvas(trackId, file, false);
+    return placeCanvas(trackId, file, false, true);
   }
   // The same dead end `call` handles, on the one route that cannot go through
   // it — a body labelled as JSON would be refused here.
-  if (response.status === 401 && !retry) endSession(session !== null);
+  if (response.status === 401 && renewed) endSession(session !== null);
   if (!response.ok) throw new ApiError(response.status, `PUT ${path}`);
   return parse<CanvasBlob>(response);
 }
