@@ -688,7 +688,7 @@ async fn authorize_lastfm(state: &AppState, args: AuthorizeLastFmArgs) -> anyhow
     println!("…and run:");
     println!();
     // **Deliberately not a line to paste with the token in it.** A first
-    // version printed `WAVEFLOW_LASTFM_TOKEN=… waveflow scrobble exchange …`,
+    // version printed `WAVEFLOW_LASTFM_TOKEN=… waveflow-server scrobble exchange …`,
     // ready to copy — and a copied command line lands in a shell history,
     // which is one of the two things `--token-env` exists to keep this token
     // out of. Printing a recipe that undoes the flag's own reason would have
@@ -699,7 +699,7 @@ async fn authorize_lastfm(state: &AppState, args: AuthorizeLastFmArgs) -> anyhow
     // server has no business choosing among those, and it runs on three
     // platforms whose answers differ.
     println!(
-        "  waveflow scrobble exchange --actor {} --username {} --destination {}",
+        "  waveflow-server scrobble exchange --actor {} --username {} --destination {}",
         args.actor, args.username, args.destination
     );
     println!();

@@ -825,12 +825,40 @@ destination listing says so rather than letting a link fail later. Pasting a
 session key to `PUT` still works, for a diagnosis.
 
 **That `https` address is this route's requirement, not Last.fm's.** A server
-without one can still link an account, from its own command line:
-`waveflow scrobble authorize` prints an address to open and a token to bring
-back, and `waveflow scrobble exchange` turns the approved token into the link.
-Nothing comes back to the server, so no public address is needed — only the
-application. The listing keeps saying `available: false`, which is the truth
-about *this* API and the reason it is worded as the journey's precondition.
+without one can still link an account, from its own command line. Nothing comes
+back to the server, so no public address is needed — only the application. The
+listing keeps saying `available: false`, which is the truth about *this* API and
+the reason it is worded as the journey's precondition.
+
+```bash
+waveflow-server scrobble authorize --actor admin --username listener --destination default
+```
+
+It prints an address to open and a request token to bring back. Open the
+address as that account, approve it there, then hand the token to the second
+command through **`WAVEFLOW_LASTFM_TOKEN`** — the variable `--token-env` names,
+and which it can change.
+
+The token goes through the environment for the reason an API token does: it is
+a credential, and whoever exchanges it first is who the Last.fm session ends up
+belonging to. So do not type it as `VAR=value command`, which puts it in the
+shell history. Read it instead, which echoes nothing and records nothing:
+
+```bash
+read -rs WAVEFLOW_LASTFM_TOKEN && export WAVEFLOW_LASTFM_TOKEN
+waveflow-server scrobble exchange --actor admin --username listener --destination default
+```
+
+```powershell
+$env:WAVEFLOW_LASTFM_TOKEN =
+  (Read-Host -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+waveflow-server scrobble exchange --actor admin --username listener --destination default
+```
+
+`ConvertFrom-SecureString -AsPlainText` needs PowerShell 7 or later, as the API
+token recipe above does. These are two ways and not the way: a secrets manager
+or a sourced-then-deleted file serve as well, which is why the command prints
+the token and names the variable rather than prescribing either.
 
 **What a link reports is a state, never an echo.**
 
