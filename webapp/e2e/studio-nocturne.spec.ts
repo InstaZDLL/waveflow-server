@@ -1757,6 +1757,29 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   expect(results.violations).toEqual([]);
 });
 
+/**
+ * A server newer than the client reading it.
+ *
+ * `unavailable` carries a case rather than a sentence, so this client has a
+ * table of words for the cases it knows — and a case it does not know must not
+ * become a blank where a reason should be. The type is open for the same
+ * reason: a union naming only today's cases would be an assertion about the
+ * wire that the wire never made, which is the fault this whole change set
+ * exists to remove.
+ */
+test("says a reason it does not recognise is a reason, not a blank", async ({
+  page,
+}) => {
+  const lastfm = destinations.find((row) => row.provider === "lastfm");
+  if (lastfm) lastfm.unavailable = "a_case_from_a_later_release";
+
+  await page.goto("/settings/scrobbling");
+
+  await expect(
+    page.getByText("Unavailable here: this server did not say why"),
+  ).toBeVisible();
+});
+
 test("links one instance by its key, and leaves the other alone", async ({
   page,
 }) => {

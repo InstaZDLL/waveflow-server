@@ -4,6 +4,7 @@ import {
   authorizeLastFm,
   discardUncertainScrobble,
   getTrack,
+  type KnownScrobbleUnavailable,
   linkScrobble,
   listHistory,
   listScrobbleDestinations,
@@ -92,13 +93,13 @@ const UNAVAILABLE_REASON = {
   no_application_configured: "scrobbling.unavailable.no_application_configured",
   browser_journey_needs_https:
     "scrobbling.unavailable.browser_journey_needs_https",
-} as const satisfies Record<ScrobbleUnavailable, TranslationKey>;
+} as const satisfies Record<KnownScrobbleUnavailable, TranslationKey>;
 
 function unavailableReason(
   code: ScrobbleUnavailable | undefined,
 ): TranslationKey {
-  // Read through a wider type on purpose: the union above says what this build
-  // knows, and a server is free to be newer than the client reading it.
+  // `KnownScrobbleUnavailable` is exhaustive above, so nothing is forgotten;
+  // `ScrobbleUnavailable` is open here, so nothing newer is refused.
   const known: Partial<Record<string, TranslationKey>> = UNAVAILABLE_REASON;
   return (code && known[code]) || "scrobbling.unavailable.unknown";
 }
