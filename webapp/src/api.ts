@@ -211,7 +211,20 @@ export function forgetOnSessionChange(forget: () => void): void {
   sessionScoped.push(forget);
 }
 
+/**
+ * Which session the answers below belong to.
+ *
+ * Bumped every time one begins or ends, so work already in flight can tell
+ * whether it still speaks for the account that started it. A refresh takes a
+ * round trip, and a sign-out during that round trip used to be undone by it:
+ * `logout` set the session to null, the answer arrived afterwards, and the
+ * assignment put the previous account's token straight back. The visitor was
+ * on the sign-in screen and still authenticated.
+ */
+let sessionGeneration = 0;
+
 function clearSessionState(): void {
+  sessionGeneration += 1;
   clearArtworkUrls();
   for (const forget of sessionScoped) forget();
 }
@@ -227,6 +240,13 @@ function refresh(): Promise<boolean> {
 
 async function performRefresh(): Promise<boolean> {
   const hadSession = session !== null;
+  // Whose session this renewal speaks for. Read before the round trip and
+  // checked after it: anything that began or ended a session in between makes
+  // this answer somebody else's, and it is then worth nothing — neither its
+  // token, which would undo a sign-out, nor its failure, which would sign out
+  // whoever signed in while it was away.
+  const generation = sessionGeneration;
+  const stale = () => generation !== sessionGeneration;
   const csrf = cookieValue("waveflow-csrf");
   if (!csrf) {
     handleRefreshFailure(hadSession);
@@ -237,13 +257,17 @@ async function performRefresh(): Promise<boolean> {
       method: "POST",
       headers: { "x-waveflow-csrf": csrf },
     });
+    if (stale()) return false;
     if (!response.ok) {
       handleRefreshFailure(hadSession);
       return false;
     }
-    session = await parse<WebSession>(response);
+    const renewed = await parse<WebSession>(response);
+    if (stale()) return false;
+    session = renewed;
     return true;
   } catch {
+    if (stale()) return false;
     handleRefreshFailure(hadSession);
     return false;
   }

@@ -7,6 +7,7 @@ import {
   listAlbums,
   listLibraries,
   login,
+  logout,
   safeInternalPath,
   search,
 } from "./api";
@@ -101,6 +102,56 @@ describe("session refresh failures", () => {
     );
 
     await expect(listLibraries()).rejects.toMatchObject({ status: 401 });
+    expect(hasSession()).toBe(false);
+  });
+
+  /**
+   * A renewal takes a round trip, and a sign-out during that round trip used to
+   * be undone by it: `logout` cleared the session, the answer arrived
+   * afterwards, and the assignment put the previous account's token straight
+   * back. The visitor was on the sign-in screen and still authenticated.
+   *
+   * Asserted on `hasSession` and not on the rejection: the call fails either
+   * way — the retry meets the same 401 — and only the session says whether the
+   * sign-out took.
+   */
+  it("lets a sign-out stand even when a renewal was already in flight", async () => {
+    window.history.replaceState(null, "", "/");
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
+    document.cookie = "waveflow-csrf=test-csrf; Path=/";
+    let answerRefresh = () => {};
+    const heldRefresh = new Promise<Response>((resolve) => {
+      answerRefresh = () =>
+        resolve(new Response(JSON.stringify(webSession), { status: 200 }));
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/web/auth/login")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(webSession), { status: 200 }),
+          );
+        }
+        // Held, so the sign-out below happens while it is still out.
+        if (url.endsWith("/web/auth/refresh")) return heldRefresh;
+        if (url.endsWith("/web/auth/logout")) {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }),
+    );
+
+    await login("listener", "password");
+    expect(hasSession()).toBe(true);
+
+    const meetingA401 = listLibraries();
+    await logout();
+    expect(hasSession()).toBe(false);
+
+    answerRefresh();
+    await expect(meetingA401).rejects.toMatchObject({ status: 401 });
+    // The renewal answered for an account that had already left.
     expect(hasSession()).toBe(false);
   });
 
