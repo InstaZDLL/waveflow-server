@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="WaveFlow">
+  <!-- The brand mark from the client's own sidebar: an accent square with four
+       equaliser bars cut out of it, at the heights `.brand-mark i` gives them.
+       Solid rather than theme-aware, because a tab strip is not the page and an
+       icon that changes with the reader's colour scheme is harder to find, not
+       easier. -->
+  <rect width="32" height="32" rx="10" fill="#34d399"/>
+  <g fill="#101311">
+    <rect x="8.5" y="12.05" width="2.1" height="7.9" rx="1.05"/>
+    <rect x="12.8" y="8.3" width="2.1" height="15.4" rx="1.05"/>
+    <rect x="17.1" y="5.85" width="2.1" height="20.3" rx="1.05"/>
+    <rect x="21.4" y="10.15" width="2.1" height="11.7" rx="1.05"/>
+  </g>
+</svg>

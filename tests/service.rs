@@ -281,6 +281,24 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
         .unwrap_or_default()
         .starts_with("text/html"));
 
+    // An icon request is answered once, or not at all — never with the shell.
+    //
+    // No build produces a `favicon.ico`, so the fallback used to hand the
+    // browser the client page. It cannot decode HTML as an image, learns
+    // nothing from a 200, and asks again: sixty-six requests in fifty-one
+    // seconds on a real session, forty kilobytes of markup spent on a tab icon.
+    // A 404 is a definitive answer. Asserted on the content type rather than on
+    // the status alone, because that is what the browser choked on — and this
+    // holds whether or not a client build is embedded in the binary under test.
+    let icon = get("/favicon.ico").await;
+    assert_eq!(icon.status(), StatusCode::NOT_FOUND);
+    assert!(!icon
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default()
+        .starts_with("text/html"));
+
     // A client route that merely starts like a reserved endpoint is not one.
     let lookalike = get("/reference-guide").await;
     assert_eq!(lookalike.status(), StatusCode::OK);
