@@ -1015,16 +1015,30 @@ export const scrobble = (trackId: string, submission: boolean) =>
 export type ScrobbleProvider = "listenbrainz" | "maloja" | "lastfm";
 
 /**
+ * The cases this build has been taught to word.
+ *
+ * Exhaustive over what the server sends *today*, which is what a screen's
+ * translation table must cover.
+ */
+export type KnownScrobbleUnavailable =
+  | "no_application_configured"
+  | "browser_journey_needs_https";
+
+/**
  * Why a declared instance cannot be linked — a case, not a sentence.
  *
  * The server sent its own English prose here until 2026-09-15, which this
  * client printed verbatim: a French reader was told in English what to change
  * in a configuration file. The wording belongs to whoever is doing the
  * telling, so the wire carries only the case.
+ *
+ * Open on purpose. A server is free to be newer than the client reading it, so
+ * a type naming only today's cases would be the same untruth this file has
+ * just been cleared of: an assertion about the wire that the wire never made.
+ * `string & {}` keeps the known cases in autocomplete while admitting the rest,
+ * so handling an unrecognised one needs no cast to express.
  */
-export type ScrobbleUnavailable =
-  | "no_application_configured"
-  | "browser_journey_needs_https";
+export type ScrobbleUnavailable = KnownScrobbleUnavailable | (string & {});
 
 /** One instance a member may link, and whether this server can link it now. */
 export type ScrobbleDestination = {
