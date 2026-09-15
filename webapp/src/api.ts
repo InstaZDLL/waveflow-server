@@ -730,13 +730,32 @@ export async function placeCanvas(
     endSession(session !== null);
   }
   if (!response.ok) throw new ApiError(response.status, `PUT ${path}`);
-  return parse<CanvasBlob>(response);
+  const placed = await parse<CanvasBlob>(response);
+  // Again, and not redundantly. The call above covers answers older than this
+  // placement; this covers one that raced it — a ticket asked for after the
+  // first forget and answered before the loop was committed gets a truthful
+  // 404, passes the identity check because its entry is current, and files the
+  // track as carrying nothing. The loop would then stay invisible until the
+  // page was reloaded.
+  //
+  // `removeCanvas` needs no such pair: only absences are remembered, so a
+  // ticket that succeeds mid-removal records nothing, and the next question
+  // gets the 404 that has become true.
+  forgetCanvas(trackId);
+  return placed;
 }
 
-export const removeCanvas = (trackId: string) => {
-  forgetCanvas(trackId);
-  return call<void>(`/api/v2/tracks/${trackId}/canvas`, { method: "DELETE" });
-};
+/**
+ * Takes a track's loop away.
+ *
+ * Nothing is forgotten here, unlike a placement, and the asymmetry is the
+ * point: only *absences* are remembered. A ticket already in flight either
+ * succeeds — and a ticket is never cached — or meets the removal and answers
+ * 404, which by then is true. Either way the next question is answered
+ * correctly, so a forget would be a line no test could tell the absence of.
+ */
+export const removeCanvas = (trackId: string) =>
+  call<void>(`/api/v2/tracks/${trackId}/canvas`, { method: "DELETE" });
 
 /**
  * A URL a `<video>` can play for the loop a track carries, or `null` when it

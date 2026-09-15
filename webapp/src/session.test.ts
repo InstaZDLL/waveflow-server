@@ -427,6 +427,70 @@ describe("a canvas the server says is not there", () => {
     });
   });
 
+  it("is dropped even by a placement the server refuses", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    fetchStub.mockResolvedValue(jsonResponse({}, 404));
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+
+    // A refusal is not proof that nothing changed: a 404 on this route can
+    // also be another client having moved the loop while this one looked at
+    // it. Nothing is forgotten after a failure, so it has to happen before.
+    fetchStub.mockResolvedValueOnce(jsonResponse({}, 409));
+    await expect(
+      api.placeCanvas("t1", new Blob(["loop"], { type: "video/mp4" })),
+    ).rejects.toMatchObject({ status: 409 });
+
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+    );
+    await expect(api.canvasUrl("t1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+  });
+
+  it("is not recorded from an answer that raced a placement", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    let commitPlacement = () => {};
+    const heldPlacement = new Promise<Response>((resolve) => {
+      commitPlacement = () =>
+        resolve(
+          jsonResponse({
+            url: "/blob",
+            hash: "h",
+            format: "mp4",
+            byte_size: 1,
+          }),
+        );
+    });
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/canvas-ticket")
+        ? jsonResponse({}, 404)
+        : heldPlacement,
+    );
+
+    const placing = api.placeCanvas(
+      "t1",
+      new Blob(["loop"], { type: "video/mp4" }),
+    );
+    // Asked after the placement began and answered before it was committed, so
+    // this 404 is true at the moment it is given and stale by the time the
+    // loop exists. Forgetting only before the request would have filed it.
+    await expect(api.canvasUrl("t1")).resolves.toBeNull();
+    commitPlacement();
+    await placing;
+
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+    );
+    await expect(api.canvasUrl("t1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+  });
+
   it("is forgotten when the session ends", async () => {
     const api = await freshApi();
     await signIn(api);
