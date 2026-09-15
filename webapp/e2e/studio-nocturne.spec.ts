@@ -2303,3 +2303,62 @@ test("asks the catalogue again after a track is favourited", async ({
     .poll(() => asked, { message: "the album was re-asked" })
     .toBe(2);
 });
+
+/**
+ * A cover that failed to load is asked for again; one the server does not hold
+ * is not.
+ *
+ * The two used to be the same answer: any response that was not `ok`, and any
+ * network failure, became `null` and was then held for the session — so a
+ * single blip left a cover grey until the tab was reloaded. A 404 is the server
+ * saying it holds no such artwork, which is worth keeping; anything else is a
+ * server that could not answer, which is not.
+ */
+test("asks again for a cover that failed, and not for one that is absent", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  const shelf = albums.map((album, index) => ({
+    ...album,
+    artwork_hash: index === 0 ? "hash-flaky" : "hash-absent",
+  }));
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  let flaky = 0;
+  let absent = 0;
+  await page.route("**/api/v2/artwork/hash-flaky", async (route) => {
+    flaky += 1;
+    // Down the first time, up afterwards.
+    if (flaky === 1) return route.fulfill({ status: 503, body: "" });
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.route("**/api/v2/artwork/hash-absent", async (route) => {
+    absent += 1;
+    await route.fulfill({ status: 404, body: "" });
+  });
+
+  await page.goto("/");
+  // Waited on rather than sampled: the covers are asked for once the observer
+  // says they are on screen, which is a frame or two after the grid renders.
+  await expect.poll(() => flaky).toBe(1);
+  await expect.poll(() => absent).toBe(1);
+  await expect(page.locator(".grid .cover-fallback")).toHaveCount(2);
+
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+
+  // The one that failed is asked again and arrives; the one the server does not
+  // hold is not asked again, because that answer has not changed.
+  await expect(page.locator(".grid img.cover")).toHaveCount(1);
+  await expect.poll(() => flaky).toBe(2);
+  expect(absent).toBe(1);
+});
