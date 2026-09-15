@@ -228,8 +228,15 @@ pub struct ExchangeLastFmArgs {
     /// `argv` for the reason `link`'s secret is: a shell history and a process
     /// list are both readable by people this is not for, and whoever exchanges
     /// this token first is who the session ends up belonging to.
-    #[arg(long, default_value = "WAVEFLOW_LASTFM_TOKEN")]
+    #[arg(long, default_value = ExchangeLastFmArgs::TOKEN_ENV)]
     token_env: String,
+}
+
+impl ExchangeLastFmArgs {
+    /// Named once, because `authorize` prints it and this declares it — and a
+    /// default spelled in two places is a default that eventually disagrees
+    /// with the instructions for using it.
+    const TOKEN_ENV: &'static str = "WAVEFLOW_LASTFM_TOKEN";
 }
 
 #[derive(Debug, Args)]
@@ -667,18 +674,33 @@ async fn authorize_lastfm(state: &AppState, args: AuthorizeLastFmArgs) -> anyhow
         .services
         .begin_lastfm_approval(&args.destination)
         .await?;
-    // Both lines carry the same secret — the address has the token in its
-    // query string. They go to standard output because that is where the
-    // operator reads them, and nowhere else: nothing here is traced.
+    // The address and the token are the same secret twice — the token is in
+    // the address's query string. Both go to standard output because that is
+    // where the operator reads them, and nowhere else: nothing here is traced.
     println!("Open this address as {}, and approve it:", args.username);
     println!();
     println!("  {}", approval.authorize_url);
     println!();
-    println!("Then, on this machine:");
+    println!("Then put this token in {}:", ExchangeLastFmArgs::TOKEN_ENV);
     println!();
+    println!("  {}", approval.token);
+    println!();
+    println!("…and run:");
+    println!();
+    // **Deliberately not a line to paste with the token in it.** A first
+    // version printed `WAVEFLOW_LASTFM_TOKEN=… waveflow scrobble exchange …`,
+    // ready to copy — and a copied command line lands in a shell history,
+    // which is one of the two things `--token-env` exists to keep this token
+    // out of. Printing a recipe that undoes the flag's own reason would have
+    // been worse than having no flag.
+    //
+    // How the variable gets set is left to the operator and their shell: a
+    // silent `read`, a password manager, a file sourced and deleted. This
+    // server has no business choosing among those, and it runs on three
+    // platforms whose answers differ.
     println!(
-        "  WAVEFLOW_LASTFM_TOKEN={} \\\n    waveflow scrobble exchange --actor {} --username {} --destination {}",
-        approval.token, args.actor, args.username, args.destination
+        "  waveflow scrobble exchange --actor {} --username {} --destination {}",
+        args.actor, args.username, args.destination
     );
     println!();
     println!("The token is Last.fm's and expires on their clock; this server wrote nothing down.");

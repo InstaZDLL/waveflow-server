@@ -1814,6 +1814,14 @@ test("opens the rest of the client from the mobile bar", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "about the phone bar");
+  // An administrator of a library that takes files, so all eight are this
+  // account's to see. The default fixture takes none, which left `Upload` out
+  // of the list below while the comment on it claimed otherwise — and nothing
+  // then proved the sheet ever shows an upload entry at all. Its absence in
+  // the test beside this one is over-determined: that account is a listener
+  // *and* its library is closed, so it would pass against a sheet that had
+  // dropped the entry entirely.
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
   await page.goto("/");
 
   const bar = page.locator(".mobile-navigation");
@@ -1849,10 +1857,14 @@ test("opens the rest of the client from the mobile bar", async ({
     "Recently played",
     "Shares",
     "Scrobbling",
+    "Upload",
     "Admin",
   ]) {
     await expect(sheet.getByRole("link", { name })).toBeVisible();
   }
+  // Counted as well as named: a sheet that also offered something nobody asked
+  // for would satisfy every line above.
+  await expect(sheet.getByRole("link")).toHaveCount(8);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
