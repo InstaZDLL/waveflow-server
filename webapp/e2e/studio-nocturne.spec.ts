@@ -2430,11 +2430,76 @@ test("keeps a canvas on screen when re-minting its ticket fails", async ({
 
   const title = page.getByLabel("Title", { exact: true });
   await title.fill("A title this track did not have");
+  // Armed before the click, and awaited after it: the assertions below are
+  // about what the panel shows once the re-mint has actually failed, and
+  // waiting only on "Saved." would leave that to the order two promises happen
+  // to settle in.
+  const refused = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/canvas-ticket") && response.status() === 503,
+  );
   await page.getByRole("button", { name: "Save" }).click();
+  await refused;
   await expect(page.getByText("Saved.")).toBeVisible();
 
   await expect(preview).toBeVisible();
   await expect(
     page.getByText("Whether this track has a canvas could not be read."),
   ).toHaveCount(0);
+});
+
+/**
+ * A correction reaches the listings that were holding the old value.
+ *
+ * Correcting a track can change its title, its artists, its genres, its year
+ * and its numbering — so it can change what an album holds, how a listing
+ * orders, which genre a track belongs to and what a search matches. While every
+ * screen re-read on mount the question did not arise; against a cache, a
+ * listing sits on the old answer for as long as it is held.
+ *
+ * **Reached by clicking throughout.** A `goto` to the editor would load a fresh
+ * document, and a fresh document has an empty cache — the listing would be
+ * re-asked whether or not anything was invalidated, and the test would be
+ * measuring the reload. That is what defeated the first attempt at this.
+ *
+ * Asserted on the request, because the mock answers a fixture that does not
+ * change: what marks the difference is that the question was asked again.
+ */
+test("re-asks a held listing after a correction is saved", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  let asked = 0;
+  await page.route("**/api/v2/albums*", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: albums });
+  });
+  // The album holds the correctable track, so its editor is a link away rather
+  // than an address away.
+  await page.route("**/api/v2/albums/album-1", async (route) => {
+    await route.fulfill({
+      json: { ...albums[0], songs: [correctable.song] },
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  const sidebar = page.getByRole("navigation");
+  await page.getByRole("link", { name: /Post/ }).first().click();
+  await page
+    .getByRole("link", { name: "Correct tags: Army Of Me" })
+    .click();
+
+  const title = page.getByLabel("Title", { exact: true });
+  await expect(title).toHaveValue("Army Of Me");
+  await title.fill("Army of Me");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(2);
 });
