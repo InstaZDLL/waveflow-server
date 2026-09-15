@@ -184,6 +184,24 @@ une question de vie privée à trancher (un serveur auto-hébergé qui interroge
 tiers sur la bibliothèque de son propriétaire, par défaut ou sur consentement).
 Cela relève d'une **RFC**, pas d'un ticket d'interface.
 
+**Et la réponse est probablement déjà conçue, ailleurs.** Le dépôt
+[InstaZDLL/waveflow-plugins](https://github.com/InstaZDLL/waveflow-plugins)
+décrit des **composants WebAssembly en bac à sable** : un seul `plugin.wasm`
+portable, exécuté sous wasmtime avec un budget de carburant et de mémoire, et
+une **liste blanche HTTP déclarée au manifeste que l'hôte impose** — un plugin
+n'atteint que les hôtes qu'il a demandés. Le registre épingle version et
+`blake3`. Deux plugins de ce genre existent déjà, `apple-artwork` et
+`spotify-canvas`, et le README affirme que le même fichier tourne « on Windows,
+macOS, Linux, **and the server** ».
+
+**Le serveur, lui, n'en sait rien** : aucune occurrence de `plugin` sous
+`src/`. La bonne RFC n'est donc sans doute pas « le serveur appelle Last.fm »
+mais **« le serveur héberge le moteur de plugins »** — la permission, le bac à
+sable et la question de vie privée y sont déjà traités par construction, et une
+source de métadonnées devient un plugin parmi d'autres plutôt qu'une dépendance
+de plus dans le binaire. C'est plus ambitieux et plus juste ; à trancher dans
+la RFC, pas ici.
+
 Reste faisable tout de suite et sans source externe : les **titres les plus
 écoutés** d'un artiste, que l'historique local sait calculer — ce qui remplit
 `getTopSongs` par la même occasion.
@@ -230,6 +248,21 @@ mérite d'être traité comme telle — un relevé des espacements, des tailles 
 des niveaux de contraste réellement utilisés, puis une échelle choisie, plutôt
 qu'une retouche écran par écran.
 
+**Un indice de là où ça se joue** : `webapp/src/styles.css` fait cohabiter
+**deux nomenclatures**. D'un côté des rôles — `--panel`, `--panel-soft`,
+`--panel-strong`, `--line`, `--line-strong`, `--muted` ; de l'autre des
+surfaces nommées par leur apparence — `--color-surface-dark`,
+`--color-surface-light`, et leurs variantes `-elevated`. Deux systèmes pour la
+même chose, c'est précisément ce qui produit un écran « en carton » : plus
+aucune règle ne dit lequel employer, donc chaque écran tranche pour lui-même.
+Il n'existe **aucune échelle d'espacement** — ni variable, ni pas — alors
+qu'une échelle est exactement ce dont ce constat a besoin.
+
+L'issue #63 (close) parlait déjà d'unifier ces surfaces sur un paquet
+`@waveflow/design-tokens` en OKLCH. Ce paquet **n'est pas une dépendance du
+client** et le CSS ne contient aucun `oklch`. À vérifier avant de choisir :
+reprendre ce paquet, ou poser l'échelle ici.
+
 ## 3. Ce qui manque, côté fonctions
 
 ### Dans le client web
@@ -238,6 +271,14 @@ qu'une retouche écran par écran.
   historique, aléatoire — jamais « toutes mes pistes, triées ». Le composant
   existe (`SongTable`, utilisé à cinq endroits) ; la route non. C'est le manque
   qu'un utilisateur venant de Navidrome remarque en premier.
+
+  **Et le serveur ne sait pas répondre non plus.** L'issue #179 disait que
+  `GET /api/v2/songs` exigeait un `genre` et ne pouvait donc rien lister ; elle
+  a été close le 2026-09-10 **en renommant la route** en
+  `/api/v2/songs/by-genre`. Le contrat est devenu honnête, la fonction n'est
+  pas apparue : il ne reste que `by-genre` et `random`. La liste « Titres »
+  demande donc **une nouvelle route serveur** — paginée et triable — avant
+  toute page. C'est une correction à l'estimation : ce point traverse le fil.
 - **Aucun import `.m3u`.** Rien dans le dépôt. C'est ce qui permet d'arriver
   avec une collection existante : une barrière à l'adoption, pas un confort.
 - Pas de playlists intelligentes, pas de profils de transcodage.
@@ -311,6 +352,52 @@ optimisation.
 8. **Informations de fichier, barre de qualité, vue paroles, vue immersive.**
 9. **Import `.m3u`**, puis les radios internet.
 10. Playlists intelligentes, jukebox, podcasts : de vrais projets.
+
+## 5. Le découpage en pull requests
+
+Onze pull requests, plus une RFC. Les tailles emploient l'échelle des étiquettes
+du dépôt (`size: xs` < 10 lignes, `s` 10-50, `m` 50-200, `l` 200-500,
+`xl` > 500) et restent des **estimations**, tests compris.
+
+| # | Intitulé | Ce qu'elle porte | Taille |
+|---|---|---|---|
+| 1 | Une réponse stable ne se redemande pas | Les deux défauts de la section 1 | `m` |
+| 2 | Une seule marque, et un écran qui la porte | Identité du desktop, trois copies réduites à un SVG, écran de chargement et transitions | `l` |
+| 3 | Le catalogue se laisse parcourir | Route serveur listant les pistes, page « Titres », recherche à la frappe, extraction des trois primitives hors de `pages.tsx` | `l` |
+| 4 | Le serveur compresse ce qu'il envoie | Une feature `tower-http`, une couche, un test | `s` |
+| 5 | Ce qu'un fichier est, et une barre qui le dit | Sérialiser cinq champs déjà projetés, étendre le type client, dessiner | `l` |
+| 6 | Les réglages cessent de traîner dans un couloir | Page Réglages, clients enregistrés, route de jetons portée sur soi | `l` |
+| 7 | Les paroles et la vue immersive | Deux vues sur « En écoute » | `l` |
+| 8 | La passe de conception | Échelle d'espacement, nomenclature unique, hiérarchie | `xl` |
+| 9 | Les plus écoutés d'un artiste | Calcul sur l'historique local ; remplit `getTopSongs` | `l` |
+| 10 | Import `.m3u` | Analyse, résolution des chemins, serveur et client | `xl` |
+| 11 | Les radios internet | Migration, trois écritures Subsonic, `/api/v2`, page | `xl` |
+
+**Hors PR — une RFC** : le moteur de plugins côté serveur, dont dépendent la
+biographie et les artistes similaires. Voir la section « Les pages artiste ».
+
+### L'ordre, et ce qui contraint
+
+- **1 à 4 ne dépendent de rien** et peuvent partir ensemble. Deux vrais
+  défauts, l'identité, les deux manques les plus visibles et le seul gain de
+  transfert du document.
+- **7 suppose 2** : la vue immersive réemploie l'écran de marque.
+- **8 vient après 3, 5, 6 et 7**, sinon la passe se refait sur du balisage qui
+  a changé entre-temps.
+- **9 est la seule moitié de la page artiste** qui n'attend pas la RFC.
+
+### Deux regroupements refusés, et pourquoi
+
+La consigne était de grouper au maximum. Deux exceptions, assumées :
+
+1. **La compression reste seule** (4) plutôt que de rejoindre `.m3u` ou les
+   radios, l'autre travail Rust. La grouper ferait attendre quarante lignes à
+   fort rendement derrière un chantier de plusieurs centaines.
+2. **5 et 7 restent séparées** bien qu'elles touchent le même écran. La 5
+   **change la forme du fil**, la 7 non. Mêler un changement de wire à du
+   travail d'interface est exactement ce qui a laissé passer les quatre
+   défauts de la PR #203 : les mocks confirmaient les types au lieu de les
+   contredire. Une PR qui touche le fil mérite son propre regard.
 
 ## Ce qui n'a pas été vérifié
 
