@@ -349,6 +349,79 @@ impl crate::services::LastFmSessionExchange for LastFm {
             Ok(key)
         })
     }
+
+    /// `auth.getToken`, and the address the person has to open with it.
+    ///
+    /// **This is the method the comment above says belongs to the other
+    /// journey, and it is now implemented** — for the CLI, where nothing comes
+    /// back to this server. The two must not be mixed up: here the token is
+    /// asked for *first* and is worth nothing until its owner approves it,
+    /// while on the web Last.fm hands one over on the return, already
+    /// approved. Both end at `auth.getSession` above, which is why one trait
+    /// carries them.
+    ///
+    /// The address is built here rather than in the service because the
+    /// application key is here — the service's copy of it lives on a structure
+    /// that only exists when a public `https` address is configured, which is
+    /// the case this journey exists to do without.
+    fn request_token<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<crate::services::LastFmApproval, crate::services::ServiceError>> {
+        Box::pin(async move {
+            use crate::services::ServiceError;
+            let mut params = vec![
+                ("method", "auth.getToken".to_owned()),
+                ("api_key", self.application.api_key.clone()),
+            ];
+            params.push(("api_sig", signature(&params, &self.application.secret)));
+            params.push(("format", "json".to_owned()));
+            let response = self
+                .client
+                .post(self.endpoint.clone())
+                .form(&params)
+                .send()
+                .await
+                .map_err(|_| ServiceError::Unavailable)?;
+            if !response.status().is_success() {
+                // The status and nothing else, like the exchange beside it: a
+                // failure here quotes the application key back in its error
+                // text.
+                tracing::warn!(status = %response.status(), "last.fm refused to mint a request token");
+                return Err(ServiceError::Unavailable);
+            }
+            let body: TokenResponse = response
+                .json()
+                .await
+                .map_err(|_| ServiceError::Unavailable)?;
+            let token = body.token.unwrap_or_default();
+            if token.is_empty() {
+                // A `200` carrying an error object — a bad key, or a signature
+                // this server computed wrong. Nothing of the body is logged.
+                tracing::warn!("last.fm returned no request token");
+                return Err(ServiceError::Unavailable);
+            }
+            let mut authorize_url = url::Url::parse(crate::services::LASTFM_AUTHORIZE_URL)
+                .map_err(|_| ServiceError::Unavailable)?;
+            authorize_url
+                .query_pairs_mut()
+                .append_pair("api_key", &self.application.api_key)
+                .append_pair("token", &token);
+            Ok(crate::services::LastFmApproval {
+                authorize_url: authorize_url.to_string(),
+                token,
+            })
+        })
+    }
+}
+
+/// Just enough of the answer to read the request token out of it.
+///
+/// Narrow for the reason [`SessionResponse`] is narrow: the error object
+/// beside it quotes the application key back, and a type able to hold it is a
+/// type something eventually prints.
+#[derive(serde::Deserialize)]
+struct TokenResponse {
+    token: Option<String>,
 }
 
 /// Just enough of the answer to read the session key out of it.

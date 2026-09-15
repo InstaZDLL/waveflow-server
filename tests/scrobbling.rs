@@ -3260,6 +3260,13 @@ fn lastfm_app(temp: &tempfile::TempDir) -> waveflow_server::Config {
 struct ExchangesFor {
     session_key: Result<String, ()>,
     tokens: Mutex<Vec<String>>,
+    /// What `auth.getToken` would answer, and how often it was asked.
+    ///
+    /// Counted as well as answered, because the sharpest thing a test can say
+    /// about the web journey is that this was **never called** — the token it
+    /// exchanges is the one Last.fm appended to the return, and a server that
+    /// minted its own would hold the wrong one.
+    minted: Mutex<(String, usize)>,
 }
 
 impl ExchangesFor {
@@ -3267,6 +3274,7 @@ impl ExchangesFor {
         std::sync::Arc::new(Self {
             session_key: Ok(session_key.to_owned()),
             tokens: Mutex::new(Vec::new()),
+            minted: Mutex::new(("minted-request-token".to_owned(), 0)),
         })
     }
 
@@ -3274,11 +3282,17 @@ impl ExchangesFor {
         std::sync::Arc::new(Self {
             session_key: Err(()),
             tokens: Mutex::new(Vec::new()),
+            minted: Mutex::new(("minted-request-token".to_owned(), 0)),
         })
     }
 
     fn tokens(&self) -> Vec<String> {
         self.tokens.lock().unwrap().clone()
+    }
+
+    /// How many times a request token was asked for.
+    fn mintings(&self) -> usize {
+        self.minted.lock().unwrap().1
     }
 }
 
@@ -3287,6 +3301,20 @@ impl waveflow_server::services::LastFmSessionExchange for ExchangesFor {
         Box::pin(async move {
             self.tokens.lock().unwrap().push(token.to_owned());
             self.session_key.clone().map_err(|()| ServiceError::Invalid)
+        })
+    }
+
+    fn request_token<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<waveflow_server::services::LastFmApproval, ServiceError>> {
+        Box::pin(async move {
+            let mut minted = self.minted.lock().unwrap();
+            minted.1 += 1;
+            let token = minted.0.clone();
+            Ok(waveflow_server::services::LastFmApproval {
+                authorize_url: format!("https://www.last.fm/api/auth/?api_key=k&token={token}"),
+                token,
+            })
         })
     }
 }
@@ -4164,4 +4192,230 @@ async fn an_ambiguous_entry_names_which_instance_it_was_queued_for() {
         ["alice", "bob"],
         "each entry names the instance whose queue it is in"
     );
+}
+
+/// The browser-less journey, and the one requirement it drops.
+///
+/// RFC-010 deferred this because "writing two journeys at once is two chances
+/// to get the temporary state wrong". This one has no temporary state: the
+/// request token is Last.fm's, it expires on Last.fm's clock, and a person
+/// carries it between two commands. Nothing of ours is written down, so there
+/// is no second thing to get wrong — which is what made it safe to write
+/// second.
+///
+/// **No `WAVEFLOW_PUBLIC_URL`.** The web journey needs one because Last.fm has
+/// to bring a browser back to an address this server answers; nothing comes
+/// back here. A headless server is exactly the deployment that has no such
+/// address, and exactly the one this journey is for.
+#[tokio::test]
+async fn a_journey_without_a_browser_needs_no_public_address() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = lastfm_app(&temp);
+    config.public_url = None;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "headless-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    // The web journey cannot even start here, which is the contrast.
+    assert!(matches!(
+        state
+            .services
+            .begin_lastfm_authorization(listener.owner, "default")
+            .await,
+        Err(ServiceError::Unavailable)
+    ));
+
+    let approval = state
+        .services
+        .begin_lastfm_approval("default")
+        .await
+        .unwrap();
+    assert_eq!(exchange.mintings(), 1);
+    assert!(approval
+        .authorize_url
+        .starts_with("https://www.last.fm/api/auth/"));
+    // The address carries the token, which is why neither of them is ever
+    // logged: whoever opens it first is who the session belongs to.
+    assert!(approval.authorize_url.contains(&approval.token));
+
+    state
+        .services
+        .complete_lastfm_approval(listener.owner, "default", &approval.token)
+        .await
+        .unwrap();
+
+    // The token exchanged is the one that was minted, and there is only one.
+    assert_eq!(exchange.tokens(), vec![approval.token]);
+    let links = state.services.scrobble_links(listener.owner).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].provider, ScrobbleProvider::LastFm);
+    assert_eq!(links[0].destination, "default");
+}
+
+/// The web journey never asks for a token of its own.
+///
+/// This is the mistake `src/scrobblers/lastfm.rs` warns about in as many
+/// words: the two halves of Last.fm's protocol resemble each other enough to
+/// be mixed up, and a server that minted a token and then received a different
+/// one would hold the wrong one. Until `auth.getToken` existed there was
+/// nothing to count; now there is, and the count is zero.
+#[tokio::test]
+async fn the_journey_with_a_browser_mints_no_token_of_its_own() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let listener = fixture(&config, &state, "no-minting-listener").await;
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    let started = state
+        .services
+        .begin_lastfm_authorization(listener.owner, "default")
+        .await
+        .unwrap();
+    let journey = state_of(&started.authorize_url);
+    state
+        .services
+        .complete_lastfm_authorization(&journey, &started.cookie, "the-token-last-fm-appended")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        exchange.tokens(),
+        vec!["the-token-last-fm-appended".to_owned()],
+        "the token exchanged is the one Last.fm handed back"
+    );
+    assert_eq!(
+        exchange.mintings(),
+        0,
+        "and this journey asks Last.fm for no token of its own"
+    );
+}
+
+/// An instance this server does not offer is refused before anything leaves.
+///
+/// A token minted for a name no link could be made against is a call made for
+/// nothing, and it would be made against a real Last.fm application.
+#[tokio::test]
+async fn an_approval_for_an_undeclared_instance_asks_last_fm_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = lastfm_app(&temp);
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let exchange = ExchangesFor::key("a-session-key");
+    state.services.register_lastfm_exchange(
+        "default",
+        std::sync::Arc::clone(&exchange)
+            as std::sync::Arc<dyn waveflow_server::services::LastFmSessionExchange>,
+    );
+
+    assert!(matches!(
+        state
+            .services
+            .begin_lastfm_approval("nobody-declared-me")
+            .await,
+        Err(ServiceError::NotFound)
+    ));
+    assert_eq!(exchange.mintings(), 0);
+}
+
+/// The real adapter asks Last.fm for a token, and puts it in the address.
+///
+/// The three tests above drive a double, which proves the service's half and
+/// nothing about the wire. This one stands a server on loopback and lets the
+/// Last.fm adapter talk to it — so what is checked here is what only exists
+/// there: that the call is `auth.getToken`, that it is signed, that the token
+/// is read out of the answer, and that the address handed to the operator
+/// carries the application key and that same token.
+#[tokio::test]
+async fn the_adapter_asks_last_fm_for_a_token_and_names_it_in_the_address() {
+    let base = spawn_answering("/2.0/", r#"{"token":"a-real-request-token"}"#).await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    let url = waveflow_server::scrobblers::validate_destination(&base, true)
+        .expect("a destination the suite chose");
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config
+        .destinations
+        .retain(|declared| declared.provider != ScrobbleProvider::LastFm);
+    config
+        .destinations
+        .push(waveflow_server::config::ScrobbleDestination {
+            provider: ScrobbleProvider::LastFm,
+            name: "default".to_owned(),
+            url,
+            fingerprint,
+        });
+    // An application and no public address: the browser-less journey's whole
+    // precondition, and the adapter is registered on the application alone.
+    config.public_url = None;
+    config.lastfm = Some(waveflow_server::config::LastFmApplication {
+        api_key: "an-application-key".to_owned(),
+        secret: "an-application-secret".to_owned(),
+    });
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    let approval = state
+        .services
+        .begin_lastfm_approval("default")
+        .await
+        .unwrap();
+
+    assert_eq!(approval.token, "a-real-request-token");
+    // The website, not the API endpoint the destination names — two different
+    // hosts, and the address is built from a constant for that reason.
+    assert!(approval
+        .authorize_url
+        .starts_with("https://www.last.fm/api/auth/"));
+    assert!(approval
+        .authorize_url
+        .contains("api_key=an-application-key"));
+    assert!(approval
+        .authorize_url
+        .contains("token=a-real-request-token"));
+}
+
+/// An answer with no token in it is a failure, not an empty token.
+///
+/// Last.fm reports a bad key or a signature this server computed wrong as a
+/// `200` carrying an error object. Read as success, it would hand the operator
+/// an address with nothing in it and the journey would fail one step later,
+/// with nothing saying why.
+#[tokio::test]
+async fn an_answer_carrying_no_token_is_refused_rather_than_passed_on() {
+    let base = spawn_answering("/2.0/", r#"{"error":4,"message":"Invalid API key"}"#).await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    let url = waveflow_server::scrobblers::validate_destination(&base, true)
+        .expect("a destination the suite chose");
+    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    config
+        .destinations
+        .retain(|declared| declared.provider != ScrobbleProvider::LastFm);
+    config
+        .destinations
+        .push(waveflow_server::config::ScrobbleDestination {
+            provider: ScrobbleProvider::LastFm,
+            name: "default".to_owned(),
+            url,
+            fingerprint,
+        });
+    config.lastfm = Some(waveflow_server::config::LastFmApplication {
+        api_key: "an-application-key".to_owned(),
+        secret: "an-application-secret".to_owned(),
+    });
+    let state = waveflow_server::initialize(&config).await.unwrap();
+
+    assert!(matches!(
+        state.services.begin_lastfm_approval("default").await,
+        Err(ServiceError::Unavailable)
+    ));
 }

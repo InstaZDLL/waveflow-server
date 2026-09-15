@@ -788,6 +788,43 @@ les applications de bureau, et il pourra venir. Deux parcours écrits ensemble,
 c'est deux fois l'occasion de se tromper sur l'état temporaire, et la CLI n'est
 ici que pour l'opérateur qui prépare un serveur.
 
+### Il est venu, le 2026-09-15, et il n'a pas d'état temporaire
+
+Le report ci-dessus tenait sur une crainte nommée : *deux fois l'occasion de se
+tromper sur l'état temporaire*. Celui-ci n'en a aucun. Le jeton de requête
+appartient à Last.fm, il expire sur leur horloge, et **c'est la personne qui le
+porte** d'une commande à l'autre. Pas de table, pas de cookie, pas d'échéance à
+nous. Il n'y avait donc pas deux états à tenir, mais un seul — et c'est ce qui
+a permis de l'écrire en second sans rejouer la crainte.
+
+Deux commandes, là où le web a deux routes :
+
+- `waveflow scrobble authorize --username … --destination …` appelle
+  `auth.getToken`, imprime l'adresse à ouvrir et le jeton à rapporter. **Elle
+  n'écrit rien** : une autorisation que personne ne termine ne coûte rien au
+  compte, et aucune ligne ne traîne qu'une purge devrait ramasser.
+- `waveflow scrobble exchange --username … --destination …` échange le jeton
+  approuvé contre la clé de session et crée le lien.
+
+**Il ne demande pas `WAVEFLOW_PUBLIC_URL`**, et c'est sa raison d'être. Le
+parcours web l'exige parce que Last.fm doit ramener un navigateur à une adresse
+que ce serveur répond ; ici rien ne revient. La seule condition est donc une
+application — ce qui fait de ce parcours celui d'un serveur sans façade
+publique, exactement la machine où la CLI est déjà le seul geste possible.
+
+**Le jeton sort par une variable d'environnement, pas par `argv`**, comme le
+secret de `link` et pour la même raison : un historique de shell et une liste de
+processus se lisent. Le sien mérite ce soin autant qu'une clé de session — qui
+l'échange le premier est celui à qui la session finit par appartenir.
+
+**Et `auth.getToken` n'entre pas dans le parcours web pour autant.** Le
+paragraphe ci-dessus disait que les deux se ressemblent assez pour se mélanger ;
+maintenant que les deux existent, cette phrase cesse d'être un avertissement et
+devient vérifiable. Le double de test compte les demandes de jeton, et le
+parcours web en fait **zéro** — un serveur qui minterait le sien puis en
+recevrait un autre travaillerait avec le mauvais, et c'est désormais une
+assertion et non une intention.
+
 ## Décision 12 — ce que l'API montre : des compteurs, jamais un écho
 
 Un lien expose son état et la forme de sa file, agrégés :
