@@ -274,6 +274,25 @@ let scrobbleWrites: Array<{ method: string; path: string; body?: unknown }> = []
 /** Where the Last.fm journey says to send the browser. */
 let lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
 
+/**
+ * The words the mock holds for each track. Absent is a track without any.
+ *
+ * Shaped like `src/lyrics.rs` answers, `camelCase` envelope included — written
+ * from the server rather than from `LyricsList` in `webapp/src/api.ts`, which
+ * is how that type spent a release claiming `structured_lyrics` while every
+ * read of it threw.
+ */
+let lyricSheets = new Map<
+  string,
+  Array<{
+    displayArtist: string | null;
+    displayTitle: string;
+    lang: string;
+    synced: boolean;
+    line: Array<{ start?: number; value: string }>;
+  }>
+>();
+
 /** The loop the mock holds for each track, as bytes. Absent is none. */
 let canvases = new Map<string, number[]>();
 /** Every placement and removal the mock received, in order. */
@@ -542,11 +561,15 @@ async function mockAuthenticatedApi(page: Page) {
       url.pathname.startsWith("/api/v2/tracks/") &&
       url.pathname.endsWith("/lyrics")
     ) {
-      // A track without words. The playing page asks for them, and the
-      // catch-all below would answer with a track, which is not a list of
-      // lyrics — no test visited that page before the canvas put a loop on it.
+      // The playing page asks for these, and the catch-all below would answer
+      // with a track, which is not a list of lyrics — no test visited that page
+      // before the canvas put a loop on it. Empty unless a test says otherwise.
+      const trackId = url.pathname.split("/")[4] as string;
       await route.fulfill({
-        json: { track_id: url.pathname.split("/")[4], structured_lyrics: [] },
+        json: {
+          trackId,
+          structuredLyrics: lyricSheets.get(trackId) ?? [],
+        },
       });
       return;
     }
@@ -683,6 +706,7 @@ test.beforeEach(async ({ page }) => {
   uploadCommits = [];
   uploadSession = freshUploadSession();
   loseAcknowledgementOf = null;
+  lyricSheets = new Map();
   canvases = new Map();
   canvasWrites = [];
   refuseCanvasWith = null;
@@ -1569,6 +1593,33 @@ test("offers removal but no new canvas where the library takes none", async ({
  * name. It steps aside when motion is reduced, and when the browser cannot play
  * it — the cover shows then, never an empty frame.
  */
+/**
+ * The playing page, reading what the server actually sends.
+ *
+ * Until 2026-09-15 `LyricsList` declared a `snake_case` envelope the server has
+ * never sent, so this page threw on its first property and showed nothing at
+ * all. Nothing caught it because the mock above was written from that type. An
+ * assertion on the words themselves is what tells the two shapes apart: an
+ * empty sheet renders the same "no lyrics" line under either name.
+ */
+test("shows the words a track travels with", async ({ page }) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: false,
+      line: [{ value: "the lamps come on along the quay" }],
+    },
+  ]);
+  await page.goto("/playing");
+  await expect(
+    page.getByRole("listitem").filter({
+      hasText: "the lamps come on along the quay",
+    }),
+  ).toBeVisible();
+});
+
 test("plays a track's canvas over its cover, and steps aside for it", async ({
   page,
 }) => {

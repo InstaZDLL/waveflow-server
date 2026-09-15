@@ -909,9 +909,18 @@ export type StructuredLyrics = {
   line: LyricsLine[];
 };
 
+/**
+ * What `GET /api/v2/tracks/{id}/lyrics` answers.
+ *
+ * `camelCase`, because `src/lyrics.rs` renames the whole struct that way — the
+ * envelope as much as the `StructuredLyrics` it carries. This declared
+ * `track_id`/`structured_lyrics` until 2026-09-15, so every read of it threw on
+ * the first property and the playing page was unreachable. `StructuredLyrics`
+ * above was already right: the inside was converted and the envelope forgotten.
+ */
 export type LyricsList = {
-  track_id: string;
-  structured_lyrics: StructuredLyrics[];
+  trackId: string;
+  structuredLyrics: StructuredLyrics[];
 };
 
 export const getLyrics = (trackId: string) =>
