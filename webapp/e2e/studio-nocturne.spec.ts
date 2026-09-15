@@ -830,6 +830,59 @@ test("sorts through the server and filters in the browser", async ({
 });
 
 /**
+ * Covers are asked for when they are about to be seen, not when the page mounts.
+ *
+ * `/api/v2/artwork/{hash}` needs an `Authorization` header, so each thumbnail
+ * costs a `fetch` of its own. A library of 164 tracks opened with 127 requests
+ * in half a second against a connection limit of six, and the covers below the
+ * fold were queued ahead of the ones being looked at.
+ *
+ * Asserted on one card at the far end rather than on a count: a count depends
+ * on the viewport and would have to be loosened until it stopped meaning
+ * anything. What this pins is the property — off screen is not asked for, and
+ * scrolling to it asks.
+ */
+test("asks for a cover when it comes into view, and not before", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  const shelf = Array.from({ length: 60 }, (_, index) => ({
+    id: `album-lazy-${index}`,
+    library_id: "library-1",
+    title: `Shelf ${String(index).padStart(2, "0")}`,
+    artist: "Rue Delacour",
+    artist_id: "artist-1",
+    artwork_hash: `hash-${index}`,
+    year: 2000 + index,
+    starred_at: null,
+    user_rating: null,
+  }));
+
+  // Registered after `mockAuthenticatedApi`, so these win: Playwright tries
+  // handlers newest first.
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    asked.push(new URL(route.request().url()).pathname.split("/").pop() ?? "");
+    // A 404 is enough: this is about which requests leave, not what comes back.
+    await route.fulfill({ status: 404, body: "" });
+  });
+
+  await page.goto("/");
+  const last = page.getByText("Shelf 59");
+  await expect(last).toBeVisible();
+
+  // The top of the shelf is on screen and has been asked for; the bottom is
+  // sixty cards away and has not.
+  await expect.poll(() => asked).toContain("hash-0");
+  expect(asked).not.toContain("hash-59");
+
+  await last.scrollIntoViewIfNeeded();
+  await expect.poll(() => asked).toContain("hash-59");
+});
+
+/**
  * The card actions guard themselves while their album's tracks are being
  * fetched. The guard was one album id, which meant two cards in flight shared
  * a single slot: pressing the second card cleared the first one's guard
