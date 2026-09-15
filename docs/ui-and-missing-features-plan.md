@@ -159,10 +159,51 @@ arrivent dans le désordre. Le bouton peut rester pour la validation au clavier.
 Aujourd'hui : un nom et des albums. Attendu : le niveau du client desktop —
 biographie, artistes similaires.
 
-**Le serveur sait déjà répondre** : `getArtistInfo`, `getArtistInfo2`,
-`getSimilarSongs`, `getSimilarSongs2` et `getTopSongs` sont tous servis par la
-façade. Ce qui manque est côté client, et côté `/api/v2` il faut vérifier que
-l'équivalent existe avant de promettre la page.
+**Ce n'est pas un travail de client, et c'est le point le plus sous-estimé du
+document.** La séance a d'abord conclu que « le serveur sait déjà répondre »
+parce que les méthodes sont routées. Elles le sont, et elles ne répondent rien :
+
+| Méthode | Ce qu'elle rend réellement |
+|---|---|
+| `getTopSongs` | conteneur vide (`src/subsonic/mod.rs:401`) |
+| `getSimilarSongs` | conteneur vide (`:402`) |
+| `getSimilarSongs2` | conteneur vide (`:403`) |
+| `getArtistInfo`, `getArtistInfo2` | `artist_info` cherche l'artiste **pour son seul refus** — la sémantique 404 — puis renvoie un conteneur vide (`src/subsonic/browse.rs:79`) |
+| `getAlbumInfo`, `getAlbumInfo2` | l'identifiant de sortie s'il existe, rien d'autre |
+
+Et la raison est écrite dans le code, comme une politique et non comme un
+oubli : **« WaveFlow queries no remote source, so notes and biography images
+stay absent. »** Il n'y a ni biographie ni artiste similaire **nulle part** —
+ni en base, ni dans les services, ni dans une migration. Chez Navidrome ces
+données viennent de Last.fm et de MusicBrainz.
+
+**Conséquence sur l'estimation** : une page artiste au niveau du desktop exige
+une capacité qui n'existe pas — **une source de métadonnées externe**, avec son
+cache, sa limitation de débit, sa dégradation quand elle est injoignable, et
+une question de vie privée à trancher (un serveur auto-hébergé qui interroge un
+tiers sur la bibliothèque de son propriétaire, par défaut ou sur consentement).
+Cela relève d'une **RFC**, pas d'un ticket d'interface.
+
+Reste faisable tout de suite et sans source externe : les **titres les plus
+écoutés** d'un artiste, que l'historique local sait calculer — ce qui remplit
+`getTopSongs` par la même occasion.
+
+### Ce que le serveur sait déjà, et ne dit pas
+
+Les métadonnées techniques sont **stockées et déjà projetées en SQL** —
+`codec`, `bitrate`, `sample_rate`, `bit_depth`, `channels`, `duration_ms`,
+`size` figurent dans les migrations et dans la projection `song_select!`.
+
+Mais **elles ne sortent pas** : aucune ne paraît dans les réponses de
+`src/api/`, et `webapp/src/api.ts` ne les connaît pas. Donc informations de
+fichier et barre de qualité **ne demandent aucune migration** — seulement de
+les sérialiser, d'étendre le type client, et de dessiner. C'est la plus grosse
+économie du document.
+
+Symétriquement, une réserve sur la page Réglages : les jetons ne sont listés
+que par une route **d'administration** — `/api/v2/admin/users/{username}/tokens`.
+Montrer à un utilisateur **ses propres** clients enregistrés demande donc une
+route non administrateur, portée sur soi. Petite, mais c'est du serveur.
 
 ### Ce qu'on ne voit pas d'un fichier
 
@@ -260,7 +301,11 @@ optimisation.
    traîne et expose ce qui est aujourd'hui caché.
 5. **L'écran de chargement de marque** et les transitions. Sans plancher
    artificiel.
-6. **Les pages artiste**, une fois vérifié ce que `/api/v2` sait répondre.
+6. **Les titres les plus écoutés d'un artiste**, calculés sur l'historique
+   local — la seule moitié de la page artiste qui ne demande pas de source
+   externe, et elle remplit `getTopSongs` au passage. **La biographie et les
+   artistes similaires sortent de cette liste** : ils exigent une RFC sur une
+   source de métadonnées externe.
 7. **La passe de conception** — espacements, hiérarchie. À traiter comme un
    sujet, pas comme une liste.
 8. **Informations de fichier, barre de qualité, vue paroles, vue immersive.**
