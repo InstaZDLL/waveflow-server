@@ -2402,3 +2402,39 @@ test("keeps the shuffle still when a track in it is favourited", async ({
   await expect(page.getByText("Army of Me")).toBeVisible();
   expect(drawn).toBe(1);
 });
+
+/**
+ * A loop already on screen survives a failed re-mint.
+ *
+ * A query keeps the answer it has when a later one fails, so `data` and `error`
+ * can both be set at once — and saving a correction makes that reachable, since
+ * it invalidates everything and this ticket is re-minted. Reading the error
+ * first replaced a preview that still played, for a credential good for an
+ * hour.
+ */
+test("keeps a canvas on screen when re-minting its ticket fails", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+  canvases.set("song-9", [1, 2, 3]);
+
+  await page.goto("/tracks/song-9/edit");
+  const preview = page.locator("video.canvas-preview");
+  await expect(preview).toBeVisible();
+
+  // From here the ticket route is down, while the loop already on screen is
+  // still playable.
+  await page.route("**/api/v2/tracks/song-9/canvas-ticket", async (route) => {
+    await route.fulfill({ status: 503, body: "" });
+  });
+
+  const title = page.getByLabel("Title", { exact: true });
+  await title.fill("A title this track did not have");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+
+  await expect(preview).toBeVisible();
+  await expect(
+    page.getByText("Whether this track has a canvas could not be read."),
+  ).toHaveCount(0);
+});
