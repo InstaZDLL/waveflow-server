@@ -9,6 +9,12 @@
       content="WaveFlow is your private, self-hosted music library."
     />
     <meta name="theme-color" content="#11100f" />
+    <!-- Declared, so the browser stops probing for one. With no icon named
+         here it asks for /favicon.ico, which no build has ever produced: the
+         router fallback answered the client shell, the browser could not decode
+         HTML as an image, and it asked again — sixty-six times in fifty-one
+         seconds, measured on a real session. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>WaveFlow</title>
   </head>
   <body>

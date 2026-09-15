@@ -32,7 +32,23 @@ const RESERVED_PREFIXES: [&str; 3] = ["api/", "rest/", "share/"];
 /// Single endpoints, matched whole. Comparing these by prefix would swallow
 /// client routes that merely start the same way — `/reference-guide` is a
 /// legitimate page, not a mistyped `/reference`.
-const RESERVED_EXACT: [&str; 4] = ["health", "ready", "openapi.json", "reference"];
+///
+/// `favicon.ico` is here for a different reason than the rest: not because the
+/// server claims it, but because no build produces it and answering the shell
+/// was worse than answering nothing. A browser that asks for an icon and
+/// receives `200 text/html` cannot decode it, learns nothing, and asks again —
+/// sixty-six times in fifty-one seconds on a real session, forty kilobytes of
+/// HTML spent on a tab icon. A 404 is a definitive answer and is asked once.
+/// The icon this build does ship is declared in `index.html` and served as
+/// `favicon.svg`; shipping a real `.ico` beside it would mean taking this line
+/// out, since a reserved path is refused before the assets are looked at.
+const RESERVED_EXACT: [&str; 5] = [
+    "health",
+    "ready",
+    "openapi.json",
+    "reference",
+    "favicon.ico",
+];
 
 pub async fn handler(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
@@ -55,7 +71,7 @@ fn asset(path: &str) -> Option<Response> {
     let content_type =
         HeaderValue::from_str(mime).unwrap_or(HeaderValue::from_static("application/octet-stream"));
     // Only files under the bundler's output directory carry a content hash, so
-    // only they are safe to freeze. Everything else — the shell, favicon.ico,
+    // only they are safe to freeze. Everything else — the shell, favicon.svg,
     // robots.txt, a service worker — keeps a stable name across deploys, and
     // pinning those for a year would strand clients on a stale build.
     let cache_control = if path.starts_with("assets/") {
