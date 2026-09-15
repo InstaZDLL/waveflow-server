@@ -167,7 +167,10 @@ async function parse<T>(response: Response): Promise<T> {
  * already retired and the whole session is dropped. Callers await one operation
  * instead.
  */
-let pendingRefresh: Promise<boolean> | null = null;
+let pendingRefresh: {
+  generation: number;
+  result: Promise<boolean>;
+} | null = null;
 const artworkUrls = new Map<string, Promise<string | null>>();
 
 /**
@@ -230,12 +233,23 @@ function clearSessionState(): void {
 }
 
 function refresh(): Promise<boolean> {
-  if (!pendingRefresh) {
-    pendingRefresh = performRefresh().finally(() => {
-      pendingRefresh = null;
-    });
+  // Shared only with callers of the same session. A renewal that outlived the
+  // account it was started for now answers `false` on purpose, and handing that
+  // answer to somebody who asked after a new session began would fail their
+  // request for a reason that no longer applies.
+  if (pendingRefresh && pendingRefresh.generation === sessionGeneration) {
+    return pendingRefresh.result;
   }
-  return pendingRefresh;
+  const attempt: { generation: number; result: Promise<boolean> } = {
+    generation: sessionGeneration,
+    result: performRefresh().finally(() => {
+      // Only if nothing newer has taken its place: clearing unconditionally
+      // would throw away a renewal that is still out.
+      if (pendingRefresh === attempt) pendingRefresh = null;
+    }),
+  };
+  pendingRefresh = attempt;
+  return attempt.result;
 }
 
 async function performRefresh(): Promise<boolean> {
