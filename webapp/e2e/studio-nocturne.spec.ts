@@ -214,10 +214,14 @@ let loseAcknowledgementOf: number | null = null;
  */
 type Recipient = "listenbrainz" | "maloja" | "lastfm";
 
-/** Copied from `lastfm_unavailability`, which is what a real server answers. */
-const NO_PUBLIC_URL =
-  "last.fm needs WAVEFLOW_PUBLIC_URL to be an https address for the browser journey; " +
-  "an operator can still link an account from this server's command line";
+/**
+ * What `lastfm_unavailability` answers — a case, not a sentence.
+ *
+ * It used to be the server's own English prose, copied here and asserted
+ * verbatim below, so the test agreed with the server about a string neither of
+ * them should have been sending to a client that ships in two languages.
+ */
+const NO_PUBLIC_URL = "browser_journey_needs_https";
 
 const freshDestinations = () => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
@@ -1680,10 +1684,14 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   ).toBeVisible();
 
   // Declared and unusable is a real shape, and the reason is published so the
-  // person is not left to discover it when a link fails later.
+  // person is not left to discover it when a link fails later. Asserted on the
+  // words this client chose for `NO_PUBLIC_URL`, not on the code it was given:
+  // a case printed raw would satisfy any assertion made on the code itself.
   await expect(
     page.getByText(
-      `Unavailable here: ${NO_PUBLIC_URL}`,
+      "Unavailable here: the browser journey needs this server’s public " +
+        "address to be an https one — an operator can still link an account " +
+        "from the command line",
     ),
   ).toBeVisible();
   await expect(

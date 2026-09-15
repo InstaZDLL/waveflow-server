@@ -1014,17 +1014,28 @@ export const scrobble = (trackId: string, submission: boolean) =>
  */
 export type ScrobbleProvider = "listenbrainz" | "maloja" | "lastfm";
 
+/**
+ * Why a declared instance cannot be linked — a case, not a sentence.
+ *
+ * The server sent its own English prose here until 2026-09-15, which this
+ * client printed verbatim: a French reader was told in English what to change
+ * in a configuration file. The wording belongs to whoever is doing the
+ * telling, so the wire carries only the case.
+ */
+export type ScrobbleUnavailable =
+  | "no_application_configured"
+  | "browser_journey_needs_https";
+
 /** One instance a member may link, and whether this server can link it now. */
 export type ScrobbleDestination = {
   provider: ScrobbleProvider;
   destination: string;
   available: boolean;
   /**
-   * Why not, when it is not — in words an operator can act on. Present only
-   * for an unavailable one, which is why a screen must not read it as the
-   * reason a link failed.
+   * Why not, when it is not. Present only for an unavailable one, which is why
+   * a screen must not read it as the reason a link failed.
    */
-  unavailable?: string;
+  unavailable?: ScrobbleUnavailable;
 };
 
 /**

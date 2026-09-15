@@ -148,7 +148,7 @@ pub struct ScrobbleDestinationName {
     pub destination: String,
     /// Whether this server can actually link it right now.
     pub available: bool,
-    /// And when it cannot, why — in words an operator can act on.
+    /// And when it cannot, why.
     ///
     /// Published here rather than left to be discovered: a link that fails
     /// later with no explanation is the silent failure this whole RFC spends
@@ -156,7 +156,27 @@ pub struct ScrobbleDestinationName {
     /// still unusable, because its journey needs an application the operator
     /// registered and an `https` address to bring a person back to.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unavailable: Option<&'static str>,
+    pub unavailable: Option<ScrobbleUnavailable>,
+}
+
+/// Why a declared instance cannot be linked — a code, not a sentence.
+///
+/// This was an English sentence until 2026-09-15, printed verbatim into a web
+/// client that ships in two languages: a French reader was told, in English,
+/// what to change in their configuration. A reason only helps whoever can read
+/// it, so what crosses the wire is the case and the wording belongs to whoever
+/// is doing the telling. The two cases are the two things an operator can
+/// actually change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrobbleUnavailable {
+    /// No Last.fm application is declared on this server —
+    /// `WAVEFLOW_SCROBBLE_LASTFM_API_KEY` and `_SECRET`.
+    NoApplicationConfigured,
+    /// `WAVEFLOW_PUBLIC_URL` is not an `https` address, so there is nowhere to
+    /// bring a browser back to. The command-line journey needs no public
+    /// address at all and still works.
+    BrowserJourneyNeedsHttps,
 }
 
 /// What one link's queue looks like from outside: counters, never content.

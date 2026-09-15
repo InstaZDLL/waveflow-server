@@ -242,6 +242,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::ScrobbleProvider,
         services::ScrobbleLinkState,
         services::ScrobbleDestinationName,
+        services::ScrobbleUnavailable,
         api::LastFmAuthorizationResponse,
         services::UncertainScrobble,
         api::LinkScrobbleRequest,
