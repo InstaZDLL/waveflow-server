@@ -2197,3 +2197,104 @@ test("forgets the catalogue when the session changes", async ({
   await expect(page.getByText("Post", { exact: true })).toBeVisible();
   expect(asked).toBe(2);
 });
+
+/**
+ * A cover already in memory does not flash grey on the way back.
+ *
+ * The bytes are held in a map keyed by hash, but that map holds *promises*, so
+ * nothing in it could be read while rendering: every mount started with no
+ * image and put the placeholder on screen for a frame — on every navigation
+ * back to a grid already visited, for every cover in it. Navidrome's own image
+ * cache reads its entry synchronously into `useState` for exactly this reason.
+ *
+ * Watched frame by frame rather than checked once, because a single frame is
+ * the whole of what went wrong: an assertion that ran after the navigation
+ * settled would have found the covers in place and called it fixed.
+ */
+test("shows a held cover at once, without a grey frame in between", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  const shelf = albums.map((album, index) => ({
+    ...album,
+    artwork_hash: `hash-${index}`,
+  }));
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+
+  await page.goto("/");
+  // Both covers in place, so their bytes are held before the round trip below.
+  await expect(page.locator("img.cover")).toHaveCount(2);
+
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+
+  const greyFrames = await page.evaluate(async () => {
+    const link = [...document.querySelectorAll("nav a")].find((anchor) =>
+      anchor.textContent?.includes("Albums"),
+    ) as HTMLElement;
+    let grey = 0;
+    link.click();
+    const started = performance.now();
+    return await new Promise<number>((resolve) => {
+      const tick = () => {
+        grey += document.querySelectorAll(".grid .cover-fallback").length;
+        if (performance.now() - started > 400) return resolve(grey);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  });
+
+  expect(greyFrames).toBe(0);
+});
+
+/**
+ * A favourite asks the catalogue again, so the star survives the next visit.
+ *
+ * The table keeps its stars in a map of its own while the request is out, which
+ * was enough when every screen re-read on mount: the server's answer replaced
+ * that overlay on the way back. Against a cache it is not — the overlay dies
+ * with the component and the held listing still carries the old `starred_at`,
+ * so the star un-ticks itself on the next visit.
+ *
+ * Asserted on the request rather than on the star, because the mock answers a
+ * fixture that never changes: what marks the difference is that the question
+ * was asked at all.
+ */
+test("asks the catalogue again after a track is favourited", async ({
+  page,
+}) => {
+  let asked = 0;
+  await page.route("**/api/v2/albums/album-1", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: { ...albums[0], songs: [track] } });
+  });
+  // The star only invalidates once the server has taken it. Answered here
+  // because the harness has no favourites route, and a refused write must not
+  // invalidate anything — which is the other half of what this checks.
+  await page.route("**/api/v2/favorites/track/*", async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  });
+
+  await page.goto("/albums/album-1");
+  await expect(page.getByRole("heading", { name: "Post" })).toBeVisible();
+  expect(asked).toBe(1);
+
+  await page
+    .getByRole("button", { name: "Add favourite: Army of Me" })
+    .click();
+  await expect
+    .poll(() => asked, { message: "the album was re-asked" })
+    .toBe(2);
+});

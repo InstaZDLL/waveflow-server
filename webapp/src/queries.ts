@@ -211,13 +211,29 @@ export const administrationQuery = () =>
     queryFn: () => Promise.all([listLibraries(), listUsers()]),
   });
 
+/**
+ * A canvas ticket, held for exactly as long as it is being looked at.
+ *
+ * `staleTime` and `gcTime` at zero, against the defaults, because what this
+ * answers is not data but a **credential with a deadline** — an AEAD-sealed
+ * ticket the `<video>` plays from, since it can send no Authorization header.
+ * A cache has no notion of that deadline and would go on serving the ticket
+ * after it passed. The lifetime is `WAVEFLOW_STREAM_TICKET_TTL`, an hour by
+ * default and an operator's to shorten, so "shorter than the cache" is a
+ * configuration away rather than impossible. `player.tsx` checks the deadline
+ * before playing a stream ticket for the same reason; here there is simply
+ * nothing worth keeping.
+ *
+ * A track with no canvas answers `null`, which a query holds as an answer. The
+ * hook this replaced could not tell that from "still waiting" and had to be
+ * handed an object to unwrap.
+ */
 export const canvasQuery = (trackId: string) =>
   queryOptions({
     queryKey: ["canvas", trackId],
-    // A track with no canvas answers `null`, which a query holds as an answer.
-    // The previous hook could not tell that from "still waiting" and had to be
-    // handed an object to unwrap.
     queryFn: () => canvasUrl(trackId),
+    staleTime: 0,
+    gcTime: 0,
   });
 
 export const scrobbleRowsQuery = () =>
