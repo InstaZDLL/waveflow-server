@@ -170,11 +170,27 @@ async function parse<T>(response: Response): Promise<T> {
 let pendingRefresh: Promise<boolean> | null = null;
 const artworkUrls = new Map<string, Promise<string | null>>();
 
+/**
+ * The same answers, once they have arrived, readable without awaiting.
+ *
+ * The map above holds promises, so nothing in it can be read during a render —
+ * and a cover component therefore started every mount with no image and put the
+ * grey placeholder on screen for a frame, even for a cover whose bytes were
+ * already in memory. Leaving a page and coming back flashed the whole grid.
+ */
+const settledArtworkUrls = new Map<string, string | null>();
+
+/** What is already held for this artwork, or `null` if nothing is yet. */
+export function cachedArtworkUrl(id: string | null): string | null {
+  return id ? (settledArtworkUrls.get(id) ?? null) : null;
+}
+
 function clearArtworkUrls(): void {
   for (const pending of artworkUrls.values()) {
     void pending.then((url) => url && URL.revokeObjectURL(url));
   }
   artworkUrls.clear();
+  settledArtworkUrls.clear();
 }
 
 /**
@@ -624,7 +640,12 @@ export function artworkUrl(id: string | null): Promise<string | null> {
   if (!id) return Promise.resolve(null);
   const cached = artworkUrls.get(id);
   if (cached) return cached;
-  const pending = loadArtworkUrl(id).catch(() => null);
+  const pending = loadArtworkUrl(id)
+    .catch(() => null)
+    .then((url) => {
+      settledArtworkUrls.set(id, url);
+      return url;
+    });
   artworkUrls.set(id, pending);
   return pending;
 }

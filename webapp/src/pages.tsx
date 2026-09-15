@@ -472,6 +472,17 @@ export function SongTable({
 }) {
   const player = usePlayer();
   const { t } = useI18n();
+  // The two maps below are an optimistic overlay, and they live exactly as long
+  // as this table does. That was enough while every screen re-read on mount: the
+  // server's answer replaced them on the way back. Against a cache it is not —
+  // the overlay dies with the component and the held list still carries the old
+  // `starred_at`, so a star would un-tick itself on the next visit.
+  //
+  // Everything is invalidated after a mutation, for the reason a correction is:
+  // a song appears in albums, genres, search, history, favourites, playlists and
+  // the queue, and a list of the caches that could be wrong is a list with one
+  // missing from it.
+  const client = useQueryClient();
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const { libraries } = useLibraryScope();
@@ -487,6 +498,7 @@ export function SongTable({
     setStars((previous) => ({ ...previous, [song.id]: on }));
     try {
       await setFavorite("track", song.id, on);
+      await client.invalidateQueries();
     } catch {
       setStars((previous) => ({ ...previous, [song.id]: !on }));
     }
@@ -497,6 +509,7 @@ export function SongTable({
     setRatings((current) => ({ ...current, [song.id]: rating }));
     try {
       await setRating("track", song.id, rating);
+      await client.invalidateQueries();
     } catch {
       setRatings((current) => ({ ...current, [song.id]: previous }));
     }
