@@ -640,10 +640,14 @@ export function artworkUrl(id: string | null): Promise<string | null> {
   if (!id) return Promise.resolve(null);
   const cached = artworkUrls.get(id);
   if (cached) return cached;
-  const pending = loadArtworkUrl(id)
+  const pending: Promise<string | null> = loadArtworkUrl(id)
     .catch(() => null)
     .then((url) => {
-      settledArtworkUrls.set(id, url);
+      // Only while this is still the request being waited on. A session change
+      // empties both maps and revokes the object URLs, and a load started for
+      // the account that left would otherwise land here afterwards — putting a
+      // revoked URL back under a key the next account reads.
+      if (artworkUrls.get(id) === pending) settledArtworkUrls.set(id, url);
       return url;
     });
   artworkUrls.set(id, pending);

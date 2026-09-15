@@ -2256,6 +2256,11 @@ test("shows a held cover at once, without a grey frame in between", async ({
     });
   });
 
+  // The catalogue is back and showing its covers. Asserted after the count and
+  // not instead of it: zero grey frames is also what a navigation that never
+  // arrived would produce, and this assertion is the whole difference between
+  // measuring the fix and measuring nothing at all.
+  await expect(page.locator(".grid img.cover")).toHaveCount(2);
   expect(greyFrames).toBe(0);
 });
 
