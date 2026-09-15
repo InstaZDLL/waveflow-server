@@ -95,13 +95,27 @@ const UNAVAILABLE_REASON = {
     "scrobbling.unavailable.browser_journey_needs_https",
 } as const satisfies Record<KnownScrobbleUnavailable, TranslationKey>;
 
+/**
+ * The same table, read by a key that may be anything.
+ *
+ * A `Map` rather than the object above, for the reason `REASONS` is a `Set`:
+ * once the key is a `string`, an object answers for names it was never given —
+ * `toString` and `constructor` come back off the prototype, truthy, and would
+ * be handed to `t()` as if they were a translation key. A `Map` holds only what
+ * was put in it.
+ */
+const UNAVAILABLE_WORDS = new Map<string, TranslationKey>(
+  Object.entries(UNAVAILABLE_REASON),
+);
+
 function unavailableReason(
   code: ScrobbleUnavailable | undefined,
 ): TranslationKey {
   // `KnownScrobbleUnavailable` is exhaustive above, so nothing is forgotten;
   // `ScrobbleUnavailable` is open here, so nothing newer is refused.
-  const known: Partial<Record<string, TranslationKey>> = UNAVAILABLE_REASON;
-  return (code && known[code]) || "scrobbling.unavailable.unknown";
+  return (
+    (code && UNAVAILABLE_WORDS.get(code)) || "scrobbling.unavailable.unknown"
+  );
 }
 
 function when(instant: number, locale: Locale): string {
