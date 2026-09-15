@@ -359,22 +359,26 @@ Onze pull requests, plus une RFC. Les tailles emploient l'échelle des étiquett
 du dépôt (`size: xs` < 10 lignes, `s` 10-50, `m` 50-200, `l` 200-500,
 `xl` > 500) et restent des **estimations**, tests compris.
 
-| # | Intitulé | Ce qu'elle porte | Taille |
-|---|---|---|---|
-| 1 | Une réponse stable ne se redemande pas | Les deux défauts de la section 1 | `m` |
-| 2 | Une seule marque, et un écran qui la porte | Identité du desktop, trois copies réduites à un SVG, écran de chargement et transitions | `l` |
-| 3 | Le catalogue se laisse parcourir | Route serveur listant les pistes, page « Titres », recherche à la frappe, extraction des trois primitives hors de `pages.tsx` | `l` |
-| 4 | Le serveur compresse ce qu'il envoie | Une feature `tower-http`, une couche, un test | `s` |
-| 5 | Ce qu'un fichier est, et une barre qui le dit | Sérialiser cinq champs déjà projetés, étendre le type client, dessiner | `l` |
-| 6 | Les réglages cessent de traîner dans un couloir | Page Réglages, clients enregistrés, route de jetons portée sur soi | `l` |
-| 7 | Les paroles et la vue immersive | Deux vues sur « En écoute » | `l` |
-| 8 | La passe de conception | Échelle d'espacement, nomenclature unique, hiérarchie | `xl` |
-| 9 | Les plus écoutés d'un artiste | Calcul sur l'historique local ; remplit `getTopSongs` | `l` |
-| 10 | Import `.m3u` | Analyse, résolution des chemins, serveur et client | `xl` |
-| 11 | Les radios internet | Migration, trois écritures Subsonic, `/api/v2`, page | `xl` |
+| # | Issue | Intitulé | Ce qu'elle porte | Taille |
+|---|---|---|---|---|
+| 1 | **#206**, **#207** | Une réponse stable ne se redemande pas | Les deux défauts de la section 1 | `m` |
+| 2 | **#208** | Une seule marque, et un écran qui la porte | Identité du desktop, trois copies réduites à un SVG, écran de chargement et transitions | `l` |
+| 3 | **#210** | Le catalogue se laisse parcourir | Route serveur listant les pistes, page « Titres », recherche à la frappe, extraction des trois primitives hors de `pages.tsx` | `l` |
+| 4 | **#209** | Le serveur compresse ce qu'il envoie | Une feature `tower-http`, une couche, un test | `s` |
+| 5 | **#211** | Ce qu'un fichier est, et une barre qui le dit | Sérialiser cinq champs déjà projetés, étendre le type client, dessiner | `l` |
+| 6 | **#212** | Les réglages cessent de traîner dans un couloir | Page Réglages, clients enregistrés, route de jetons portée sur soi | `l` |
+| 7 | **#213** | Les paroles et la vue immersive | Deux vues sur « En écoute » | `l` |
+| 8 | **#214** | La passe de conception | Échelle d'espacement, nomenclature unique, hiérarchie | `xl` |
+| 9 | **#215** | Les plus écoutés d'un artiste | Calcul sur l'historique local ; remplit `getTopSongs` | `l` |
+| 10 | **#216** | Import `.m3u` | Analyse, résolution des chemins, serveur et client | `xl` |
+| 11 | **#217** | Les radios internet | Migration, trois écritures Subsonic, `/api/v2`, page | `xl` |
 
-**Hors PR — une RFC** : le moteur de plugins côté serveur, dont dépendent la
-biographie et les artistes similaires. Voir la section « Les pages artiste ».
+**Hors PR — une RFC, suivie par #218** : le moteur de plugins côté serveur,
+dont dépendent la biographie et les artistes similaires. Voir la section « Les
+pages artiste ».
+
+La première ligne porte **deux** issues parce qu'elle porte deux défauts
+distincts : une issue décrit un problème, une PR peut en fermer plusieurs.
 
 ### L'ordre, et ce qui contraint
 
