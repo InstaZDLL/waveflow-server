@@ -205,6 +205,47 @@ describe("session refresh", () => {
     expect(navigate).toHaveBeenCalledWith("/login");
   });
 
+  it("leaves alone a session that began while an older refusal was out", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    let releaseRetry = () => {};
+    const heldRetry = new Promise<Response>((resolve) => {
+      releaseRetry = () => resolve(jsonResponse({}, 401));
+    });
+    let attempts = 0;
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/refresh") || url.includes("/auth/login")) {
+        return jsonResponse({
+          access_token: "second-token",
+          user: { id: "u1", username: "dev", role: "admin" },
+          device_id: "d1",
+        });
+      }
+      if (url.includes("/auth/logout"))
+        return new Response(null, { status: 204 });
+      attempts += 1;
+      // The first answer starts a renewal; the second is held, so the sign-out
+      // and sign-in below happen while it is still out.
+      return attempts === 1 ? jsonResponse({}, 401) : heldRetry;
+    });
+
+    const refusedForTheFirst = api.getTrack("t1");
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    await api.logout();
+    await api.login("dev", "correct horse battery staple");
+    expect(api.hasSession()).toBe(true);
+
+    releaseRetry();
+    await expect(refusedForTheFirst).rejects.toThrow();
+
+    // A sign-out and a sign-in fit inside one round trip. Ending a session on
+    // a refusal addressed to the account before it would have put whoever just
+    // arrived back on the sign-in screen.
+    expect(api.hasSession()).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("leaves it alone for a caller that never asked for a renewal", async () => {
     const api = await freshApi();
     await signIn(api);
@@ -296,6 +337,40 @@ describe("a canvas the server says is not there", () => {
 
     // Without forgetting, the panel that just placed a loop would read back
     // the answer from before it did.
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
+    );
+    await expect(api.canvasUrl("t1")).resolves.toEqual({
+      url: "/api/v2/canvas-stream/sealed",
+      expiresAt: 42,
+    });
+  });
+
+  it("is not recorded from an answer older than a placement", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    let releaseTicket = () => {};
+    const heldTicket = new Promise<Response>((resolve) => {
+      releaseTicket = () => resolve(jsonResponse({}, 404));
+    });
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/canvas-ticket")
+        ? heldTicket
+        : jsonResponse({
+            url: "/blob",
+            hash: "h",
+            format: "mp4",
+            byte_size: 1,
+          }),
+    );
+
+    // Asked before the placement, answered after it: the 404 is the truth of a
+    // moment that has passed, and filing it would lose the loop just put there.
+    const asking = api.canvasUrl("t1");
+    await api.placeCanvas("t1", new Blob(["loop"], { type: "video/mp4" }));
+    releaseTicket();
+    await expect(asking).resolves.toBeNull();
+
     fetchStub.mockResolvedValueOnce(
       jsonResponse({ url: "/api/v2/canvas-stream/sealed", expires_at: 42 }),
     );

@@ -220,9 +220,29 @@ function clearArtworkUrls(): void {
  */
 const canvaslessTracks = new Set<string>();
 
+/**
+ * How many times this client has changed each track's canvas.
+ *
+ * Read before a ticket is asked for and again when the answer comes back, so
+ * an absence is only recorded if nothing changed the track in between. Without
+ * it a question already in flight could land after a loop was placed and file
+ * the track as carrying none — the placement would have looked lost, and the
+ * panel that made it would have read back the state from before.
+ *
+ * The same shape as `sessionGeneration` below, per track instead of per
+ * account, and for the same reason: an answer is only worth what it was asked
+ * about.
+ */
+const canvasChanges = new Map<string, number>();
+
+function canvasGeneration(trackId: string): number {
+  return canvasChanges.get(trackId) ?? 0;
+}
+
 /** Ask the server again about this track's loop, whatever it said before. */
 function forgetCanvas(trackId: string): void {
   canvaslessTracks.delete(trackId);
+  canvasChanges.set(trackId, canvasGeneration(trackId) + 1);
 }
 
 /**
@@ -259,6 +279,7 @@ function clearSessionState(): void {
   sessionGeneration += 1;
   clearArtworkUrls();
   canvaslessTracks.clear();
+  canvasChanges.clear();
   for (const forget of sessionScoped) forget();
 }
 
@@ -359,6 +380,12 @@ async function call<T>(
   const headers = new Headers(init.headers);
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   if (init.body) headers.set("content-type", "application/json");
+  // Whose session this attempt speaks for, read before the round trip and
+  // checked after it — the same guard `performRefresh` already keeps, for the
+  // same reason. A signing-out and signing-in fit inside one round trip, and
+  // ending a session on a refusal addressed to the account before it would put
+  // whoever just arrived back on the sign-in screen.
+  const generation = sessionGeneration;
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && retry && (await refresh())) {
     return call<T>(path, init, false, true);
@@ -372,7 +399,9 @@ async function call<T>(
   // `setupRequired` asks with the retry switched off because it runs before
   // anyone is signed in and has no session to renew — a 401 there is not a
   // session ending, and saying so would be wrong even where it is harmless.
-  if (response.status === 401 && renewed) endSession(session !== null);
+  if (response.status === 401 && renewed && generation === sessionGeneration) {
+    endSession(session !== null);
+  }
   if (!response.ok) {
     throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
   }
@@ -690,13 +719,17 @@ export async function placeCanvas(
     "content-type": file.type || "application/octet-stream",
   });
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
+  // Whose session this attempt speaks for; see the same line in `call`.
+  const generation = sessionGeneration;
   const response = await fetch(path, { method: "PUT", headers, body: file });
   if (response.status === 401 && retry && (await refresh())) {
     return placeCanvas(trackId, file, false, true);
   }
   // The same dead end `call` handles, on the one route that cannot go through
   // it — a body labelled as JSON would be refused here.
-  if (response.status === 401 && renewed) endSession(session !== null);
+  if (response.status === 401 && renewed && generation === sessionGeneration) {
+    endSession(session !== null);
+  }
   if (!response.ok) throw new ApiError(response.status, `PUT ${path}`);
   return parse<CanvasBlob>(response);
 }
@@ -717,6 +750,9 @@ export const removeCanvas = (trackId: string) => {
  */
 export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
   if (canvaslessTracks.has(trackId)) return null;
+  // What this question is about. Checked again below, because a placement can
+  // land while it is out.
+  const generation = canvasGeneration(trackId);
   try {
     const ticket = await call<{ url: string; expires_at: number }>(
       `/api/v2/tracks/${trackId}/canvas-ticket`,
@@ -725,7 +761,9 @@ export async function canvasUrl(trackId: string): Promise<StreamUrl | null> {
     return { url: ticket.url, expiresAt: ticket.expires_at };
   } catch (cause) {
     if (cause instanceof ApiError && cause.status === 404) {
-      canvaslessTracks.add(trackId);
+      if (generation === canvasGeneration(trackId)) {
+        canvaslessTracks.add(trackId);
+      }
       return null;
     }
     throw cause;
