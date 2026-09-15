@@ -2065,3 +2065,441 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
 });
+
+/**
+ * A page already visited comes back without passing through its skeleton.
+ *
+ * Every screen used to load on mount and blank itself first, so leaving a page
+ * and returning drew the loading state again even when the answer took nine
+ * milliseconds. Measured on a real library over a local network, that was 79ms
+ * of flicker on every navigation — brief, and on every single one.
+ *
+ * **The delay below is what makes this test able to fail.** Every other mock in
+ * this file answers instantly, and against an instant answer a cache miss and a
+ * cache hit look identical: both paint within a frame and neither shows a
+ * skeleton long enough to observe. A question that takes 150ms leaves a mark if
+ * it is asked, and none if it is not.
+ *
+ * The first visit still draws it, and that is deliberate — a page holding
+ * nothing has to say it is working. Losing that would trade a flicker for a
+ * screen that looks broken on a slow link.
+ */
+test("draws the skeleton on a first visit, and never again on a return", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  for (const path of ["/api/v2/genres*", "/api/v2/albums*"]) {
+    await page.route(`**${path}`, async (route) => {
+      const url = new URL(route.request().url());
+      asked.push(url.pathname);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await route.fulfill({
+        json: url.pathname.endsWith("genres")
+          ? [{ name: "Trip hop", song_count: 4, album_count: 1 }]
+          : albums,
+      });
+    });
+  }
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+
+  const seen = await page.evaluate(async () => {
+    // Watched across the whole navigation rather than sampled after it: the
+    // skeleton is on screen for a matter of frames when it is on screen at all,
+    // and a check that ran once would miss it and call the flicker fixed.
+    const visit = async (label: string) => {
+      const started = performance.now();
+      let appeared = false;
+      const link = [...document.querySelectorAll("a")].find((anchor) =>
+        anchor.textContent?.includes(label),
+      ) as HTMLElement;
+      link.click();
+      return await new Promise<boolean>((resolve) => {
+        const tick = () => {
+          if (document.querySelector(".skeleton-grid")) appeared = true;
+          if (performance.now() - started > 500) return resolve(appeared);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+    };
+    return {
+      first: await visit("Genres"),
+      back: await visit("Albums"),
+      again: await visit("Genres"),
+    };
+  });
+
+  expect(seen).toEqual({ first: true, back: false, again: false });
+  // And the reason: the return asked nothing. Three visits, two questions.
+  expect(asked).toEqual(["/api/v2/albums", "/api/v2/genres"]);
+});
+
+/**
+ * Signing out empties what was answered for the account that left.
+ *
+ * The cache is the first thing in this client that outlives a screen, and a
+ * sign-out here is a client-side navigation — the document is never reloaded,
+ * so nothing is forgotten on its own. A catalogue is scoped by library
+ * membership and an administrator sees more than that, so carrying any of it
+ * across would show the next person what the last one could see.
+ *
+ * Asserted on the request, because that is the only thing that distinguishes an
+ * emptied cache from a full one: both render the same albums, and only one of
+ * them had to ask.
+ */
+test("forgets the catalogue when the session changes", async ({
+  page,
+}, testInfo) => {
+  // The sidebar that carries the sign-out is hidden below 820px, where the
+  // same gesture lives behind the overflow sheet. What is being measured is
+  // the cache, not where the button sits, so it is measured once.
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+  let asked = 0;
+  await page.route("**/api/v2/albums*", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: albums });
+  });
+  await page.route("**/api/v2/web/auth/login", async (route) => {
+    await route.fulfill({ json: session });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  // Away and straight back, without signing out: this is the cache doing its
+  // job, and the contrast that makes the count below mean something.
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  // Dispatched rather than clicked: the sidebar's footer sits under the fixed
+  // player bar at this viewport, so a real click waits on hit-testing forever.
+  // What this test is about is what the sign-out does to the cache, and the
+  // gesture itself is covered by the accessibility pass.
+  await page
+    .getByRole("button", { name: "Sign out" })
+    .dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+
+  // Signed in again through the form, not by reloading the page. A reload
+  // would destroy the cache whatever this code does, and would prove nothing:
+  // the leak this guards against is exactly the one that needs no reload.
+  await page.getByLabel("Username").fill("nocturne");
+  await page.getByLabel("Password").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(2);
+});
+
+/**
+ * A cover already in memory does not flash grey on the way back.
+ *
+ * The bytes are held in a map keyed by hash, but that map holds *promises*, so
+ * nothing in it could be read while rendering: every mount started with no
+ * image and put the placeholder on screen for a frame — on every navigation
+ * back to a grid already visited, for every cover in it. Navidrome's own image
+ * cache reads its entry synchronously into `useState` for exactly this reason.
+ *
+ * Watched frame by frame rather than checked once, because a single frame is
+ * the whole of what went wrong: an assertion that ran after the navigation
+ * settled would have found the covers in place and called it fixed.
+ */
+test("shows a held cover at once, without a grey frame in between", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  const shelf = albums.map((album, index) => ({
+    ...album,
+    artwork_hash: `hash-${index}`,
+  }));
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+
+  await page.goto("/");
+  // Both covers in place, so their bytes are held before the round trip below.
+  await expect(page.locator("img.cover")).toHaveCount(2);
+
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+
+  const greyFrames = await page.evaluate(async () => {
+    const link = [...document.querySelectorAll("nav a")].find((anchor) =>
+      anchor.textContent?.includes("Albums"),
+    ) as HTMLElement;
+    let grey = 0;
+    link.click();
+    const started = performance.now();
+    return await new Promise<number>((resolve) => {
+      const tick = () => {
+        grey += document.querySelectorAll(".grid .cover-fallback").length;
+        if (performance.now() - started > 400) return resolve(grey);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  });
+
+  // The catalogue is back and showing its covers. Asserted after the count and
+  // not instead of it: zero grey frames is also what a navigation that never
+  // arrived would produce, and this assertion is the whole difference between
+  // measuring the fix and measuring nothing at all.
+  await expect(page.locator(".grid img.cover")).toHaveCount(2);
+  expect(greyFrames).toBe(0);
+});
+
+/**
+ * A favourite asks the catalogue again, so the star survives the next visit.
+ *
+ * The table keeps its stars in a map of its own while the request is out, which
+ * was enough when every screen re-read on mount: the server's answer replaced
+ * that overlay on the way back. Against a cache it is not — the overlay dies
+ * with the component and the held listing still carries the old `starred_at`,
+ * so the star un-ticks itself on the next visit.
+ *
+ * Asserted on the request rather than on the star, because the mock answers a
+ * fixture that never changes: what marks the difference is that the question
+ * was asked at all.
+ */
+test("asks the catalogue again after a track is favourited", async ({
+  page,
+}) => {
+  let asked = 0;
+  await page.route("**/api/v2/albums/album-1", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: { ...albums[0], songs: [track] } });
+  });
+  // The star only invalidates once the server has taken it. Answered here
+  // because the harness has no favourites route, and a refused write must not
+  // invalidate anything — which is the other half of what this checks.
+  await page.route("**/api/v2/favorites/track/*", async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  });
+
+  await page.goto("/albums/album-1");
+  await expect(page.getByRole("heading", { name: "Post" })).toBeVisible();
+  expect(asked).toBe(1);
+
+  await page
+    .getByRole("button", { name: "Add favourite: Army of Me" })
+    .click();
+  await expect
+    .poll(() => asked, { message: "the album was re-asked" })
+    .toBe(2);
+});
+
+/**
+ * A cover that failed to load is asked for again; one the server does not hold
+ * is not.
+ *
+ * The two used to be the same answer: any response that was not `ok`, and any
+ * network failure, became `null` and was then held for the session — so a
+ * single blip left a cover grey until the tab was reloaded. A 404 is the server
+ * saying it holds no such artwork, which is worth keeping; anything else is a
+ * server that could not answer, which is not.
+ */
+test("asks again for a cover that failed, and not for one that is absent", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  const shelf = albums.map((album, index) => ({
+    ...album,
+    artwork_hash: index === 0 ? "hash-flaky" : "hash-absent",
+  }));
+  await page.route("**/api/v2/albums*", async (route) => {
+    await route.fulfill({ json: shelf });
+  });
+
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  let flaky = 0;
+  let absent = 0;
+  await page.route("**/api/v2/artwork/hash-flaky", async (route) => {
+    flaky += 1;
+    // Down the first time, up afterwards.
+    if (flaky === 1) return route.fulfill({ status: 503, body: "" });
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.route("**/api/v2/artwork/hash-absent", async (route) => {
+    absent += 1;
+    await route.fulfill({ status: 404, body: "" });
+  });
+
+  await page.goto("/");
+  // Waited on rather than sampled: the covers are asked for once the observer
+  // says they are on screen, which is a frame or two after the grid renders.
+  await expect.poll(() => flaky).toBe(1);
+  await expect.poll(() => absent).toBe(1);
+  await expect(page.locator(".grid .cover-fallback")).toHaveCount(2);
+
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+
+  // The one that failed is asked again and arrives; the one the server does not
+  // hold is not asked again, because that answer has not changed.
+  await expect(page.locator(".grid img.cover")).toHaveCount(1);
+  await expect.poll(() => flaky).toBe(2);
+  expect(absent).toBe(1);
+});
+
+/**
+ * Starring a track on the shuffle page does not redraw the shuffle.
+ *
+ * A mutation invalidates everything it could have made wrong, because a song
+ * appears in albums, genres, search, history, favourites, playlists and the
+ * queue. The draw is the exception: it is the one question deliberately kept
+ * out of the cache, so invalidating it asks the server for a *different*
+ * sample — and the list goes out from under the hand that starred it, taking
+ * the starred track with it.
+ */
+test("keeps the shuffle still when a track in it is favourited", async ({
+  page,
+}) => {
+  let drawn = 0;
+  await page.route("**/api/v2/songs/random*", async (route) => {
+    drawn += 1;
+    await route.fulfill({ json: [track] });
+  });
+  await page.route("**/api/v2/favorites/track/*", async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  });
+
+  await page.goto("/random");
+  await expect(page.getByText("Army of Me")).toBeVisible();
+  expect(drawn).toBe(1);
+
+  await page
+    .getByRole("button", { name: "Add favourite: Army of Me" })
+    .click();
+  // The button renames itself once the star is on, so the state is read from
+  // the label rather than from a locator that no longer matches.
+  await expect(
+    page.getByRole("button", { name: "Remove favourite: Army of Me" }),
+  ).toBeVisible();
+
+  // The same track, still there, and the server was not asked to draw again.
+  await expect(page.getByText("Army of Me")).toBeVisible();
+  expect(drawn).toBe(1);
+});
+
+/**
+ * A loop already on screen survives a failed re-mint.
+ *
+ * A query keeps the answer it has when a later one fails, so `data` and `error`
+ * can both be set at once — and saving a correction makes that reachable, since
+ * it invalidates everything and this ticket is re-minted. Reading the error
+ * first replaced a preview that still played, for a credential good for an
+ * hour.
+ */
+test("keeps a canvas on screen when re-minting its ticket fails", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+  canvases.set("song-9", [1, 2, 3]);
+
+  await page.goto("/tracks/song-9/edit");
+  const preview = page.locator("video.canvas-preview");
+  await expect(preview).toBeVisible();
+
+  // From here the ticket route is down, while the loop already on screen is
+  // still playable.
+  await page.route("**/api/v2/tracks/song-9/canvas-ticket", async (route) => {
+    await route.fulfill({ status: 503, body: "" });
+  });
+
+  const title = page.getByLabel("Title", { exact: true });
+  await title.fill("A title this track did not have");
+  // Armed before the click, and awaited after it: the assertions below are
+  // about what the panel shows once the re-mint has actually failed, and
+  // waiting only on "Saved." would leave that to the order two promises happen
+  // to settle in.
+  const refused = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/canvas-ticket") && response.status() === 503,
+  );
+  await page.getByRole("button", { name: "Save" }).click();
+  await refused;
+  await expect(page.getByText("Saved.")).toBeVisible();
+
+  await expect(preview).toBeVisible();
+  await expect(
+    page.getByText("Whether this track has a canvas could not be read."),
+  ).toHaveCount(0);
+});
+
+/**
+ * A correction reaches the listings that were holding the old value.
+ *
+ * Correcting a track can change its title, its artists, its genres, its year
+ * and its numbering — so it can change what an album holds, how a listing
+ * orders, which genre a track belongs to and what a search matches. While every
+ * screen re-read on mount the question did not arise; against a cache, a
+ * listing sits on the old answer for as long as it is held.
+ *
+ * **Reached by clicking throughout.** A `goto` to the editor would load a fresh
+ * document, and a fresh document has an empty cache — the listing would be
+ * re-asked whether or not anything was invalidated, and the test would be
+ * measuring the reload. That is what defeated the first attempt at this.
+ *
+ * Asserted on the request, because the mock answers a fixture that does not
+ * change: what marks the difference is that the question was asked again.
+ */
+test("re-asks a held listing after a correction is saved", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+
+  let asked = 0;
+  await page.route("**/api/v2/albums*", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: albums });
+  });
+  // The album holds the correctable track, so its editor is a link away rather
+  // than an address away.
+  await page.route("**/api/v2/albums/album-1", async (route) => {
+    await route.fulfill({
+      json: { ...albums[0], songs: [correctable.song] },
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  const sidebar = page.getByRole("navigation");
+  await page.getByRole("link", { name: /Post/ }).first().click();
+  await page
+    .getByRole("link", { name: "Correct tags: Army Of Me" })
+    .click();
+
+  const title = page.getByLabel("Title", { exact: true });
+  await expect(title).toHaveValue("Army Of Me");
+  await title.fill("Army of Me");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(2);
+});

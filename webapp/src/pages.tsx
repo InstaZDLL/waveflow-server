@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type FormEvent,
@@ -10,15 +11,10 @@ import {
 
 import {
   type Album,
-  type AlbumDetail,
   type AlbumSort,
-  type ApiToken,
-  type Artist,
-  type ArtistDetail,
   addLibrary,
   appendToPlaylist,
   authorize,
-  type Bookmark,
   bootstrapAdmin,
   createApiToken,
   createPlaylist,
@@ -29,41 +25,18 @@ import {
   deletePlaylist,
   deleteShare,
   formatDuration,
-  type Genre,
   getAlbum,
-  getArtist,
-  getLyrics,
-  getTrack,
   isAllowedRedirect,
-  type LibraryMember,
   type LyricsLine,
-  type LyricsList,
-  listAlbums,
-  listApiTokens,
-  listArtists,
-  listBookmarks,
-  listFavorites,
-  listGenreSongs,
-  listGenres,
-  listHistory,
-  listLibraries,
-  listLibraryMembers,
-  listNowPlaying,
-  listPlaylists,
   listRandomSongs,
-  listShares,
-  listUsers,
   login,
-  type NowPlaying,
   type Playlist,
   removeLibraryMember,
   revokeApiToken,
   type ScanJob,
-  type SearchResult,
   type Share,
   type Song,
   safeInternalPath,
-  search,
   setBookmark,
   setFavorite,
   setLibraryMember,
@@ -81,6 +54,26 @@ import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
 import { usePlayer, usePlayerProgress } from "./player";
+import {
+  administrationQuery,
+  albumQuery,
+  albumsQuery,
+  apiTokensQuery,
+  artistQuery,
+  artistsQuery,
+  bookmarksQuery,
+  favoriteTracksQuery,
+  genreSongsQuery,
+  genresQuery,
+  historyTracksQuery,
+  libraryMembersQuery,
+  lyricsQuery,
+  nowPlayingQuery,
+  playlistsQuery,
+  randomSongsQuery,
+  searchQuery,
+  sharesQuery,
+} from "./queries";
 
 const SKELETON_KEYS = [
   "one",
@@ -93,28 +86,21 @@ const SKELETON_KEYS = [
   "eight",
 ];
 
-/** Resolves a promise into render state, with the error surfaced rather than swallowed. */
-export function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
-  const [value, setValue] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setValue(null);
-    setError(null);
-    load().then(
-      (result) => !cancelled && setValue(result),
-      (cause: unknown) =>
-        !cancelled &&
-        setError(cause instanceof Error ? cause.message : "error"),
-    );
-    return () => {
-      cancelled = true;
-    };
-    // Placed here, not above useEffect: the rule fires on the dependency
-    // argument, and biome only accepts the suppression on that line.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: the caller supplies the dependency list, which is the point of this hook
-  }, deps);
-  return { value, error };
+/**
+ * Ask again for what a mutation has just made wrong.
+ *
+ * Every screen below used to hold a `revision` counter and put it in a
+ * dependency list, so that bumping it re-ran the load. That worked, and it
+ * re-ran exactly one screen: a playlist created here and a playlist listed
+ * elsewhere were two loads of the same thing with no idea of each other.
+ * Invalidating by key reaches every reader of that answer, which is what
+ * "it changed" actually means.
+ */
+export function useReload(queryKey: readonly unknown[]) {
+  const client = useQueryClient();
+  return () => {
+    void client.invalidateQueries({ queryKey });
+  };
 }
 
 /**
@@ -130,13 +116,27 @@ export function Waiting() {
   );
 }
 
-export function Loading({ error }: { error: string | null }) {
+/**
+ * Takes whatever a failed load threw.
+ *
+ * `unknown` rather than `string`, so a caller hands over what it was given
+ * instead of unwrapping it first. A query rejects with an `Error`; the hook
+ * this replaced narrowed to a message before the screen ever saw it, and every
+ * call site would otherwise have had to repeat that narrowing.
+ */
+export function Loading({ error }: { error: unknown }) {
   const { t } = useI18n();
   if (error) {
+    const detail =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : null;
     return (
       <div className="error-state" role="alert">
         <strong>{t("common.loadError")}</strong>
-        <p>{error}</p>
+        <p>{detail}</p>
       </div>
     );
   }
@@ -346,10 +346,7 @@ export function AlbumsPage() {
   const [sort, setSort] = useState<AlbumSort>("alphabeticalByName");
   const [filter, setFilter] = useState("");
   const scope = useScopeId();
-  const { value, error } = useAsync(
-    () => listAlbums(sort, scope),
-    [sort, scope],
-  );
+  const { data: value, error } = useQuery(albumsQuery(sort, scope));
   const needle = normalizeFilter(filter);
   const shown = useMemo(
     () =>
@@ -475,6 +472,31 @@ export function SongTable({
 }) {
   const player = usePlayer();
   const { t } = useI18n();
+  // The two maps below are an optimistic overlay, and they live exactly as long
+  // as this table does. That was enough while every screen re-read on mount: the
+  // server's answer replaced them on the way back. Against a cache it is not —
+  // the overlay dies with the component and the held list still carries the old
+  // `starred_at`, so a star would un-tick itself on the next visit.
+  //
+  // Everything is invalidated after a mutation, for the reason a correction is:
+  // a song appears in albums, genres, search, history, favourites, playlists and
+  // the queue, and a list of the caches that could be wrong is a list with one
+  // missing from it.
+  const client = useQueryClient();
+  /**
+   * Everything the mutation could have made wrong, **except the draw**.
+   *
+   * This table is rendered on the shuffle page too, and that query is the one
+   * question here deliberately kept out of the cache: invalidating it would
+   * re-ask the server for a *different* sample, so starring a track pulled the
+   * list out from under the hand that starred it — and took the track with it.
+   * A star says something about one song and nothing about which songs were
+   * drawn.
+   */
+  const reloadAffected = () =>
+    client.invalidateQueries({
+      predicate: (query) => query.queryKey[0] !== "random-songs",
+    });
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const { libraries } = useLibraryScope();
@@ -490,6 +512,7 @@ export function SongTable({
     setStars((previous) => ({ ...previous, [song.id]: on }));
     try {
       await setFavorite("track", song.id, on);
+      await reloadAffected();
     } catch {
       setStars((previous) => ({ ...previous, [song.id]: !on }));
     }
@@ -500,6 +523,7 @@ export function SongTable({
     setRatings((current) => ({ ...current, [song.id]: rating }));
     try {
       await setRating("track", song.id, rating);
+      await reloadAffected();
     } catch {
       setRatings((current) => ({ ...current, [song.id]: previous }));
     }
@@ -582,16 +606,7 @@ export function SongTable({
 
 export function FavoritesPage() {
   const { t } = useI18n();
-  const { value, error } = useAsync(async () => {
-    const favorites = await listFavorites();
-    const tracks = favorites.filter((item) => item.entity_type === "track");
-    const resolved = await Promise.allSettled(
-      tracks.map((item) => getTrack(item.entity_id)),
-    );
-    return resolved.flatMap((result) =>
-      result.status === "fulfilled" ? [result.value] : [],
-    );
-  }, []);
+  const { data: value, error } = useQuery(favoriteTracksQuery());
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -611,10 +626,10 @@ export function FavoritesPage() {
 export function PlaylistsPage() {
   const player = usePlayer();
   const { t } = useI18n();
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(playlistsQuery().queryKey);
   const [name, setName] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const { value, error } = useAsync(listPlaylists, [revision]);
+  const { data: value, error } = useQuery(playlistsQuery());
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -622,7 +637,7 @@ export function PlaylistsPage() {
     try {
       await createPlaylist(name);
       setName("");
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setMutationError(t("playlists.createError"));
     }
@@ -636,7 +651,7 @@ export function PlaylistsPage() {
         playlist.id,
         player.queue.map((song) => song.id),
       );
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setMutationError(t("playlists.queueError"));
     }
@@ -646,7 +661,7 @@ export function PlaylistsPage() {
     setMutationError(null);
     try {
       await deletePlaylist(id);
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setMutationError(t("playlists.deleteError"));
     }
@@ -789,9 +804,9 @@ export function SharesPage() {
   const { t } = useI18n();
   const [description, setDescription] = useState("");
   const [createdShare, setCreatedShare] = useState<Share | null>(null);
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(sharesQuery().queryKey);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const { value, error } = useAsync(listShares, [revision]);
+  const { data: value, error } = useQuery(sharesQuery());
   const createdShareNotice = createdShare?.url ? (
     <p>
       {t("shares.once")}{" "}
@@ -819,7 +834,7 @@ export function SharesPage() {
       );
       setCreatedShare(share);
       setDescription("");
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setMutationError(t("shares.createError"));
     }
@@ -830,7 +845,7 @@ export function SharesPage() {
     try {
       await deleteShare(id);
       setCreatedShare((current) => (current?.id === id ? null : current));
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setMutationError(t("shares.deleteError"));
     }
@@ -957,7 +972,7 @@ export function GenresPage() {
   const { t } = useI18n();
   const [filter, setFilter] = useState("");
   const scope = useScopeId();
-  const { value, error } = useAsync<Genre[]>(() => listGenres(scope), [scope]);
+  const { data: value, error } = useQuery(genresQuery(scope));
   const needle = normalizeFilter(filter);
   const shown = useMemo(
     () =>
@@ -1011,10 +1026,7 @@ export function GenrePage({ genre }: { genre: string }) {
   const { t } = useI18n();
   const [drawing, setDrawing] = useState(false);
   const scope = useScopeId();
-  const { value, error } = useAsync<Song[]>(
-    () => listGenreSongs(genre, scope),
-    [genre, scope],
-  );
+  const { data: value, error } = useQuery(genreSongsQuery(genre, scope));
 
   /**
    * A shuffle of this genre, drawn by the server. It is a separate route from
@@ -1080,24 +1092,7 @@ const HISTORY_TRACKS = 50;
 
 export function HistoryPage() {
   const { t } = useI18n();
-  const { value, error } = useAsync(async () => {
-    const plays = await listHistory(200);
-    // The route answers plays, not songs, and the same track can appear many
-    // times. Keeping the first sighting of each id gives "recently played" in
-    // the order it was last played, and asks for each track once.
-    const seen = new Set<string>();
-    const ordered = plays.filter((play) => {
-      if (seen.has(play.track_id)) return false;
-      seen.add(play.track_id);
-      return true;
-    });
-    const resolved = await Promise.allSettled(
-      ordered.slice(0, HISTORY_TRACKS).map((play) => getTrack(play.track_id)),
-    );
-    return resolved.flatMap((result) =>
-      result.status === "fulfilled" ? [result.value] : [],
-    );
-  }, []);
+  const { data: value, error } = useQuery(historyTracksQuery(HISTORY_TRACKS));
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -1118,12 +1113,8 @@ export function HistoryPage() {
 
 export function RandomPage() {
   const { t } = useI18n();
-  const [draw, setDraw] = useState(0);
   const scope = useScopeId();
-  const { value, error } = useAsync<Song[]>(
-    () => listRandomSongs(100, undefined, scope),
-    [draw, scope],
-  );
+  const { data: value, error, refetch } = useQuery(randomSongsQuery(scope));
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -1133,7 +1124,11 @@ export function RandomPage() {
       >
         <div className="actions">
           <PlaySetActions songs={value} />
-          <button type="button" onClick={() => setDraw((n) => n + 1)}>
+          {/* A redraw is the same question asked again, not a different one,
+              so it refetches rather than changing a key. The query holds
+              nothing between visits — a shuffle that came back identical
+              would be the cache working and the page failing. */}
+          <button type="button" onClick={() => void refetch()}>
             {t("random.again")}
           </button>
         </div>
@@ -1164,10 +1159,7 @@ export function currentLyricLine(lines: LyricsLine[], seconds: number): number {
 function Lyrics({ trackId }: { trackId: string }) {
   const { t } = useI18n();
   const progress = usePlayerProgress();
-  const { value, error } = useAsync<LyricsList>(
-    () => getLyrics(trackId),
-    [trackId],
-  );
+  const { data: value, error } = useQuery(lyricsQuery(trackId));
   const sheet = value?.structuredLyrics[0];
   const active = sheet?.synced
     ? currentLyricLine(sheet.line, progress.position)
@@ -1213,9 +1205,9 @@ export function PlayingPage() {
   const player = usePlayer();
   const progress = usePlayerProgress();
   const { t } = useI18n();
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(bookmarksQuery().queryKey);
   const [busy, setBusy] = useState(false);
-  const { value: bookmarks } = useAsync<Bookmark[]>(listBookmarks, [revision]);
+  const { data: bookmarks } = useQuery(bookmarksQuery());
   const current = player.current;
 
   /**
@@ -1227,7 +1219,7 @@ export function PlayingPage() {
     setBusy(true);
     try {
       await setBookmark(song.id, progress.position * 1000);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       // Nothing is lost: the head has not moved and the old bookmark stands.
     } finally {
@@ -1238,7 +1230,7 @@ export function PlayingPage() {
   async function forget(trackId: string) {
     try {
       await deleteBookmark(trackId);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       // Same: the list simply does not change.
     }
@@ -1409,23 +1401,11 @@ function ScanProgress({ scanId }: { scanId: string }) {
 /** Who is listening to what, right now, across the accounts one can see. */
 function NowPlayingPanel() {
   const { t } = useI18n();
-  const [tick, setTick] = useState(0);
-  const { value } = useAsync<NowPlaying[]>(listNowPlaying, [tick]);
-  // `useAsync` clears its value at the start of every run, so each poll blanked
-  // the panel and flashed "nobody is listening" before the answer arrived.
-  // Holding the last reading means a refresh is invisible, which is what a
-  // refresh should be.
-  const [entries, setEntries] = useState<NowPlaying[] | null>(null);
-  useEffect(() => {
-    if (value) setEntries(value);
-  }, [value]);
-
-  // No stream exists for this one, so it is polled. Thirty seconds is slower
-  // than a track changes and fast enough for an operator glancing at it.
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((n) => n + 1), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  // No stream exists for this one, so it is polled, on the interval the query
+  // carries. A query keeps the reading it has while it refetches, so the panel
+  // no longer has to hold the previous one in a state of its own to avoid
+  // flashing "nobody is listening" every thirty seconds.
+  const { data: entries } = useQuery(nowPlayingQuery());
 
   return (
     <article className="admin-panel">
@@ -1454,7 +1434,7 @@ function NowPlayingPanel() {
 /** API tokens for one account, so a client can be authorised without the CLI. */
 function ApiTokensPanel({ username }: { username: string }) {
   const { t } = useI18n();
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(apiTokensQuery(username, true).queryKey);
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1462,10 +1442,7 @@ function ApiTokensPanel({ username }: { username: string }) {
   // on mount meant one request per account every time the admin screen opened
   // — for a list almost nobody opens.
   const [open, setOpen] = useState(false);
-  const { value, error } = useAsync<ApiToken[] | null>(
-    () => (open ? listApiTokens(username) : Promise.resolve(null)),
-    [username, revision, open],
-  );
+  const { data: value, error } = useQuery(apiTokensQuery(username, open));
 
   async function issue(event: FormEvent) {
     event.preventDefault();
@@ -1475,7 +1452,7 @@ function ApiTokensPanel({ username }: { username: string }) {
       setName("");
       // Shown once and never again: only its SHA-256 hash is stored.
       setSecret(created.secret);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       setFailed(true);
     }
@@ -1485,7 +1462,7 @@ function ApiTokensPanel({ username }: { username: string }) {
     setFailed(false);
     try {
       await revokeApiToken(username, id);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       setFailed(true);
     }
@@ -1584,18 +1561,15 @@ function LibraryMembersPanel({
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
-  const [revision, setRevision] = useState(0);
   const [failed, setFailed] = useState(false);
-  const { value, error } = useAsync<LibraryMember[] | null>(
-    () => (open ? listLibraryMembers(libraryId) : Promise.resolve(null)),
-    [libraryId, revision, open],
-  );
+  const reload = useReload(libraryMembersQuery(libraryId, true).queryKey);
+  const { data: value, error } = useQuery(libraryMembersQuery(libraryId, open));
 
   async function grant(userId: string, role: "manager" | "listener") {
     setFailed(false);
     try {
       await setLibraryMember(libraryId, userId, role);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       setFailed(true);
     }
@@ -1605,7 +1579,7 @@ function LibraryMembersPanel({
     setFailed(false);
     try {
       await removeLibraryMember(libraryId, userId);
-      setRevision((n) => n + 1);
+      reload();
     } catch {
       setFailed(true);
     }
@@ -1715,7 +1689,7 @@ function LibraryMembersPanel({
 export function AdminPage() {
   const signedInUser = currentUser();
   const { t } = useI18n();
-  const [revision, setRevision] = useState(0);
+  const reload = useReload(administrationQuery().queryKey);
   const [notice, setNotice] = useState<string | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [libraryName, setLibraryName] = useState("");
@@ -1727,10 +1701,7 @@ export function AdminPage() {
   // The scan whose progress is on screen — whichever was started last from
   // here. Starting another replaces it rather than stacking panels.
   const [watchedScan, setWatchedScan] = useState<string | null>(null);
-  const { value, error } = useAsync(
-    () => Promise.all([listLibraries(), listUsers()]),
-    [revision],
-  );
+  const { data: value, error } = useQuery(administrationQuery());
   if (!value) return <Loading error={error} />;
   const [libraries, users] = value;
 
@@ -1745,7 +1716,7 @@ export function AdminPage() {
       setLibraryPath("");
       setNotice(t("admin.initialScan", { id: result.scan_id }));
       setWatchedScan(result.scan_id);
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setAdminError(t("admin.libraryError"));
     } finally {
@@ -1762,7 +1733,7 @@ export function AdminPage() {
       await createUser(username, password, "user");
       setUsername("");
       setPassword("");
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setAdminError(t("admin.accountError"));
     } finally {
@@ -1775,7 +1746,7 @@ export function AdminPage() {
     setNotice(null);
     try {
       await setUserDisabled(user.username, !user.disabled);
-      setRevision((value) => value + 1);
+      reload();
     } catch {
       setAdminError(t("admin.statusError"));
     }
@@ -1990,10 +1961,7 @@ function EmptyState({ message }: { message: string }) {
 
 export function AlbumPage({ albumId }: { albumId: string }) {
   const { t } = useI18n();
-  const { value, error } = useAsync<AlbumDetail>(
-    () => getAlbum(albumId),
-    [albumId],
-  );
+  const { data: value, error } = useQuery(albumQuery(albumId));
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -2022,10 +1990,7 @@ export function ArtistsPage() {
   const { t } = useI18n();
   const [filter, setFilter] = useState("");
   const scope = useScopeId();
-  const { value, error } = useAsync<Artist[]>(
-    () => listArtists(scope),
-    [scope],
-  );
+  const { data: value, error } = useQuery(artistsQuery(scope));
   const needle = normalizeFilter(filter);
   // `/api/v2/artists` takes no `sort`, unlike `/albums`: the one order the
   // server offers is alphabetical, so this page filters and does not sort.
@@ -2081,10 +2046,7 @@ export function ArtistsPage() {
 
 export function ArtistPage({ artistId }: { artistId: string }) {
   const { t } = useI18n();
-  const { value, error } = useAsync<ArtistDetail>(
-    () => getArtist(artistId),
-    [artistId],
-  );
+  const { data: value, error } = useQuery(artistQuery(artistId));
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -2113,12 +2075,7 @@ export function SearchPage() {
   const scope = active?.id;
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
-  const { value, error } = useAsync<SearchResult | null>(
-    () => (submitted ? search(submitted, scope) : Promise.resolve(null)),
-    // The scope belongs in here: changing library while a result is on screen
-    // has to re-ask, or the page keeps answering for the library it left.
-    [submitted, scope],
-  );
+  const { data: value, error } = useQuery(searchQuery(submitted, scope));
 
   return (
     <section>

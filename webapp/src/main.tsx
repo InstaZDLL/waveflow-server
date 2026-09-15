@@ -1,3 +1,4 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
@@ -11,7 +12,12 @@ import {
 import { type RefObject, StrictMode, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
-import { currentUser, ensureSession, logout } from "./api";
+import {
+  currentUser,
+  ensureSession,
+  forgetOnSessionChange,
+  logout,
+} from "./api";
 import {
   I18nProvider,
   LanguagePicker,
@@ -48,6 +54,7 @@ import {
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
+import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
@@ -542,12 +549,25 @@ declare module "@tanstack/react-router" {
 const container = document.getElementById("root");
 if (!container) throw new Error("missing #root");
 
+// One client for the life of the document. Built here rather than at module
+// scope so nothing holds a cache of somebody else's answers if this module is
+// ever imported by a test.
+const queryClient = createQueryClient();
+
+// Emptied whenever the session changes. Everything the cache holds was answered
+// for one account — a catalogue is scoped by membership, and an administrator's
+// answers are scoped by more than that — so carrying it across a sign-out would
+// show the next person what the last one could see.
+forgetOnSessionChange(() => queryClient.clear());
+
 createRoot(container).render(
   <StrictMode>
-    <PreferencesProvider>
-      <I18nProvider>
-        <RouterProvider router={router} />
-      </I18nProvider>
-    </PreferencesProvider>
+    <QueryClientProvider client={queryClient}>
+      <PreferencesProvider>
+        <I18nProvider>
+          <RouterProvider router={router} />
+        </I18nProvider>
+      </PreferencesProvider>
+    </QueryClientProvider>
   </StrictMode>,
 );

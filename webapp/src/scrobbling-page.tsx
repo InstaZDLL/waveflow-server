@@ -1,15 +1,11 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   authorizeLastFm,
   discardUncertainScrobble,
-  getTrack,
   type KnownScrobbleUnavailable,
   linkScrobble,
-  listHistory,
-  listScrobbleDestinations,
-  listScrobbleLinks,
-  listUncertainScrobbles,
   retryUncertainScrobble,
   type ScrobbleLink,
   type ScrobbleProvider,
@@ -18,14 +14,9 @@ import {
   unlinkScrobble,
 } from "./api";
 import { type Locale, type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader, useAsync } from "./pages";
-import {
-  playsByInstant,
-  returnedFrom,
-  type ScrobbleRow,
-  scrobbleRows,
-  tracksToName,
-} from "./scrobbling";
+import { Loading, PageHeader } from "./pages";
+import { scrobbleRowsQuery, uncertainScrobblesQuery } from "./queries";
+import { returnedFrom, type ScrobbleRow } from "./scrobbling";
 
 /**
  * The four gestures RFC-010 leaves to a client.
@@ -135,8 +126,16 @@ export function ScrobblingPage() {
   // moment it is answered, so answering one below has to move the counters
   // above — showing a decision as outstanding after it was made is the same
   // fault as not showing it at all.
-  const [revision, setRevision] = useState(0);
-  const refresh = () => setRevision((n) => n + 1);
+  // Answering a listen below has to move the counters above: showing a
+  // decision as outstanding after it was made is the same fault as not showing
+  // it at all. One gesture, both keys.
+  const client = useQueryClient();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: scrobbleRowsQuery().queryKey });
+    void client.invalidateQueries({
+      queryKey: uncertainScrobblesQuery().queryKey,
+    });
+  };
   // Read once, on mount. It describes the navigation that brought us here, and
   // a later render is no longer that navigation.
   const returned = useMemo(() => returnedFrom(window.location.search), []);
@@ -156,13 +155,7 @@ export function ScrobblingPage() {
     window.history.replaceState(window.history.state, "", address);
   }, [returned]);
 
-  const { value, error } = useAsync(async () => {
-    const [destinations, links] = await Promise.all([
-      listScrobbleDestinations(),
-      listScrobbleLinks(),
-    ]);
-    return scrobbleRows(destinations, links);
-  }, [revision]);
+  const { data: value, error } = useQuery(scrobbleRowsQuery());
 
   return (
     <section>
@@ -192,7 +185,7 @@ export function ScrobblingPage() {
       ) : (
         <Loading error={error} />
       )}
-      <UncertainPanel revision={revision} onAnswered={refresh} />
+      <UncertainPanel onAnswered={refresh} />
     </section>
   );
 }
@@ -397,41 +390,12 @@ function reasonText(
  * with its time: refusing to display it would hide a decision that is still
  * owed, which is the one outcome this panel exists to prevent.
  */
-function UncertainPanel({
-  revision,
-  onAnswered,
-}: {
-  revision: number;
-  onAnswered: () => void;
-}) {
+function UncertainPanel({ onAnswered }: { onAnswered: () => void }) {
   const { t, locale } = useI18n();
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
-  const { value, error } = useAsync(async () => {
-    const entries = await listUncertainScrobbles();
-    if (entries.length === 0)
-      return { entries, titles: new Map<string, string>() };
-    // Only when there is something to name. An empty list must not cost a
-    // history read on every visit to this page.
-    const plays = playsByInstant(await listHistory(200));
-    const resolved = await Promise.allSettled(
-      tracksToName(entries, plays).map((id) => getTrack(id)),
-    );
-    const byTrack = new Map<string, string>();
-    for (const result of resolved) {
-      if (result.status === "fulfilled") {
-        byTrack.set(result.value.id, result.value.title);
-      }
-    }
-    const titles = new Map<string, string>();
-    for (const entry of entries) {
-      const track = plays.get(entry.played_at);
-      const title = track ? byTrack.get(track) : undefined;
-      if (title) titles.set(entry.id, title);
-    }
-    return { entries, titles };
-  }, [revision]);
+  const { data: value, error } = useQuery(uncertainScrobblesQuery());
 
   async function answer(entry: UncertainScrobble, send: boolean) {
     setBusy(entry.id);

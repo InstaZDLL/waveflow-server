@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { artworkUrl } from "./api";
+import { artworkUrl, cachedArtworkUrl } from "./api";
 
 type ArtworkProps = {
   artworkId: string | null;
@@ -43,8 +43,15 @@ const observable = typeof IntersectionObserver !== "undefined";
  * is the deeper fix and is not this one.
  */
 export function Artwork({ artworkId, title, className = "" }: ArtworkProps) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [wanted, setWanted] = useState(!observable);
+  // Read straight out of the cache, during the render rather than after it.
+  // A cover whose bytes are already held has nothing to wait for, and starting
+  // at `null` put the grey placeholder on screen for a frame every time this
+  // remounted — which is every navigation back to a grid already visited.
+  const held = cachedArtworkUrl(artworkId);
+  const [src, setSrc] = useState<string | null>(held);
+  // And nothing to observe for, either: asking whether it is on screen before
+  // showing what is already in memory is a wait with no question behind it.
+  const [wanted, setWanted] = useState(!observable || held !== null);
 
   // A callback ref rather than a `useRef`: this component renders a different
   // element depending on whether the image has arrived, so there is no one node
@@ -73,8 +80,8 @@ export function Artwork({ artworkId, title, className = "" }: ArtworkProps) {
   const [asked, setAsked] = useState(artworkId);
   if (asked !== artworkId) {
     setAsked(artworkId);
-    setSrc(null);
-    setWanted(!observable);
+    setSrc(held);
+    setWanted(!observable || held !== null);
   }
 
   useEffect(() => {
