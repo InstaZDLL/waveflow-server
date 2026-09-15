@@ -1,17 +1,17 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import {
   ApiError,
   correctTrack,
-  getTrackCredits,
-  getTrackOverrides,
   type SongCredits,
   type TrackOverrides,
 } from "./api";
 import { CanvasPanel } from "./canvas-panel";
 import { type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader, useAsync } from "./pages";
+import { Loading, PageHeader } from "./pages";
+import { trackEditQuery } from "./queries";
 import {
   buildCorrectionPatch,
   type CorrectionDraft,
@@ -40,13 +40,6 @@ const LABELS: Record<CorrectionField, TranslationKey> = {
 
 type Loaded = { song: SongCredits; tracked: TrackOverrides };
 
-function load(trackId: string): Promise<Loaded> {
-  return Promise.all([
-    getTrackCredits(trackId),
-    getTrackOverrides(trackId),
-  ]).then(([song, tracked]) => ({ song, tracked }));
-}
-
 /**
  * Corrects a track's tags without touching its file.
  *
@@ -56,13 +49,16 @@ function load(trackId: string): Promise<Loaded> {
  * libraries that failed to load would otherwise turn an owner away.
  */
 export function TrackEditorPage({ trackId }: { trackId: string }) {
-  const { value, error } = useAsync(() => load(trackId), [trackId]);
+  const { data: value, error } = useQuery(trackEditQuery(trackId));
   if (!value) return <Loading error={error} />;
   return <CorrectionForm key={trackId} initial={value} />;
 }
 
 function CorrectionForm({ initial }: { initial: Loaded }) {
   const { t } = useI18n();
+  // Read through the cache, so the rest of the client sees the corrected
+  // track too rather than only this form.
+  const client = useQueryClient();
   const [loaded, setLoaded] = useState(initial);
   const [draft, setDraft] = useState<CorrectionDraft>(() =>
     draftFrom(initial.tracked, initial.song),
@@ -121,7 +117,25 @@ function CorrectionForm({ initial }: { initial: Loaded }) {
       return;
     }
     try {
-      const fresh = await load(song.id);
+      // Everything, not the six keys that came to mind.
+      //
+      // A correction can change a title, a sort title, a year, a track or disc
+      // number, the artists and the genres — so it can change what an album
+      // holds, how a listing orders, which genre a track belongs to, what a
+      // search matches and what a favourite is called. Listing the caches that
+      // could be wrong is a list with something missing in it; a cache nobody
+      // thought of is exactly the one that goes on showing the old title.
+      // Marking all of them stale costs a refetch on the screens actually open
+      // and nothing at all on the rest, which ask again when they are next
+      // mounted.
+      await client.invalidateQueries();
+      // Then read this track back, past the cache: the entry invalidated a line
+      // above is the one that was just made wrong, and the form has to stand on
+      // what the server now holds before it says the correction was taken.
+      const fresh = await client.fetchQuery({
+        ...trackEditQuery(song.id),
+        staleTime: 0,
+      });
       setLoaded(fresh);
       setDraft(draftFrom(fresh.tracked, fresh.song));
       setMessage({ kind: "notice", text: t("correction.saved") });

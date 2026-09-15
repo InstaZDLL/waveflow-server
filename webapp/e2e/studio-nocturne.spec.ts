@@ -2065,3 +2065,135 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
 });
+
+/**
+ * A page already visited comes back without passing through its skeleton.
+ *
+ * Every screen used to load on mount and blank itself first, so leaving a page
+ * and returning drew the loading state again even when the answer took nine
+ * milliseconds. Measured on a real library over a local network, that was 79ms
+ * of flicker on every navigation — brief, and on every single one.
+ *
+ * **The delay below is what makes this test able to fail.** Every other mock in
+ * this file answers instantly, and against an instant answer a cache miss and a
+ * cache hit look identical: both paint within a frame and neither shows a
+ * skeleton long enough to observe. A question that takes 150ms leaves a mark if
+ * it is asked, and none if it is not.
+ *
+ * The first visit still draws it, and that is deliberate — a page holding
+ * nothing has to say it is working. Losing that would trade a flicker for a
+ * screen that looks broken on a slow link.
+ */
+test("draws the skeleton on a first visit, and never again on a return", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  for (const path of ["/api/v2/genres*", "/api/v2/albums*"]) {
+    await page.route(`**${path}`, async (route) => {
+      const url = new URL(route.request().url());
+      asked.push(url.pathname);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await route.fulfill({
+        json: url.pathname.endsWith("genres")
+          ? [{ name: "Trip hop", song_count: 4, album_count: 1 }]
+          : albums,
+      });
+    });
+  }
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+
+  const seen = await page.evaluate(async () => {
+    // Watched across the whole navigation rather than sampled after it: the
+    // skeleton is on screen for a matter of frames when it is on screen at all,
+    // and a check that ran once would miss it and call the flicker fixed.
+    const visit = async (label: string) => {
+      const started = performance.now();
+      let appeared = false;
+      const link = [...document.querySelectorAll("a")].find((anchor) =>
+        anchor.textContent?.includes(label),
+      ) as HTMLElement;
+      link.click();
+      return await new Promise<boolean>((resolve) => {
+        const tick = () => {
+          if (document.querySelector(".skeleton-grid")) appeared = true;
+          if (performance.now() - started > 500) return resolve(appeared);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+    };
+    return {
+      first: await visit("Genres"),
+      back: await visit("Albums"),
+      again: await visit("Genres"),
+    };
+  });
+
+  expect(seen).toEqual({ first: true, back: false, again: false });
+  // And the reason: the return asked nothing. Three visits, two questions.
+  expect(asked).toEqual(["/api/v2/albums", "/api/v2/genres"]);
+});
+
+/**
+ * Signing out empties what was answered for the account that left.
+ *
+ * The cache is the first thing in this client that outlives a screen, and a
+ * sign-out here is a client-side navigation — the document is never reloaded,
+ * so nothing is forgotten on its own. A catalogue is scoped by library
+ * membership and an administrator sees more than that, so carrying any of it
+ * across would show the next person what the last one could see.
+ *
+ * Asserted on the request, because that is the only thing that distinguishes an
+ * emptied cache from a full one: both render the same albums, and only one of
+ * them had to ask.
+ */
+test("forgets the catalogue when the session changes", async ({
+  page,
+}, testInfo) => {
+  // The sidebar that carries the sign-out is hidden below 820px, where the
+  // same gesture lives behind the overflow sheet. What is being measured is
+  // the cache, not where the button sits, so it is measured once.
+  test.skip(testInfo.project.name !== "desktop", "about the sidebar");
+  let asked = 0;
+  await page.route("**/api/v2/albums*", async (route) => {
+    asked += 1;
+    await route.fulfill({ json: albums });
+  });
+  await page.route("**/api/v2/web/auth/login", async (route) => {
+    await route.fulfill({ json: session });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  // Away and straight back, without signing out: this is the cache doing its
+  // job, and the contrast that makes the count below mean something.
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+  await sidebar.getByRole("link", { name: "Albums" }).click();
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(1);
+
+  // Dispatched rather than clicked: the sidebar's footer sits under the fixed
+  // player bar at this viewport, so a real click waits on hit-testing forever.
+  // What this test is about is what the sign-out does to the cache, and the
+  // gesture itself is covered by the accessibility pass.
+  await page
+    .getByRole("button", { name: "Sign out" })
+    .dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+
+  // Signed in again through the form, not by reloading the page. A reload
+  // would destroy the cache whatever this code does, and would prove nothing:
+  // the leak this guards against is exactly the one that needs no reload.
+  await page.getByLabel("Username").fill("nocturne");
+  await page.getByLabel("Password").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByText("Post", { exact: true })).toBeVisible();
+  expect(asked).toBe(2);
+});
