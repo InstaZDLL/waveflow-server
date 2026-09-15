@@ -2503,3 +2503,33 @@ test("re-asks a held listing after a correction is saved", async ({
   await expect(page.getByText("Post", { exact: true })).toBeVisible();
   expect(asked).toBe(2);
 });
+
+/**
+ * The icon is declared, and the declared icon is really there.
+ *
+ * Covered here rather than in the Rust suite, which runs against whatever
+ * `build.rs` staged: a real client build when one exists, and a placeholder
+ * holding nothing but `index.html` otherwise. The Rust CI never builds the
+ * client, so asserting this there would pass on a developer's machine and fail
+ * in CI for a reason that has nothing to do with the code. This project's
+ * preview server holds the actual build.
+ *
+ * What the server does with `/favicon.ico` — a 404 rather than the shell, which
+ * is what stopped a browser asking for it once a second — belongs to the
+ * fallback and is pinned in `tests/service.rs`.
+ */
+test("declares an icon, and serves the one it declares", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+
+  await page.goto("/");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    "href",
+    "/favicon.svg",
+  );
+
+  const icon = await page.request.get("/favicon.svg");
+  expect(icon.status()).toBe(200);
+  expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+});
