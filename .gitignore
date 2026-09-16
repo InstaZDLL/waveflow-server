@@ -28,3 +28,9 @@ skills-lock.json
 webapp/dist/
 webapp/playwright-report/
 webapp/test-results/
+
+# The server writes here at runtime: the SQLite database, the instance key
+# that decrypts what the database holds encrypted, the artwork cache and the
+# transcode cache. Never tracked. A `git add -A` from the repository root swept
+# the whole directory into a commit once, key included, on a public remote.
+data/
