@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">WaveFlow Server — Self-hosted music server</title>
+  <desc id="desc">GitHub social preview for WaveFlow Server, a fast and private self-hosted music server compatible with OpenSubsonic.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07110F"/>
+      <stop offset="0.5" stop-color="#090D13"/>
+      <stop offset="1" stop-color="#0A0D16"/>
+    </linearGradient>
+    <radialGradient id="green-glow" cx="0" cy="0" r="1" gradientTransform="translate(84 22) rotate(35) scale(700 500)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10B981" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blue-glow" cx="0" cy="0" r="1" gradientTransform="translate(1190 575) rotate(-148) scale(650 480)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#6EE7B7"/>
+      <stop offset="0.52" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="waveflow-logo-gradient" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34D399"/>
+      <stop offset="0.5" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="cover" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#123C35"/>
+      <stop offset="0.45" stop-color="#0A2527"/>
+      <stop offset="1" stop-color="#0C1B31"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFFFF" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.025"/>
+    </linearGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#FFFFFF" stroke-opacity="0.035"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="30" result="blur"/>
+      <feOffset in="blur" dy="24" result="offsetBlur"/>
+      <feColorMatrix in="offsetBlur" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .48 0" result="shadowBlur"/>
+      <feMerge><feMergeNode in="shadowBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft-shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14" result="blur"/>
+      <feOffset in="blur" dy="12" result="offsetBlur"/>
+      <feColorMatrix in="offsetBlur" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .42 0" result="shadowBlur"/>
+      <feMerge><feMergeNode in="shadowBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="logo-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="cover-clip">
+      <rect x="735" y="151" width="420" height="220" rx="22"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <rect width="1280" height="640" fill="url(#green-glow)"/>
+  <rect width="1280" height="640" fill="url(#blue-glow)"/>
+  <rect width="1280" height="640" fill="url(#grid)" opacity="0.68"/>
+  <path d="M0 550C248 492 416 542 650 580C912 623 1090 590 1280 492V640H0Z" fill="#10B981" fill-opacity="0.025"/>
+
+  <!-- Left column: every element begins at x=80. -->
+  <g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <!-- Bare official WaveFlow mark: no fourth tile treatment. -->
+    <g transform="translate(71 55.5) scale(0.25)" fill="url(#waveflow-logo-gradient)" filter="url(#logo-glow)">
+      <rect x="36" y="58" width="24" height="140" rx="12"/>
+      <rect x="76" y="88" width="24" height="80" rx="12"/>
+      <rect x="116" y="108" width="24" height="40" rx="12"/>
+      <rect x="156" y="88" width="24" height="80" rx="12"/>
+      <rect x="196" y="58" width="24" height="140" rx="12"/>
+    </g>
+    <text x="140" y="96" fill="#F8FAFC" font-size="27" font-weight="700" letter-spacing="-0.7">WaveFlow Server</text>
+
+    <text x="80" y="232" fill="#F8FAFC" font-size="70" font-weight="760" letter-spacing="-3.5">Self-hosted</text>
+    <text x="80" y="307" fill="url(#accent)" font-size="70" font-weight="760" letter-spacing="-3.5">music server.</text>
+
+    <text x="80" y="364" fill="#A5B2BC" font-size="22" font-weight="400" letter-spacing="-0.3">
+      <tspan x="80" dy="0">Your library, your server, your rules.</tspan>
+      <tspan x="80" dy="35">Fast, private, and OpenSubsonic compatible.</tspan>
+    </text>
+
+    <g transform="translate(80 460)">
+      <g>
+        <rect width="164" height="46" rx="14" fill="#FFFFFF" fill-opacity="0.045" stroke="#FFFFFF" stroke-opacity="0.10"/>
+        <circle cx="22" cy="23" r="5" fill="#34D399"/>
+        <text x="37" y="29" fill="#DDE7E5" font-size="14" font-weight="650" letter-spacing="0.35">RUST + SQLITE</text>
+      </g>
+      <g transform="translate(176 0)">
+        <rect width="176" height="46" rx="14" fill="#FFFFFF" fill-opacity="0.045" stroke="#FFFFFF" stroke-opacity="0.10"/>
+        <path d="M18 23l5 5 10-11" fill="none" stroke="#34D399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="43" y="29" fill="#DDE7E5" font-size="14" font-weight="650" letter-spacing="0.35">SINGLE BINARY</text>
+      </g>
+      <g transform="translate(364 0)">
+        <rect width="178" height="46" rx="14" fill="#FFFFFF" fill-opacity="0.045" stroke="#FFFFFF" stroke-opacity="0.10"/>
+        <path d="M18 23a7 7 0 0 1 7-7h2.5a5.5 5.5 0 1 1 0 11H25a7 7 0 0 1-7-7" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
+        <text x="43" y="29" fill="#DDE7E5" font-size="14" font-weight="650" letter-spacing="0.35">OPENSUBSONIC</text>
+      </g>
+    </g>
+
+    <text x="80" y="574" fill="#65736F" font-size="14" font-weight="600" letter-spacing="1.2">OPEN SOURCE · AGPL-3.0</text>
+  </g>
+
+  <!-- Enlarged server/player panel closes the central gap. -->
+  <g filter="url(#shadow)" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <rect x="690" y="65" width="510" height="510" rx="34" fill="#0A1118" stroke="#FFFFFF" stroke-opacity="0.12"/>
+    <rect x="691" y="66" width="508" height="508" rx="33" fill="url(#glass)"/>
+
+    <g transform="translate(728 99)">
+      <circle cx="7" cy="7" r="4" fill="#34D399"/>
+      <text x="22" y="12" fill="#C7D2D9" font-size="14" font-weight="650">waveflow.local</text>
+      <rect x="365" width="78" height="25" rx="12.5" fill="#34D399" fill-opacity="0.10" stroke="#34D399" stroke-opacity="0.22"/>
+      <circle cx="380" cy="12.5" r="3.5" fill="#34D399"/>
+      <text x="390" y="17" fill="#75E1B7" font-size="11" font-weight="700" letter-spacing="0.6">ONLINE</text>
+    </g>
+
+    <g clip-path="url(#cover-clip)">
+      <rect x="735" y="151" width="420" height="220" fill="url(#cover)"/>
+      <circle cx="1130" cy="158" r="175" fill="#38BDF8" fill-opacity="0.09"/>
+      <circle cx="746" cy="375" r="150" fill="#34D399" fill-opacity="0.12"/>
+      <path d="M735 310C810 266 856 291 923 316C1000 345 1060 324 1155 255V371H735Z" fill="#FFFFFF" fill-opacity="0.035"/>
+      <g transform="translate(861.5 178.3) scale(0.65)" fill="url(#waveflow-logo-gradient)" filter="url(#logo-glow)">
+        <rect x="36" y="58" width="24" height="140" rx="12"/>
+        <rect x="76" y="88" width="24" height="80" rx="12"/>
+        <rect x="116" y="108" width="24" height="40" rx="12"/>
+        <rect x="156" y="88" width="24" height="80" rx="12"/>
+        <rect x="196" y="58" width="24" height="140" rx="12"/>
+      </g>
+    </g>
+
+    <text x="735" y="419" fill="#F3F7F8" font-size="25" font-weight="720" letter-spacing="-0.5">Your music library</text>
+    <text x="735" y="447" fill="#71808B" font-size="15" font-weight="500">Streaming from your own server</text>
+
+    <rect x="735" y="477" width="420" height="6" rx="3" fill="#FFFFFF" fill-opacity="0.08"/>
+    <rect x="735" y="477" width="274" height="6" rx="3" fill="url(#accent)"/>
+    <circle cx="1009" cy="480" r="6.5" fill="#A7F3D0" stroke="#10221E" stroke-width="3"/>
+
+    <g transform="translate(735 514)">
+      <circle cx="18" cy="18" r="18" fill="#FFFFFF" fill-opacity="0.055" stroke="#FFFFFF" stroke-opacity="0.08"/>
+      <path d="M15 12L25 18L15 24Z" fill="#CBD5E1"/>
+      <text x="51" y="14" fill="#71808B" font-size="11" font-weight="700" letter-spacing="1">NOW PLAYING</text>
+      <text x="51" y="34" fill="#C7D2D9" font-size="14" font-weight="600">Anywhere you listen</text>
+    </g>
+  </g>
+
+  <g transform="translate(645 226)" filter="url(#soft-shadow)" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <rect width="142" height="70" rx="18" fill="#101922" stroke="#FFFFFF" stroke-opacity="0.12"/>
+    <circle cx="26" cy="26" r="10" fill="#38BDF8" fill-opacity="0.14" stroke="#38BDF8" stroke-opacity="0.36"/>
+    <path d="M22 26h8M26 22v8" stroke="#7DD3FC" stroke-width="1.7" stroke-linecap="round"/>
+    <text x="45" y="30" fill="#D8E2E8" font-size="12" font-weight="700">API ready</text>
+    <text x="19" y="54" fill="#687984" font-size="10" font-weight="600" letter-spacing="0.6">OPENSUBSONIC</text>
+  </g>
+
+  <rect x="0.5" y="0.5" width="1279" height="639" fill="none" stroke="#FFFFFF" stroke-opacity="0.055"/>
+</svg>
