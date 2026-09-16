@@ -96,7 +96,10 @@ pub enum MediaError {
     Unauthorized,
     NotFound,
     InvalidRequest,
-    RangeNotSatisfiable(u64),
+    /// The range could not be honoured. The length is `None` when the
+    /// representation does not have one yet — a transcode still being produced
+    /// knows how many bytes it has written, never how many it will.
+    RangeNotSatisfiable(Option<u64>),
     /// A quota the caller cannot spend past. Distinct from a refusal of the
     /// bytes themselves: nothing is wrong with what was sent, there is only no
     /// room for it.
@@ -209,7 +212,7 @@ impl MediaService {
         // Feishin with `bytes=0-`, then Juliet with the `bytes=0-1` probe iOS
         // sends before anything else.
         if range.is_some_and(|value| !starts_at_the_first_byte(value)) {
-            return Err(MediaError::RangeNotSatisfiable(0));
+            return Err(MediaError::RangeNotSatisfiable(None));
         }
 
         if query.offset_ms > 0 {
@@ -1278,15 +1281,35 @@ impl IntoResponse for MediaError {
                 (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "1")]).into_response()
             }
             Self::RangeNotSatisfiable(size) => {
-                let content_range = format!("bytes */{size}");
-                (
-                    StatusCode::RANGE_NOT_SATISFIABLE,
-                    [
-                        (header::CONTENT_RANGE, content_range.as_str()),
-                        (header::ACCEPT_RANGES, "none"),
-                    ],
-                )
-                    .into_response()
+                // Two refusals wear this status, and they do not mean the same
+                // thing.
+                //
+                // A complete file knows its length, so it can say which range
+                // would have been satisfiable — and it accepts ranges, which
+                // every other answer `serve_file` gives for that same resource
+                // already says. Only the range asked for was wrong.
+                //
+                // A transcode still being produced knows how many bytes it has
+                // written, never how many it will, and takes no range until it
+                // is whole. `bytes */0` would not say "length unknown": it
+                // would say the resource is empty, which a client is entitled
+                // to believe and never ask about again. The unsatisfied-range
+                // form has nowhere to put an unknown length, so the header is
+                // left out instead of filled with a falsehood.
+                let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+                let headers = response.headers_mut();
+                match size {
+                    Some(size) => {
+                        headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+                        if let Ok(value) = HeaderValue::from_str(&format!("bytes */{size}")) {
+                            headers.insert(header::CONTENT_RANGE, value);
+                        }
+                    }
+                    None => {
+                        headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
+                    }
+                }
+                response
             }
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
@@ -1371,7 +1394,7 @@ async fn serve_file(
     match range {
         Some(range) => {
             let (start, end) =
-                parse_range(range, size).ok_or(MediaError::RangeNotSatisfiable(size))?;
+                parse_range(range, size).ok_or(MediaError::RangeNotSatisfiable(Some(size)))?;
             serve_partial(file, start, end, size, mime).await
         }
         None => {

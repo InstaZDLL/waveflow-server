@@ -210,8 +210,8 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             | ("playlist", "entry")
             | ("bookmarks", "bookmark")
             | ("starred2" | "starred", "artist" | "album" | "song")
-            | ("nowPlaying", "song")
-            | ("playQueue", "song")
+            | ("nowPlaying", "entry")
+            | ("playQueue", "entry")
             | ("shares", "share")
             | ("share", "entry")
             | ("users", "user")
@@ -220,8 +220,9 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             | ("lyricsList", "structuredLyrics")
             | ("structuredLyrics", "line")
             // A media item is rendered as `song`, and renamed to `entry` inside
-            // a playlist or share and to `child` inside a directory. Its
-            // OpenSubsonic relations are arrays under all three names.
+            // a playlist, a share, a play queue or the now-playing list, and to
+            // `child` inside a directory. Its OpenSubsonic relations are arrays
+            // under all three names.
             | ("song" | "entry" | "child" | "album", "artists" | "genres")
             // `getMusicDirectory` renders an album as `child`, so its arrays
             // have to keep their shape under that name too — otherwise one

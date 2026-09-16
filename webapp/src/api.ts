@@ -282,6 +282,26 @@ function clearSessionState(): void {
   for (const forget of sessionScoped) forget();
 }
 
+/**
+ * Whether a refusal addressed to this attempt still deserves a renewal.
+ *
+ * A sign-out and a sign-in fit inside one round trip, so a 401 raised for
+ * account A can arrive after account B has signed in. Renewing then spends
+ * **B's** rotating refresh token for a request A made, and the replay goes out
+ * under **B's** access token, because a retry rebuilds its headers from the
+ * current session. Nobody asked B for that request, and its answer is delivered
+ * to a consumer that no longer exists.
+ *
+ * The generation is checked twice on purpose. Once before the renewal, and
+ * again after it, because the renewal is itself a round trip that a sign-out
+ * can happen inside — checking only on the way in would let the replay through.
+ */
+async function renewFor(generation: number): Promise<boolean> {
+  if (generation !== sessionGeneration) return false;
+  if (!(await refresh())) return false;
+  return generation === sessionGeneration;
+}
+
 function refresh(): Promise<boolean> {
   // Shared only with callers of the same session. A renewal that outlived the
   // account it was started for now answers `false` on purpose, and handing that
@@ -386,7 +406,7 @@ async function call<T>(
   // whoever just arrived back on the sign-in screen.
   const generation = sessionGeneration;
   const response = await fetch(path, { ...init, headers });
-  if (response.status === 401 && retry && (await refresh())) {
+  if (response.status === 401 && retry && (await renewFor(generation))) {
     return call<T>(path, init, false, true);
   }
   // Refused again, on the attempt that a renewal had already paid for. A
@@ -665,12 +685,14 @@ export async function putUploadChunk(
 ): Promise<UploadSessionState> {
   const headers = new Headers({ "content-type": "application/octet-stream" });
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
+  // Whose session this attempt speaks for; see `renewFor`.
+  const generation = sessionGeneration;
   const response = await fetch(`/api/v2/uploads/${id}/chunks/${index}`, {
     method: "PUT",
     headers,
     body: bytes,
   });
-  if (response.status === 401 && retry && (await refresh())) {
+  if (response.status === 401 && retry && (await renewFor(generation))) {
     return putUploadChunk(id, index, bytes, false);
   }
   if (!response.ok) {
@@ -721,7 +743,7 @@ export async function placeCanvas(
   // Whose session this attempt speaks for; see the same line in `call`.
   const generation = sessionGeneration;
   const response = await fetch(path, { method: "PUT", headers, body: file });
-  if (response.status === 401 && retry && (await refresh())) {
+  if (response.status === 401 && retry && (await renewFor(generation))) {
     return placeCanvas(trackId, file, false, true);
   }
   // The same dead end `call` handles, on the one route that cannot go through
@@ -807,10 +829,12 @@ async function loadArtworkUrl(
 ): Promise<string | null> {
   const headers = new Headers();
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
+  // Whose session this attempt speaks for; see `renewFor`.
+  const generation = sessionGeneration;
   const response = await fetch(`/api/v2/artwork/${encodeURIComponent(id)}`, {
     headers,
   });
-  if (response.status === 401 && retry && (await refresh())) {
+  if (response.status === 401 && retry && (await renewFor(generation))) {
     return loadArtworkUrl(id, false);
   }
   // The same distinction `canvasUrl` makes above, and for the same reason: a
@@ -960,8 +984,11 @@ export function watchScan(
       // repeat what `call` does about an expired access token. Without it an
       // admin who left the tab open watched "waiting for the first reading"
       // for as long as the scan took, and then for ever.
+      // Whose session this stream speaks for; see `renewFor`. This route is
+      // the fifth of the kind and was not named in the issue.
+      const generation = sessionGeneration;
       let response = await open();
-      if (response.status === 401 && (await refresh())) {
+      if (response.status === 401 && (await renewFor(generation))) {
         response = await open();
       }
       if (!response.ok || !response.body) {

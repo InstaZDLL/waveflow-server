@@ -246,6 +246,62 @@ describe("session refresh", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it("neither renews nor replays a refusal that outlived its session", async () => {
+    const api = await freshApi();
+    await signIn(api);
+    let releaseRefusal = () => {};
+    const heldRefusal = new Promise<Response>((resolve) => {
+      releaseRefusal = () => resolve(jsonResponse({}, 401));
+    });
+    let renewals = 0;
+    let reads = 0;
+    fetchStub.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/refresh")) {
+        renewals += 1;
+        return jsonResponse({
+          access_token: "renewed",
+          user: { id: "u2", username: "other", role: "admin" },
+          device_id: "d2",
+        });
+      }
+      if (url.includes("/auth/login"))
+        return jsonResponse({
+          access_token: "second-token",
+          user: { id: "u2", username: "other", role: "admin" },
+          device_id: "d2",
+        });
+      if (url.includes("/auth/logout"))
+        return new Response(null, { status: 204 });
+      reads += 1;
+      // Held open on purpose. Hoping to land inside the window instead of
+      // holding it open is how this test passes with the guard removed.
+      return heldRefusal;
+    });
+
+    const refusedForTheFirst = api.getTrack("t1");
+    await vi.waitFor(() => expect(reads).toBe(1));
+
+    // The whole race, made deliberate: the account the request belongs to signs
+    // out and another signs in while its refusal is still in the air.
+    await api.logout();
+    await api.login("other", "correct horse battery staple");
+    expect(api.hasSession()).toBe(true);
+
+    releaseRefusal();
+    await expect(refusedForTheFirst).rejects.toThrow();
+
+    // Renewing here would spend the **new** account's rotating refresh token
+    // for a request the previous one made, and the replay would go out under
+    // the new account's access token, because a retry rebuilds its headers
+    // from the current session. Nobody asked for that request, and its answer
+    // would be delivered to a consumer that has been torn down.
+    expect(renewals).toBe(0);
+    expect(reads).toBe(1);
+    expect(api.hasSession()).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("leaves it alone for a caller that never asked for a renewal", async () => {
     const api = await freshApi();
     await signIn(api);

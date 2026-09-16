@@ -19,6 +19,14 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > Nothing the 2026-09-16 campaign found is a regression. Everything it surfaced
 > is reachable at `v2.0.0-beta.0` too, and is filed as #224, #225 and #226.
 >
+> **The rows record the runs, not today’s server.** #224, #225 and #226 were
+> fixed after these campaigns, so two observations below have since stopped
+> being true: `getPlayQueue` and `getNowPlaying` named their children `song`
+> when DSub and Juliet met them, and now name them `entry`, with the `username`
+> the schema requires beside them. That is an **observable wire change**, made
+> deliberately during a beta rather than carried into a stable tag — the freeze
+> protects the clients that were validated, not a divergence from the schema.
+>
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names
 > its sender. Each run is bounded by a burst in the request rate, corroborated

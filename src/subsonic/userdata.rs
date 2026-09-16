@@ -185,10 +185,15 @@ pub(super) async fn now_playing(
         .map_err(internal)?;
     Ok(
         Node::new("nowPlaying").children(entries.iter().map(|(username, song, started)| {
-            song_node(song).attr("username", username.clone()).attr(
-                "minutesAgo",
-                ((chrono::Utc::now().timestamp_millis() - started) / 60_000).max(0),
-            )
+            // `entry`, not `song`: the schema renames a media item inside this
+            // container exactly as it does inside a playlist.
+            song_node(song)
+                .renamed("entry")
+                .attr("username", username.clone())
+                .attr(
+                    "minutesAgo",
+                    ((chrono::Utc::now().timestamp_millis() - started) / 60_000).max(0),
+                )
         })),
     )
 }
@@ -198,14 +203,24 @@ pub(super) async fn get_queue(
     principal: &Principal,
 ) -> Result<Node, ProtocolError> {
     let Some(queue) = state.services.queue(principal.id).await.map_err(internal)? else {
+        // Nothing has been saved. The empty container carries no `username`
+        // either, because `changed` and `changedBy` would have to be invented
+        // beside it, and a queue that does not exist has no such facts.
         return Ok(Node::new("playQueue"));
     };
     Ok(Node::new("playQueue")
+        .attr("username", principal.username.clone())
         .maybe_attr("current", queue.current.map(|id| id.to_string()))
         .attr("position", queue.position_ms)
         .maybe_attr("changedBy", queue.changed_by)
         .attr("changed", iso_time(queue.updated_at))
-        .children(queue.songs.iter().map(song_node)))
+        // `entry`, not `song` — see `nowPlaying` above.
+        .children(
+            queue
+                .songs
+                .iter()
+                .map(|song| song_node(song).renamed("entry")),
+        ))
 }
 
 pub(super) async fn save_queue(
