@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="80" alt="WaveFlow logo" />
+</p>
+
 <h1 align="center">WaveFlow Server</h1>
 
 <p align="center">
