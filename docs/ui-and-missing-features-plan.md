@@ -315,6 +315,36 @@ protocole laisse.
   `maloja`. Ce qui bloque Last.fm est l'enregistrement d'une application chez
   eux, pas une ligne à écrire.
 
+### Dans la documentation : deux langues dans une même série
+
+Le dépôt est public et sous AGPL, et sa documentation de conception est écrite
+moitié en anglais, moitié en français — **y compris à l'intérieur de la série
+des RFC**, ce qui est le point le plus difficile à défendre :
+
+| | Fichiers | Lignes |
+|---|---|---|
+| **RFC en français** | 004, 007, 008, 009, 010 | **2 692** |
+| **RFC en anglais** | 002, 003 | 299 |
+| **Analyses et plans, en français** | `web-client-gap-analysis`, `opensubsonic-gap-analysis`, `desktop-v2-integration-gap`, ce document | **1 595** |
+| **Archives, en français** | `M4-handoff`, `M3-symfonium-validation` | 602 |
+
+Tout le reste est déjà en anglais : `README.md`, `CLAUDE.md`, `AGENTS.md`, les
+deux guides d'API, la matrice de compatibilité et les **huit handoffs**. Ce qui
+est tourné vers l'extérieur parle donc déjà anglais ; ce qui explique les
+décisions, non.
+
+**Deux réserves, parce qu'une traduction bâclée vaut moins que l'original.**
+
+1. **Une RFC vaut par sa précision.** RFC-010 fait mille lignes de raisonnement
+   de conception, avec des décisions numérotées auxquelles le texte renvoie
+   (« par décision 11 »), des lignes `Implémentée par` qui nomment des PR, et
+   des renvois croisés. Traduire au kilomètre casse tout ça en silence. Le
+   travail se fait document par document, en relisant les renvois.
+2. **Les deux archives sont un cas à part.** `M3-symfonium-validation` date une
+   campagne du 2026-08-23 et `M4-handoff` raconte une étape close. Traduire une
+   archive, c'est réécrire un compte rendu. À trancher séparément : les laisser
+   en l'état est défendable, les traduire aussi, mais pas sans le dire.
+
 ### Un écart de structure, sans effet visible
 
 Quatre écrans — éditeur de tags, panneau canvas, upload, scrobbling —
@@ -372,6 +402,7 @@ du dépôt (`size: xs` < 10 lignes, `s` 10-50, `m` 50-200, `l` 200-500,
 | 9 | **#215** | Les plus écoutés d'un artiste | Calcul sur l'historique local ; remplit `getTopSongs` | `l` |
 | 10 | **#216** | Import `.m3u` | Analyse, résolution des chemins, serveur et client | `xl` |
 | 11 | **#217** | Les radios internet | Migration, trois écritures Subsonic, `/api/v2`, page | `xl` |
+| 12 | **#222** | Une seule langue pour la documentation | Les cinq RFC françaises et les quatre analyses passent à l'anglais ; le sort des deux archives est tranché à part | `xl` |
 
 **Hors PR — une RFC, suivie par #218** : le moteur de plugins côté serveur,
 dont dépendent la biographie et les artistes similaires. Voir la section « Les
@@ -389,6 +420,9 @@ distincts : une issue décrit un problème, une PR peut en fermer plusieurs.
 - **8 vient après 3, 5, 6 et 7**, sinon la passe se refait sur du balisage qui
   a changé entre-temps.
 - **9 est la seule moitié de la page artiste** qui n'attend pas la RFC.
+- **12 ne dépend de rien et ne bloque rien**, mais se fait mieux tôt : chaque
+  document écrit d'ici là s'ajoute à ce qu'il y aura à traduire, et ce document
+  compte parmi eux.
 
 ### Deux regroupements refusés, et pourquoi
 
