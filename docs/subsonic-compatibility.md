@@ -2,18 +2,19 @@
 
 Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_browse`, `subsonic_fields` and `subsonic_methods` targets under `tests/` for XML, JSON, `.view`, GET, form POST, `u/p`, `u/t/s`, `apiKey`, catalogue isolation, all documented mutations, media and artwork.
 
-> **Four of the five rows were replayed on 2026-09-16 and name the model `main`
-> serves; only Substreamer's is older.** §4 of
+> **The whole replayed set was run again on 2026-09-16, and every row in it
+> names the model `main` serves.** §4 of
 > [`handoff-2026-08-23.md`](handoff-2026-08-23.md) asked for the campaign to be
-> replayed before a stable tag, and it has been — Symfonium, DSub, Juliet and
-> Feishin, against a façade that had since been **split by method family**
-> (`b6888c6`), had **seven defects in the moved code** corrected (`e57559f`),
-> had **five output fields added to an album** on 2026-08-24, and had changed
-> what a track answers (`efa7af0`, "a song is not a release"). The read path
-> moved twice as well: `03f5a06` caches the transcode a seek abandons, and
-> `3770966` puts a deadline on filling that cache. **§4 stays open for
-> Substreamer alone**, which has not been replayed since 2026-08-02 and cannot
-> be installed on the current device.
+> replayed before a stable tag, and **it is now closed**: Symfonium, DSub,
+> Juliet and Feishin were all replayed against a façade that had since been
+> **split by method family** (`b6888c6`), had **seven defects in the moved code**
+> corrected (`e57559f`), had **five output fields added to an album** on
+> 2026-08-24, and had changed what a track answers (`efa7af0`, "a song is not a
+> release"). The read path moved twice as well: `03f5a06` caches the transcode a
+> seek abandons, and `3770966` puts a deadline on filling that cache.
+> Substreamer is **not part of the set** and is not counted toward a tag — that
+> build no longer installs on the current Android device, and Juliet on a
+> physical iPhone took its place, which is the reason given further down.
 >
 > Nothing the 2026-09-16 campaign found is a regression. Everything it surfaced
 > is reachable at `v2.0.0-beta.0` too, and is filed as #224, #225 and #226.
@@ -150,9 +151,10 @@ OpenSubsonic to hundreds of clients for years, and where the two disagreed it
 was our disagreement to withdraw, not theirs. A matrix green against the variant
 said nothing about the model that replaced it, so the whole set was run again.
 
-**All four were replayed on 2026-08-23 against the aligned model**, and every row
-above now carries that date. Substreamer stays out of the replayed set for the
-reason given above, and is still not counted toward it.
+**All four were replayed on 2026-08-23 against the aligned model**, and again
+on 2026-09-16 against the façade as it stands after the split by method family;
+every row above carries that later date. Substreamer stays out of the replayed
+set for the reason given above, and is still not counted toward it.
 
 That campaign found no defect in what it exercised, but it found two before it
 reached a client at all, both invisible to a suite that only ever migrates an
