@@ -3,7 +3,7 @@
 # which is what a contributor wants and what an operator does not.
 services:
   waveflow:
-    image: ghcr.io/instazdll/waveflow-server:2.0.0-beta.0
+    image: ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
     # build: .
     restart: unless-stopped
     ports:

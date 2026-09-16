@@ -1652,7 +1652,7 @@ async fn play_queue_and_now_playing_name_their_children_entry() {
     // schema has no way to say "empty queue" — the reference omits the element
     // entirely — so conforming would mean a *third* observable change, on the
     // one call every client makes at startup, with no client harm observed and
-    // none of it asked for. Pinned rather than corrected, and recorded on #225.
+    // none of it asked for. Pinned rather than corrected, and carried by #229.
     let unsaved = subsonic_json(&router, "getPlayQueue", "wfsk_queue", "").await;
     let unsaved = &unsaved["subsonic-response"]["playQueue"];
     assert!(unsaved.is_object(), "{unsaved}");

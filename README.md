@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/static/v1?label=version&message=2.0.0-beta.0&color=emerald&style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/static/v1?label=version&message=2.0.0-beta.1&color=emerald&style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/rust-1.94%2B-orange?style=flat-square&logo=rust" alt="Rust 1.94+" />
   <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
   <img src="https://img.shields.io/badge/API-OpenSubsonic-6a4bd6?style=flat-square" alt="OpenSubsonic" />
@@ -23,7 +23,7 @@ WaveFlow Server streams the music you already own to the clients you already use
 
 No PostgreSQL. No Redis. No identity provider. No container orchestration. **One binary, one database file, one key file.**
 
-> **Status — `2.0.0-beta.0`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients on real devices — Symfonium, DSub, Feishin and Juliet — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
+> **Status — `2.0.0-beta.1`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients — **Symfonium 15.0.1** and **DSub 5.5.3** on an Android 17 emulator, **Feishin 1.15.1** on Windows desktop, and **Juliet** on a physical iPhone — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
 
 ## Install
 
@@ -36,7 +36,7 @@ docker run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro \
-  ghcr.io/instazdll/waveflow-server:2.0.0-beta.0
+  ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
 ```
 
 Or with Compose — set `WAVEFLOW_MUSIC_PATH` to your music directory, which is mounted read-only:
@@ -120,6 +120,7 @@ Point any Subsonic client at `http://your-host:4533` with that username and pass
 | **Run it** | [Operations](docs/operations.md) — backup, losing or rotating the instance key, reverse proxies, probes and logging |
 | **Integrate** | [Native API v2](docs/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/subsonic-api-guide.md) |
 | **What clients do** | [Compatibility matrix](docs/subsonic-compatibility.md) — the four replayed above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/opensubsonic-gap-analysis.md) |
+| **What changed** | [CHANGELOG](CHANGELOG.md) |
 | **The design** | [RFC-002, the accepted design](docs/rfcs/RFC-002-waveflow-server-v2.md) · [RFC-003, sync](docs/rfcs/RFC-003-waveflow-sync-v2.md) · [RFC-004, local/server reconciliation](docs/rfcs/RFC-004-local-server-reconciliation.md) · [RFC-007, library events](docs/rfcs/RFC-007-library-event-stream.md) · [RFC-008, uploads](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009, canvas](docs/rfcs/RFC-009-track-canvas.md) · [RFC-010, scrobbling](docs/rfcs/RFC-010-external-scrobbling.md) |
 | **On a running server** | [`/reference`](http://127.0.0.1:4533/reference) for the interactive API · [`/openapi.json`](http://127.0.0.1:4533/openapi.json) for the contract |
 | **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) for the conventions in depth |
