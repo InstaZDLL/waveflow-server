@@ -19,7 +19,7 @@ WaveFlow Server streams the music you already own to the clients you already use
 
 No PostgreSQL. No Redis. No identity provider. No container orchestration. **One binary, one database file, one key file.**
 
-> **Status — `2.0.0-beta.1`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients on real devices — Symfonium, DSub, Feishin and Juliet — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
+> **Status — `2.0.0-beta.1`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients — **Symfonium 15.0.1** and **DSub 5.5.3** on an Android 17 emulator, **Feishin 1.15.1** on Windows desktop, and **Juliet** on a physical iPhone — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
 
 ## Install
 

@@ -48,7 +48,7 @@ consumes, and one on the Subsonic façade.
   `getPlayQueue` with nothing saved still answers a bare `playQueue`, unchanged
   and not schema-conforming. Making it so means omitting the element, which is a
   further wire change on the one call every client makes at startup; it is
-  pinned by a test and left to decide after the beta.
+  pinned by a test and left to decide after the beta, on #229.
 
 ### Added
 
@@ -144,9 +144,17 @@ release introduces.
 
 ### Known issues
 
-None outstanding. The four the client campaigns found were all present in
-`2.0.0-beta.0` as well, and all four were fixed before this tag rather than
-carried into it — #219, #224, #225 and #226, above.
+The four the client campaigns found were all present in `2.0.0-beta.0` as well,
+and all four were fixed before this tag rather than carried into it: they are
+listed above as #219, #224, #225 and #226.
+
+One deviation is knowingly left in place: **`getPlayQueue` with nothing saved
+answers a bare `playQueue`**, carrying none of the `username`, `changed` or
+`changedBy` the schema requires. The schema has no way to say "empty queue" —
+the reference omits the element — so conforming means removing it, which is a
+further wire change on the one call every client makes at startup. No client has
+been observed to mind. It is pinned by a contract test so it cannot drift
+unnoticed, and #229 carries the decision.
 
 ## [2.0.0-beta.0] — 2026-08-23
 
