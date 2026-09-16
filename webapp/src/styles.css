@@ -305,35 +305,14 @@ h3 {
   text-transform: uppercase;
 }
 
+/* The mark is `/logo.svg`, the same five-bar file the desktop application
+   carries, so the two cannot drift again. It was drawn here in CSS — four bars,
+   an asymmetric profile, a flat accent square — and that is what diverged.
+   Sizing only from now on. */
 .brand-mark {
-  display: flex;
   width: 1.7rem;
   height: 1.7rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.12rem;
-  border-radius: 0.52rem;
-  background: var(--accent);
-  box-shadow: 0 0.5rem 1.4rem color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-.brand-mark i {
-  width: 0.11rem;
-  border-radius: 1rem;
-  background: var(--bg);
-}
-
-.brand-mark i:nth-child(1) {
-  height: 0.42rem;
-}
-.brand-mark i:nth-child(2) {
-  height: 0.82rem;
-}
-.brand-mark i:nth-child(3) {
-  height: 1.08rem;
-}
-.brand-mark i:nth-child(4) {
-  height: 0.62rem;
+  flex: none;
 }
 
 .primary-navigation {

@@ -117,12 +117,7 @@ function Brand() {
   const { t } = useI18n();
   return (
     <Link className="brand" to="/" aria-label={t("nav.home")}>
-      <span className="brand-mark" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-        <i />
-      </span>
+      <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
       <span>WaveFlow</span>
       <small>{t("nav.server")}</small>
     </Link>

@@ -1,14 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="WaveFlow">
-  <!-- The brand mark from the client's own sidebar: an accent square with four
-       equaliser bars cut out of it, at the heights `.brand-mark i` gives them.
-       Solid rather than theme-aware, because a tab strip is not the page and an
-       icon that changes with the reader's colour scheme is harder to find, not
-       easier. -->
-  <rect width="32" height="32" rx="10" fill="#34d399"/>
-  <g fill="#101311">
-    <rect x="8.5" y="12.05" width="2.1" height="7.9" rx="1.05"/>
-    <rect x="12.8" y="8.3" width="2.1" height="15.4" rx="1.05"/>
-    <rect x="17.1" y="5.85" width="2.1" height="20.3" rx="1.05"/>
-    <rect x="21.4" y="10.15" width="2.1" height="11.7" rx="1.05"/>
+  <!-- The same mark as `/logo.svg` and as the desktop application: five bars,
+       symmetric, 140/80/40/80/140, under the same diagonal gradient. The
+       geometry below is that file's, scaled and centred rather than redrawn, so
+       the shape cannot drift from it again.
+
+       Two things are adapted, and only two. A **container** is kept: at 16px in
+       a tab strip, five thin bars with nothing behind them lose their contrast
+       and the mark stops being findable — which is the whole job of a favicon.
+       And the bars are cut out of it in the application's own dark rather than
+       drawn in the gradient, because a gradient on a gradient at that size is
+       mud.
+
+       Deliberately **not** theme-aware. An icon that follows the reader's
+       colour scheme is harder to find in a row of thirty, not easier. -->
+  <defs>
+    <linearGradient id="waveflowMark" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34D399"/>
+      <stop offset="0.5" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="10" fill="url(#waveflowMark)"/>
+  <g fill="#101311" transform="translate(0.64 0.64) scale(0.12)">
+    <rect x="36" y="58" width="24" height="140" rx="12"/>
+    <rect x="76" y="88" width="24" height="80" rx="12"/>
+    <rect x="116" y="108" width="24" height="40" rx="12"/>
+    <rect x="156" y="88" width="24" height="80" rx="12"/>
+    <rect x="196" y="58" width="24" height="140" rx="12"/>
   </g>
 </svg>
