@@ -17,34 +17,13 @@
 
 WaveFlow Server streams the music you already own to the clients you already use. It scans your folders, owns the catalogue in a single SQLite file, transcodes on demand with FFmpeg, and answers on three surfaces at once: the **OpenSubsonic API** that dozens of existing players speak, a **native API** for WaveFlow Desktop, and an **embedded web player** compiled into the binary.
 
-No PostgreSQL. No Redis. No identity provider. No container orchestration. One binary, one database file, one key file.
+No PostgreSQL. No Redis. No identity provider. No container orchestration. **One binary, one database file, one key file.**
 
-> **Status — `2.0.0-beta.0`.** All six milestones pass their release gates. The OpenSubsonic façade has been replayed against four real clients on real devices — Symfonium, Feishin, DSub and Juliet — with every result read back from server state rather than from the client's display. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each client actually exercises, and what it does not.
+> **Status — `2.0.0-beta.0`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients on real devices — Symfonium, DSub, Feishin and Juliet — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
 
-## Why another one
+## Install
 
-**Your identifiers stop moving.** Album and artist IDs are *derived* from the tags that name them (UUID v8 over a configurable spec, the same grammar Navidrome uses). Rebuild your database from scratch and the same files answer with the same IDs — so cached artwork, starred albums and deep links survive a reinstall. Track IDs are drawn at random on purpose: six tables cascade off them, and a scan matches a file by path and then by content hash, which is a better identity than any tag.
-
-**The Subsonic surface is the reference's, not a variant.** Where WaveFlow and Navidrome disagreed on the artist model, we withdrew — thirteen credit roles, `contributors[]`, `displayComposer`, `roles[]`, an album that hangs off *every* artist it is credited to, and separator rules that split `Rue Delacour / Ivy Trench` in two while leaving `AC/DC` alone.
-
-**Multi-user is a query, not a filter.** Tenancy is enforced inside the SQL through library membership, never in a handler. A resource that is missing and one that belongs to somebody else answer identically — a 404 never confirms existence to someone not entitled to it.
-
-**Your files are never written.** The scanner and every tag operation are strictly read-only.
-
-## Features
-
-| Area | Highlights |
-| --- | --- |
-| **Catalogue** | Authoritative scanner with content hashing and relocation detection, FTS5 full-text search that folds case and diacritics, deduplicated artwork, embedded and sidecar lyrics, extended tags (ISRC, BPM, moods, ReplayGain, explicit status) |
-| **Credits** | Thirteen roles from the reference model — artist, album artist, composer, lyricist, conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer, performer with its instrument — one person can hold several on one track |
-| **Streaming** | Original byte-range playback, on-demand FFmpeg transcode to MP3 or Opus with a disk cache, per-user and global concurrency limits, temporal seek into a live transcode |
-| **OpenSubsonic** | The full browse, search, playlist, favourite, rating, scrobble, bookmark, play-queue and share surface, in XML or JSON, over GET or form POST, with the extensions it advertises |
-| **Native API** | `/api/v2` with rotating sessions, Authorization Code + PKCE for desktop clients, user-data synchronization over REST and WebSocket ([RFC-003](docs/rfcs/RFC-003-waveflow-sync-v2.md)), SSE scan progress, OpenAPI document and an interactive reference |
-| **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive |
-| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers |
-| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, `/health` and `/ready`, JSON logging that never records a query string or a token |
-
-## Quick start
+**Requirements**: `ffmpeg` and `ffprobe` on `PATH`. Nothing else — no database server, no cache, no broker.
 
 ### Docker
 
@@ -70,9 +49,11 @@ docker exec -e WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters' \
 docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
 ```
 
+Open `http://your-host:4533` and sign in. The scan starts on its own.
+
 ### From source
 
-Requirements: **Rust 1.94+**, plus `ffmpeg` and `ffprobe` on `PATH`. Nothing else.
+Requires **Rust 1.94+** as well.
 
 ```bash
 bun --cwd=webapp install
@@ -86,102 +67,62 @@ cargo run
 
 `cargo build` works without a client build too: a placeholder page is embedded when `webapp/dist` is absent.
 
-### Connect a client
+### Connect a Subsonic client
+
+A Subsonic client uses a **dedicated password**, separate from the web account's:
 
 ```bash
 export WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password'
-cargo run -- credential set --actor admin --username admin
+waveflow-server credential set --actor admin --username admin
 ```
 
-That prints an API key **once**, on standard output by itself — everything else the command says goes to standard error, so `install -m 600 /dev/null key` followed by `… > key` captures the key alone, in a file nobody else can read — a redirection into an existing file truncates it without changing its mode. That `install` line is POSIX only; the [native API guide](docs/api-v2-guide.md) gives the PowerShell equivalent. Point any Subsonic client at `http://your-host:4533` with the username and that password. For browser-hosted clients such as Feishin, list the trusted origins explicitly — wildcards are rejected, so credential-bearing requests can never be opened to arbitrary sites:
+Point any Subsonic client at `http://your-host:4533` with that username and password. Browser-hosted clients need their origin listed, and a reverse proxy needs `WAVEFLOW_PUBLIC_URL` — both are in the [operations guide](docs/operations.md#behind-a-reverse-proxy-generally).
 
-```bash
-WAVEFLOW_ALLOWED_ORIGINS=http://127.0.0.1:9180,https://music.example.com
-```
+## How it works
 
-Behind a reverse proxy, set `WAVEFLOW_PUBLIC_URL=https://music.example.com` so a created share returns an absolute, externally usable URL.
-
-### One path whose query string must not reach your proxy's log
-
-If you link Last.fm **through a browser**, keep the query string out of the access log on this path — and only its log, since the token in it is what the route exists to receive:
-
-```text
-/api/v2/scrobble-links/lastfm/callback/
-```
-
-Last.fm returns the browser there with `?token=…` appended. That token is worth an hour and worth a profile: whoever holds it can exchange it for a session key and start receiving somebody else's listens. This server keeps none of it — traces record the path only, that path is redacted in them, the answer carries `no-store` and `no-referrer`, and it redirects at once to an address with no token in it. **A reverse proxy logs the full request line by default.** The component that keeps nothing sits behind the component that keeps everything, and only its operator can close that.
-
-On nginx, log that location with `$uri`, which is the path without the query, rather than `$request`, which includes it:
-
-```nginx
-log_format waveflow_no_query '$remote_addr - $remote_user [$time_local] '
-                             '"$request_method $uri $server_protocol" $status '
-                             '$body_bytes_sent "$http_referer" "$http_user_agent"';
-
-location /api/v2/scrobble-links/lastfm/callback/ {
-    access_log /var/log/nginx/access.log waveflow_no_query;
-    proxy_pass http://waveflow:4533;   # passes the URI on unchanged, query included
-}
-```
-
-Caddy can drop the parameter itself rather than the whole query, through its access log's `query` filter with a `delete token` action — see their log-filter documentation for the syntax your version takes. For anything else, the question to ask of its access-log format is whether the query string can be excluded; dropping the whole path field is blunt but valid.
-
-These are illustrations to adapt, not configuration this repository tests — nothing here can reach your proxy. **The command-line journey avoids the whole question**: no browser comes back, so no token ever travels in a URL. See the [native API guide](docs/api-v2-guide.md#external-scrobbling).
-
-## Back up two files, together
-
-```bash
-cargo run -- database backup  --output /backups/waveflow-2026-08-23
-cargo run -- database restore --input  /backups/waveflow-2026-08-23
-```
-
-`data/waveflow.db` and `data/instance.key` are one unit: the encrypted Subsonic credentials cannot be recovered with one without the other. The database stores a non-secret fingerprint of the key, so a mismatched pair is rejected at startup rather than after it has replaced your data. Restore runs before SQLite is opened and moves the previous pair into a timestamped recovery directory.
-
-## When the key is gone, or has to change
-
-A container moved without its volume, a key left out of a copy, a key that ended up somewhere it should not have been. The server will not start:
-
-```
-instance.key does not match waveflow.db; restore the database and key from the same backup bundle
-```
-
-**Restore the bundle if you still have one** — that is what the message is for, and it costs nothing. What follows is for when the key is genuinely unrecoverable, or when it must be replaced because it leaked.
-
-### What you lose, and what you keep
-
-Almost everything is unaffected, because almost nothing is encrypted:
-
-| Lost, and re-entered by hand | Survives untouched |
+| | |
 | --- | --- |
-| The dedicated Subsonic password of every account | Every account, and its web password — Argon2id, never encrypted |
-| Every external scrobbling link (Last.fm, ListenBrainz, Maloja) | The whole catalogue: tracks, albums, artists, libraries and their members |
-| | Favourites, ratings, playlists, play queues, listening history, bookmarks |
+| **One process** | `src/main.rs` loads config and serves; everything else lives behind `app()` in `src/lib.rs`, so the test suite drives the very router `main` does |
+| **One database** | SQLite in WAL with foreign keys and a single process-wide writer. Migrations are dated, embedded at compile time and checksummed — editing an applied one makes the server refuse to start |
+| **One catalogue, three surfaces** | `/api/v2`, the Subsonic façade and the web client all call the same domain services. A mutation reachable from two surfaces calls one method, which is what stops them drifting |
+| **Tenancy in the query** | Enforced through library membership inside the SQL, never in a handler. A resource that is missing and one that belongs to somebody else answer identically — a 404 never confirms existence to someone not entitled to it |
+| **Read-only files** | The scanner and every tag operation leave your audio files untouched |
 
-Shares are kept but **their public URLs change**: a share token is derived from the instance key rather than stored, so every link handed out under the old key stops resolving.
+## Why another one
 
-Stream tickets are sealed under the key too. They last an hour and are minted on demand, so nothing has to be done about them — but it is also why a leaked key matters even when nothing is encrypted under it: whoever holds one can mint a ticket for any track they can address.
+**Your identifiers stop moving.** Album and artist IDs are *derived* from the tags that name them (UUID v8 over a configurable spec, the same grammar Navidrome uses). Rebuild your database from scratch and the same files answer with the same IDs — so cached artwork, starred albums and deep links survive a reinstall. Track IDs are drawn at random on purpose: six tables cascade off them, and a scan matches a file by path and then by content hash, which is a better identity than any tag.
 
-### The procedure
+**The Subsonic surface is the reference's, not a variant.** Where WaveFlow and Navidrome disagreed on the artist model, we withdrew — thirteen credit roles, `contributors[]`, `displayComposer`, `roles[]`, an album that hangs off *every* artist it is credited to, and separator rules that split `Rue Delacour / Ivy Trench` in two while leaving `AC/DC` alone.
 
-There is no command for this yet ([#221](https://github.com/InstaZDLL/waveflow-server/issues/221)). Until there is, it is two writes and a deleted file, with the server **stopped**:
+## Features
 
-```sql
--- Values only the old key could read. They are unreadable now, not damaged.
-DELETE FROM subsonic_credential;
-DELETE FROM scrobble_link;
--- Release the fingerprint. The next start binds whatever key it finds.
-DELETE FROM instance_metadata;
-```
+| Area | Highlights | Deep dive |
+| --- | --- | --- |
+| **Catalogue** | Authoritative scanner with content hashing and relocation detection, FTS5 full-text search that folds case and diacritics, deduplicated artwork, embedded and sidecar lyrics, extended tags (ISRC, BPM, moods, ReplayGain, explicit status) | [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md) |
+| **Credits** | Thirteen roles from the reference model — artist, album artist, composer, lyricist, conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer, performer with its instrument — one person can hold several on one track | [Subsonic guide](docs/subsonic-api-guide.md) |
+| **Streaming** | Original byte-range playback, on-demand FFmpeg transcode to MP3 or Opus with a disk cache, per-user and global concurrency limits, temporal seek into a live transcode | [Subsonic guide](docs/subsonic-api-guide.md) |
+| **OpenSubsonic** | The full browse, search, playlist, favourite, rating, scrobble, bookmark, play-queue and share surface, in XML or JSON, over GET or form POST, with the extensions it advertises | [compatibility matrix](docs/subsonic-compatibility.md) |
+| **Native API** | `/api/v2` with rotating sessions, Authorization Code + PKCE for desktop clients, user-data sync over REST and WebSocket, SSE scan progress, an OpenAPI document and an interactive reference | [API v2 guide](docs/api-v2-guide.md) · [RFC-003](docs/rfcs/RFC-003-waveflow-sync-v2.md) |
+| **Uploads & canvas** | A library can accept files, decided server-side and received in chunks; a track can carry a looping visual with its own store and tickets | [RFC-008](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009](docs/rfcs/RFC-009-track-canvas.md) |
+| **Scrobbling** | ListenBrainz, Last.fm and Maloja, each a named instance, behind a durable queue that survives a restart, retries once and honours `Retry-After` | [RFC-010](docs/rfcs/RFC-010-external-scrobbling.md) |
+| **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive | — |
+| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers | [operations](docs/operations.md) |
+| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
 
-```bash
-rm data/instance.key
-```
+## Documentation
 
-Start the server. It generates a fresh 32-byte key, binds its SHA-256 fingerprint to the database, and comes up on the catalogue you already had. Then re-set the Subsonic password of each account with `credential set`, and re-link any scrobbling destination.
+| | |
+| --- | --- |
+| **Run it** | [Operations](docs/operations.md) — backup, losing or rotating the instance key, reverse proxies, probes and logging |
+| **Integrate** | [Native API v2](docs/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/subsonic-api-guide.md) |
+| **What clients do** | [Compatibility matrix](docs/subsonic-compatibility.md) — the four replayed above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/opensubsonic-gap-analysis.md) |
+| **The design** | [RFC-002, the accepted design](docs/rfcs/RFC-002-waveflow-server-v2.md) · [RFC-003, sync](docs/rfcs/RFC-003-waveflow-sync-v2.md) · [RFC-004, local/server reconciliation](docs/rfcs/RFC-004-local-server-reconciliation.md) · [RFC-007, library events](docs/rfcs/RFC-007-library-event-stream.md) · [RFC-008, uploads](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009, canvas](docs/rfcs/RFC-009-track-canvas.md) · [RFC-010, scrobbling](docs/rfcs/RFC-010-external-scrobbling.md) |
+| **On a running server** | [`/reference`](http://127.0.0.1:4533/reference) for the interactive API · [`/openapi.json`](http://127.0.0.1:4533/openapi.json) for the contract |
+| **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) for the conventions in depth |
 
-Take a copy of `data/` before you begin. The three deletions are not reversible, and a mistyped table name is a restore away from being someone's evening.
+> **An RFC's `Statut` field never flips** — every one says `Proposed` whether it shipped a year ago or not at all. What each carries instead is an **`Implémentée par`** line naming the pull requests. When it matters, read the code: the routes registered in `src/lib.rs` and the dated files under `migrations-v2/` are the only account of what exists.
 
-Verified end to end on a real instance: 164 tracks, 130 albums, 160 artists, one account and one library came back untouched under a new key.
+## Built with
 
 | Layer | Technologies |
 | --- | --- |
@@ -193,15 +134,6 @@ Verified end to end on a real instance: 164 tracks, 130 albums, 160 artists, one
 | **Web client** | React 19, TypeScript, Vite 8, compiled into the binary by rust-embed 8 |
 | **Runtime** | tokio, `tracing` with optional JSON output |
 
-## Documentation
-
-- **Integration** — [Native API v2 guide](docs/api-v2-guide.md) · [Subsonic/OpenSubsonic guide](docs/subsonic-api-guide.md) · [compatibility matrix](docs/subsonic-compatibility.md) · [gap analysis](docs/opensubsonic-gap-analysis.md)
-- **Architecture** — [RFC-002, the accepted design](docs/rfcs/RFC-002-waveflow-server-v2.md) · [RFC-003, synchronization](docs/rfcs/RFC-003-waveflow-sync-v2.md) · [RFC-004, local/server reconciliation](docs/rfcs/RFC-004-local-server-reconciliation.md)
-- **Live on a running server** — [`/reference`](http://127.0.0.1:4533/reference) for the interactive API, [`/openapi.json`](http://127.0.0.1:4533/openapi.json) for the contract
-- **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md); commits need DCO sign-off (`git commit -s`) and Conventional Commit messages
-
-The v1 PostgreSQL/JWKS implementation was removed once the native API landed. It remains in git history; any reference to `/api/v1` in older documents is stale.
-
 ## Development
 
 ```bash
@@ -209,11 +141,14 @@ cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features          # hermetic — temporary SQLite databases, no service container
 
+bun --cwd=webapp run test
 bun --cwd=webapp x playwright install chromium
 bun --cwd=webapp run test:e2e
 ```
 
-FFmpeg and ffprobe must be on `PATH`: the suite boots a real media service.
+FFmpeg and ffprobe must be on `PATH`: the suite boots a real media service. Commits need DCO sign-off (`git commit -s`) and Conventional Commit messages.
+
+The v1 PostgreSQL/JWKS implementation was removed once the native API landed. It remains in git history; any reference to `/api/v1` in an older document is stale.
 
 ## Community
 
