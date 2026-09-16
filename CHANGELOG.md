@@ -10,11 +10,12 @@ out first, whether or not it breaks a compile.
 
 ## [2.0.0-beta.1] — 2026-09-16
 
-354 commits since `2.0.0-beta.0`.
+361 commits since `2.0.0-beta.0`.
 
-### Changed — `/api/v2` response shapes
+### Changed — response shapes
 
-Two changes a native client must follow.
+Three changes a client must follow — two on `/api/v2`, which the desktop app
+consumes, and one on the Subsonic façade.
 
 - **`GET /api/v2/scrobble-destinations`** — the `unavailable` field now carries
   a **case**, not an English sentence: `no_application_configured` or
@@ -29,6 +30,25 @@ Two changes a native client must follow.
   `total` and `processed`. A watcher that bound `total_files` showed `undefined`
   from the first progress frame on. The type behind it is deliberately no longer
   serialisable, so the other shape cannot come back.
+
+- **`getPlayQueue` and `getNowPlaying`** name their children **`entry`**, not
+  `song`. The Subsonic schema renames a media item inside those two containers
+  exactly as it does inside a playlist, and this server sent `song` in both
+  until now. A client that decodes against the schema read an empty queue and an
+  empty now-playing list; three client campaigns passed over it because every
+  client that met it was lenient. `playQueue` also gains the **`username`** the
+  schema requires beside `changed` and `changedBy`.
+
+  Both names are deliberately **not** emitted together: a response carrying
+  `entry` *and* `song` would conform to neither contract and would need a second
+  wire change later to undo. The freeze on the Subsonic contract protects the
+  clients that were validated against it, not a divergence from the
+  specification — which is what a beta is for.
+
+  `getPlayQueue` with nothing saved still answers a bare `playQueue`, unchanged
+  and not schema-conforming. Making it so means omitting the element, which is a
+  further wire change on the one call every client makes at startup; it is
+  pinned by a test and left to decide after the beta.
 
 ### Added
 
@@ -69,6 +89,31 @@ Two changes a native client must follow.
 
 ### Fixed
 
+Four of these were found by the client campaigns of 2026-09-16 and cleared
+before the tag. All four shipped in `2.0.0-beta.0`; none is a regression this
+release introduces.
+
+- **A role separator no longer cuts inside parentheses** (#224). A `COMPOSER`
+  reading `Kobee (Melange / INHOUSE), Holy M (Melange / INHOUSE)` names two
+  people; the two slashes made three entities, each carrying a parenthesis it
+  never opened, and they reached the catalogue as artists that search answered
+  with. The reference's rule is untouched — `Bach/Gounod` is still two people
+  and `AC/DC` is still one band.
+- **`getPlayQueue` and `getNowPlaying` name their children `entry`** (#225), and
+  `playQueue` carries `username`. See the response-shape section above: this one
+  changes the wire.
+- **A `416` no longer announces a length of zero** (#226). A transcode still
+  being produced has no complete length, and `bytes */0` did not say "unknown" —
+  it said the resource is empty, which a client may believe and never ask about
+  again. The header is now omitted instead. A complete file, whose length *is*
+  known, states it and answers `Accept-Ranges: bytes`, where it used to claim
+  `none` and contradict every other answer for the same file.
+- **A refusal that outlived its session neither renews nor replays** (#219). A
+  sign-out and a sign-in fit inside one round trip, so a 401 raised for one
+  account could arrive after another had signed in — renewing spent the new
+  account's rotating refresh token for a request the old one made. Five routes
+  did this, including the scan event stream.
+
 - **The transcode a seek abandons is now cached**, and a cache fill has a
   deadline. A seek used to throw away the work it interrupted.
 - **Artist favourites survive a change of artist identity spec.**
@@ -86,24 +131,22 @@ Two changes a native client must follow.
   all successful**, schema 22 → 38, catalogue and FTS5 search intact. Nothing in
   the repository would have caught this: every integration target starts from an
   empty database. Tracked by #223.
-- **The OpenSubsonic façade, replayed on 2026-09-16** against DSub 5.5.3 and
-  Symfonium 15.0.1 on an Android 17 emulator, with every result read back from
-  server state. Playback and seeking on cold transcodes, catalogue browsing,
-  the full playlist cycle, favourites, ratings, scrobbles and the server-side
-  play queue all behave. See
-  [the compatibility matrix](docs/subsonic-compatibility.md).
+- **The OpenSubsonic façade, replayed on 2026-09-16** against the whole
+  replayed set — **Symfonium 15.0.1** and **DSub 5.5.3** on an Android 17
+  emulator, **Juliet** on a physical iPhone, and **Feishin 1.15.1** on Windows
+  desktop — with every result read back from server state rather than from what
+  a client displayed. Playback and seeking on cold transcodes, catalogue
+  browsing, the full playlist cycle, favourites, ratings, scrobbles and the
+  server-side play queue all behave, and seeking by byte range was
+  re-established on iOS and on desktop. Substreamer is not part of the set: that
+  build no longer installs on the current Android device, and Juliet took its
+  place. See [the compatibility matrix](docs/subsonic-compatibility.md).
 
 ### Known issues
 
-All of these are present in `2.0.0-beta.0` as well; none is a regression.
-
-- **#224** — a role separator cuts inside an unclosed parenthesis, so a composer
-  credit naming a parenthesised publisher becomes several artists.
-- **#225** — `getPlayQueue` and `getNowPlaying` name their children `song` where
-  the Subsonic schema says `entry`.
-- **#226** — a `416` on a cold transcode announces a total length of zero.
-- **#219** — a `401` from a session that has ended still renews and replays
-  under the next one.
+None outstanding. The four the client campaigns found were all present in
+`2.0.0-beta.0` as well, and all four were fixed before this tag rather than
+carried into it — #219, #224, #225 and #226, above.
 
 ## [2.0.0-beta.0] — 2026-08-23
 
