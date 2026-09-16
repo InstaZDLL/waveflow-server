@@ -137,7 +137,51 @@ cargo run -- database restore --input  /backups/waveflow-2026-08-23
 
 `data/waveflow.db` and `data/instance.key` are one unit: the encrypted Subsonic credentials cannot be recovered with one without the other. The database stores a non-secret fingerprint of the key, so a mismatched pair is rejected at startup rather than after it has replaced your data. Restore runs before SQLite is opened and moves the previous pair into a timestamped recovery directory.
 
-## Tech stack
+## When the key is gone, or has to change
+
+A container moved without its volume, a key left out of a copy, a key that ended up somewhere it should not have been. The server will not start:
+
+```
+instance.key does not match waveflow.db; restore the database and key from the same backup bundle
+```
+
+**Restore the bundle if you still have one** — that is what the message is for, and it costs nothing. What follows is for when the key is genuinely unrecoverable, or when it must be replaced because it leaked.
+
+### What you lose, and what you keep
+
+Almost everything is unaffected, because almost nothing is encrypted:
+
+| Lost, and re-entered by hand | Survives untouched |
+| --- | --- |
+| The dedicated Subsonic password of every account | Every account, and its web password — Argon2id, never encrypted |
+| Every external scrobbling link (Last.fm, ListenBrainz, Maloja) | The whole catalogue: tracks, albums, artists, libraries and their members |
+| | Favourites, ratings, playlists, play queues, listening history, bookmarks |
+
+Shares are kept but **their public URLs change**: a share token is derived from the instance key rather than stored, so every link handed out under the old key stops resolving.
+
+Stream tickets are sealed under the key too. They last an hour and are minted on demand, so nothing has to be done about them — but it is also why a leaked key matters even when nothing is encrypted under it: whoever holds one can mint a ticket for any track they can address.
+
+### The procedure
+
+There is no command for this yet ([#221](https://github.com/InstaZDLL/waveflow-server/issues/221)). Until there is, it is two writes and a deleted file, with the server **stopped**:
+
+```sql
+-- Values only the old key could read. They are unreadable now, not damaged.
+DELETE FROM subsonic_credential;
+DELETE FROM scrobble_link;
+-- Release the fingerprint. The next start binds whatever key it finds.
+DELETE FROM instance_metadata;
+```
+
+```bash
+rm data/instance.key
+```
+
+Start the server. It generates a fresh 32-byte key, binds its SHA-256 fingerprint to the database, and comes up on the catalogue you already had. Then re-set the Subsonic password of each account with `credential set`, and re-link any scrobbling destination.
+
+Take a copy of `data/` before you begin. The three deletions are not reversible, and a mistyped table name is a restore away from being someone's evening.
+
+Verified end to end on a real instance: 164 tracks, 130 albums, 160 artists, one account and one library came back untouched under a new key.
 
 | Layer | Technologies |
 | --- | --- |
