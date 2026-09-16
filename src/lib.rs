@@ -103,7 +103,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
 #[openapi(
     info(
         title = "WaveFlow Server API",
-        version = "2.0.0-beta.0",
+        version = env!("CARGO_PKG_VERSION"),
         description = "Self-hosted WaveFlow music server v2.",
         license(name = "AGPL-3.0-only")
     ),

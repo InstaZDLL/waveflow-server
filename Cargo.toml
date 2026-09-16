@@ -1,6 +1,6 @@
 [package]
 name = "waveflow-server"
-version = "2.0.0-beta.0"
+version = "2.0.0-beta.1"
 description = "Self-hosted music server with WaveFlow and Subsonic compatibility."
 authors = ["InstaZDLL <github.105mh@8shield.net>"]
 edition = "2021"
