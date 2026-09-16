@@ -102,6 +102,26 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
         .await
         .unwrap();
     assert_eq!(unsatisfiable.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    // The file has a length, so the refusal states which range would have been
+    // satisfiable — and states the real one, read from the fixture rather than
+    // written down, so the assertion cannot drift away from the file.
+    let length = std::fs::metadata(music.join("Range.wav")).unwrap().len();
+    assert_eq!(
+        unsatisfiable
+            .headers()
+            .get("content-range")
+            .and_then(|value| value.to_str().ok()),
+        Some(format!("bytes */{length}").as_str())
+    );
+    // And it still accepts ranges: only the range asked for was wrong. Saying
+    // `none` here would contradict every other answer this file gives.
+    assert_eq!(
+        unsatisfiable
+            .headers()
+            .get("accept-ranges")
+            .and_then(|value| value.to_str().ok()),
+        Some("bytes")
+    );
 
     let hidden = router
         .clone()
@@ -300,6 +320,24 @@ async fn media_streaming_ranges_transcodes_caches_and_isolates_tenants() {
         .await
         .unwrap();
     assert_eq!(cold_seek.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    // Nothing has been produced yet, so there is no complete length to give.
+    // The unsatisfied-range form has nowhere to put "unknown", and `bytes */0`
+    // is not unknown — it is a claim that the resource is empty, which a client
+    // is entitled to believe and never ask again. The header is omitted.
+    assert!(
+        cold_seek.headers().get("content-range").is_none(),
+        "a refusal with no known length must not state one: {:?}",
+        cold_seek.headers().get("content-range")
+    );
+    // This one genuinely takes no range until the transcode is whole, which is
+    // the other half of the same distinction.
+    assert_eq!(
+        cold_seek
+            .headers()
+            .get("accept-ranges")
+            .and_then(|value| value.to_str().ok()),
+        Some("none")
+    );
 
     let live_seek = router
         .clone()

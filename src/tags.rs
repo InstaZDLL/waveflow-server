@@ -113,14 +113,49 @@ const ARTIST_SEPARATORS: [&str; 6] = [" / ", " feat. ", " feat ", " ft. ", " ft 
 /// composer's name contains a slash.
 const ROLE_SEPARATORS: [&str; 2] = ["/", ";"];
 
+/// Cuts `value` on any of `separators`, but never inside parentheses.
+///
+/// A separator nested in a parenthesis does not divide two credits: it divides
+/// what qualifies one. `Kobee (Melange / INHOUSE), Holy M (Melange / INHOUSE)`
+/// names two people, and cutting at those slashes made three entities, each
+/// carrying a parenthesis it never opened — `Kobee (Melange`,
+/// `INHOUSE), Holy M (Melange`. They reached the catalogue as artists, and
+/// search answered with them.
+///
+/// The separators are tried in the order given at every position, which is what
+/// keeps ` feat. ` ahead of ` feat `. Depth is clamped at zero so a stray
+/// closing parenthesis cannot make the rest of the value uncuttable, and an
+/// opening one that is never closed simply protects the tail it opened.
 fn split_on(value: &str, separators: &[&str]) -> Vec<String> {
-    let mut parts = vec![value.to_owned()];
-    for separator in separators {
-        parts = parts
-            .into_iter()
-            .flat_map(|part| part.split(separator).map(str::to_owned).collect::<Vec<_>>())
-            .collect();
+    let mut parts = Vec::new();
+    let mut depth: usize = 0;
+    let mut start = 0;
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if depth == 0 {
+            if let Some(separator) = separators
+                .iter()
+                .find(|separator| rest.starts_with(**separator))
+            {
+                parts.push(&value[start..cursor]);
+                cursor += separator.len();
+                start = cursor;
+                continue;
+            }
+        }
+        let character = rest
+            .chars()
+            .next()
+            .expect("the cursor only ever lands on a character boundary");
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        cursor += character.len_utf8();
     }
+    parts.push(&value[start..]);
     parts
         .into_iter()
         .map(|part| part.trim().to_owned())
@@ -383,6 +418,72 @@ mod tests {
         assert_eq!(
             names_of(&credits(&joined), Role::Artist),
             vec!["Nova Kern", "Lior Sand"]
+        );
+    }
+
+    /// A separator inside parentheses qualifies one credit; it does not divide
+    /// two. The real tag that exposed this named two people and produced three
+    /// entities, each carrying a parenthesis it never opened.
+    #[test]
+    fn a_role_separator_inside_parentheses_does_not_cut() {
+        let raw = RawCredits {
+            artist: vec!["ITZY".into()],
+            roles: vec![(
+                Role::Composer,
+                vec!["Kobee (Melange / INHOUSE), Holy M (Melange / INHOUSE)".into()],
+            )],
+            ..RawCredits::default()
+        };
+        assert_eq!(
+            names_of(&credits(&raw), Role::Composer),
+            vec!["Kobee (Melange / INHOUSE), Holy M (Melange / INHOUSE)"]
+        );
+    }
+
+    /// The parenthesis rule must not cost the cut it was added beside: a
+    /// separator outside one still divides, in the same value.
+    #[test]
+    fn a_role_separator_outside_parentheses_still_cuts() {
+        let raw = RawCredits {
+            artist: vec!["Nobody".into()],
+            roles: vec![(
+                Role::Composer,
+                vec!["Bach (arr. Gounod)/Liszt (after Bach)".into()],
+            )],
+            ..RawCredits::default()
+        };
+        assert_eq!(
+            names_of(&credits(&raw), Role::Composer),
+            vec!["Bach (arr. Gounod)", "Liszt (after Bach)"]
+        );
+    }
+
+    /// A tag whose parentheses never balance must not swallow the whole value
+    /// or hang the scan. The opening one protects only the tail it opened.
+    #[test]
+    fn an_unbalanced_parenthesis_protects_only_its_tail() {
+        let unclosed = RawCredits {
+            artist: vec!["Nobody".into()],
+            roles: vec![(
+                Role::Composer,
+                vec!["Bach/Gounod (Melange / INHOUSE".into()],
+            )],
+            ..RawCredits::default()
+        };
+        assert_eq!(
+            names_of(&credits(&unclosed), Role::Composer),
+            vec!["Bach", "Gounod (Melange / INHOUSE"]
+        );
+
+        // A stray closing parenthesis must not make the rest uncuttable.
+        let stray = RawCredits {
+            artist: vec!["Nobody".into()],
+            roles: vec![(Role::Composer, vec!["INHOUSE)/Bach".into()])],
+            ..RawCredits::default()
+        };
+        assert_eq!(
+            names_of(&credits(&stray), Role::Composer),
+            vec!["INHOUSE)", "Bach"]
         );
     }
 

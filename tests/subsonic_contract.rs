@@ -1094,7 +1094,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         .unwrap();
     assert_eq!(listener_now_playing.status(), StatusCode::OK);
     let all_now_playing = subsonic_json(&router, "getNowPlaying", api_key, "").await;
-    assert!(all_now_playing["subsonic-response"]["nowPlaying"]["song"]
+    assert!(all_now_playing["subsonic-response"]["nowPlaying"]["entry"]
         .as_array()
         .unwrap()
         .iter()
@@ -1584,4 +1584,135 @@ async fn subsonic_blurs_foreign_catalog_and_rate_limits_failed_authentication() 
         .unwrap();
     assert_eq!(unknown.status(), wrong.status());
     assert_eq!(body_text(unknown).await, body_text(wrong).await);
+}
+
+/// `getPlayQueue` and `getNowPlaying` name their children `entry`, never `song`.
+///
+/// The schema renames a media item inside these two containers exactly as it
+/// does inside a playlist, and this server sent `song` in both until
+/// 2026-09-16. Three client campaigns passed over it because every client that
+/// met it was lenient; a client that decodes against the schema reads an empty
+/// queue and an empty now-playing list.
+///
+/// Asserted in XML *and* JSON, and asserted negatively as well: the point is
+/// not that `entry` appears, it is that `song` does not come back. Without the
+/// negative half, emitting both names would pass.
+#[tokio::test]
+async fn play_queue_and_now_playing_name_their_children_entry() {
+    let (_temp, config, state) = test_app().await;
+    let web_hash = security::hash_password("web-password-for-test").unwrap();
+    let owner = state
+        .db
+        .create_account("queue-owner", &web_hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(b"queue-password").unwrap(),
+            &security::token_hash("wfsk_queue"),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("queue-subsonic");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Queued.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Queue Subsonic",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library,
+            name: "Queue Subsonic".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let song = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+    let router = waveflow_server::app(&config, state);
+
+    // Nothing is saved yet, and this pins what that answers today: a bare
+    // `playQueue`, carrying none of `username`, `changed` or `changedBy`.
+    //
+    // It is not schema-conforming, and it is deliberately left alone here. The
+    // schema has no way to say "empty queue" — the reference omits the element
+    // entirely — so conforming would mean a *third* observable change, on the
+    // one call every client makes at startup, with no client harm observed and
+    // none of it asked for. Pinned rather than corrected, and recorded on #225.
+    let unsaved = subsonic_json(&router, "getPlayQueue", "wfsk_queue", "").await;
+    let unsaved = &unsaved["subsonic-response"]["playQueue"];
+    assert!(unsaved.is_object(), "{unsaved}");
+    assert!(unsaved["entry"].is_null());
+    assert!(unsaved["username"].is_null());
+
+    // Something has to be in each container, or an assertion that `song` is
+    // absent would hold on an empty answer and prove nothing.
+    subsonic_json(
+        &router,
+        "savePlayQueue",
+        "wfsk_queue",
+        &format!("&id={song}&current={song}&position=25"),
+    )
+    .await;
+    subsonic_json(
+        &router,
+        "scrobble",
+        "wfsk_queue",
+        &format!("&id={song}&submission=false"),
+    )
+    .await;
+
+    let queue = subsonic_json(&router, "getPlayQueue", "wfsk_queue", "").await;
+    let queue = &queue["subsonic-response"]["playQueue"];
+    assert_eq!(queue["entry"][0]["id"], song.to_string());
+    assert!(queue["song"].is_null(), "playQueue still carries `song`");
+    // Required by the schema beside `changed` and `changedBy`, and absent until
+    // the same change: a queue belongs to somebody, and said so nowhere.
+    assert_eq!(queue["username"], "queue-owner");
+
+    let playing = subsonic_json(&router, "getNowPlaying", "wfsk_queue", "").await;
+    let playing = &playing["subsonic-response"]["nowPlaying"];
+    assert_eq!(playing["entry"][0]["id"], song.to_string());
+    assert!(playing["song"].is_null(), "nowPlaying still carries `song`");
+
+    // The XML half. A JSON-only assertion would miss a renaming applied to the
+    // array table alone, which is where the JSON shape is decided.
+    for (method, container) in [
+        ("getPlayQueue", "playQueue"),
+        ("getNowPlaying", "nowPlaying"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/rest/{method}.view?apiKey=wfsk_queue&v=1.16.1&c=golden"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let xml = body_text(response).await;
+        assert!(xml.contains(&format!("<{container}")), "{method}: {xml}");
+        assert!(xml.contains("<entry "), "{method} has no `entry`: {xml}");
+        assert!(
+            !xml.contains("<song "),
+            "{method} still sends `song`: {xml}"
+        );
+    }
 }
