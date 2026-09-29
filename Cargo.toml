@@ -59,7 +59,7 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["cors", "request-id", "timeout", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-utoipa = { version = "5", features = ["axum_extras", "uuid"] }
+utoipa = { version = "6", features = ["axum_extras", "uuid"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
