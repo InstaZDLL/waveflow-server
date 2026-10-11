@@ -48,6 +48,7 @@ import {
 } from "./api";
 import { Artwork } from "./artwork";
 import { CanvasStage } from "./canvas";
+import { FileQuality } from "./file-quality";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
@@ -1325,6 +1326,10 @@ export function PlayingPage() {
             <p className="muted">
               {current.artist ?? t("common.unknownArtist")}
             </p>
+            {/* Under the names and above the words: what the file is belongs
+                with the track and not with the lyrics, and a listener who
+                came here to read along should not have to pass it twice. */}
+            <FileQuality song={current} />
             <Lyrics trackId={current.id} />
           </div>
         </div>

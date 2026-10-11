@@ -109,6 +109,17 @@ const song = (
   disc: 1,
   starred_at: starred ? 1 : null,
   user_rating: rating,
+  // What the file is, as `SongItem` has always sent it. Present here because
+  // the screen now draws it — and worth nothing as evidence of the wire,
+  // which is asserted server-side against a real file by
+  // `the_technical_fields_reach_the_wire_and_match_the_file`.
+  codec: "FLAC",
+  suffix: "flac",
+  size: 27_983_872,
+  bitrate: 957,
+  sample_rate: 44_100,
+  channels: 2,
+  bit_depth: 16,
 });
 
 const albumDetail = {
@@ -2672,4 +2683,39 @@ test("takes the first-load screen away even when the bundle never loads", async 
   // What is revealed is an empty root — the page as it was before this screen
   // existed. The ceiling restores the old failure rather than inventing one.
   await expect(page.locator("#root")).toBeEmpty();
+});
+
+/**
+ * The playing screen says what the file is.
+ *
+ * The facts, not the meter: the meter is five lit bars and `aria-hidden`,
+ * because the band it summarises is printed in words right beside it and a
+ * reader should hear that once rather than twice.
+ *
+ * Asserted on the rendered line rather than on the mock that fed it. The mock
+ * carries these fields because `Song` declares them, so it agrees with the
+ * declaration by construction — exactly the loop the lyrics test above was
+ * written against, where a `snake_case` envelope the server never sent was
+ * confirmed by a mock built from it. What the server really answers is
+ * pinned in `tests/native_api.rs`, against the bytes of a WAV.
+ */
+test("says what the file is on the playing screen", async ({ page }) => {
+  await page.goto("/playing");
+
+  const facts = page.locator(".file-facts");
+  await expect(facts).toBeVisible();
+  // Read as one string: the order is part of what makes it legible at a
+  // glance, and six separate assertions would pass on a line that listed
+  // them backwards.
+  await expect(facts).toHaveText(
+    "Lossless · FLAC · 957 kbps · 44.1 kHz · 16 bit · 2 ch · 28 MB",
+  );
+
+  // Four of five steps lit: lossless, and not the hi-res band above it.
+  await expect(page.locator(".quality-meter span.on")).toHaveCount(4);
+  // And hidden from assistive technology, so the band is announced once.
+  await expect(page.locator(".quality-meter")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
 });

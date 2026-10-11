@@ -3002,3 +3002,146 @@ async fn every_refusal_a_narrow_token_meets_is_documented() {
         "the read that asks for write authority is what this sweep is for: {refused:#?}"
     );
 }
+
+/// Every technical field reaches the wire, and says what the file says.
+///
+/// #211 reports these as never serialised. **That is no longer true**, and
+/// checking rather than believing it changed what this test had to be: they
+/// are all on `SongItem`, which derives `Serialize` with nothing skipped, and
+/// `docs/api-v2-guide.md` already names three of them. What was missing is
+/// this — nothing asserted any of it, so the client could declare a field the
+/// server had quietly stopped sending and the whole suite would agree with
+/// the client.
+///
+/// Which is the trap the issue names: the client's types are hand-written
+/// assertions about this wire, and its mocks are built from those types. A
+/// test on that side confirms the type. So the values here are read **out of
+/// the file on disk** — the WAV header's own bytes and the size the
+/// filesystem reports — and compared with what the server answered. Nothing
+/// is written down twice.
+#[tokio::test]
+async fn the_technical_fields_reach_the_wire_and_match_the_file() {
+    let (_temp, config, state) = test_app().await;
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("fields-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("fields-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let file = music.join("Properties.wav");
+    write_test_wav(&file);
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Technical fields",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Technical fields".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "fields-owner", &password).await;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/tracks/{}", track.id))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let song = json_body(response).await;
+
+    // The fmt chunk, at the offsets a canonical WAV puts it: channels at 22,
+    // the sample rate at 24, the bits per sample at 34. Read here so the
+    // assertions below belong to the file rather than to a number somebody
+    // typed into both sides.
+    let bytes = std::fs::read(&file).unwrap();
+    // Every offset below is checked against its marker first. A fixture that
+    // grows a chunk — a `LIST` before the data, say — would otherwise have
+    // this test reading two arbitrary bytes and failing on a number, which
+    // says the server is wrong about a file that moved underneath it.
+    for (at, marker) in [
+        (0usize, &b"RIFF"[..]),
+        (8, b"WAVE"),
+        (12, b"fmt "),
+        (36, b"data"),
+    ] {
+        assert_eq!(
+            &bytes[at..at + 4],
+            marker,
+            "the WAV fixture no longer puts {} at byte {at}",
+            String::from_utf8_lossy(marker)
+        );
+    }
+    let channels = u16::from_le_bytes([bytes[22], bytes[23]]) as i64;
+    let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as i64;
+    let bit_depth = u16::from_le_bytes([bytes[34], bytes[35]]) as i64;
+
+    assert_eq!(song["sample_rate"].as_i64(), Some(sample_rate));
+    assert_eq!(song["channels"].as_i64(), Some(channels));
+    assert_eq!(song["bit_depth"].as_i64(), Some(bit_depth));
+    assert_eq!(
+        song["size"].as_i64(),
+        Some(std::fs::metadata(&file).unwrap().len() as i64)
+    );
+    assert_eq!(song["suffix"].as_str(), Some("wav"));
+    // **Compared with what the catalogue stored, not with the word "WAV".**
+    // Pinning the spelling would pin the tag reader's vocabulary: a dependency
+    // that renamed its container would fail this test for a reason that has
+    // nothing to do with this surface. Comparing against the row is exact and
+    // stays about the question — does the stored value reach the wire — and it
+    // catches what a non-empty check cannot, a column carrying another track's
+    // value or the suffix by mistake.
+    assert_eq!(song["codec"].as_str(), track.codec.as_deref());
+    assert!(
+        track
+            .codec
+            .as_deref()
+            .is_some_and(|codec| !codec.is_empty()),
+        "the scan stored no codec at all, so the comparison above proves nothing"
+    );
+
+    // **Four fields tied together, rather than four numbers each asserted
+    // alone.** Uncompressed PCM has one bitrate and it is arithmetic:
+    // channels times depth times rate. A projection that dropped one of them,
+    // or a scanner that read one from the wrong offset, breaks the equality —
+    // where four separate assertions would each still pass against a
+    // plausible-looking wrong value.
+    let expected_kbps = sample_rate * bit_depth * channels / 1000;
+    assert_eq!(song["bitrate"].as_i64(), Some(expected_kbps));
+
+    // And the duration follows from the data chunk at the same rate.
+    let data_bytes = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as i64;
+    let frames = data_bytes / (channels * bit_depth / 8);
+    assert_eq!(
+        song["duration_ms"].as_i64(),
+        Some(frames * 1000 / sample_rate)
+    );
+}
