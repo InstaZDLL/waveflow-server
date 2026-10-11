@@ -281,6 +281,38 @@ aucune règle ne dit lequel employer, donc chaque écran tranche pour lui-même.
 Il n'existe **aucune échelle d'espacement** — ni variable, ni pas — alors
 qu'une échelle est exactement ce dont ce constat a besoin.
 
+> **État au 2026-10-11 (#214).** Deux choses mesurées, et la première
+> contredit ce qui précède.
+>
+> **Les deux nomenclatures ne sont pas concurrentes, elles sont superposées.**
+> `--color-surface-*` et `--accent-*` sont écrites **à l'exécution** par
+> `applyTheme` (`webapp/src/design-tokens/apply.ts`) depuis un `ThemePreset` ;
+> `--panel`, `--panel-soft` et `--panel-strong` sont des `color-mix()` qui en
+> **dérivent**. Il y a donc bien une règle : un thème écrit des surfaces, un
+> écran emploie des rôles. Et elle est respectée — tous les usages de
+> `--color-surface-*` sont dans les blocs qui définissent les jetons, aucun
+> écran ne franchit la couche. Le paquet npm `@waveflow/design-tokens` n'est
+> pas une dépendance, mais **un module du même nom vit dans l'arbre** depuis le
+> 2026-08-14 et c'est lui qui pilote le thème.
+>
+> **L'absence d'échelle, elle, était réelle et pire que décrite.** Relevé :
+> **49 valeurs d'espacement distinctes et aucune variable**, 24 employées une
+> ou deux fois ; et **37 tailles de police**, dont **sept entre 0,70 et
+> 0,86 rem** — la même taille épelée sept fois, ce qui est précisément pourquoi
+> rien ne paraissait plus important que le reste.
+>
+> Posées ici plutôt que dans un paquet : neuf pas d'espacement sur une grille
+> au quart de rem, sept pas de texte et trois d'affichage. Les égalités se
+> résolvent **vers le haut**, puisque la plainte était le serrement. 267
+> littéraux portés sur l'échelle : 96 élargis, 87 resserrés, **bilan net
+> +4,42 rem**. Un `rem` dans une largeur, une hauteur, un rayon ou un décalage
+> est laissé — c'est une dimension, pas un pas — et `webapp/src/styles.test.ts`
+> tient la règle plutôt qu'une liste d'exceptions : dans la portée de
+> l'échelle, c'est l'échelle qu'on emploie.
+>
+> Ce qui **n'est pas** fait : la moitié de goût d'une passe de conception. Juger
+> une hiérarchie demande des yeux sur le résultat, et l'agent n'en a pas.
+
 L'issue #63 (close) parlait déjà d'unifier ces surfaces sur un paquet
 `@waveflow/design-tokens` en OKLCH. Ce paquet **n'est pas une dépendance du
 client** et le CSS ne contient aucun `oklch`. À vérifier avant de choisir :
