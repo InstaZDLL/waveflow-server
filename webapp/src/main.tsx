@@ -8,8 +8,9 @@ import {
   RouterProvider,
   redirect,
   useNavigate,
+  useRouterState,
 } from "@tanstack/react-router";
-import { type RefObject, StrictMode, useRef } from "react";
+import { type RefObject, StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -57,6 +58,7 @@ import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
 import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";
+import { dismissSplash } from "./splash";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
 import "./styles.css";
@@ -273,6 +275,81 @@ function MoreSheet({
 }
 
 /**
+ * A navigation that is drawn rather than instantaneous.
+ *
+ * The complaint the session recorded was that pages "load too fast to be
+ * real", and the cause is the absence of a drawn transition rather than the
+ * speed. **No latency is added here**: the new screen is already mounted and
+ * simply fades in over 140ms. Manufacturing a wait to make the application
+ * feel substantial is a regression nobody could remove later without it being
+ * noticed.
+ *
+ * **Scripted rather than a CSS animation on a keyed element, and the
+ * difference is not stylistic.** A CSS animation restarts only on a new
+ * element, so keying this frame on the path was the obvious way to replay it
+ * — and it replaced the frame, which remounts the screen inside. A
+ * navigation whose location settles in two steps then mounts that screen
+ * twice, and a screen that mounts twice asks the server twice: signing out
+ * and back in went from two catalogue reads to three, which
+ * `forgets the catalogue when the session changes` caught. `animate()`
+ * replays on the element that is already there.
+ *
+ * Reduced motion is honoured here rather than in a media query, because there
+ * is no longer a stylesheet rule to disable.
+ *
+ * The first screen is not faded. It arrives under the first-load screen,
+ * which is still covering the viewport and fading out on its own, so an
+ * animation beneath it would be work nobody can see.
+ */
+function FadingOutlet() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const frame = useRef<HTMLDivElement>(null);
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    const first = shown.current === null;
+    shown.current = pathname;
+    const element = frame.current;
+    if (first || !element) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    element.animate(
+      [
+        { opacity: 0, transform: "translateY(0.35rem)" },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: 140, easing: "ease-out" },
+    );
+  }, [pathname]);
+  return (
+    <div className="page-frame" ref={frame}>
+      <ScopedOutlet />
+    </div>
+  );
+}
+
+/**
+ * Takes the first-load screen away once the application has committed a
+ * screen of its own.
+ *
+ * Renders nothing. An effect runs after the commit it belongs to, so by the
+ * time this fires the router has put either the sign-in page or the shell in
+ * the document — which is what the splash was covering.
+ *
+ * **Here rather than on the scope being ready**, which would hold the mark
+ * over the one round trip the shell still waits on. That wait has `Waiting`
+ * already, with `role="status"`, and it is usually finished inside the 300ms
+ * floor anyway. Covering it with the mark instead would mean the splash
+ * outliving a failure it cannot describe.
+ */
+function SplashGate() {
+  useEffect(() => {
+    dismissSplash();
+  }, []);
+  return null;
+}
+
+/**
  * Holds the catalogue back until the active library is known. One round trip,
  * and it buys the guarantee that no screen renders the whole catalogue before
  * narrowing to one library — which is what the unscoped first request did.
@@ -337,7 +414,7 @@ function Shell() {
             <LanguagePicker />
           </header>
           <main id="main-content" tabIndex={-1}>
-            <ScopedOutlet />
+            <FadingOutlet />
           </main>
           <Navigation mobile />
           <PlayerBar />
@@ -570,6 +647,7 @@ createRoot(container).render(
     <QueryClientProvider client={queryClient}>
       <PreferencesProvider>
         <I18nProvider>
+          <SplashGate />
           <RouterProvider router={router} />
         </I18nProvider>
       </PreferencesProvider>

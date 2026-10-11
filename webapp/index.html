@@ -16,8 +16,69 @@
          seconds, measured on a real session. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>WaveFlow</title>
+    <!-- Inline, and only what the first screen needs. The stylesheet is a
+         separate request of about 30 kB, and a splash that waited for it would
+         paint unstyled first — which is the thing it exists to prevent.
+
+         The background is `#101311` because that is what `--ambient-bg`
+         holds in the stylesheet, before `design-tokens/apply.ts` replaces it
+         at mount. So this screen matches the page underneath it exactly and
+         introduces no flash of its own. A reader on the light theme does see
+         dark until the tokens land, but that is already true of the page and
+         is not this screen's doing. -->
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: #101311;
+        opacity: 1;
+        transition: opacity 180ms ease-out;
+      }
+      #splash[data-leaving="true"] {
+        opacity: 0;
+      }
+      #splash img {
+        width: 5.5rem;
+        height: 5.5rem;
+        animation: splash-breathe 1.6s ease-in-out infinite;
+      }
+      @keyframes splash-breathe {
+        0%,
+        100% {
+          opacity: 0.55;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash {
+          transition: none;
+        }
+        #splash img {
+          animation: none;
+          opacity: 1;
+        }
+      }
+    </style>
   </head>
   <body>
+    <!-- The mark comes from `/logo.svg`, the one vector file the sidebar also
+         references. Inlining the five bars here would be quicker by one small
+         request and would recreate the fourth copy of the mark — which is the
+         defect this screen's own issue was filed about.
+
+         `aria-hidden`: the mark says nothing a reader needs, and three
+         hundred milliseconds is below the span where announcing a wait helps
+         rather than interrupts. A wait long enough to be worth saying is
+         `Waiting`'s, inside the application, where it carries
+         `role="status"`. -->
+    <div id="splash" aria-hidden="true">
+      <img src="/logo.svg" alt="" width="88" height="88" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

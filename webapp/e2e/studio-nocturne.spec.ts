@@ -2575,3 +2575,47 @@ test("declares an icon, and serves the one it declares", async ({
   expect(icon.status()).toBe(200);
   expect(icon.headers()["content-type"]).toContain("image/svg+xml");
 });
+
+/**
+ * The first-load screen is in the document the server sends, and it carries
+ * the one vector file.
+ *
+ * Structural only: nothing here times anything. The floor and the fade are
+ * pinned in `src/splash.test.ts` against fake timers, because an assertion on
+ * when the screen left would be an assertion about how fast the runner parsed
+ * 276 kB of React.
+ *
+ * What this adds is the half a unit test cannot see: that the markup ships in
+ * `index.html` rather than in the bundle — a splash inside the bundle could
+ * only appear after the wait it exists to dress — and that it points at
+ * `/logo.svg`, the same file the sidebar uses. A fourth hand-drawn copy of the
+ * mark is the defect this screen's own issue was filed about.
+ */
+test("ships the first-load screen in the document, drawn from the one logo", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+
+  // Read off the wire, before any script has run. Asking the rendered page
+  // would be asking after the screen has already been taken away.
+  const document_ = await page.request.get("/");
+  const html = await document_.text();
+  expect(html).toContain('id="splash"');
+  expect(html).toContain('src="/logo.svg"');
+
+  const logo = await page.request.get("/logo.svg");
+  expect(logo.status()).toBe(200);
+  expect(logo.headers()["content-type"]).toContain("image/svg+xml");
+  // The desktop profile, so a divergence in the shared file fails here too:
+  // five bars, symmetric, and a gradient rather than a flat fill.
+  const svg = await logo.text();
+  expect(svg.match(/<rect/g)).toHaveLength(5);
+  expect(svg).toContain("linearGradient");
+
+  await page.goto("/");
+  // Gone from the document once the application is up — removed rather than
+  // left transparent, because an element over the whole viewport still takes
+  // a click at zero opacity.
+  await expect(page.locator("#splash")).toHaveCount(0);
+  await expect(page.locator(".page-frame")).toBeVisible();
+});
