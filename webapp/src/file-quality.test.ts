@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Song } from "./api";
 import {
+  containerName,
   QUALITY_STEPS,
   type QualityBand,
   qualityBand,
@@ -115,5 +116,27 @@ describe("the quality band", () => {
     expect(steps).toEqual([...steps].sort((a, b) => a - b));
     expect(new Set(steps).size).toBe(rising.length);
     expect(Math.max(...steps)).toBe(QUALITY_STEPS);
+  });
+});
+
+describe("the container name", () => {
+  it("prefers the codec and falls back to the suffix", () => {
+    expect(containerName(song({ codec: "FLAC", suffix: "flac" }))).toBe("FLAC");
+    expect(containerName(song({ codec: null, suffix: "mp3" }))).toBe("MP3");
+  });
+
+  it("treats an empty codec as no codec", () => {
+    // `??` kept it, and the line then showed no container at all — worse
+    // than the suffix it was supposed to fall back to. Whitespace counts as
+    // empty for the same reason.
+    expect(containerName(song({ codec: "", suffix: "opus" }))).toBe("OPUS");
+    expect(containerName(song({ codec: "   ", suffix: "opus" }))).toBe("OPUS");
+  });
+
+  it("says nothing rather than something empty", () => {
+    const nameless = { ...song({}) } as Record<string, unknown>;
+    nameless.codec = null;
+    delete nameless.suffix;
+    expect(containerName(nameless as unknown as Song)).toBeNull();
   });
 });

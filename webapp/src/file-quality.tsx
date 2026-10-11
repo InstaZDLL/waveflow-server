@@ -75,6 +75,22 @@ const BAND_LABEL: Record<QualityBand, TranslationKey> = {
   hiRes: "quality.hiRes",
 };
 
+/**
+ * What to call the container, in upper case, or `null` if there is nothing.
+ *
+ * `||` and not `??`: a codec that arrived as an empty string is not a codec,
+ * and `??` keeps it — the line then lost its container name altogether
+ * instead of falling back to the suffix, which the server never leaves
+ * absent. Non-strings are read as missing for the reason the numbers are:
+ * this type is a claim about the server, not a guarantee from it.
+ */
+export function containerName(song: Song): string | null {
+  const text = [song.codec, song.suffix].find(
+    (value) => typeof value === "string" && value.trim() !== "",
+  );
+  return text ? text.trim().toUpperCase() : null;
+}
+
 /** A sample rate in kHz, trimmed: 44.1, and 48 rather than 48.0. */
 function kilohertz(rate: number): string {
   const value = rate / 1000;
@@ -111,7 +127,7 @@ export function FileQuality({ song }: { song: Song }) {
   const channels = measured(song.channels);
   const size = measured(song.size);
   const facts = [
-    (song.codec ?? song.suffix ?? "").toUpperCase() || null,
+    containerName(song),
     bitrate === null ? null : `${bitrate} kbps`,
     rate === null ? null : `${kilohertz(rate)} kHz`,
     depth === null ? null : `${depth} bit`,

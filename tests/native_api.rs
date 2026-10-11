@@ -3083,6 +3083,23 @@ async fn the_technical_fields_reach_the_wire_and_match_the_file() {
     // assertions below belong to the file rather than to a number somebody
     // typed into both sides.
     let bytes = std::fs::read(&file).unwrap();
+    // Every offset below is checked against its marker first. A fixture that
+    // grows a chunk — a `LIST` before the data, say — would otherwise have
+    // this test reading two arbitrary bytes and failing on a number, which
+    // says the server is wrong about a file that moved underneath it.
+    for (at, marker) in [
+        (0usize, &b"RIFF"[..]),
+        (8, b"WAVE"),
+        (12, b"fmt "),
+        (36, b"data"),
+    ] {
+        assert_eq!(
+            &bytes[at..at + 4],
+            marker,
+            "the WAV fixture no longer puts {} at byte {at}",
+            String::from_utf8_lossy(marker)
+        );
+    }
     let channels = u16::from_le_bytes([bytes[22], bytes[23]]) as i64;
     let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as i64;
     let bit_depth = u16::from_le_bytes([bytes[34], bytes[35]]) as i64;
