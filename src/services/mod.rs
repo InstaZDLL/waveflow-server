@@ -818,6 +818,13 @@ pub enum SongOrder {
     Frequent,
     Recent,
     Starred,
+    /// A fresh draw per request, so it **does not page**: asking for an
+    /// offset gives a new sample rather than the next slice, which can repeat
+    /// rows already seen and skip others. Left answering rather than refused,
+    /// because [`AlbumOrder::Random`] answers the same way and sits behind
+    /// `getAlbumList2?type=random` — refusing here alone would give one
+    /// catalogue two rules for one question. A caller wanting a bounded draw
+    /// has `/api/v2/songs/random`, which takes a limit and no offset at all.
     Random,
     ByYear,
     ByGenre,
