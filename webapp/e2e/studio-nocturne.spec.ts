@@ -2575,3 +2575,101 @@ test("declares an icon, and serves the one it declares", async ({
   expect(icon.status()).toBe(200);
   expect(icon.headers()["content-type"]).toContain("image/svg+xml");
 });
+
+/**
+ * The first-load screen is in the document the server sends, and it carries
+ * the one vector file.
+ *
+ * Structural only: nothing here times anything. The floor and the fade are
+ * pinned in `src/splash.test.ts` against fake timers, because an assertion on
+ * when the screen left would be an assertion about how fast the runner parsed
+ * 276 kB of React.
+ *
+ * What this adds is the half a unit test cannot see: that the markup ships in
+ * `index.html` rather than in the bundle — a splash inside the bundle could
+ * only appear after the wait it exists to dress — and that it points at
+ * `/logo.svg`, the same file the sidebar uses. A fourth hand-drawn copy of the
+ * mark is the defect this screen's own issue was filed about.
+ */
+test("ships the first-load screen in the document, drawn from the one logo", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+
+  // Read off the wire, before any script has run. Asking the rendered page
+  // would be asking after the screen has already been taken away.
+  const document_ = await page.request.get("/");
+  const html = await document_.text();
+  expect(html).toContain('id="splash"');
+  expect(html).toContain('src="/logo.svg"');
+
+  const logo = await page.request.get("/logo.svg");
+  expect(logo.status()).toBe(200);
+  expect(logo.headers()["content-type"]).toContain("image/svg+xml");
+  // The desktop profile, so a divergence in the shared file fails here too:
+  // five bars, symmetric, and a gradient rather than a flat fill.
+  const svg = await logo.text();
+  expect(svg.match(/<rect/g)).toHaveLength(5);
+  expect(svg).toContain("linearGradient");
+
+  await page.goto("/");
+  // Gone from the document once the application is up — removed rather than
+  // left transparent, because an element over the whole viewport still takes
+  // a click at zero opacity.
+  await expect(page.locator("#splash")).toHaveCount(0);
+  await expect(page.locator("#main-content")).toBeVisible();
+
+  // And on an address no route claims. This is the reason the dismissal sits
+  // in the root route component rather than in the sign-in and shell
+  // components: `notFoundComponent` belongs to the root and renders inside
+  // neither of those, so a first visit to an unknown address would have kept
+  // the mark until the ten-second ceiling.
+  await page.goto("/no-such-screen");
+  await expect(page.locator("#splash")).toHaveCount(0);
+});
+
+/**
+ * The first-load screen leaves even when the client never arrives.
+ *
+ * `dismissSplash` runs from the bundle, so it cannot be what rescues a bundle
+ * that fails to load: a reader would be left with a pulsing mark over the
+ * whole viewport for as long as the tab stayed open — worse than a blank
+ * page, which at least looks broken rather than looking like it is working.
+ *
+ * Eleven seconds of patience here, against a ten-second ceiling. It is the
+ * slowest test in this file and it earns it: an untested fallback for a
+ * failure nobody reproduces is the kind that turns out not to work on the one
+ * day it matters.
+ */
+test("takes the first-load screen away even when the bundle never loads", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+
+  // Every script the document asks for is refused, so React never mounts and
+  // nothing in the bundle can clean up after it.
+  await page.route("**/*.js", (route) => route.abort());
+  await page.route("**/src/main.tsx", (route) => route.abort());
+
+  await page.goto("/");
+  // Up, and covering the page: this is the state the ceiling exists for.
+  await expect(page.locator("#splash")).toBeVisible();
+
+  // While it is up is the only moment the leaving state can be read on the
+  // real element. Marked by hand rather than waited for: what is checked is
+  // the rule, not the clock. Without `pointer-events: none` the layer keeps
+  // taking clicks for the length of the fade — and for all of it under
+  // `prefers-reduced-motion`, where it is already invisible.
+  await page.locator("#splash").evaluate((element: HTMLElement) => {
+    element.dataset.leaving = "true";
+  });
+  await expect(page.locator("#splash")).toHaveCSS("pointer-events", "none");
+  await page.locator("#splash").evaluate((element: HTMLElement) => {
+    delete element.dataset.leaving;
+  });
+
+  await expect(page.locator("#splash")).toHaveCount(0, { timeout: 11_000 });
+  // What is revealed is an empty root — the page as it was before this screen
+  // existed. The ceiling restores the old failure rather than inventing one.
+  await expect(page.locator("#root")).toBeEmpty();
+});

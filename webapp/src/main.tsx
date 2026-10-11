@@ -9,7 +9,7 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { type RefObject, StrictMode, useRef } from "react";
+import { type RefObject, StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -57,6 +57,7 @@ import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";
 import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";
+import { dismissSplash } from "./splash";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
 import "./styles.css";
@@ -273,6 +274,38 @@ function MoreSheet({
 }
 
 /**
+ * Takes the first-load screen away once the application has committed a
+ * screen of its own.
+ *
+ * Renders nothing. An effect runs after the commit it belongs to, so by the
+ * time this fires the router has put either the sign-in page or the shell in
+ * the document — which is what the splash was covering.
+ *
+ * **Inside the router's root component**, so the commit this effect belongs
+ * to is the one that put a screen in the document. As a sibling of
+ * `RouterProvider` it fired on the first commit of the tree, which the
+ * router need not have filled yet — the 300ms floor hid that, and a floor
+ * hiding an ordering is weaker than an ordering that is right.
+ *
+ * Not in `loginRoute` and `authedRoute` instead, which was the other
+ * suggestion: `notFoundComponent` belongs to the root and renders inside
+ * neither, so an unknown address on a first visit would have kept the mark
+ * until the ten-second ceiling.
+ *
+ * **Not on the scope being ready** either, which would hold the mark over the
+ * one round trip the shell still waits on. That wait has `Waiting` already,
+ * with `role="status"`, and is usually finished inside the floor. Covering
+ * it with the mark would mean the screen outliving a failure it cannot
+ * describe.
+ */
+function SplashGate() {
+  useEffect(() => {
+    dismissSplash();
+  }, []);
+  return null;
+}
+
+/**
  * Holds the catalogue back until the active library is known. One round trip,
  * and it buys the guarantee that no screen renders the whole catalogue before
  * narrowing to one library — which is what the unscoped first request did.
@@ -347,8 +380,21 @@ function Shell() {
   );
 }
 
+/**
+ * Everything every route sits inside: the outlet, and the one effect that
+ * takes the first-load screen away.
+ */
+function RootFrame() {
+  return (
+    <>
+      <SplashGate />
+      <Outlet />
+    </>
+  );
+}
+
 const rootRoute = createRootRoute({
-  component: Outlet,
+  component: RootFrame,
   notFoundComponent: NotFoundPage,
 });
 
@@ -543,7 +589,43 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-const router = createRouter({ routeTree });
+/**
+ * A navigation that is drawn rather than instantaneous.
+ *
+ * The complaint the session recorded was that pages "load too fast to be
+ * real", and the cause is the absence of a drawn transition rather than the
+ * speed. `defaultViewTransition` hands that to the browser, which holds a
+ * snapshot of the screen being left and cross-fades it into the one arriving
+ * — **an actual cross-fade**, where fading the new screen in over nothing is
+ * only half of one.
+ *
+ * It replaced a hand-written version of the same idea, and the comparison is
+ * the argument: that one animated the incoming frame in a layout effect,
+ * which meant deciding whether to key the frame on the path (it remounted the
+ * screen, and a screen that mounts twice asks the server twice), whether the
+ * effect ran before the paint (after it, the screen flashed at full opacity
+ * first), and how to hold the outgoing view at all (it could not — the router
+ * had already unmounted it). None of those questions exist here.
+ *
+ * `startViewTransition` is absent in older browsers; `router-core` checks for
+ * it and navigates plainly when it is missing. The duration lives in
+ * `styles.css`, where a `::view-transition` pseudo-element can be reached.
+ *
+ * **Reduced motion switches it off rather than animating it to nothing.** A
+ * transition started and then neutralised in CSS has to win a cascade against
+ * the user agent on a pseudo-element that exists only while it runs; not
+ * starting one has nothing to win. Read once, at startup, so a reader who
+ * changes the setting mid-session sees it after a reload — which is why the
+ * media query in `styles.css` stays as well.
+ *
+ * The first load is untouched: a view transition is a thing between two
+ * screens, and there is only one.
+ */
+const router = createRouter({
+  routeTree,
+  defaultViewTransition: !window.matchMedia("(prefers-reduced-motion: reduce)")
+    .matches,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

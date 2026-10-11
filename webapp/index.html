@@ -16,9 +16,101 @@
          seconds, measured on a real session. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>WaveFlow</title>
+    <!-- Inline, and only what the first screen needs. The stylesheet is a
+         separate request of about 30 kB, and a splash that waited for it would
+         paint unstyled first — which is the thing it exists to prevent.
+
+         The background is `#101311` because that is what `--ambient-bg`
+         holds in the stylesheet, before `design-tokens/apply.ts` replaces it
+         at mount. So this screen matches the page underneath it exactly and
+         introduces no flash of its own. A reader on the light theme does see
+         dark until the tokens land, but that is already true of the page and
+         is not this screen's doing. -->
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: #101311;
+        opacity: 1;
+        transition: opacity 180ms ease-out;
+      }
+      /* `pointer-events` as well as opacity, because the element is still
+         there for the length of the fade — and under
+         `prefers-reduced-motion` it is invisible the instant it is marked,
+         with the whole 180ms still to run. A transparent layer over the
+         viewport goes on taking every click aimed at the page beneath it. */
+      #splash[data-leaving="true"] {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash img {
+        width: 5.5rem;
+        height: 5.5rem;
+        animation: splash-breathe 1.6s ease-in-out infinite;
+      }
+      @keyframes splash-breathe {
+        0%,
+        100% {
+          opacity: 0.55;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash {
+          transition: none;
+        }
+        #splash img {
+          animation: none;
+          opacity: 1;
+        }
+      }
+    </style>
   </head>
   <body>
+    <!-- The mark comes from `/logo.svg`, the one vector file the sidebar also
+         references. Inlining the five bars here would be quicker by one small
+         request and would recreate the fourth copy of the mark — which is the
+         defect this screen's own issue was filed about.
+
+         `aria-hidden`: the mark says nothing a reader needs, and three
+         hundred milliseconds is below the span where announcing a wait helps
+         rather than interrupts. A wait long enough to be worth saying is
+         `Waiting`'s, inside the application, where it carries
+         `role="status"`. -->
+    <div id="splash" aria-hidden="true">
+      <img src="/logo.svg" alt="" width="88" height="88" />
+    </div>
     <div id="root"></div>
+    <!-- The screen must not outlive a client that never arrives.
+         `dismissSplash` is the ordinary way out and it runs from the bundle,
+         so a bundle that fails to parse, or throws before React's first
+         commit, would leave a pulsing mark over the viewport for as long as
+         the tab stayed open — worse than a blank page, because a blank page
+         at least looks broken instead of looking like it is working.
+
+         Ten seconds: past any load this is meant to dress, and short enough
+         that a client which is not coming becomes visible. What it reveals is
+         an empty `#root`, which is exactly what this page showed before the
+         screen existed — the ceiling restores the old failure rather than
+         inventing a new one.
+
+         A `window.onerror` handler would notice sooner, and is not used: any
+         unrelated non-fatal error would then take the screen away early, and
+         the ceiling already covers the case it would catch.
+
+         Inline on purpose. A fallback for the bundle cannot live in the
+         bundle. -->
+    <script>
+      setTimeout(function () {
+        var splash = document.getElementById("splash");
+        if (splash && !splash.dataset.leaving) splash.remove();
+      }, 10000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
