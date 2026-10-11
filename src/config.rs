@@ -199,6 +199,26 @@ pub struct Config {
     pub instance_key_path: PathBuf,
     pub artwork_dir: PathBuf,
     pub db_max_connections: u32,
+    /// How long taking a connection out of the pool may take before it gives
+    /// up. `WAVEFLOW_DB_ACQUIRE_TIMEOUT_MS`, five seconds by default.
+    ///
+    /// **Every checkout, for the life of the process** — not only the boot.
+    /// sqlx applies it to each `acquire`, so it covers creating the file and
+    /// establishing the connection the migrations run on, and equally a
+    /// request waiting for a free connection once every one of
+    /// `db_max_connections` is busy. It does **not** bound the SQL that runs
+    /// once a connection is in hand; lock contention between writers is
+    /// `sqlite_busy_timeout`.
+    ///
+    /// So raising it trades failing fast for waiting: a saturated server
+    /// holds a request longer instead of refusing it. Five seconds is ample
+    /// on a warm disk — sqlx's own default is thirty — and has proved too
+    /// tight on a loaded CI runner, where three separate test targets have
+    /// failed at `Database::open` with "pool timed out while waiting for an
+    /// open connection". Either way the only thing this can produce is a
+    /// timeout, never a wrong answer, and a deployment on slow or contended
+    /// storage can raise it rather than fail to start.
+    pub db_acquire_timeout: Duration,
     pub sqlite_busy_timeout: Duration,
     pub access_token_ttl: Duration,
     /// Lifetime of a browser stream ticket. It must outlive a full listen, not
@@ -338,6 +358,7 @@ impl std::fmt::Debug for Config {
             .field("instance_key_path", &self.instance_key_path)
             .field("artwork_dir", &self.artwork_dir)
             .field("db_max_connections", &self.db_max_connections)
+            .field("db_acquire_timeout", &self.db_acquire_timeout)
             .field("sqlite_busy_timeout", &self.sqlite_busy_timeout)
             .field("access_token_ttl", &self.access_token_ttl)
             .field("stream_ticket_ttl", &self.stream_ticket_ttl)
@@ -378,6 +399,10 @@ impl Config {
             .transpose()?;
         let request_timeout_secs = parse_positive_env("WAVEFLOW_REQUEST_TIMEOUT_SECS", 30u64)?;
         let db_max_connections = parse_positive_env("WAVEFLOW_DB_MAX_CONNECTIONS", 8u32)?;
+        let db_acquire_timeout_ms = parse_positive_env(
+            "WAVEFLOW_DB_ACQUIRE_TIMEOUT_MS",
+            DEFAULT_DB_ACQUIRE_TIMEOUT_MS,
+        )?;
         let sqlite_busy_timeout_ms =
             parse_positive_env("WAVEFLOW_SQLITE_BUSY_TIMEOUT_MS", 5_000u64)?;
         let stream_ticket_ttl_secs =
@@ -589,6 +614,7 @@ impl Config {
             artwork_dir: data_dir.join("artwork"),
             data_dir,
             db_max_connections,
+            db_acquire_timeout: Duration::from_millis(db_acquire_timeout_ms),
             sqlite_busy_timeout: Duration::from_millis(sqlite_busy_timeout_ms),
             access_token_ttl: Duration::from_secs(access_token_ttl_secs),
             stream_ticket_ttl: Duration::from_secs(stream_ticket_ttl_secs),
@@ -627,6 +653,15 @@ impl Config {
             artwork_dir: data_dir.join("artwork"),
             data_dir,
             db_max_connections: 4,
+            // Generous where production is tight, and for a reason production
+            // does not have: a test target boots a whole server per test, so
+            // several cold databases are created at once on a machine already
+            // compiling. Three targets — uploads, media, scrobbling — have
+            // each failed this acquire on the Windows runner at different
+            // times, naming whichever test happened to be unlucky. Raising
+            // the budget removes a lottery; it hides no wrong answer, because
+            // the only thing this timeout can produce is a refusal to start.
+            db_acquire_timeout: Duration::from_secs(30),
             sqlite_busy_timeout: Duration::from_secs(5),
             access_token_ttl: Duration::from_secs(15 * 60),
             stream_ticket_ttl: Duration::from_secs(60 * 60),
@@ -936,6 +971,12 @@ fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
     }
 }
 
+/// The acquire budget a deployment gets unless it says otherwise.
+///
+/// Named so the test fixture's longer budget can be compared against it
+/// instead of against a second copy of the number.
+const DEFAULT_DB_ACQUIRE_TIMEOUT_MS: u64 = 5_000;
+
 fn parse_positive_env<T>(name: &str, default: T) -> anyhow::Result<T>
 where
     T: std::str::FromStr + PartialOrd + Default + Copy + std::fmt::Display,
@@ -1000,6 +1041,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 #[cfg(test)]
 mod tests {
     use super::normalize_public_url;
+    use super::DEFAULT_DB_ACQUIRE_TIMEOUT_MS;
     use super::{parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
     use super::{validate_canvas, CanvasLimits};
     use super::{validate_uploads, UploadLimits};
@@ -1312,5 +1354,29 @@ mod tests {
                 "{accepted:?} must be usable"
             );
         }
+    }
+
+    /// The test fixture waits longer for a cold database than a deployment.
+    ///
+    /// `Database::open` creates the file and establishes the connection the
+    /// migrations run on, and a test target boots one whole server per test,
+    /// so several cold databases are created at once on a machine that is
+    /// also compiling. Three targets — uploads, media, scrobbling — have each
+    /// failed that acquire on the Windows runner at different times, naming
+    /// whichever test was unlucky and looking like three unrelated flakes.
+    ///
+    /// Pinned because the repair is one literal wide: a later tidy-up that
+    /// gives the fixture the production budget back restores a lottery whose
+    /// losing ticket is drawn in a different file every time.
+    #[test]
+    fn the_test_fixture_waits_longer_for_a_cold_database_than_a_deployment() {
+        let fixture = super::Config::for_data_dir(std::path::PathBuf::from("data"));
+        let deployment = Duration::from_millis(DEFAULT_DB_ACQUIRE_TIMEOUT_MS);
+        assert!(
+            fixture.db_acquire_timeout > deployment,
+            "the fixture waits {:?}, a deployment {deployment:?} — a test boots a server per \
+             test and must not inherit a budget tuned for one warm server",
+            fixture.db_acquire_timeout
+        );
     }
 }

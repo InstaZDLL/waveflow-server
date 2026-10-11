@@ -298,7 +298,7 @@ impl Database {
 
         let pool = SqlitePoolOptions::new()
             .max_connections(config.db_max_connections)
-            .acquire_timeout(std::time::Duration::from_secs(5))
+            .acquire_timeout(config.db_acquire_timeout)
             .connect_with(options)
             .await
             .map_err(|error| anyhow::anyhow!("sqlite connect failed: {error}"))?;
