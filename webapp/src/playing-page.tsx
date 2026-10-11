@@ -216,8 +216,14 @@ function LyricsView({ song }: { song: Song }) {
     });
   }, [active, reduced]);
 
+  // Inside the view's own frame, like the empty state below it: a column that
+  // appears out of nowhere once the words land is a jump the wrapper absorbs.
   if (state === "waiting")
-    return <p className="muted">{t("common.loading")}</p>;
+    return (
+      <div className="lyrics-view">
+        <p className="muted">{t("common.loading")}</p>
+      </div>
+    );
   if (state === "none" || !sheet)
     return (
       <div className="lyrics-view">

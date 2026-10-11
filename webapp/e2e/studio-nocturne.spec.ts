@@ -391,6 +391,8 @@ let lyricSheets = new Map<
   }>
 >();
 
+/** Held open by the late-sheet test; instant for everyone else. */
+let lyricsGate: Promise<void> = Promise.resolve();
 /** The loop the mock holds for each track, as bytes. Absent is none. */
 let canvases = new Map<string, number[]>();
 /** Every placement and removal the mock received, in order. */
@@ -730,6 +732,7 @@ async function mockAuthenticatedApi(page: Page) {
       // with a track, which is not a list of lyrics — no test visited that page
       // before the canvas put a loop on it. Empty unless a test says otherwise.
       const trackId = url.pathname.split("/")[4] as string;
+      await lyricsGate;
       await route.fulfill({
         json: {
           trackId,
@@ -889,6 +892,7 @@ test.beforeEach(async ({ page }) => {
   uploadSession = freshUploadSession();
   loseAcknowledgementOf = null;
   lyricSheets = new Map();
+  lyricsGate = Promise.resolve();
   canvases = new Map();
   canvasWrites = [];
   refuseCanvasWith = null;
@@ -3181,6 +3185,57 @@ test("gives the words a view of their own, with timings where there are any", as
   await page.goto("/playing?view=karaoke");
   await expect(page.locator(".playing")).toBeVisible();
   await expect(page.locator(".lyrics-view")).toHaveCount(0);
+});
+
+/**
+ * A sheet that arrives after the head has already moved is still centred.
+ *
+ * The case a review asked about: open the lyrics view mid-track with nothing
+ * cached, so the column mounts only once the sheet lands. The claim was that
+ * the scroll effect would not re-run, because it watches `active` and not the
+ * three-state reading beside it. It does run — `active` is derived from the
+ * sheet, so it is `-1` until one arrives and cannot already name a line — and
+ * this is that argument turned into a measurement rather than left as one.
+ */
+test("centres a sheet that lands after the head has moved", async ({
+  page,
+}) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: true,
+      line: Array.from({ length: 40 }, (_, index) => ({
+        start: index * 5_000,
+        value: `late line ${index}`,
+      })),
+    },
+  ]);
+  let release = () => {};
+  lyricsGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await page.goto("/playing?view=lyrics");
+  // Waiting, not empty: the view's frame is there and the column is not.
+  await expect(page.locator(".lyrics-view")).toContainText("Loading");
+  await expect(page.locator(".lyrics-view ol")).toHaveCount(0);
+
+  // The head moves while there is no sheet to mark, so `active` stays -1 and
+  // the effect has nothing to do.
+  for (let press = 0; press < 20; press += 1) {
+    await page.keyboard.press("ArrowRight");
+  }
+
+  release();
+  const column = page.locator(".lyrics-view ol");
+  await expect(column).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "late line 20" }),
+  ).toHaveAttribute("aria-current", "true");
+  // The line the head is on is in view, which is the whole claim.
+  await expect.poll(() => column.evaluate((list) => list.scrollTop)).toBeGreaterThan(0);
 });
 
 /**
