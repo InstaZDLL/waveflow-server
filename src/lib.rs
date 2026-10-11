@@ -474,21 +474,25 @@ fn annotate_scope_refusals(openapi: &mut utoipa::openapi::OpenApi) {
 /// Reads are skipped: a GET carries no operation id and cannot conflict.
 fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
     use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
-    use utoipa::openapi::{Required, ResponseBuilder, Schema, Type};
+    use utoipa::openapi::{RefOr, Required, ResponseBuilder, Schema, Type};
 
+    // utoipa 6 holds a parameter list as `RefOr`, so a parameter built here
+    // is wrapped on the way in rather than pushed bare.
     let header = |name: &str, description: &str| {
-        ParameterBuilder::new()
-            .name(name)
-            .parameter_in(ParameterIn::Header)
-            .required(Required::False)
-            .description(Some(description.to_owned()))
-            .schema(Some(Schema::Object({
-                let mut object = utoipa::openapi::Object::new();
-                object.schema_type = utoipa::openapi::schema::SchemaType::new(Type::String);
-                object.format = Some(utoipa::openapi::SchemaFormat::Custom("uuid".to_owned()));
-                object
-            })))
-            .build()
+        RefOr::T(
+            ParameterBuilder::new()
+                .name(name)
+                .parameter_in(ParameterIn::Header)
+                .required(Required::False)
+                .description(Some(description.to_owned()))
+                .schema(Some(Schema::Object({
+                    let mut object = utoipa::openapi::Object::new();
+                    object.schema_type = utoipa::openapi::schema::SchemaType::new(Type::String);
+                    object.format = Some(utoipa::openapi::SchemaFormat::Custom("uuid".to_owned()));
+                    object
+                })))
+                .build(),
+        )
     };
 
     for item in openapi.paths.paths.values_mut() {
@@ -907,6 +911,7 @@ mod tests {
     /// nothing said so.
     #[test]
     fn the_scrobbling_routes_advertise_no_operation_id_protocol() {
+        use utoipa::openapi::RefOr;
         use utoipa::OpenApi;
 
         let openapi = super::ApiDoc::openapi();
@@ -933,7 +938,13 @@ mod tests {
                     .parameters
                     .iter()
                     .flatten()
-                    .map(|parameter| parameter.name.as_str())
+                    .map(|parameter| match parameter {
+                        RefOr::T(parameter) => parameter.name.as_str(),
+                        RefOr::Ref(reference) => panic!(
+                            "{path} advertises a parameter by reference ({}), which this check cannot read",
+                            reference.ref_location
+                        ),
+                    })
                     .collect();
                 assert!(
                     !names.contains(&super::api::OPERATION_ID_HEADER),
