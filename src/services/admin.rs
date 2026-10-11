@@ -154,11 +154,7 @@ impl DomainServices {
         }
     }
 
-    /// The API tokens issued to one account.
-    ///
-    /// Administrative like the Subsonic credential routes beside it: a token
-    /// carries the authority of the account it belongs to, so who may mint one
-    /// is a question about the instance, not about the account itself.
+    /// The API tokens issued to one account, as an administrator asks.
     pub async fn api_tokens(
         &self,
         actor_id: Uuid,
@@ -170,7 +166,33 @@ impl DomainServices {
             .account_by_username(username)
             .await?
             .ok_or(ServiceError::NotFound)?;
-        Ok(self.db.api_tokens_for_user(account.id).await?)
+        self.tokens_of(account.id).await
+    }
+
+    /// The API tokens of the account asking, which needs no administrator.
+    ///
+    /// **The authority a token carries is the account's own**, and nothing
+    /// here widens it: `authenticated` checks the role separately from the
+    /// scopes, so a token minted by an ordinary account with `admin` written
+    /// in its scopes grants nothing — a scope narrows a credential, it never
+    /// promotes one. So who may see and revoke an account's own clients is a
+    /// question about that account, and it used to need the whole instance's
+    /// administrator: a listener could not find out which devices were reading
+    /// their library, let alone stop one.
+    ///
+    /// The three methods below share one implementation each with their
+    /// administrative twin. Two authorizations, one operation — validation,
+    /// normalisation and the shape of a refusal belong to what is being done
+    /// and not to who asked.
+    pub async fn own_api_tokens(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<ApiTokenRecord>, ServiceError> {
+        self.tokens_of(actor_id).await
+    }
+
+    async fn tokens_of(&self, account_id: Uuid) -> Result<Vec<ApiTokenRecord>, ServiceError> {
+        Ok(self.db.api_tokens_for_user(account_id).await?)
     }
 
     /// Issues a token and returns it beside its record.
@@ -186,6 +208,55 @@ impl DomainServices {
         scopes: &[String],
     ) -> Result<(ApiTokenRecord, String), ServiceError> {
         self.require_admin(actor_id).await?;
+        let account = self
+            .db
+            .account_by_username(username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+        self.issue_token(account.id, name, scopes).await
+    }
+
+    /// Issues a token to the account asking. See [`Self::own_api_tokens`].
+    ///
+    /// **A credential cannot mint one wider than itself.** An empty scope list
+    /// means "everything this account has", so a narrowed token asking for one
+    /// would walk out with the account's whole authority — an escalation
+    /// inside a single account, from a credential that had been deliberately
+    /// restricted. The authorization-code flow had the same hole and it is
+    /// closed the same way: the caller's own scopes bound what it can hand on.
+    ///
+    /// An unrestricted caller may ask for anything, including nothing. A
+    /// narrowed one must name scopes, and only ones it holds.
+    pub async fn create_own_api_token(
+        &self,
+        actor_id: Uuid,
+        actor_scopes: &[String],
+        name: &str,
+        scopes: &[String],
+    ) -> Result<(ApiTokenRecord, String), ServiceError> {
+        if !actor_scopes.is_empty() {
+            let wanted: Vec<String> = scopes.iter().map(|scope| scope.trim().to_owned()).collect();
+            // Refused rather than quietly narrowed to the caller's own set: a
+            // caller that asked for everything and received a subset would
+            // believe it held more than it does, and find out at the first
+            // refusal from a token it minted itself.
+            if wanted.is_empty()
+                || !wanted
+                    .iter()
+                    .all(|scope| actor_scopes.iter().any(|held| held == scope))
+            {
+                return Err(ServiceError::Forbidden);
+            }
+        }
+        self.issue_token(actor_id, name, scopes).await
+    }
+
+    async fn issue_token(
+        &self,
+        account_id: Uuid,
+        name: &str,
+        scopes: &[String],
+    ) -> Result<(ApiTokenRecord, String), ServiceError> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 120 {
             return Err(ServiceError::Invalid);
@@ -201,16 +272,11 @@ impl DomainServices {
         if scopes.iter().any(String::is_empty) {
             return Err(ServiceError::Invalid);
         }
-        let account = self
-            .db
-            .account_by_username(username)
-            .await?
-            .ok_or(ServiceError::NotFound)?;
         let token = security::generate_token("wfapi_");
         let record = self
             .db
             .create_api_token(
-                account.id,
+                account_id,
                 name,
                 &security::token_hash(&token),
                 &scopes,
@@ -237,9 +303,33 @@ impl DomainServices {
             .account_by_username(username)
             .await?
             .ok_or(ServiceError::NotFound)?;
+        self.retire_token(actor_id, account.id, token_id).await
+    }
+
+    /// Revokes one of the asking account's own tokens. See
+    /// [`Self::own_api_tokens`].
+    ///
+    /// A token belonging to somebody else answers as a missing one, because
+    /// the owner is part of the condition: the update matches on the account
+    /// as well as the id, so naming another tenant's token cannot confirm
+    /// that it exists.
+    pub async fn revoke_own_api_token(
+        &self,
+        actor_id: Uuid,
+        token_id: Uuid,
+    ) -> Result<(), ServiceError> {
+        self.retire_token(actor_id, actor_id, token_id).await
+    }
+
+    async fn retire_token(
+        &self,
+        actor_id: Uuid,
+        account_id: Uuid,
+        token_id: Uuid,
+    ) -> Result<(), ServiceError> {
         if self
             .db
-            .revoke_api_token(actor_id, account.id, token_id, now_ms())
+            .revoke_api_token(actor_id, account_id, token_id, now_ms())
             .await?
         {
             Ok(())

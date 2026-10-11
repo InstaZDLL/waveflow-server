@@ -12,7 +12,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Response, Sse,
     },
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -155,6 +155,14 @@ pub fn router(state: AppState) -> Router {
             get(get_playlist)
                 .patch(update_playlist)
                 .delete(delete_playlist),
+        )
+        .route(
+            "/api/v2/api-tokens",
+            get(list_own_api_tokens).post(create_own_api_token),
+        )
+        .route(
+            "/api/v2/api-tokens/{token_id}",
+            delete(revoke_own_api_token),
         )
         .route("/api/v2/favorites", get(list_favorites))
         .route(

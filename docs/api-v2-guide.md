@@ -954,6 +954,9 @@ Admin Bearer tokens can manage:
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
 | API tokens | `GET/POST /api/v2/admin/users/{username}/tokens`, `DELETE /api/v2/admin/users/{username}/tokens/{token_id}` |
 
+An account manages **its own** clients without any of this: see
+[its own clients](#its-own-clients) below.
+
 Starting a scan needs more than membership. A scan walks the owner's files and
 takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
 is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
@@ -1028,6 +1031,34 @@ The response carries the record and a `secret` beginning `wfapi_`. Only its
 SHA-256 hash is stored, so the secret appears there and never again: the
 listing returns names, scopes and timestamps, and a caller who loses a token
 issues another rather than reading it back.
+
+#### Its own clients
+
+The routes above are administrative, and they are not the only way in. An
+account lists, registers and revokes **its own** tokens at `/api/v2/api-tokens`
+— a plain self-scoped resource like `/api/v2/bookmarks`, needing no
+administrator:
+
+```bash
+curl https://music.example.com/api/v2/api-tokens   -H "Authorization: Bearer ACCESS_TOKEN"
+
+curl -X DELETE https://music.example.com/api/v2/api-tokens/TOKEN_UUID   -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+This is safe because a token is never a promotion: the account's role is
+checked apart from the credential's scopes, so a scope narrows and cannot
+widen. An ordinary account issuing a token that names `admin` gets a token
+that is still refused on every administrative route.
+
+**A credential cannot mint one wider than itself.** An empty `scopes` list
+means "everything this account has", so a token already restricted to
+`write` asking for an empty list is refused with **403** — that would be an
+escalation inside a single account. It may name scopes it holds, and only
+those. An unrestricted caller — a signed-in session, or a token naming no
+scope — may ask for anything.
+
+A token belonging to another account answers **404** on the revoke, not 403:
+naming it must not confirm that it exists.
 
 **Scopes are enforced on every route.** A token issued with a non-empty
 `scopes` list is restricted to it, whatever the account behind it may do. Two

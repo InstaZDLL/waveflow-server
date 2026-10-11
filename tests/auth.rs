@@ -918,3 +918,201 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
         "an authorization code is single use"
     );
 }
+
+/// An account sees and revokes its own clients, and cannot mint a wider one.
+///
+/// Until now the only listing was `/api/v2/admin/users/{username}/tokens`, so
+/// a listener could not find out which devices held a credential on their own
+/// library, let alone stop one. The material was there and reachable only by
+/// the instance administrator.
+///
+/// Opening it is safe for a reason worth asserting rather than asserting
+/// about: `authenticated` checks the account role separately from the
+/// credential scopes, so a scope narrows and never promotes. Both halves are
+/// exercised below — a self-minted token is refused on an administrative route
+/// however it was scoped, and a narrowed credential cannot hand on more than
+/// it holds.
+#[tokio::test]
+async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
+    let (_temp, config, state) = test_app().await;
+    let now = now_ms();
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("clients-user", &hash, AccountRole::User, now)
+        .await
+        .unwrap();
+    let stranger = state
+        .db
+        .create_account("clients-other", &hash, AccountRole::User, now)
+        .await
+        .unwrap();
+    // Another account credential: it must appear in no listing here, and must
+    // not be revocable from this side.
+    let theirs = state
+        .db
+        .create_api_token(
+            stranger,
+            "a phone belonging elsewhere",
+            &security::token_hash(&security::generate_token("wfapi_")),
+            &[],
+            now,
+        )
+        .await
+        .unwrap();
+    // A deliberately narrowed credential of this account own, which is what
+    // the widening rule is about.
+    let narrowed = security::generate_token("wfapi_");
+    state
+        .db
+        .create_api_token(
+            owner,
+            "a narrowed client",
+            &security::token_hash(&narrowed),
+            &["write".to_owned()],
+            now,
+        )
+        .await
+        .unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let session = login_token(&router, "clients-user", &password).await;
+
+    async fn listing(router: &axum::Router, bearer: &str) -> serde_json::Value {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v2/api-tokens")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        json_body(response).await
+    }
+
+    async fn mint(
+        router: &axum::Router,
+        bearer: &str,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
+        let mut request = json_request("/api/v2/api-tokens", body);
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {bearer}").parse().unwrap());
+        router.clone().oneshot(request).await.unwrap()
+    }
+
+    async fn drop_token(router: &axum::Router, bearer: &str, id: &str) -> axum::response::Response {
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v2/api-tokens/{id}"))
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    // 1. Its own, and **only** its own — from an ordinary account, in an
+    //    instance with no administrator at all.
+    let listed = listing(&router, &session).await;
+    let names: Vec<&str> = listed
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|token| token["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["a narrowed client"]);
+    assert!(
+        !listed.to_string().contains(&theirs.id.to_string()),
+        "another account credential appeared in this account listing"
+    );
+
+    // 2. It can register one, and the secret is shown once.
+    let created = mint(
+        &router,
+        &session,
+        serde_json::json!({ "name": "my laptop" }),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let minted = json_body(created).await;
+    let secret = minted["secret"].as_str().expect("a secret").to_owned();
+    assert!(secret.starts_with("wfapi_"));
+    assert_eq!(
+        listing(&router, &session).await.as_array().unwrap().len(),
+        2
+    );
+
+    // 3. **A self-minted credential is not a promotion.** Unrestricted, from
+    //    an ordinary account, it still cannot reach an administrative route:
+    //    the role is checked apart from the scopes, which is the whole reason
+    //    this surface can be opened at all.
+    let administrative = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/admin/users/clients-user/tokens")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(administrative.status(), StatusCode::FORBIDDEN);
+
+    // 4. **And a narrowed credential cannot hand on more than it holds.** An
+    //    empty scope list means everything this account has, so a token
+    //    restricted to `write` asking for one would walk out unrestricted —
+    //    an escalation inside a single account.
+    let widened = mint(
+        &router,
+        &narrowed,
+        serde_json::json!({ "name": "a wider one" }),
+    )
+    .await;
+    assert_eq!(widened.status(), StatusCode::FORBIDDEN);
+    let promoted = mint(
+        &router,
+        &narrowed,
+        serde_json::json!({ "name": "an admin one", "scopes": ["admin"] }),
+    )
+    .await;
+    assert_eq!(promoted.status(), StatusCode::FORBIDDEN);
+    // What it holds, it may pass on.
+    let sideways = mint(
+        &router,
+        &narrowed,
+        serde_json::json!({ "name": "an equal one", "scopes": ["write"] }),
+    )
+    .await;
+    assert_eq!(sideways.status(), StatusCode::CREATED);
+
+    // 5. Another account credential answers as a missing one. Not 403:
+    //    naming it must not confirm that it exists.
+    let foreign = drop_token(&router, &session, &theirs.id.to_string()).await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+
+    // 6. And revoking its own stops that credential working, which is the
+    //    whole point of showing the list.
+    let own_id = minted["id"].as_str().expect("an id").to_owned();
+    let revoked = drop_token(&router, &session, &own_id).await;
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    let refused = router
+        .oneshot(
+            Request::get("/api/v2/albums")
+                .header("authorization", format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+}
