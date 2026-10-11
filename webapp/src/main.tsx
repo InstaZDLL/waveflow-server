@@ -8,15 +8,8 @@ import {
   RouterProvider,
   redirect,
   useNavigate,
-  useRouterState,
 } from "@tanstack/react-router";
-import {
-  type RefObject,
-  StrictMode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { type RefObject, StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -281,65 +274,6 @@ function MoreSheet({
 }
 
 /**
- * A navigation that is drawn rather than instantaneous.
- *
- * The complaint the session recorded was that pages "load too fast to be
- * real", and the cause is the absence of a drawn transition rather than the
- * speed. **No latency is added here**: the new screen is already mounted and
- * simply fades in over 140ms. Manufacturing a wait to make the application
- * feel substantial is a regression nobody could remove later without it being
- * noticed.
- *
- * **Scripted rather than a CSS animation on a keyed element, and the
- * difference is not stylistic.** A CSS animation restarts only on a new
- * element, so keying this frame on the path was the obvious way to replay it
- * — and it replaced the frame, which remounts the screen inside. A
- * navigation whose location settles in two steps then mounts that screen
- * twice, and a screen that mounts twice asks the server twice: signing out
- * and back in went from two catalogue reads to three, which
- * `forgets the catalogue when the session changes` caught. `animate()`
- * replays on the element that is already there.
- *
- * Reduced motion is honoured here rather than in a media query, because there
- * is no longer a stylesheet rule to disable.
- *
- * The first screen is not faded. It arrives under the first-load screen,
- * which is still covering the viewport and fading out on its own, so an
- * animation beneath it would be work nobody can see.
- *
- * `useLayoutEffect` and not `useEffect`, which runs after the browser has
- * painted: the new screen would appear at full opacity, then jump to zero as
- * the animation took its first keyframe. One frame of flicker on every
- * navigation, from the thing whose whole purpose is to remove one.
- */
-function FadingOutlet() {
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
-  const frame = useRef<HTMLDivElement>(null);
-  const shown = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    const first = shown.current === null;
-    shown.current = pathname;
-    const element = frame.current;
-    if (first || !element) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    element.animate(
-      [
-        { opacity: 0, transform: "translateY(0.35rem)" },
-        { opacity: 1, transform: "none" },
-      ],
-      { duration: 140, easing: "ease-out" },
-    );
-  }, [pathname]);
-  return (
-    <div className="page-frame" ref={frame}>
-      <ScopedOutlet />
-    </div>
-  );
-}
-
-/**
  * Takes the first-load screen away once the application has committed a
  * screen of its own.
  *
@@ -436,7 +370,7 @@ function Shell() {
             <LanguagePicker />
           </header>
           <main id="main-content" tabIndex={-1}>
-            <FadingOutlet />
+            <ScopedOutlet />
           </main>
           <Navigation mobile />
           <PlayerBar />
@@ -655,7 +589,43 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-const router = createRouter({ routeTree });
+/**
+ * A navigation that is drawn rather than instantaneous.
+ *
+ * The complaint the session recorded was that pages "load too fast to be
+ * real", and the cause is the absence of a drawn transition rather than the
+ * speed. `defaultViewTransition` hands that to the browser, which holds a
+ * snapshot of the screen being left and cross-fades it into the one arriving
+ * — **an actual cross-fade**, where fading the new screen in over nothing is
+ * only half of one.
+ *
+ * It replaced a hand-written version of the same idea, and the comparison is
+ * the argument: that one animated the incoming frame in a layout effect,
+ * which meant deciding whether to key the frame on the path (it remounted the
+ * screen, and a screen that mounts twice asks the server twice), whether the
+ * effect ran before the paint (after it, the screen flashed at full opacity
+ * first), and how to hold the outgoing view at all (it could not — the router
+ * had already unmounted it). None of those questions exist here.
+ *
+ * `startViewTransition` is absent in older browsers; `router-core` checks for
+ * it and navigates plainly when it is missing. The duration lives in
+ * `styles.css`, where a `::view-transition` pseudo-element can be reached.
+ *
+ * **Reduced motion switches it off rather than animating it to nothing.** A
+ * transition started and then neutralised in CSS has to win a cascade against
+ * the user agent on a pseudo-element that exists only while it runs; not
+ * starting one has nothing to win. Read once, at startup, so a reader who
+ * changes the setting mid-session sees it after a reload — which is why the
+ * media query in `styles.css` stays as well.
+ *
+ * The first load is untouched: a view transition is a thing between two
+ * screens, and there is only one.
+ */
+const router = createRouter({
+  routeTree,
+  defaultViewTransition: !window.matchMedia("(prefers-reduced-motion: reduce)")
+    .matches,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

@@ -315,6 +315,32 @@ h3 {
   flex: none;
 }
 
+/**
+ * The cross-fade the browser draws between two screens.
+ *
+ * 140ms rather than the 250ms a view transition takes by default: long
+ * enough to be seen, short enough that nobody waits on it. **No latency is
+ * added** — the new screen is already built, and this animates the swap.
+ *
+ * The reduced motion block is the second line of defence: `main.tsx` does not
+ * start a transition at all when the setting is on, and this catches a reader
+ * who turns it on without reloading. No `!important` — author styles already
+ * beat the user agent, and `animation: none` clears the name, which a more
+ * specific rule setting only a duration cannot restore.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 140ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}
+
 .primary-navigation {
   display: grid;
   gap: 0.24rem;

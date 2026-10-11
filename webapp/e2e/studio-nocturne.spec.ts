@@ -2617,7 +2617,7 @@ test("ships the first-load screen in the document, drawn from the one logo", asy
   // left transparent, because an element over the whole viewport still takes
   // a click at zero opacity.
   await expect(page.locator("#splash")).toHaveCount(0);
-  await expect(page.locator(".page-frame")).toBeVisible();
+  await expect(page.locator("#main-content")).toBeVisible();
 
   // And on an address no route claims. This is the reason the dismissal sits
   // in the root route component rather than in the sign-in and shell
