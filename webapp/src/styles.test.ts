@@ -30,46 +30,74 @@ const SPACING_OR_TYPE =
 
 const STEP_DECLARATION = /--((?:space|text)-[a-z0-9]+):\s*([0-9.]+)rem;/g;
 
+const TOKEN_SELECTOR = /(:root|\[data-theme)/;
+
+/**
+ * The stylesheet with every token-defining block blanked out, line for line.
+ *
+ * **Blanked rather than skipped, and that distinction cost two rounds.** A
+ * line is not a unit of CSS: a token block can open and close inside one, and
+ * a rule can share the line with it either side. Skipping the line took the
+ * rule with it; walking the line took the tokens as rules. Replacing the
+ * block's own characters with spaces leaves the rest of the line to be read
+ * normally, and every line number intact for the report.
+ */
+function withoutTokenBlocks(css: string): string {
+  const out = css.split("");
+  let at = 0;
+  while (at < css.length) {
+    const open = css.indexOf("{", at);
+    if (open === -1) break;
+    // What sits between the last rule's end and this brace — not everything
+    // since the cursor, which for a nested rule would drag the enclosing
+    // block's own declarations into the selector and match on them.
+    const selector = css.slice(at, open).split(/[};]/).pop() ?? "";
+    if (!TOKEN_SELECTOR.test(selector)) {
+      // Descend instead of jumping past: an `@media` carries ordinary rules,
+      // and nothing stops a token block from sitting inside one.
+      at = open + 1;
+      continue;
+    }
+    let depth = 0;
+    let close = open;
+    for (; close < css.length; close += 1) {
+      if (css[close] === "{") depth += 1;
+      else if (css[close] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    const to = Math.min(close, css.length - 1);
+    for (let k = open - selector.length; k <= to; k += 1) {
+      if (out[k] !== "\n") out[k] = " ";
+    }
+    at = to + 1;
+  }
+  return out.join("");
+}
+
 /** Walks declarations outside the blocks that define the tokens. */
 function eachDeclaration(
   css: string,
   visit: (property: string, value: string, line: number) => void,
 ): void {
-  let depth = 0;
-  let inTokens = false;
-  css.split("\n").forEach((line, index) => {
-    const opens = (line.match(/\{/g) ?? []).length;
-    const closes = (line.match(/\}/g) ?? []).length;
-    const wasTokens = inTokens;
-    // A scale cannot be written in terms of itself, so `:root` and the theme
-    // overrides beside it are skipped.
-    const startsTokens =
-      depth === 0 && opens > 0 && /(:root|\[data-theme)/.test(line);
-    if (startsTokens) inTokens = true;
-    depth += opens - closes;
-    if (depth <= 0) {
-      inTokens = false;
-      depth = 0;
-    }
-    // `startsTokens` as well as the two flags: a `:root { --space-1: 0.25rem; }`
-    // written on one line opens and closes in the same breath, so `inTokens`
-    // is already back to false by the time this runs.
-    if (wasTokens || inTokens || startsTokens) return;
-    // **Every declaration on the line, not the line as one declaration.** The
-    // rule is about the stylesheet and not about how it happens to be
-    // formatted today: `.a { gap: 0.65rem; }` is the same defect written
-    // flat, and an anchored pattern would walk straight past it the day a
-    // formatter setting changes or somebody writes a rule by hand.
-    //
-    // The terminator is looked at rather than eaten: consuming the `;` leaves
-    // the next declaration without the delimiter its own match needs, so a
-    // line carrying two of them gave up one — found by asserting on two.
-    const declarations =
-      /(?:^|[;{])\s*([a-z-]+)\s*:\s*([^{};]*?)\s*(?=[;{}]|$)/g;
-    for (const declaration of line.matchAll(declarations)) {
-      visit(declaration[1], declaration[2], index + 1);
-    }
-  });
+  withoutTokenBlocks(css)
+    .split("\n")
+    .forEach((line, index) => {
+      // **Every declaration on the line, not the line as one declaration.**
+      // The rule is about the stylesheet and not about how it happens to be
+      // formatted today: `.a { gap: 0.65rem; }` is the same defect written
+      // flat, and an anchored pattern walked straight past it.
+      //
+      // The terminator is looked at rather than eaten: consuming the `;`
+      // leaves the next declaration without the delimiter its own match needs,
+      // so a line carrying two of them gave one up.
+      const declarations =
+        /(?:^|[;{])\s*([a-z-]+)\s*:\s*([^{};]*?)\s*(?=[;{}]|$)/g;
+      for (const declaration of line.matchAll(declarations)) {
+        visit(declaration[1], declaration[2], index + 1);
+      }
+    });
 }
 
 /** Every raw `rem` inside the scale's range, outside the token blocks. */
@@ -201,5 +229,23 @@ describe("the spacing and type scale", () => {
     // Nor the block that defines the steps, on two lines or on one.
     expect(offScale(":root {\n  --space-3: 0.75rem;\n}")).toEqual([]);
     expect(offScale(":root { --space-3: 0.75rem; }")).toEqual([]);
+
+    // **And a rule sharing the line with that block is still read.** Skipping
+    // the whole line hid it, which is the blind spot the first remedy traded
+    // for the one it closed — either side of the block, since a blank at one
+    // end proves nothing about the other.
+    expect(
+      offScale(":root { --space-3: 0.75rem; } .a { gap: 0.65rem; }"),
+    ).toEqual(["line 1: gap: 0.65rem"]);
+    expect(
+      offScale(".a { gap: 0.65rem; } :root { --space-3: 0.75rem; }"),
+    ).toEqual(["line 1: gap: 0.65rem"]);
+    // A token block inside an `@media`, which is why the walk descends rather
+    // than jumping past a block whose selector does not match.
+    expect(
+      offScale(
+        "@media (hover: none) {\n  :root { --space-3: 0.75rem; }\n  .a { gap: 0.65rem; }\n}",
+      ),
+    ).toEqual(["line 3: gap: 0.65rem"]);
   });
 });
