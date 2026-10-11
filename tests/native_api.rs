@@ -3112,14 +3112,20 @@ async fn the_technical_fields_reach_the_wire_and_match_the_file() {
         Some(std::fs::metadata(&file).unwrap().len() as i64)
     );
     assert_eq!(song["suffix"].as_str(), Some("wav"));
-    // A container name, whatever it is: pinning the spelling would be pinning
-    // the tag reader's vocabulary rather than this surface.
+    // **Compared with what the catalogue stored, not with the word "WAV".**
+    // Pinning the spelling would pin the tag reader's vocabulary: a dependency
+    // that renamed its container would fail this test for a reason that has
+    // nothing to do with this surface. Comparing against the row is exact and
+    // stays about the question — does the stored value reach the wire — and it
+    // catches what a non-empty check cannot, a column carrying another track's
+    // value or the suffix by mistake.
+    assert_eq!(song["codec"].as_str(), track.codec.as_deref());
     assert!(
-        song["codec"]
-            .as_str()
+        track
+            .codec
+            .as_deref()
             .is_some_and(|codec| !codec.is_empty()),
-        "codec: {}",
-        song["codec"]
+        "the scan stored no codec at all, so the comparison above proves nothing"
     );
 
     // **Four fields tied together, rather than four numbers each asserted
