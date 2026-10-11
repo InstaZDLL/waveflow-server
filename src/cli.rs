@@ -611,7 +611,16 @@ async fn create_token(state: &AppState, args: CreateTokenArgs) -> anyhow::Result
     let actor = require_admin(&state.db, &args.actor).await?;
     let (record, token) = state
         .services
-        .create_api_token(actor.id, &args.username, &args.name, &args.scopes)
+        .create_api_token(
+            actor.id,
+            // The command line holds the whole account authority: it is a
+            // shell on the host, not a credential that could have been
+            // narrowed.
+            &[],
+            &args.username,
+            &args.name,
+            &args.scopes,
+        )
         .await?;
     // Standard output carries the token alone; see `set_credential` for why.
     eprintln!("Created API token {} for {}", record.id, args.username);

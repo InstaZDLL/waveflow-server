@@ -1060,6 +1060,19 @@ scope — may ask for anything.
 A token belonging to another account answers **404** on the revoke, not 403:
 naming it must not confirm that it exists.
 
+**A credential minted this way expires.** `WAVEFLOW_API_TOKEN_TTL_SECS`, a year
+by default and `0` for never. The reason is this route: before it, registering
+a client needed the instance administrator, so a session taken for the fifteen
+minutes of its access token could read a library and nothing more. Now it can
+register a credential — and `expires_at` has been a column honoured by the
+lookup since the table existed, and was never written.
+
+The administrative route is deliberately **not** bounded by that setting. An
+operator provisioning a service account is a different act from a person
+clicking a button in their settings: it carries an audit entry, it needs a role
+no stolen session can reach, and a token that quietly stops working in a year is
+an operational surprise an operator did not ask for.
+
 **Scopes are enforced on every route.** A token issued with a non-empty
 `scopes` list is restricted to it, whatever the account behind it may do. Two
 scopes are checked:

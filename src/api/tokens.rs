@@ -54,9 +54,23 @@ pub async fn create_api_token(
     let actor = authenticated(&state, &headers, Access::Admin).await?;
     let (token, secret) = state
         .services
-        .create_api_token(actor.id, &username, &request.name, &request.scopes)
+        .create_api_token(
+            actor.id,
+            &actor.scopes,
+            &username,
+            &request.name,
+            &request.scopes,
+        )
         .await
-        .map_err(service_error)?;
+        // 403 and not the blanket 404, the same way the self-scoped route does
+        // it and for the same reason: nothing is being looked up when a
+        // credential is refused the right to hand on what it does not hold,
+        // and a 404 would tell an administrator the account they just named
+        // does not exist.
+        .map_err(|error| match error {
+            crate::services::ServiceError::Forbidden => ApiError::Forbidden,
+            other => service_error(other),
+        })?;
     Ok((
         StatusCode::CREATED,
         Json(CreateApiTokenResponse { token, secret }),

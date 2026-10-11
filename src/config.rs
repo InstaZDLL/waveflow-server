@@ -228,6 +228,24 @@ pub struct Config {
     /// long a leaked URL stays useful, not how long access itself lasts.
     pub stream_ticket_ttl: Duration,
     pub refresh_token_ttl: Duration,
+    /// How long a client credential an **account** mints for itself may live.
+    /// `WAVEFLOW_API_TOKEN_TTL_SECS`, a year by default; `0` for no expiry.
+    ///
+    /// It exists because the self-service route changed what a stolen session
+    /// can leave behind. Before it, minting a token needed the instance's
+    /// administrator, so a session taken for the fifteen minutes of its access
+    /// token could read a library and nothing more. Now it can register a
+    /// credential — and `api_token` has always been written without an
+    /// `expires_at`, so that credential outlived the theft by as long as
+    /// nobody noticed.
+    ///
+    /// The administrative route is deliberately **not** bounded by this. An
+    /// operator provisioning a service account is a different act from a
+    /// person clicking a button in their settings: it carries an audit entry,
+    /// it needs a role no stolen session can reach, and a token that quietly
+    /// stops working in a year is an operational surprise an operator did not
+    /// ask for.
+    pub api_token_ttl: Option<Duration>,
     pub scan_interval: Option<Duration>,
     pub scan_parallelism: usize,
     pub ffmpeg_path: PathBuf,
@@ -363,6 +381,7 @@ impl std::fmt::Debug for Config {
             .field("access_token_ttl", &self.access_token_ttl)
             .field("stream_ticket_ttl", &self.stream_ticket_ttl)
             .field("refresh_token_ttl", &self.refresh_token_ttl)
+            .field("api_token_ttl", &self.api_token_ttl)
             .field("scan_interval", &self.scan_interval)
             .field("scan_parallelism", &self.scan_parallelism)
             .field("ffmpeg_path", &self.ffmpeg_path)
@@ -411,6 +430,13 @@ impl Config {
             parse_positive_env("WAVEFLOW_ACCESS_TOKEN_TTL_SECS", 15 * 60u64)?;
         let refresh_token_ttl_secs =
             parse_positive_env("WAVEFLOW_REFRESH_TOKEN_TTL_SECS", 30 * 24 * 60 * 60u64)?;
+        // Zero is a value here and not a refusal — "no expiry" is a choice an
+        // operator may make — so it is read like the scan interval rather than
+        // through `parse_positive_env`.
+        let api_token_ttl_secs = std::env::var("WAVEFLOW_API_TOKEN_TTL_SECS")
+            .unwrap_or_else(|_| "31536000".to_owned())
+            .parse::<u64>()
+            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_API_TOKEN_TTL_SECS: {error}"))?;
         let scan_interval_secs = std::env::var("WAVEFLOW_SCAN_INTERVAL_SECS")
             .unwrap_or_else(|_| "21600".to_owned())
             .parse::<u64>()
@@ -619,6 +645,8 @@ impl Config {
             access_token_ttl: Duration::from_secs(access_token_ttl_secs),
             stream_ticket_ttl: Duration::from_secs(stream_ticket_ttl_secs),
             refresh_token_ttl: Duration::from_secs(refresh_token_ttl_secs),
+            api_token_ttl: (api_token_ttl_secs > 0)
+                .then(|| Duration::from_secs(api_token_ttl_secs)),
             scan_interval: (scan_interval_secs > 0)
                 .then(|| Duration::from_secs(scan_interval_secs)),
             scan_parallelism,
@@ -666,6 +694,9 @@ impl Config {
             access_token_ttl: Duration::from_secs(15 * 60),
             stream_ticket_ttl: Duration::from_secs(60 * 60),
             refresh_token_ttl: Duration::from_secs(30 * 24 * 60 * 60),
+            // A year, as production has it: a suite that minted tokens with no
+            // expiry could not tell a bounded one from an unbounded one.
+            api_token_ttl: Some(Duration::from_secs(365 * 24 * 60 * 60)),
             scan_interval: None,
             scan_parallelism: 2,
             ffmpeg_path: PathBuf::from("ffmpeg"),

@@ -203,17 +203,28 @@ impl DomainServices {
     pub async fn create_api_token(
         &self,
         actor_id: Uuid,
+        actor_scopes: &[String],
         username: &str,
         name: &str,
         scopes: &[String],
     ) -> Result<(ApiTokenRecord, String), ServiceError> {
         self.require_admin(actor_id).await?;
+        // **The same bound as the self-service path**, which this did not
+        // have. Nothing exploits that today: reaching this route needs
+        // `Access::Admin`, and the `admin` scope already admits every access
+        // level, so a credential that gets here can already do everything. It
+        // is the asymmetry that is the defect — the day a fourth scope exists,
+        // `admin` stops meaning "everything" and this path would hand on more
+        // than its caller holds, silently, while its twin refused.
+        bound_by_caller(actor_scopes, scopes)?;
         let account = self
             .db
             .account_by_username(username)
             .await?
             .ok_or(ServiceError::NotFound)?;
-        self.issue_token(account.id, name, scopes).await
+        // No expiry: the operator path keeps the contract it has had since
+        // the table existed.
+        self.issue_token(account.id, name, scopes, None).await
     }
 
     /// Issues a token to the account asking. See [`Self::own_api_tokens`].
@@ -234,21 +245,14 @@ impl DomainServices {
         name: &str,
         scopes: &[String],
     ) -> Result<(ApiTokenRecord, String), ServiceError> {
-        if !actor_scopes.is_empty() {
-            let wanted: Vec<String> = scopes.iter().map(|scope| scope.trim().to_owned()).collect();
-            // Refused rather than quietly narrowed to the caller's own set: a
-            // caller that asked for everything and received a subset would
-            // believe it held more than it does, and find out at the first
-            // refusal from a token it minted itself.
-            if wanted.is_empty()
-                || !wanted
-                    .iter()
-                    .all(|scope| actor_scopes.iter().any(|held| held == scope))
-            {
-                return Err(ServiceError::Forbidden);
-            }
-        }
-        self.issue_token(actor_id, name, scopes).await
+        bound_by_caller(actor_scopes, scopes)?;
+        // Bounded in time as well as in scope, and **only here**. See the
+        // field on `Config`: an operator provisioning a service account is a
+        // different act from a person clicking a button in their settings.
+        let expires_at = self
+            .api_token_ttl
+            .map(|ttl| now_ms() + ttl.as_millis() as i64);
+        self.issue_token(actor_id, name, scopes, expires_at).await
     }
 
     async fn issue_token(
@@ -256,6 +260,7 @@ impl DomainServices {
         account_id: Uuid,
         name: &str,
         scopes: &[String],
+        expires_at: Option<i64>,
     ) -> Result<(ApiTokenRecord, String), ServiceError> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 120 {
@@ -280,6 +285,7 @@ impl DomainServices {
                 name,
                 &security::token_hash(&token),
                 &scopes,
+                expires_at,
                 now_ms(),
             )
             .await?;
@@ -565,4 +571,36 @@ impl DomainServices {
             Ok(())
         }
     }
+}
+
+/// A credential may hand on no more than it holds.
+///
+/// An empty scope list means "everything this account has", so a token already
+/// restricted asking for one would walk out carrying the account's whole
+/// authority — an escalation inside a single account, from a credential
+/// somebody narrowed on purpose. The authorization-code flow had the same
+/// hole; `src/api/access.rs` records how it was closed, and this is the same
+/// rule in the same place.
+///
+/// Refused rather than quietly narrowed to the caller's own set: a caller that
+/// asked for everything and received a subset would believe it held more than
+/// it does, and find out at the first refusal from a token it minted itself.
+///
+/// An unrestricted caller may ask for anything, including nothing.
+fn bound_by_caller(actor_scopes: &[String], requested: &[String]) -> Result<(), ServiceError> {
+    if actor_scopes.is_empty() {
+        return Ok(());
+    }
+    let wanted: Vec<String> = requested
+        .iter()
+        .map(|scope| scope.trim().to_owned())
+        .collect();
+    if wanted.is_empty()
+        || !wanted
+            .iter()
+            .all(|scope| actor_scopes.iter().any(|held| held == scope))
+    {
+        return Err(ServiceError::Forbidden);
+    }
+    Ok(())
 }

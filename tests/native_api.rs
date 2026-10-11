@@ -866,7 +866,7 @@ async fn native_bookmarks_and_api_tokens_round_trip() {
     assert!(matches!(
         state
             .services
-            .create_api_token(listener, "token-admin", "stolen", &[])
+            .create_api_token(listener, &[], "token-admin", "stolen", &[])
             .await,
         Err(ServiceError::Forbidden)
     ));

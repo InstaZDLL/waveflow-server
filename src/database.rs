@@ -961,13 +961,18 @@ impl Database {
         name: &str,
         token_hash: &[u8],
         scopes: &[String],
+        expires_at: Option<i64>,
         now_ms: i64,
     ) -> Result<ApiTokenRecord, sqlx::Error> {
         let _writer = self.writer_guard().await;
         let id = Uuid::new_v4();
+        // `expires_at` has been a column, and honoured by the lookup, since
+        // the table existed — and never written. Nothing minted a bounded
+        // token, so every one of them outlived whatever asked for it.
         let row = sqlx::query(
-            "INSERT INTO api_token (id, user_id, name, token_hash, scopes_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
+            "INSERT INTO api_token \
+               (id, user_id, name, token_hash, scopes_json, expires_at, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
              RETURNING id, name, scopes_json, expires_at, created_at, last_used_at, revoked_at",
         )
         .bind(id.to_string())
@@ -975,6 +980,7 @@ impl Database {
         .bind(name.trim())
         .bind(token_hash)
         .bind(encode_scopes(scopes)?)
+        .bind(expires_at)
         .bind(now_ms)
         .fetch_one(&self.pool)
         .await?;

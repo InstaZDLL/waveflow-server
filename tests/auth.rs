@@ -557,6 +557,7 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
             "integration token",
             &security::token_hash(&token),
             &[],
+            None,
             now,
         )
         .await
@@ -957,6 +958,7 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
             "a phone belonging elsewhere",
             &security::token_hash(&security::generate_token("wfapi_")),
             &[],
+            None,
             now,
         )
         .await
@@ -971,6 +973,7 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
             "a narrowed client",
             &security::token_hash(&narrowed),
             &["write".to_owned()],
+            None,
             now,
         )
         .await
@@ -1115,4 +1118,114 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
         .await
         .unwrap();
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// What a self-minted credential cannot outlive, and what the sibling path
+/// may not hand on either.
+///
+/// Both come from a security review of the branch that opened
+/// `/api/v2/api-tokens`, and both are about a door that change created rather
+/// than about the door itself.
+#[tokio::test]
+async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
+    let (_temp, config, state) = test_app().await;
+    let now = now_ms();
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    state
+        .db
+        .create_account("ttl-user", &hash, AccountRole::User, now)
+        .await
+        .unwrap();
+    let boss = state
+        .db
+        .create_account("ttl-admin", &hash, AccountRole::Admin, now)
+        .await
+        .unwrap();
+    // An administrator credential narrowed to exactly the scope that admits
+    // the administrative routes, and nothing wider.
+    let narrow_admin = security::generate_token("wfapi_");
+    state
+        .db
+        .create_api_token(
+            boss,
+            "a narrowed administrator",
+            &security::token_hash(&narrow_admin),
+            &["admin".to_owned()],
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let session = login_token(&router, "ttl-user", &password).await;
+
+    // 1. **A credential an account mints for itself does not outlive the
+    //    policy.** `expires_at` has been a column, and honoured by the
+    //    lookup, since the table existed, and nothing ever wrote it: before
+    //    this, a session taken for the fifteen minutes of its access token
+    //    could register a credential that outlived the theft by as long as
+    //    nobody noticed.
+    let mut request = json_request(
+        "/api/v2/api-tokens",
+        serde_json::json!({ "name": "a bounded client" }),
+    );
+    request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {session}").parse().unwrap(),
+    );
+    let created = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let minted = json_body(created).await;
+    let expires_at = minted["expires_at"]
+        .as_i64()
+        .expect("a self-minted credential carries an expiry");
+    // Read off the configuration rather than written down again, so the
+    // assertion follows the policy instead of pinning a year.
+    let ttl = config
+        .api_token_ttl
+        .expect("the fixture bounds a self-minted credential")
+        .as_millis() as i64;
+    let created_at = minted["created_at"].as_i64().expect("a creation instant");
+    assert!(
+        (expires_at - created_at - ttl).abs() < 5_000,
+        "expiry {expires_at} is not one lifetime after {created_at}"
+    );
+
+    // 2. **And the administrative path is bounded by its caller as well.**
+    //    Nothing exploits its absence today — reaching that route needs the
+    //    `admin` scope, which already admits every access level — but the
+    //    asymmetry was the defect: the day a fourth scope exists, `admin`
+    //    stops meaning everything and this path would have handed on more
+    //    than its caller held, silently, while its twin refused.
+    let mut widening = json_request(
+        "/api/v2/admin/users/ttl-user/tokens",
+        serde_json::json!({ "name": "a wider one" }),
+    );
+    widening.headers_mut().insert(
+        "authorization",
+        format!("Bearer {narrow_admin}").parse().unwrap(),
+    );
+    let refused = router.clone().oneshot(widening).await.unwrap();
+    // 403, like its twin: nothing was looked up, so a 404 would say the
+    // account just named does not exist.
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+    // What it holds, it may still pass on — and the operator path stays
+    // unbounded in time, which is its own contract and not an oversight.
+    let mut equal = json_request(
+        "/api/v2/admin/users/ttl-user/tokens",
+        serde_json::json!({ "name": "an equal one", "scopes": ["admin"] }),
+    );
+    equal.headers_mut().insert(
+        "authorization",
+        format!("Bearer {narrow_admin}").parse().unwrap(),
+    );
+    let allowed = router.oneshot(equal).await.unwrap();
+    assert_eq!(allowed.status(), StatusCode::CREATED);
+    assert!(
+        json_body(allowed).await["expires_at"].is_null(),
+        "the operator path grew an expiry it was never given"
+    );
 }
