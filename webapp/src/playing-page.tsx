@@ -285,6 +285,14 @@ function ImmersiveView({ song }: { song: Song }) {
   useLayoutEffect(() => {
     const dialog = frame.current;
     if (!dialog) return;
+    // **Cleared on the way in, because an effect has to be able to run
+    // twice.** `StrictMode` mounts, cleans up and mounts again on the same
+    // instance, so the ref survives into the second run — and left at `true`
+    // it would swallow a close the person asked for, leaving the view shut and
+    // the address still naming it. In development only, which is exactly why
+    // no test saw it: the end-to-end suite runs the production build, where
+    // the effect runs once.
+    leaving.current = false;
     dialog.showModal();
     return () => {
       leaving.current = true;
@@ -303,6 +311,11 @@ function ImmersiveView({ song }: { song: Song }) {
       className="immersive"
       aria-label={t("playing.immersiveTitle")}
       onClose={() => {
+        // `close()` queues the event rather than firing it, so the close from
+        // that first cleanup can arrive **after** the second `showModal` has
+        // reopened the dialog. Navigating then would shut a view the person is
+        // looking at, on a close that is already spent.
+        if (frame.current?.open) return;
         // **`replace`, or Back reopens what was just closed.** Pushing
         // would leave `/playing → ?view=immersive → /playing` in the
         // history, so the next Back press would land on the immersive entry
