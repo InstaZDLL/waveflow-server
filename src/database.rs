@@ -183,6 +183,20 @@ pub struct SessionRecord {
 }
 
 #[derive(Debug, Clone)]
+/// One API token to write, gathered rather than passed as seven arguments.
+///
+/// `actor_id` is who registered it, which the audit entry records and which
+/// is not always the owner: an administrator provisioning a service account is
+/// the actor, and the account is the subject.
+pub struct NewApiToken<'a> {
+    pub actor_id: Uuid,
+    pub user_id: Uuid,
+    pub name: &'a str,
+    pub token_hash: &'a [u8],
+    pub scopes: &'a [String],
+    pub expires_at: Option<i64>,
+}
+
 pub struct AccessRecord {
     pub user_id: Uuid,
     pub username: String,
@@ -191,6 +205,14 @@ pub struct AccessRecord {
     /// session or an OAuth grant, which carry the account's full authority,
     /// and for a token issued without any.
     pub scopes: Vec<String>,
+    /// When the API token this request arrived on stops working, if it is one
+    /// and if it has a deadline.
+    ///
+    /// `None` for a session, which is a different kind of credential: it is
+    /// short-lived and refreshes, and authorising something longer-lived than
+    /// itself is part of what it is for. `None` for a token issued without an
+    /// expiry too — there is simply nothing to bound by.
+    pub credential_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -840,6 +862,8 @@ impl Database {
                 username: row.try_get("username")?,
                 role: parse_role(row.try_get("role")?)?,
                 scopes: decode_scopes(row.try_get("scopes_json")?)?,
+                // A session, not an API token: see the field.
+                credential_expires_at: None,
             })
         })
         .transpose()
@@ -851,7 +875,8 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<AccessRecord>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT a.id, a.username, a.role, t.scopes_json, t.last_used_at FROM api_token t \
+            "SELECT a.id, a.username, a.role, t.scopes_json, t.last_used_at, \
+                    t.expires_at FROM api_token t \
              JOIN account a ON a.id = t.user_id \
              WHERE t.token_hash = ? AND t.revoked_at IS NULL \
                AND (t.expires_at IS NULL OR t.expires_at > ?) AND a.disabled = 0",
@@ -869,6 +894,7 @@ impl Database {
             username: row.try_get("username")?,
             role: parse_role(row.try_get("role")?)?,
             scopes: decode_scopes(row.try_get("scopes_json")?)?,
+            credential_expires_at: row.try_get("expires_at")?,
         };
         if last_used_at.is_none_or(|last_used| last_used <= now_ms.saturating_sub(60_000)) {
             let _writer = self.writer_guard().await;
@@ -957,17 +983,27 @@ impl Database {
     /// token the account holds to find one whose id was already known.
     pub async fn create_api_token(
         &self,
-        user_id: Uuid,
-        name: &str,
-        token_hash: &[u8],
-        scopes: &[String],
+        token: NewApiToken<'_>,
         now_ms: i64,
     ) -> Result<ApiTokenRecord, sqlx::Error> {
+        let NewApiToken {
+            actor_id,
+            user_id,
+            name,
+            token_hash,
+            scopes,
+            expires_at,
+        } = token;
         let _writer = self.writer_guard().await;
         let id = Uuid::new_v4();
+        // `expires_at` has been a column, and honoured by the lookup, since
+        // the table existed — and never written. Nothing minted a bounded
+        // token, so every one of them outlived whatever asked for it.
+        let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            "INSERT INTO api_token (id, user_id, name, token_hash, scopes_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
+            "INSERT INTO api_token \
+               (id, user_id, name, token_hash, scopes_json, expires_at, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
              RETURNING id, name, scopes_json, expires_at, created_at, last_used_at, revoked_at",
         )
         .bind(id.to_string())
@@ -975,9 +1011,25 @@ impl Database {
         .bind(name.trim())
         .bind(token_hash)
         .bind(encode_scopes(scopes)?)
+        .bind(expires_at)
         .bind(now_ms)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        // In the same transaction as the row it describes, the way the
+        // revocation beside it already is. Revoking a credential left an audit
+        // entry and registering one left none, which is the wrong half to
+        // record: it became an act an account can perform for itself without
+        // an administrator anywhere, so it is exactly the event an operator
+        // would want to find afterwards.
+        insert_audit(
+            &mut tx,
+            Some(actor_id),
+            "api_token.created",
+            Some(id),
+            now_ms,
+        )
+        .await?;
+        tx.commit().await?;
         api_token_from_row(row)
     }
 

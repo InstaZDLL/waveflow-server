@@ -954,6 +954,9 @@ Admin Bearer tokens can manage:
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
 | API tokens | `GET/POST /api/v2/admin/users/{username}/tokens`, `DELETE /api/v2/admin/users/{username}/tokens/{token_id}` |
 
+An account manages **its own** clients without any of this: see
+[its own clients](#its-own-clients) below.
+
 Starting a scan needs more than membership. A scan walks the owner's files and
 takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
 is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
@@ -1029,6 +1032,66 @@ SHA-256 hash is stored, so the secret appears there and never again: the
 listing returns names, scopes and timestamps, and a caller who loses a token
 issues another rather than reading it back.
 
+#### Its own clients
+
+The routes above are administrative, and they are not the only way in. An
+account lists, registers and revokes **its own** tokens at `/api/v2/api-tokens`
+— a plain self-scoped resource like `/api/v2/bookmarks`, needing no
+administrator:
+
+```bash
+curl https://music.example.com/api/v2/api-tokens \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+curl -X POST https://music.example.com/api/v2/api-tokens \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"the kitchen speaker","scopes":[]}'
+
+curl -X DELETE https://music.example.com/api/v2/api-tokens/TOKEN_UUID \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+This is safe because a token is never a promotion: the account's role is
+checked apart from the credential's scopes, so a scope narrows and cannot
+widen. An ordinary account issuing a token that names `admin` gets a token
+that is still refused on every administrative route.
+
+**A credential cannot mint one wider than itself.** An empty `scopes` list
+means "everything this account has", so a token already restricted to
+`write` asking for an empty list is refused with **403** — that would be an
+escalation inside a single account. It may name scopes it holds, and only
+those. An unrestricted caller — a signed-in session, or a token naming no
+scope — may ask for anything.
+
+A token belonging to another account answers **404** on the revoke, not 403:
+naming it must not confirm that it exists.
+
+**A credential minted this way expires.** `WAVEFLOW_API_TOKEN_TTL_SECS`, a year
+by default and `0` for never. The reason is this route: before it, registering
+a client needed the instance administrator, so a session taken for the fifteen
+minutes of its access token could read a library and nothing more. Now it can
+register a credential — and `expires_at` has been a column honoured by the
+lookup since the table existed, and was never written.
+
+**And never later than the credential that asked.** A token expiring tomorrow
+minting one that expires in a year, and that one another, would make the
+deadline decorative after a single hop. So a request arriving on an API token
+gets the earlier of the policy and the caller's own expiry — the scope rule
+applied to time, since a credential hands on no more than it holds in either
+currency.
+
+A **session** carries no such cap, deliberately: it is short-lived and
+refreshes, and authorising something longer-lived than itself is part of what it
+is for. Capping by it would make every client a person registers die in fifteen
+minutes.
+
+The administrative route is deliberately **not** bounded by that setting. An
+operator provisioning a service account is a different act from a person
+clicking a button in their settings: it carries an audit entry, it needs a role
+no stolen session can reach, and a token that quietly stops working in a year is
+an operational surprise an operator did not ask for.
+
 **Scopes are enforced on every route.** A token issued with a non-empty
 `scopes` list is restricted to it, whatever the account behind it may do. Two
 scopes are checked:
@@ -1063,12 +1126,24 @@ cannot be added without choosing what it needs — the compiler asks. This
 matters because the previous release stored scopes, returned them from the API
 and printed them from the CLI while reading them nowhere.
 
-Issuing a token is administrative: an account cannot mint one for itself. A
-token carries the authority of the account it belongs to, so who may create one
-is a question about the instance rather than about the account, and the answer
-is the same from the CLI and from the API. `DELETE` revokes one; the token
-stops authenticating immediately, and revoking it again answers `404`,
-because it is already not working.
+**Minting a token for *another* account is administrative**, and these routes
+are that: naming a username is the administrative act, and the answer is the
+same from the CLI and from the API. An account mints, lists and revokes **its
+own** through `/api/v2/api-tokens` and needs nobody — see
+[its own clients](#its-own-clients) above for why that is safe and what bounds
+it.
+
+This paragraph used to say that an account could not mint one for itself at
+all, on the reasoning that a token carries the authority of the account it
+belongs to and so who may create one is a question about the instance. The
+first half is true and the conclusion did not follow: a token carries that
+authority and never more, because the role is checked apart from the scopes. So
+the question is about the account, and the sentence was keeping a listener from
+seeing which devices read their own library.
+
+`DELETE` revokes one on either path; the token stops authenticating
+immediately, and revoking it again answers `404`, because it is already not
+working.
 
 The `token create` CLI command remains, for bootstrapping an instance that
 has no administrator session yet. Both paths go through the same service.

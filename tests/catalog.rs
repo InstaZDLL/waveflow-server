@@ -2339,7 +2339,7 @@ async fn a_search_narrows_to_one_library_across_all_three_kinds() {
 
     let (_record, secret) = state
         .services
-        .create_api_token(owner, "search-scope", "scoped search", &[])
+        .create_api_token(owner, &[], "search-scope", "scoped search", &[])
         .await
         .unwrap();
     let router = waveflow_server::app(&config, state);

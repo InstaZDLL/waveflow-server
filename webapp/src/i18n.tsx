@@ -49,6 +49,26 @@ const en = {
   "songs.empty": "This library holds no tracks yet.",
   "file.megabytes": "{size} MB",
   "file.kilobytes": "{size} kB",
+  "nav.settings": "Settings",
+  "settings.detail":
+    "Appearance, language, and the clients allowed to read your library.",
+  "settings.appearance": "Appearance",
+  "settings.scrobblingDetail":
+    "Send what you listen to to ListenBrainz, Last.fm or Maloja.",
+  "settings.scrobblingOpen": "Open scrobbling settings",
+  "clients.title": "Registered clients",
+  "clients.detail":
+    "Devices and scripts holding a credential on your library. Revoking one stops it at once.",
+  "clients.name": "What it is for",
+  "clients.register": "Register",
+  "clients.once":
+    "Copy this now. Only its hash is stored, so it is shown once and never again:",
+  "clients.revoke": "Revoke",
+  "clients.none": "No client holds a credential on your library.",
+  "clients.error": "That did not work. Nothing changed.",
+  "clients.registered": "registered {when}",
+  "clients.used": "last used {when}",
+  "clients.unused": "never used",
   "quality.label": "File quality",
   "quality.unknown": "Unknown",
   "quality.low": "Low",
@@ -492,6 +512,27 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "songs.empty": "Cette bibliothèque ne contient encore aucune piste.",
   "file.megabytes": "{size} Mo",
   "file.kilobytes": "{size} ko",
+  "nav.settings": "Réglages",
+  "settings.detail":
+    "Apparence, langue, et les clients autorisés à lire votre bibliothèque.",
+  "settings.appearance": "Apparence",
+  "settings.scrobblingDetail":
+    "Envoyer ce que vous écoutez vers ListenBrainz, Last.fm ou Maloja.",
+  "settings.scrobblingOpen": "Ouvrir les réglages de scrobbling",
+  "clients.title": "Clients enregistrés",
+  "clients.detail":
+    "Appareils et scripts détenant un justificatif sur votre bibliothèque. En révoquer un l’arrête aussitôt.",
+  "clients.name": "À quoi il sert",
+  "clients.register": "Enregistrer",
+  "clients.once":
+    "Copiez-le maintenant. Seule son empreinte est conservée : il est montré une fois et jamais plus :",
+  "clients.revoke": "Révoquer",
+  "clients.none":
+    "Aucun client ne détient de justificatif sur votre bibliothèque.",
+  "clients.error": "Cela n’a pas fonctionné. Rien n’a changé.",
+  "clients.registered": "enregistré le {when}",
+  "clients.used": "dernier usage le {when}",
+  "clients.unused": "jamais utilisé",
   "quality.label": "Qualité du fichier",
   "quality.unknown": "Inconnue",
   "quality.low": "Faible",

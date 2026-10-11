@@ -18,12 +18,7 @@ import {
   forgetOnSessionChange,
   logout,
 } from "./api";
-import {
-  I18nProvider,
-  LanguagePicker,
-  type TranslationKey,
-  useI18n,
-} from "./i18n";
+import { I18nProvider, type TranslationKey, useI18n } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import {
   LibraryPicker,
@@ -54,9 +49,10 @@ import {
   SongsPage,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
-import { PreferencesProvider, ThemePicker } from "./preferences";
+import { PreferencesProvider } from "./preferences";
 import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";
+import { SettingsPage } from "./settings-page";
 import { dismissSplash } from "./splash";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
@@ -76,6 +72,7 @@ const navigation: Array<{
     | "/playlists"
     | "/queue"
     | "/shares"
+    | "/settings"
     | "/settings/scrobbling"
     | "/upload"
     | "/admin";
@@ -108,6 +105,7 @@ const navigation: Array<{
   },
   { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
   { to: "/shares", labelKey: "nav.shares", icon: "shares" },
+  { to: "/settings", labelKey: "nav.settings", icon: "admin" },
   {
     to: "/settings/scrobbling",
     labelKey: "nav.scrobbling",
@@ -333,9 +331,11 @@ function Shell() {
             <Brand />
             <LibraryPicker />
             <Navigation />
+            {/* The theme and the language used to sit here, under thirteen
+                navigation entries. They are settings and not destinations, so
+                they live on the Settings page now — and only there, because a
+                copy left behind would give two ways to ask one question. */}
             <div className="sidebar-footer">
-              <ThemePicker />
-              <LanguagePicker />
               <div className="account-chip">
                 <span aria-hidden="true">
                   {user?.username.slice(0, 1).toUpperCase()}
@@ -366,8 +366,6 @@ function Shell() {
           <header className="mobile-header">
             <Brand />
             <LibraryPicker />
-            <ThemePicker />
-            <LanguagePicker />
           </header>
           <main id="main-content" tabIndex={-1}>
             <ScopedOutlet />
@@ -533,6 +531,12 @@ const sharesRoute = createRoute({
 // The path is the server's, not a preference. `lastfm_callback` redirects
 // here when a journey completes, so spelling it any other way puts the last
 // step of that journey on the not-found page.
+const settingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings",
+  component: SettingsPage,
+});
+
 const scrobblingRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/scrobbling",
@@ -581,6 +585,7 @@ const routeTree = rootRoute.addChildren([
     playlistsRoute,
     queueRoute,
     sharesRoute,
+    settingsRoute,
     scrobblingRoute,
     adminRoute,
     authorizeRoute,

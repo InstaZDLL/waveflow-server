@@ -1046,6 +1046,10 @@ pub struct DomainServices {
     scanner: crate::scanner::ScanManager,
     uploads: crate::config::UploadLimits,
     library_event_retention: crate::config::LibraryEventRetention,
+    /// Bounds a credential an account mints for itself. See the field on
+    /// [`crate::config::Config`] for why the administrative path is not
+    /// bounded by it.
+    api_token_ttl: Option<std::time::Duration>,
     /// One lock per open upload session.
     ///
     /// A fragment is a file write and a row update that have to agree, and the
@@ -1193,6 +1197,7 @@ impl DomainServices {
             scanner,
             uploads: config.uploads,
             library_event_retention: config.library_event_retention,
+            api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,
             canvas_dir: config.canvas_dir.clone(),

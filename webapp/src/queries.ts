@@ -20,6 +20,7 @@ import {
   listLibraries,
   listLibraryMembers,
   listNowPlaying,
+  listOwnApiTokens,
   listPlaylists,
   listRandomSongs,
   listScrobbleDestinations,
@@ -227,6 +228,19 @@ export const apiTokensQuery = (username: string, open: boolean) =>
     // loading on mount meant one request per account every time the admin
     // screen opened — for a list almost nobody opens.
     enabled: open,
+  });
+
+/**
+ * This account's own registered clients.
+ *
+ * Unconditional, unlike `apiTokensQuery`, which is gated on a disclosure
+ * because the administration screen renders one per account. There is exactly
+ * one of these and the page it sits on is about it.
+ */
+export const ownApiTokensQuery = () =>
+  queryOptions({
+    queryKey: ["own-api-tokens"],
+    queryFn: listOwnApiTokens,
   });
 
 export const libraryMembersQuery = (libraryId: string, open: boolean) =>
