@@ -191,6 +191,14 @@ pub struct AccessRecord {
     /// session or an OAuth grant, which carry the account's full authority,
     /// and for a token issued without any.
     pub scopes: Vec<String>,
+    /// When the API token this request arrived on stops working, if it is one
+    /// and if it has a deadline.
+    ///
+    /// `None` for a session, which is a different kind of credential: it is
+    /// short-lived and refreshes, and authorising something longer-lived than
+    /// itself is part of what it is for. `None` for a token issued without an
+    /// expiry too — there is simply nothing to bound by.
+    pub credential_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -840,6 +848,8 @@ impl Database {
                 username: row.try_get("username")?,
                 role: parse_role(row.try_get("role")?)?,
                 scopes: decode_scopes(row.try_get("scopes_json")?)?,
+                // A session, not an API token: see the field.
+                credential_expires_at: None,
             })
         })
         .transpose()
@@ -851,7 +861,8 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<AccessRecord>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT a.id, a.username, a.role, t.scopes_json, t.last_used_at FROM api_token t \
+            "SELECT a.id, a.username, a.role, t.scopes_json, t.last_used_at, \
+                    t.expires_at FROM api_token t \
              JOIN account a ON a.id = t.user_id \
              WHERE t.token_hash = ? AND t.revoked_at IS NULL \
                AND (t.expires_at IS NULL OR t.expires_at > ?) AND a.disabled = 0",
@@ -869,6 +880,7 @@ impl Database {
             username: row.try_get("username")?,
             role: parse_role(row.try_get("role")?)?,
             scopes: decode_scopes(row.try_get("scopes_json")?)?,
+            credential_expires_at: row.try_get("expires_at")?,
         };
         if last_used_at.is_none_or(|last_used| last_used <= now_ms.saturating_sub(60_000)) {
             let _writer = self.writer_guard().await;

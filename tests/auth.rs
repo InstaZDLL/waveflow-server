@@ -1222,10 +1222,58 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
         "authorization",
         format!("Bearer {narrow_admin}").parse().unwrap(),
     );
-    let allowed = router.oneshot(equal).await.unwrap();
+    let allowed = router.clone().oneshot(equal).await.unwrap();
     assert_eq!(allowed.status(), StatusCode::CREATED);
     assert!(
         json_body(allowed).await["expires_at"].is_null(),
         "the operator path grew an expiry it was never given"
+    );
+    // 3. **And it cannot outlive the credential that asked for it.** A token
+    //    expiring tomorrow could mint one expiring in a year, and that one
+    //    another, so the deadline above was defeatable by the very credential
+    //    it bounded — decorative after a single hop.
+    let tomorrow = now + 24 * 60 * 60 * 1000;
+    let short_lived = security::generate_token("wfapi_");
+    state
+        .db
+        .create_api_token(
+            state
+                .db
+                .account_by_username("ttl-user")
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            "a client with a day left",
+            &security::token_hash(&short_lived),
+            &[],
+            Some(tomorrow),
+            now,
+        )
+        .await
+        .unwrap();
+    let mut renewing = json_request(
+        "/api/v2/api-tokens",
+        serde_json::json!({ "name": "a renewal attempt" }),
+    );
+    renewing.headers_mut().insert(
+        "authorization",
+        format!("Bearer {short_lived}").parse().unwrap(),
+    );
+    let renewed = router.clone().oneshot(renewing).await.unwrap();
+    assert_eq!(renewed.status(), StatusCode::CREATED);
+    let inherited = json_body(renewed).await["expires_at"]
+        .as_i64()
+        .expect("a minted credential carries an expiry");
+    assert_eq!(
+        inherited, tomorrow,
+        "the minted credential outlived the one that asked for it"
+    );
+    // The session, which has no deadline of this kind, still gets the policy:
+    // capping by a session would make every client a person registers die in
+    // fifteen minutes, which is not what a session is for.
+    assert!(
+        expires_at > tomorrow,
+        "a session should hand on the policy lifetime, not a day"
     );
 }

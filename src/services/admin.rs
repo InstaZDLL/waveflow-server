@@ -242,6 +242,7 @@ impl DomainServices {
         &self,
         actor_id: Uuid,
         actor_scopes: &[String],
+        actor_expires_at: Option<i64>,
         name: &str,
         scopes: &[String],
     ) -> Result<(ApiTokenRecord, String), ServiceError> {
@@ -255,9 +256,24 @@ impl DomainServices {
         // fails closed but reads as a bug — or wrapped somewhere plausible.
         // Saturating instead: an unrepresentable lifetime becomes the longest
         // one this column can hold, which is what asking for forever means.
-        let expires_at = self
+        let from_policy = self
             .api_token_ttl
             .map(|ttl| now_ms().saturating_add(i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX)));
+        // **And never later than the credential that asked.** A token
+        // expiring tomorrow could mint one expiring in a year, and that one
+        // another: the deadline was defeatable by the very credential it
+        // bounded, which made it decorative after a single hop. This is the
+        // scope rule applied to time — a credential hands on no more than it
+        // holds, in either currency.
+        //
+        // A session carries no deadline here, deliberately: it is short-lived
+        // and refreshes, and authorising something longer-lived than itself is
+        // part of what it is for. See `AuthUser::credential_expires_at`.
+        let expires_at = match (from_policy, actor_expires_at) {
+            (Some(policy), Some(caller)) => Some(policy.min(caller)),
+            (Some(only), None) | (None, Some(only)) => Some(only),
+            (None, None) => None,
+        };
         self.issue_token(actor_id, name, scopes, expires_at).await
     }
 

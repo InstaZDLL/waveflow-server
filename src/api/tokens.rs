@@ -132,7 +132,13 @@ pub async fn create_own_api_token(
     let user = authenticated(&state, &headers, Access::Write).await?;
     let (token, secret) = state
         .services
-        .create_own_api_token(user.id, &user.scopes, &request.name, &request.scopes)
+        .create_own_api_token(
+            user.id,
+            &user.scopes,
+            user.credential_expires_at,
+            &request.name,
+            &request.scopes,
+        )
         .await
         // **403 here, against the blanket mapping that sends `Forbidden` to
         // 404.** That blur exists so a surface never confirms the existence of

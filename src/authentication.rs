@@ -42,6 +42,24 @@ pub struct AuthUser {
     /// scopes on it is that they hold.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
+    /// When the credential this request arrived on stops working, if it is an
+    /// API token with a deadline.
+    ///
+    /// It exists so that **a credential cannot hand on a longer life than it
+    /// has**. A token expiring tomorrow could mint one expiring in a year, and
+    /// that one another, so the expiry a self-minted token carries was
+    /// defeatable by the very credential it bounded — the deadline was
+    /// decorative after one hop.
+    ///
+    /// `None` for a session, deliberately. A session is short-lived and
+    /// refreshes, and authorising something longer-lived than itself is part
+    /// of what it is for; capping by it would make every token a person
+    /// registers die in fifteen minutes.
+    ///
+    /// Never serialised: it describes the credential, not the account, and the
+    /// shape this type has on the wire is the account.
+    #[serde(skip)]
+    pub credential_expires_at: Option<i64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -211,6 +229,9 @@ impl AuthService {
                 // Rotation must not widen: the refreshed session answers to
                 // exactly the scopes the original was issued under.
                 scopes: session.scopes,
+                // A session, so nothing to bound a minted token by. See the
+                // field.
+                credential_expires_at: None,
             },
             device_id: session.device_id,
         })
@@ -249,6 +270,7 @@ impl AuthService {
             username: account.username,
             role: account.role,
             scopes: account.scopes,
+            credential_expires_at: account.credential_expires_at,
         })
     }
 
@@ -294,6 +316,8 @@ impl AuthService {
                 // Whatever the credential that issued it carried — empty for a
                 // password login, narrowed for a grant made by a scoped token.
                 scopes: scopes.to_vec(),
+                // A session: see the field.
+                credential_expires_at: None,
             },
             device_id,
         })
