@@ -2618,6 +2618,14 @@ test("ships the first-load screen in the document, drawn from the one logo", asy
   // a click at zero opacity.
   await expect(page.locator("#splash")).toHaveCount(0);
   await expect(page.locator(".page-frame")).toBeVisible();
+
+  // And on an address no route claims. This is the reason the dismissal sits
+  // in the root route component rather than in the sign-in and shell
+  // components: `notFoundComponent` belongs to the root and renders inside
+  // neither of those, so a first visit to an unknown address would have kept
+  // the mark until the ten-second ceiling.
+  await page.goto("/no-such-screen");
+  await expect(page.locator("#splash")).toHaveCount(0);
 });
 
 /**

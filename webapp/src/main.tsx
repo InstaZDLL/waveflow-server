@@ -336,11 +336,22 @@ function FadingOutlet() {
  * time this fires the router has put either the sign-in page or the shell in
  * the document — which is what the splash was covering.
  *
- * **Here rather than on the scope being ready**, which would hold the mark
- * over the one round trip the shell still waits on. That wait has `Waiting`
- * already, with `role="status"`, and it is usually finished inside the 300ms
- * floor anyway. Covering it with the mark instead would mean the splash
- * outliving a failure it cannot describe.
+ * **Inside the router's root component**, so the commit this effect belongs
+ * to is the one that put a screen in the document. As a sibling of
+ * `RouterProvider` it fired on the first commit of the tree, which the
+ * router need not have filled yet — the 300ms floor hid that, and a floor
+ * hiding an ordering is weaker than an ordering that is right.
+ *
+ * Not in `loginRoute` and `authedRoute` instead, which was the other
+ * suggestion: `notFoundComponent` belongs to the root and renders inside
+ * neither, so an unknown address on a first visit would have kept the mark
+ * until the ten-second ceiling.
+ *
+ * **Not on the scope being ready** either, which would hold the mark over the
+ * one round trip the shell still waits on. That wait has `Waiting` already,
+ * with `role="status"`, and is usually finished inside the floor. Covering
+ * it with the mark would mean the screen outliving a failure it cannot
+ * describe.
  */
 function SplashGate() {
   useEffect(() => {
@@ -424,8 +435,21 @@ function Shell() {
   );
 }
 
+/**
+ * Everything every route sits inside: the outlet, and the one effect that
+ * takes the first-load screen away.
+ */
+function RootFrame() {
+  return (
+    <>
+      <SplashGate />
+      <Outlet />
+    </>
+  );
+}
+
 const rootRoute = createRootRoute({
-  component: Outlet,
+  component: RootFrame,
   notFoundComponent: NotFoundPage,
 });
 
@@ -647,7 +671,6 @@ createRoot(container).render(
     <QueryClientProvider client={queryClient}>
       <PreferencesProvider>
         <I18nProvider>
-          <SplashGate />
           <RouterProvider router={router} />
         </I18nProvider>
       </PreferencesProvider>
