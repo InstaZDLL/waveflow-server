@@ -1,5 +1,5 @@
 import type { Song } from "./api";
-import { type TranslationKey, useI18n } from "./i18n";
+import { type Locale, type TranslationKey, useI18n } from "./i18n";
 
 /**
  * What a file is, and a meter that says it at a glance.
@@ -91,17 +91,50 @@ export function containerName(song: Song): string | null {
   return text ? text.trim().toUpperCase() : null;
 }
 
-/** A sample rate in kHz, trimmed: 44.1, and 48 rather than 48.0. */
-function kilohertz(rate: number): string {
-  const value = rate / 1000;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+/**
+ * A measurement, in the reader's own notation.
+ *
+ * `Intl` rather than `toFixed`, which writes a full stop whatever the
+ * language: a French reader was being shown `44.1 kHz` and `26.7 MB`, where
+ * the separator is a comma and the unit is `Mo`. The value is untouched —
+ * this changes how a number is written and never what it says.
+ *
+ * `maximumFractionDigits` and no minimum, so 48 kHz stays 48 rather than
+ * becoming 48,0.
+ */
+export function formatNumber(
+  value: number,
+  locale: Locale,
+  fractionDigits: number,
+): string {
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
 }
 
-/** Bytes as the unit a person reads: MB above a megabyte, kB below. */
-function fileSize(bytes: number): string {
+/** A sample rate in kHz: 44,1 in French, 44.1 in English, 48 in both. */
+export function kilohertz(rate: number, locale: Locale): string {
+  return formatNumber(rate / 1000, locale, 1);
+}
+
+/**
+ * Bytes as the unit a person reads — MB above a megabyte, kB below — with the
+ * unit itself left to the translation, because it is `Mo` and `ko` in
+ * French and not a symbol that travels.
+ *
+ * Returns the key and the number rather than the finished string, so the
+ * caller holds the only `t` and this stays testable without one.
+ */
+export function fileSize(
+  bytes: number,
+  locale: Locale,
+): { key: TranslationKey; size: string } {
   return bytes >= 1024 * 1024
-    ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-    : `${Math.round(bytes / 1024)} kB`;
+    ? {
+        key: "file.megabytes",
+        size: formatNumber(bytes / (1024 * 1024), locale, 1),
+      }
+    : { key: "file.kilobytes", size: formatNumber(bytes / 1024, locale, 0) };
 }
 
 /**
@@ -113,7 +146,7 @@ function fileSize(bytes: number): string {
  * `suffix` is never null, so the line always starts with something true.
  */
 export function FileQuality({ song }: { song: Song }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const band = qualityBand(song);
   const steps = qualitySteps(band);
   // Same `typeof` reading as the band, and for the same reason: a key the
@@ -126,13 +159,14 @@ export function FileQuality({ song }: { song: Song }) {
   const depth = measured(song.bit_depth);
   const channels = measured(song.channels);
   const size = measured(song.size);
+  const bytes = size === null ? null : fileSize(size, locale);
   const facts = [
     containerName(song),
     bitrate === null ? null : `${bitrate} kbps`,
-    rate === null ? null : `${kilohertz(rate)} kHz`,
+    rate === null ? null : `${kilohertz(rate, locale)} kHz`,
     depth === null ? null : `${depth} bit`,
     channels === null ? null : t("file.channels", { count: channels }),
-    size === null ? null : fileSize(size),
+    bytes === null ? null : t(bytes.key, { size: bytes.size }),
   ].filter((fact): fact is string => fact !== null);
 
   return (

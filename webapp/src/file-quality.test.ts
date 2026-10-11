@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Song } from "./api";
 import {
   containerName,
+  fileSize,
+  kilohertz,
   QUALITY_STEPS,
   type QualityBand,
   qualityBand,
@@ -138,5 +140,41 @@ describe("the container name", () => {
     nameless.codec = null;
     delete nameless.suffix;
     expect(containerName(nameless as unknown as Song)).toBeNull();
+  });
+});
+
+describe("a measurement in the reader's notation", () => {
+  it("writes the separator the language uses", () => {
+    // The defect: `toFixed` writes a full stop whatever the language, so a
+    // French reader was shown 44.1 kHz. The value is the same number either
+    // way — this is about how it is written.
+    expect(kilohertz(44_100, "en")).toBe("44.1");
+    expect(kilohertz(44_100, "fr")).toBe("44,1");
+  });
+
+  it("leaves a whole number whole", () => {
+    // 48 kHz, not 48.0: a trailing zero claims a precision the rate does not
+    // have.
+    expect(kilohertz(48_000, "en")).toBe("48");
+    expect(kilohertz(48_000, "fr")).toBe("48");
+  });
+
+  it("names the byte unit in the language, not in a symbol", () => {
+    // `Mo` and `ko` in French, which is why the unit is a translation and
+    // not a string appended here.
+    expect(fileSize(27_983_872, "en")).toEqual({
+      key: "file.megabytes",
+      size: "26.7",
+    });
+    expect(fileSize(27_983_872, "fr")).toEqual({
+      key: "file.megabytes",
+      size: "26,7",
+    });
+    // Below a megabyte it steps down, and a kilobyte count has no fraction
+    // worth showing.
+    expect(fileSize(400_000, "en")).toEqual({
+      key: "file.kilobytes",
+      size: "391",
+    });
   });
 });
