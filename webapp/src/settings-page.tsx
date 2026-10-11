@@ -175,6 +175,13 @@ function SubsonicPassword() {
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [failed, setFailed] = useState<"error" | "short" | null>(null);
+  // **Asked twice, where revoking a client is not.** Revoking one client of
+  // several takes away something the account can register again by itself.
+  // This takes away the only Subsonic credential it has, every Subsonic client
+  // of the account stops at once, and it cannot be put back without an
+  // operator — creating one is not a verb this panel has, deliberately. An
+  // action the person cannot undo is worth a second press.
+  const [arming, setArming] = useState(false);
   const { data: value, error } = useQuery(ownSubsonicCredentialQuery());
 
   async function rotate(event: FormEvent) {
@@ -190,6 +197,7 @@ function SubsonicPassword() {
       return;
     }
     setFailed(null);
+    setArming(false);
     try {
       const rotated = await rotateOwnSubsonicCredential(password);
       setPassword("");
@@ -203,6 +211,7 @@ function SubsonicPassword() {
 
   async function switchOff() {
     setFailed(null);
+    setArming(false);
     try {
       await revokeOwnSubsonicCredential();
       setApiKey(null);
@@ -263,13 +272,28 @@ function SubsonicPassword() {
           <p className="muted">
             <small>{t("subsonic.gone")}</small>
           </p>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => void switchOff()}
-          >
-            {t("subsonic.revoke")}
-          </button>
+          {arming ? (
+            <div className="inline-form">
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void switchOff()}
+              >
+                {t("subsonic.confirm")}
+              </button>
+              <button type="button" onClick={() => setArming(false)}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => setArming(true)}
+            >
+              {t("subsonic.revoke")}
+            </button>
+          )}
         </>
       )}
       {failed ? (

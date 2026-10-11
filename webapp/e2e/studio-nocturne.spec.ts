@@ -2939,10 +2939,30 @@ test("changes the Subsonic password, then switches it off", async ({
   await expect(page.getByText("wfsk_shown_once_only")).toBeVisible();
   await expect(subsonic.getByText(/last changed/)).toBeVisible();
 
+  // **Asked twice.** The account cannot put this credential back without an
+  // operator, so the first press only arms the second. `exact` because
+  // "Yes, switch it off" contains "Switch it off", and the default substring
+  // match would make every locator here ambiguous.
+  const off = subsonic.getByRole("button", {
+    name: "Switch it off",
+    exact: true,
+  });
+  const reallyOff = subsonic.getByRole("button", {
+    name: "Yes, switch it off",
+  });
+  await off.click();
+  await expect(off).toHaveCount(0);
+  // Backing out leaves the credential exactly as it was.
+  await subsonic.getByRole("button", { name: "Cancel" }).click();
+  await expect(off).toBeVisible();
+  await expect(reallyOff).toHaveCount(0);
+  await expect(subsonic.getByText(/^set /)).toBeVisible();
+
   // Switching it off leaves the panel saying the account holds none — and
   // offering nothing, because creating one opens the facade to an account and
   // that is the operator's decision.
-  await subsonic.getByRole("button", { name: "Switch it off" }).click();
+  await off.click();
+  await reallyOff.click();
   await expect(
     subsonic.getByText(
       "You have no Subsonic password, so no Subsonic client can read your library. Ask the administrator for one.",

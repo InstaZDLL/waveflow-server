@@ -154,7 +154,6 @@ impl DomainServices {
         }
     }
 
-    /// The API tokens issued to one account, as an administrator asks.
     /// Whether the asking account holds a Subsonic credential, and since when.
     ///
     /// Self-scoped, where the two above are administrative, and never carrying
@@ -246,6 +245,7 @@ impl DomainServices {
         }
     }
 
+    /// The API tokens issued to one account, as an administrator asks.
     pub async fn api_tokens(
         &self,
         actor_id: Uuid,

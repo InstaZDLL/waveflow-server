@@ -77,6 +77,7 @@ const en = {
   "subsonic.password": "New password",
   "subsonic.rotate": "Change it",
   "subsonic.revoke": "Switch it off",
+  "subsonic.confirm": "Yes, switch it off",
   "subsonic.once":
     "Copy this API key now. Only its hash is stored, so it is shown once and never again:",
   "subsonic.gone":
@@ -557,6 +558,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "subsonic.password": "Nouveau mot de passe",
   "subsonic.rotate": "Le changer",
   "subsonic.revoke": "Le désactiver",
+  "subsonic.confirm": "Oui, le désactiver",
   "subsonic.once":
     "Copiez cette clé d’API maintenant. Seule son empreinte est conservée : elle est montrée une fois et jamais plus :",
   "subsonic.gone":

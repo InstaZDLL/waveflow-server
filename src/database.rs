@@ -1363,16 +1363,26 @@ impl Database {
             .bind(user_id.to_string())
             .execute(&mut *tx)
             .await?;
-        insert_audit(
-            &mut tx,
-            Some(actor_id),
-            "subsonic.credential_revoked",
-            Some(user_id),
-            now_ms,
-        )
-        .await?;
+        let revoked = result.rows_affected() == 1;
+        // Only when something was removed. The entry was unconditional, and
+        // the service answers 404 after writing one, so the trail recorded
+        // revocations that had not happened. That was cosmetic while an
+        // administrator was the only caller; the self-scoped route makes it
+        // reachable by any account, in a loop, which turns a wrong line in a
+        // history into a way to fill one. `rotate_subsonic_credential` guards
+        // the same way, for the same reason.
+        if revoked {
+            insert_audit(
+                &mut tx,
+                Some(actor_id),
+                "subsonic.credential_revoked",
+                Some(user_id),
+                now_ms,
+            )
+            .await?;
+        }
         tx.commit().await?;
-        Ok(result.rows_affected() == 1)
+        Ok(revoked)
     }
 
     /// Whether this account holds a Subsonic credential, and since when.

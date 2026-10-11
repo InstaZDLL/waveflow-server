@@ -1553,6 +1553,36 @@ async fn an_account_rotates_or_switches_off_its_own_subsonic_credential() {
         .is_none());
     assert_eq!(read(bearer(&session)).await.trim(), "null");
 
+    // A revocation that removed nothing leaves no trace saying it did. The
+    // audit entry used to be written before the result was looked at, so the
+    // 404 below came with a `subsonic.credential_revoked` line in the
+    // history. That was cosmetic while an administrator was the only caller;
+    // this route makes it reachable by any account, in a loop, which turns a
+    // wrong line in a history into a way to fill one.
+    let revocations = || async {
+        sqlx::query(
+            "SELECT COUNT(*) AS n FROM audit_event WHERE kind = 'subsonic.credential_revoked'",
+        )
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap()
+        .get::<i64, _>("n")
+    };
+    let recorded = revocations().await;
+    let again = Request::delete("/api/v2/subsonic-credential")
+        .header("authorization", bearer(&session))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(again).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        revocations().await,
+        recorded,
+        "a revocation that removed nothing was recorded as one"
+    );
+
     // 7. **And the rotation cannot bring one back.** This is the whole design
     //    rather than a detail: an account holding no credential cannot reach
     //    the facade at all, so creating one opens a door instead of narrowing
