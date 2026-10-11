@@ -10,7 +10,7 @@ import {
 } from "./api";
 import { CanvasPanel } from "./canvas-panel";
 import { type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader } from "./pages";
+import { Loading, PageHeader } from "./page-shell";
 import { trackEditQuery } from "./queries";
 import {
   buildCorrectionPatch,

@@ -145,6 +145,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::list_artists,
         api::get_artist,
         api::search_catalog,
+        api::list_songs,
         api::list_random_songs,
         api::list_songs_by_genre,
         api::list_playlists,

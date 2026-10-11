@@ -2002,9 +2002,10 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
 });
 
 /**
- * The mobile bar holds six slots and the client has fourteen screens. Until
+ * The mobile bar holds six slots and the client has fifteen screens. Until
  * 2026-09-15 the other eight were reachable by typing their address and by
  * nothing else: the sidebar that carries them is `display: none` below 820px.
+ * The ninth is Songs, added with the listing itself.
  * Seven of the eight had been in that state since lot A, and no test saw it —
  * every mobile case here navigates by `page.goto`.
  */
@@ -2046,10 +2047,11 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The eight the bar cannot hold — including the two this account is
+  // The nine the bar cannot hold — including the two this account is
   // entitled to as an administrator of a library that takes files.
   for (const name of [
     "Artists",
+    "Songs",
     "Genres",
     "Random",
     "Recently played",
@@ -2062,7 +2064,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(8);
+  await expect(sheet.getByRole("link")).toHaveCount(9);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

@@ -44,6 +44,127 @@ impl DomainServices {
         .collect::<Result<Vec<_>, sqlx::Error>>()?)
     }
 
+    /// The catalogue's songs, ordered and paged in SQL.
+    ///
+    /// The listing that did not exist. #179 reported `GET /api/v2/songs`
+    /// requiring a `genre` and so listing nothing; it was closed by renaming
+    /// the route to `/songs/by-genre`, which made the contract honest without
+    /// making the listing exist. A client wanting "my tracks, sorted" had
+    /// `/libraries/{id}/tracks`, which pages and searches but takes one
+    /// library at a time, answers the thinner `TrackRecord`, and does not
+    /// sort at all.
+    ///
+    /// Ordering happens outside [`song_scope!`] so it can name the projection's
+    /// own output — `play_count`, `last_played_at`, `starred_at`,
+    /// `user_rating` — rather than repeat four correlated subqueries. Every
+    /// ordering ends on `id`, so paging through an offset cannot show one row
+    /// twice and skip another when two rows tie.
+    pub async fn list_songs(
+        &self,
+        user_id: Uuid,
+        query: &SongListQuery,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        let folders = folder_filter(&query.library_ids);
+        // `byGenre` with no genre is a malformed request, not an empty one:
+        // answering with the whole catalogue would drop the filter in silence.
+        // Canonical form, so "Hip-Hop" and "hip hop" are one genre — the key
+        // `list_genres` groups by.
+        let genre = match query.order {
+            SongOrder::ByGenre => Some(waveflow_core::scanner::canonical_name(
+                query.genre.as_deref().ok_or(ServiceError::Invalid)?,
+            )),
+            _ => None,
+        };
+        let from = query.from_year.unwrap_or(i64::MIN);
+        let to = query.to_year.unwrap_or(i64::MAX);
+        let sql = match (query.order, from <= to) {
+            (SongOrder::AlphabeticalByName, _) => concat!(
+                song_scope!(),
+                " ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::AlphabeticalByArtist, _) => concat!(
+                song_scope!(),
+                " ORDER BY artist_display COLLATE NOCASE NULLS LAST, \
+                  title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            // Sleeve order once inside an album: a disc before its tracks, and
+            // an untagged one after everything that says where it belongs.
+            (SongOrder::AlphabeticalByAlbum, _) => concat!(
+                song_scope!(),
+                " ORDER BY album_title COLLATE NOCASE NULLS LAST, \
+                  disc_number NULLS LAST, track_number NULLS LAST, \
+                  title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::Newest, _) => concat!(
+                song_scope!(),
+                " ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
+            ),
+            // These four filter rather than sort a null to the end: a listing
+            // of what an account rated, played or starred has no business
+            // carrying everything it has not.
+            (SongOrder::Highest, _) => concat!(
+                song_scope!(),
+                " WHERE user_rating > 0 \
+                  ORDER BY user_rating DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::Frequent, _) => concat!(
+                song_scope!(),
+                " WHERE play_count > 0 \
+                  ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::Recent, _) => concat!(
+                song_scope!(),
+                " WHERE last_played_at IS NOT NULL \
+                  ORDER BY last_played_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::Starred, _) => concat!(
+                song_scope!(),
+                " WHERE starred_at IS NOT NULL \
+                  ORDER BY starred_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::Random, _) => {
+                concat!(song_scope!(), " ORDER BY RANDOM() LIMIT ? OFFSET ?")
+            }
+            (SongOrder::ByYear, true) => concat!(
+                song_scope!(),
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::ByYear, false) => concat!(
+                song_scope!(),
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+            (SongOrder::ByGenre, _) => concat!(
+                song_scope!(),
+                " WHERE EXISTS (SELECT 1 FROM track_genre tg \
+                  JOIN genre g ON g.id=tg.genre_id \
+                  WHERE tg.track_id=s.id AND g.canonical_name=?) \
+                  ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+            ),
+        };
+        let mut statement = sqlx::query(sql)
+            .bind(user_id.to_string())
+            .bind(folders.as_deref())
+            .bind(folders.as_deref());
+        if let Some(genre) = genre {
+            statement = statement.bind(genre);
+        }
+        if query.order == SongOrder::ByYear {
+            statement = statement.bind(from.min(to)).bind(from.max(to));
+        }
+        let mut songs = statement
+            .bind(query.page.limit)
+            .bind(query.page.offset)
+            .fetch_all(self.db.pool())
+            .await?
+            .into_iter()
+            .map(song_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
+        Ok(songs)
+    }
+
     /// Songs of one genre, ordered and paged in SQL.
     ///
     /// Matching is on `genre.canonical_name`, the same key `list_genres` groups

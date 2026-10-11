@@ -543,6 +543,62 @@ function scoped(
   return libraryId ? { ...extra, library_id: libraryId } : extra;
 }
 
+/**
+ * How a song listing is ordered.
+ *
+ * A subset of what the server accepts, as `AlbumSort` is: `highest`,
+ * `random` and `byGenre` exist on the wire and have their own screens here,
+ * so offering them in this menu would give two ways to ask one question.
+ *
+ * `alphabeticalByAlbum` is the one an album listing has no use for: sleeve
+ * order across the catalogue, album then disc then track.
+ */
+export type SongSort =
+  | "alphabeticalByName"
+  | "alphabeticalByArtist"
+  | "alphabeticalByAlbum"
+  | "newest"
+  | "recent"
+  | "frequent"
+  | "starred"
+  | "byYear";
+
+/**
+ * How many songs one page of the listing carries.
+ *
+ * Exported because the page that reads it has to know when a short answer
+ * means the end — a page of fewer than this is the last one.
+ */
+export const SONG_PAGE = 200;
+
+/**
+ * One page of the catalogue's songs, in the requested order.
+ *
+ * **Paged, where `listAlbums` and `listArtists` use `collect` and fetch
+ * everything.** That difference is the whole reason this is not one more
+ * one-liner beside them: a `Song` carries 44 fields, and a library has an
+ * order of magnitude more tracks than albums. Collecting a twenty-thousand
+ * track catalogue would pull tens of megabytes through a phone to draw the
+ * first screenful, and would make the server's own pagination decorative.
+ */
+export const listSongs = (
+  sort: SongSort,
+  libraryId: string | undefined,
+  offset: number,
+  limit = SONG_PAGE,
+  signal?: AbortSignal,
+) =>
+  call<Song[]>(
+    `/api/v2/songs?${new URLSearchParams(
+      scoped(libraryId, {
+        sort,
+        offset: String(offset),
+        limit: String(limit),
+      }),
+    )}`,
+    { signal },
+  );
+
 /** Albums in the requested order, scoped to `libraryId` when one is given. */
 export const listAlbums = (sort?: AlbumSort, libraryId?: string) =>
   collect<Album>("/api/v2/albums", scoped(libraryId, sort ? { sort } : {}));
@@ -553,10 +609,25 @@ export const listArtists = (libraryId?: string) =>
   collect<Artist>("/api/v2/artists", scoped(libraryId));
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
-/** Search, scoped to `libraryId` when one is given. */
-export const search = (query: string, libraryId?: string) =>
+/**
+ * Search, scoped to `libraryId` when one is given.
+ *
+ * Takes a `signal` because the search box asks on every keystroke now. `call`
+ * already spreads its `init` into `fetch`, so this needed no plumbing — the
+ * parameter only makes the abandonment sayable from a query function.
+ *
+ * It saves the server work rather than protecting the screen: a stale answer
+ * could not be shown anyway, because every needle is its own cache key and
+ * what the page renders is the entry for the needle it is on.
+ */
+export const search = (
+  query: string,
+  libraryId?: string,
+  signal?: AbortSignal,
+) =>
   call<SearchResult>(
     `/api/v2/search?${new URLSearchParams(scoped(libraryId, { q: query }))}`,
+    { signal },
   );
 export const getTrack = (id: string) => call<Song>(`/api/v2/tracks/${id}`);
 

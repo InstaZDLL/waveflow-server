@@ -1,13 +1,10 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
 import {
-  type FormEvent,
-  Fragment,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
 import {
   type Album,
@@ -36,6 +33,7 @@ import {
   type ScanJob,
   type Share,
   type Song,
+  type SongSort,
   safeInternalPath,
   setBookmark,
   setFavorite,
@@ -53,6 +51,7 @@ import { CanvasStage } from "./canvas";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
+import { Loading, PageHeader, useReload, Waiting } from "./page-shell";
 import { usePlayer, usePlayerProgress } from "./player";
 import {
   administrationQuery,
@@ -73,90 +72,18 @@ import {
   randomSongsQuery,
   searchQuery,
   sharesQuery,
+  songsQuery,
 } from "./queries";
 
-const SKELETON_KEYS = [
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-];
-
 /**
- * Ask again for what a mutation has just made wrong.
+ * How long the typing has to settle before the search is asked.
  *
- * Every screen below used to hold a `revision` counter and put it in a
- * dependency list, so that bumping it re-ran the load. That worked, and it
- * re-ran exactly one screen: a playlist created here and a playlist listed
- * elsewhere were two loads of the same thing with no idea of each other.
- * Invalidating by key reaches every reader of that answer, which is what
- * "it changed" actually means.
+ * A quarter of a second: long enough that a word typed at speed asks once,
+ * short enough that the answer feels like a consequence of the typing rather
+ * than of stopping. The submit button stays for keyboard submission, and it
+ * does not wait.
  */
-export function useReload(queryKey: readonly unknown[]) {
-  const client = useQueryClient();
-  return () => {
-    void client.invalidateQueries({ queryKey });
-  };
-}
-
-/**
- * A wait with nothing shaped to promise. The skeleton below stands in for a
- * grid of covers, which would be a lie on a page that has none.
- */
-export function Waiting() {
-  const { t } = useI18n();
-  return (
-    <p className="muted" role="status" aria-busy="true">
-      {t("common.loading")}
-    </p>
-  );
-}
-
-/**
- * Takes whatever a failed load threw.
- *
- * `unknown` rather than `string`, so a caller hands over what it was given
- * instead of unwrapping it first. A query rejects with an `Error`; the hook
- * this replaced narrowed to a message before the screen ever saw it, and every
- * call site would otherwise have had to repeat that narrowing.
- */
-export function Loading({ error }: { error: unknown }) {
-  const { t } = useI18n();
-  if (error) {
-    const detail =
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : null;
-    return (
-      <div className="error-state" role="alert">
-        <strong>{t("common.loadError")}</strong>
-        <p>{detail}</p>
-      </div>
-    );
-  }
-  return (
-    <div
-      className="skeleton-grid"
-      role="status"
-      aria-label={t("common.loading")}
-      aria-busy="true"
-    >
-      {SKELETON_KEYS.map((key) => (
-        <div className="skeleton-card" key={key}>
-          <span />
-          <i />
-          <i />
-        </div>
-      ))}
-    </div>
-  );
-}
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -339,6 +266,134 @@ const ALBUM_SORTS: Array<{ value: AlbumSort; labelKey: TranslationKey }> = [
   { value: "starred", labelKey: "browse.sortStarred" },
   { value: "byYear", labelKey: "browse.sortByYear" },
 ];
+
+/**
+ * The orderings this menu offers, in the album menu's order plus one.
+ *
+ * `alphabeticalByAlbum` has no album equivalent: it is sleeve order read
+ * across the whole catalogue, album then disc then track.
+ */
+const SONG_SORTS: Array<{ value: SongSort; labelKey: TranslationKey }> = [
+  { value: "alphabeticalByName", labelKey: "browse.sortAlphabeticalByName" },
+  {
+    value: "alphabeticalByArtist",
+    labelKey: "browse.sortAlphabeticalByArtist",
+  },
+  { value: "alphabeticalByAlbum", labelKey: "browse.sortAlphabeticalByAlbum" },
+  { value: "newest", labelKey: "browse.sortNewest" },
+  { value: "recent", labelKey: "browse.sortRecent" },
+  { value: "frequent", labelKey: "browse.sortFrequent" },
+  { value: "starred", labelKey: "browse.sortStarred" },
+  { value: "byYear", labelKey: "browse.sortByYear" },
+];
+
+/**
+ * Every track in the catalogue, sorted, a page at a time.
+ *
+ * The listing the client never had: albums, artists, genres, favourites,
+ * history and random were all here, and "my tracks, sorted" was not.
+ *
+ * **There is no filter box, and that is the decision rather than the
+ * omission.** Every other browse page filters what it holds, because it holds
+ * everything. This one holds the pages it has asked for, so the same box would
+ * search two hundred rows out of twenty thousand and call the rest absent —
+ * a worse answer than none, because nothing on screen would say so. Searching
+ * the catalogue is what `/search` does, against the index.
+ */
+export function SongsPage() {
+  const player = usePlayer();
+  const { t } = useI18n();
+  const [sort, setSort] = useState<SongSort>("alphabeticalByName");
+  const scope = useScopeId();
+  const {
+    data,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = useInfiniteQuery(songsQuery(sort, scope));
+  const songs = useMemo(() => data?.pages.flat() ?? [], [data]);
+
+  const controls = (
+    <label className="control">
+      <span>{t("browse.sort")}</span>
+      <select
+        value={sort}
+        aria-label={t("browse.sort")}
+        onChange={(event) => setSort(event.target.value as SongSort)}
+      >
+        {SONG_SORTS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {t(option.labelKey)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  if (!data) {
+    return (
+      <section>
+        <PageHeader title={t("nav.songs")}>{controls}</PageHeader>
+        <Loading error={error} />
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      {/* The count is what has been loaded, not what exists, and it says so:
+          the route sends no total, and inventing one would mean a second
+          `COUNT(*)` over the same filter on every request. */}
+      <PageHeader
+        title={t("nav.songs")}
+        detail={
+          hasNextPage
+            ? t("songs.loadedSoFar", { count: songs.length })
+            : t("common.tracks", { count: songs.length })
+        }
+      >
+        {controls}
+      </PageHeader>
+      <div className="actions">
+        <button
+          type="button"
+          onClick={() => player.play(songs, 0)}
+          disabled={!songs.length}
+        >
+          {t("playlists.play")}
+        </button>
+      </div>
+      {songs.length ? (
+        <SongTable songs={songs} />
+      ) : (
+        <p className="muted">{t("songs.empty")}</p>
+      )}
+      {hasNextPage && (
+        <div className="actions">
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? t("songs.loading") : t("songs.loadMore")}
+          </button>
+          {/* A page that failed to load has to say so. `Loading` is no use
+              here — the pages already loaded are on screen and must stay
+              there, so this is a line beside the button that asks again, not
+              a state replacing the listing. Without it the button simply came
+              back to life and the catalogue silently stopped growing. */}
+          {isFetchNextPageError ? (
+            <p className="error" role="alert">
+              {t("songs.loadMoreError")}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
 
 /** Render the album catalogue for the active library. */
 export function AlbumsPage() {
@@ -1884,27 +1939,6 @@ export function AdminPage() {
   );
 }
 
-export function PageHeader({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  /** Omitted while the count it would state is not known yet. */
-  detail?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <header className="page-header">
-      <div className="page-heading">
-        <h2>{title}</h2>
-        {detail ? <p className="muted">{detail}</p> : null}
-      </div>
-      {children ? <div className="page-controls">{children}</div> : null}
-    </header>
-  );
-}
-
 /**
  * Text filter shared by the browse pages. It narrows what is already loaded
  * rather than asking the server: `collect` has the whole list in memory, and a
@@ -2076,6 +2110,25 @@ export function SearchPage() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const { data: value, error } = useQuery(searchQuery(submitted, scope));
+
+  /**
+   * The question follows the typing, once the typing pauses.
+   *
+   * The screen used to wait for a click, so a search was a decision rather
+   * than a reflex. Asking on every keystroke is the other mistake: one round
+   * trip per letter, and the server answering six questions to satisfy one.
+   *
+   * `submitted` is in the dependencies so a needle that has already been
+   * asked — the submit button beat the timer to it — schedules nothing.
+   * Clearing the box settles on the empty needle, which `searchQuery` holds
+   * disabled rather than asking the server for everything.
+   */
+  useEffect(() => {
+    const needle = query.trim();
+    if (needle === submitted) return;
+    const timer = setTimeout(() => setSubmitted(needle), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, submitted]);
 
   return (
     <section>

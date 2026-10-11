@@ -14,7 +14,7 @@ import {
   unlinkScrobble,
 } from "./api";
 import { type Locale, type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader } from "./pages";
+import { Loading, PageHeader } from "./page-shell";
 import { scrobbleRowsQuery, uncertainScrobblesQuery } from "./queries";
 import { returnedFrom, type ScrobbleRow } from "./scrobbling";
 

@@ -55,6 +55,20 @@ pub struct RandomSongQuery {
     pub limit: Option<i64>,
 }
 
+/// The same shape as [`AlbumBrowseQuery`], deliberately: one catalogue should
+/// not take two spellings of the same question.
+#[derive(Debug, Deserialize)]
+pub struct SongBrowseQuery {
+    pub library_id: Option<Uuid>,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub sort: Option<String>,
+    /// Required by `sort=byGenre`, ignored otherwise.
+    pub genre: Option<String>,
+    pub from_year: Option<i64>,
+    pub to_year: Option<i64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GenreSongQuery {
     pub genre: String,
@@ -181,6 +195,49 @@ pub async fn search_catalog(
             page(query.album_offset)?,
             page(query.song_offset)?,
         )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// The catalogue's songs, paged and sorted.
+///
+/// **The listing that did not exist.** #179 reported this path requiring a
+/// `genre` and so listing nothing; it was closed on 2026-09-10 by renaming the
+/// route to `/songs/by-genre`, which made the contract honest without making
+/// the listing exist. What a client had instead was
+/// `/libraries/{library_id}/tracks`: it pages and searches, but takes one
+/// library at a time, answers the thinner `TrackRecord`, and does not sort.
+///
+/// `/songs/by-genre` stays where it is. It is the native form of
+/// `getSongsByGenre`, which the facade builds on, and `genre` is required
+/// there on purpose. Here a genre is one of eleven orderings, the same way it
+/// is for albums.
+#[utoipa::path(get, path = "/api/v2/songs", tag = "catalog", params(("library_id" = Option<Uuid>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query), ("genre" = Option<String>, Query), ("from_year" = Option<i64>, Query), ("to_year" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 401, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_songs(
+    State(state): State<AppState>,
+    Query(query): Query<SongBrowseQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::SongItem>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    let order = query
+        .sort
+        .as_deref()
+        .map(crate::services::SongOrder::from_str)
+        .transpose()
+        .map_err(service_error)?
+        .unwrap_or_default();
+    let request = crate::services::SongListQuery {
+        library_ids: query.library_id.into_iter().collect(),
+        order,
+        genre: query.genre,
+        from_year: query.from_year,
+        to_year: query.to_year,
+        page: crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?,
+    };
+    state
+        .services
+        .list_songs(user.id, &request)
         .await
         .map(Json)
         .map_err(service_error)

@@ -826,12 +826,29 @@ async fn genre_matching_is_canonical_on_every_surface() {
         native("/api/v2/songs/by-genre".into()).await.status(),
         StatusCode::BAD_REQUEST
     );
-    // And `/songs` is nobody's route: it read as the general listing while
-    // answering 400, which is what sent a reader looking for a bug. The
-    // general listing is `/libraries/{id}/tracks`.
+    // `/songs` is now the general listing, and it folds a genre the same way
+    // as every surface above.
+    //
+    // It used to answer 404, asserted here, because #179 was closed by
+    // renaming it: it read as the general listing while answering 400, and
+    // that is what sent a reader looking for a bug. The rename made the
+    // contract honest without making the listing exist. It exists now, so the
+    // assertion says what is true rather than being deleted — and says it on
+    // this test's own subject, which is that one genre reaches the same tracks
+    // by any spelling, on any route.
+    let listed =
+        json_body(native("/api/v2/songs?sort=byGenre&genre=hip%20hop&limit=50".into()).await).await;
+    assert_eq!(listed.as_array().expect("a list").len(), 3);
+    // This fixture holds three tracks and all three are that one genre, so the
+    // line above would answer three even from a filter that was dropped. A
+    // genre nobody uses is what separates the two here.
+    let unused_here =
+        json_body(native("/api/v2/songs?sort=byGenre&genre=Polka&limit=50".into()).await).await;
+    assert!(unused_here.as_array().expect("a list").is_empty());
+    // And unfiltered it is a listing, not a refusal.
     assert_eq!(
         native("/api/v2/songs".into()).await.status(),
-        StatusCode::NOT_FOUND
+        StatusCode::OK
     );
     // Search pages each kind on its own offset.
     let paged =
@@ -2378,4 +2395,223 @@ async fn a_search_narrows_to_one_library_across_all_three_kinds() {
     assert_eq!(artists, ["Beacon Keepers"]);
     assert_eq!(albums, ["Beacon Foundry"]);
     assert_eq!(songs, ["Beacon Echo"]);
+}
+
+/// The songs listing answers the whole catalogue, orders it, and pages it.
+///
+/// #179 reported `GET /api/v2/songs` requiring a `genre` and so listing
+/// nothing. It was closed by renaming the route, which made the contract
+/// honest without making the listing exist. The first assertion here is that
+/// one does: no parameters, every available track.
+///
+/// Everything is read back from the server. The client's own types are
+/// hand-written assertions about this wire and its mocks are built from those
+/// types, so a test on that side would confirm the type rather than the route.
+#[tokio::test]
+async fn the_songs_listing_answers_the_whole_catalogue_orders_it_and_pages_it() {
+    let (_temp, config, state) = test_app().await;
+    let password = security::generate_token("test-password-");
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("songs-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let stranger = state
+        .db
+        .create_account("songs-stranger", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    assert_ne!(owner, stranger);
+    let music = config.data_dir.join("songs-listing");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Songs listing",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan_id, 4, false).await.unwrap();
+
+    // Titles deliberately disagree with sleeve order, so ordering by title and
+    // ordering by album cannot both be satisfied by one arrangement — an
+    // assertion that holds under either would prove nothing.
+    //
+    // The last row carries no artist and no album. That is the row the
+    // `NULLS LAST` claim is about: under `COALESCE(x, '')`, which is what the
+    // album listing does, it would lead both alphabetical answers.
+    //
+    // One row carries a different genre. Without it the genre assertion below
+    // could not fail: `browse_input` tags every row "Ambient", so asking for
+    // Ambient would answer four whether the filter applied or was dropped.
+    for (index, (title, album, artist, track, genre)) in [
+        (
+            "Zephyr",
+            Some("Anvil Hours"),
+            Some("Beta Person"),
+            Some(2),
+            "Ambient",
+        ),
+        (
+            "Anvil",
+            Some("Anvil Hours"),
+            Some("Beta Person"),
+            Some(1),
+            "Ambient",
+        ),
+        (
+            "Marrow",
+            Some("Zenith Field"),
+            Some("Aria Lux"),
+            Some(1),
+            "Dub",
+        ),
+        ("Orphan", None, None, None, "Ambient"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = browse_input(
+            20_000 + index,
+            title,
+            album.unwrap_or("placeholder"),
+            artist.unwrap_or("placeholder"),
+            track,
+            Some(1),
+        );
+        input.album = album.map(str::to_owned);
+        input.album_artist = album.and(artist).map(str::to_owned);
+        input.artist = artist.map(str::to_owned);
+        input.genre = Some(genre.to_owned());
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "songs-owner", &password).await;
+    let stranger_token = login_token(&router, "songs-stranger", &password).await;
+
+    async fn titles(router: &axum::Router, token: &str, query: &str) -> Vec<String> {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v2/songs{query}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/v2/songs{query}"
+        );
+        json_body(response)
+            .await
+            .as_array()
+            .expect("an array of songs")
+            .iter()
+            .map(|song| song["title"].as_str().expect("a title").to_owned())
+            .collect()
+    }
+
+    // 1. No parameters, the whole catalogue. This is the gap #179 described.
+    let everything = titles(&router, &token, "").await;
+    assert_eq!(everything.len(), 4, "{everything:?}");
+
+    // 2. By title.
+    assert_eq!(
+        titles(&router, &token, "?sort=alphabeticalByName").await,
+        ["Anvil", "Marrow", "Orphan", "Zephyr"]
+    );
+
+    // 3. By artist, and the untagged row goes **last**. Aria Lux before Beta
+    //    Person; the two Beta Person rows then fall back to title.
+    assert_eq!(
+        titles(&router, &token, "?sort=alphabeticalByArtist").await,
+        ["Marrow", "Anvil", "Zephyr", "Orphan"]
+    );
+
+    // 4. By album, in sleeve order inside each one, untagged last. "Anvil
+    //    Hours" holds Anvil at track 1 and Zephyr at track 2, so a listing
+    //    ordered by title would have given the opposite pair.
+    assert_eq!(
+        titles(&router, &token, "?sort=alphabeticalByAlbum").await,
+        ["Anvil", "Zephyr", "Marrow", "Orphan"]
+    );
+
+    // 5. Two pages partition the catalogue: no row twice, none missing. Every
+    //    ordering ends on `id`, which is what makes an offset stable when two
+    //    rows tie.
+    let first = titles(&router, &token, "?sort=alphabeticalByName&limit=2&offset=0").await;
+    let second = titles(&router, &token, "?sort=alphabeticalByName&limit=2&offset=2").await;
+    assert_eq!(first, ["Anvil", "Marrow"]);
+    assert_eq!(second, ["Orphan", "Zephyr"]);
+    let mut paged: Vec<String> = first.into_iter().chain(second).collect();
+    paged.sort();
+    let mut whole = everything;
+    whole.sort();
+    assert_eq!(paged, whole, "the pages do not cover the listing exactly");
+
+    // 6. `byGenre` with no genre is malformed, not empty. Answering the whole
+    //    catalogue would drop the filter in silence, which is the fault #179
+    //    was filed about in the first place.
+    let no_genre = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/songs?sort=byGenre")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_genre.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    // Three of the four, and the fourth reachable by its own genre. Counted
+    // **and named**: a count alone would be satisfied by a filter that
+    // dropped the wrong row, and asking only for the genre three rows share
+    // would be satisfied by no filter at all.
+    let ambient = titles(&router, &token, "?sort=byGenre&genre=Ambient").await;
+    assert_eq!(ambient, ["Anvil", "Orphan", "Zephyr"]);
+    assert_eq!(
+        titles(&router, &token, "?sort=byGenre&genre=Dub").await,
+        ["Marrow"]
+    );
+    // And a genre nobody uses is empty rather than everything.
+    assert!(titles(&router, &token, "?sort=byGenre&genre=Polka")
+        .await
+        .is_empty());
+
+    // 7. An ordering nobody implements is refused rather than silently
+    //    replaced by the default.
+    let nonsense = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v2/songs?sort=byWhateverTheClientFeltLike")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nonsense.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 8. Tenancy is in the query, so an account with no membership sees an
+    //    empty catalogue rather than another tenant's.
+    assert!(titles(&router, &stranger_token, "").await.is_empty());
 }
