@@ -183,6 +183,20 @@ pub struct SessionRecord {
 }
 
 #[derive(Debug, Clone)]
+/// One API token to write, gathered rather than passed as seven arguments.
+///
+/// `actor_id` is who registered it, which the audit entry records and which
+/// is not always the owner: an administrator provisioning a service account is
+/// the actor, and the account is the subject.
+pub struct NewApiToken<'a> {
+    pub actor_id: Uuid,
+    pub user_id: Uuid,
+    pub name: &'a str,
+    pub token_hash: &'a [u8],
+    pub scopes: &'a [String],
+    pub expires_at: Option<i64>,
+}
+
 pub struct AccessRecord {
     pub user_id: Uuid,
     pub username: String,
@@ -969,18 +983,23 @@ impl Database {
     /// token the account holds to find one whose id was already known.
     pub async fn create_api_token(
         &self,
-        user_id: Uuid,
-        name: &str,
-        token_hash: &[u8],
-        scopes: &[String],
-        expires_at: Option<i64>,
+        token: NewApiToken<'_>,
         now_ms: i64,
     ) -> Result<ApiTokenRecord, sqlx::Error> {
+        let NewApiToken {
+            actor_id,
+            user_id,
+            name,
+            token_hash,
+            scopes,
+            expires_at,
+        } = token;
         let _writer = self.writer_guard().await;
         let id = Uuid::new_v4();
         // `expires_at` has been a column, and honoured by the lookup, since
         // the table existed — and never written. Nothing minted a bounded
         // token, so every one of them outlived whatever asked for it.
+        let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
             "INSERT INTO api_token \
                (id, user_id, name, token_hash, scopes_json, expires_at, created_at) \
@@ -994,8 +1013,23 @@ impl Database {
         .bind(encode_scopes(scopes)?)
         .bind(expires_at)
         .bind(now_ms)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        // In the same transaction as the row it describes, the way the
+        // revocation beside it already is. Revoking a credential left an audit
+        // entry and registering one left none, which is the wrong half to
+        // record: it became an act an account can perform for itself without
+        // an administrator anywhere, so it is exactly the event an operator
+        // would want to find afterwards.
+        insert_audit(
+            &mut tx,
+            Some(actor_id),
+            "api_token.created",
+            Some(id),
+            now_ms,
+        )
+        .await?;
+        tx.commit().await?;
         api_token_from_row(row)
     }
 

@@ -553,11 +553,15 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     state
         .db
         .create_api_token(
-            user_id,
-            "integration token",
-            &security::token_hash(&token),
-            &[],
-            None,
+            waveflow_server::database::NewApiToken {
+                // The actor the audit entry records: here the account itself.
+                actor_id: user_id,
+                user_id,
+                name: "integration token",
+                token_hash: &security::token_hash(&token),
+                scopes: &[],
+                expires_at: None,
+            },
             now,
         )
         .await
@@ -954,11 +958,15 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
     let theirs = state
         .db
         .create_api_token(
-            stranger,
-            "a phone belonging elsewhere",
-            &security::token_hash(&security::generate_token("wfapi_")),
-            &[],
-            None,
+            waveflow_server::database::NewApiToken {
+                // The actor the audit entry records.
+                actor_id: stranger,
+                user_id: stranger,
+                name: "a phone belonging elsewhere",
+                token_hash: &security::token_hash(&security::generate_token("wfapi_")),
+                scopes: &[],
+                expires_at: None,
+            },
             now,
         )
         .await
@@ -969,11 +977,15 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
     state
         .db
         .create_api_token(
-            owner,
-            "a narrowed client",
-            &security::token_hash(&narrowed),
-            &["write".to_owned()],
-            None,
+            waveflow_server::database::NewApiToken {
+                // The actor the audit entry records: here the account itself.
+                actor_id: owner,
+                user_id: owner,
+                name: "a narrowed client",
+                token_hash: &security::token_hash(&narrowed),
+                scopes: &["write".to_owned()],
+                expires_at: None,
+            },
             now,
         )
         .await
@@ -1148,11 +1160,15 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
     state
         .db
         .create_api_token(
-            boss,
-            "a narrowed administrator",
-            &security::token_hash(&narrow_admin),
-            &["admin".to_owned()],
-            None,
+            waveflow_server::database::NewApiToken {
+                // The actor the audit entry records: here the account itself.
+                actor_id: boss,
+                user_id: boss,
+                name: "a narrowed administrator",
+                token_hash: &security::token_hash(&narrow_admin),
+                scopes: &["admin".to_owned()],
+                expires_at: None,
+            },
             now,
         )
         .await
@@ -1233,21 +1249,26 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
     //    another, so the deadline above was defeatable by the very credential
     //    it bounded — decorative after a single hop.
     let tomorrow = now + 24 * 60 * 60 * 1000;
+    let owner_of_ttl_user = state
+        .db
+        .account_by_username("ttl-user")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
     let short_lived = security::generate_token("wfapi_");
     state
         .db
         .create_api_token(
-            state
-                .db
-                .account_by_username("ttl-user")
-                .await
-                .unwrap()
-                .unwrap()
-                .id,
-            "a client with a day left",
-            &security::token_hash(&short_lived),
-            &[],
-            Some(tomorrow),
+            waveflow_server::database::NewApiToken {
+                // The actor the audit entry records: here the account itself.
+                actor_id: owner_of_ttl_user,
+                user_id: owner_of_ttl_user,
+                name: "a client with a day left",
+                token_hash: &security::token_hash(&short_lived),
+                scopes: &[],
+                expires_at: Some(tomorrow),
+            },
             now,
         )
         .await
@@ -1290,4 +1311,27 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
     );
     let narrower = router.oneshot(narrowing).await.unwrap();
     assert_eq!(narrower.status(), StatusCode::CREATED);
+
+    // 5. **And registering one leaves a trace.** Revoking a credential wrote
+    //    an audit entry and registering one wrote none, which is the wrong
+    //    half to record: it became an act an account performs for itself with
+    //    no administrator anywhere, so it is exactly the event an operator
+    //    would go looking for afterwards. In the same transaction as the row
+    //    it describes, so a token cannot exist without its entry.
+    //
+    //    Counted against the tokens themselves rather than against a number
+    //    typed here: the claim is that every credential has an entry, and a
+    //    literal would have to be recounted every time this test grows a
+    //    fixture.
+    let entries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_event WHERE kind = ?")
+        .bind("api_token.created")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    let tokens: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_token")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(tokens > 0, "no credential was registered at all");
+    assert_eq!(entries, tokens, "a credential exists with no audit entry");
 }

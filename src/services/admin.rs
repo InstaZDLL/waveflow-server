@@ -224,7 +224,8 @@ impl DomainServices {
             .ok_or(ServiceError::NotFound)?;
         // No expiry: the operator path keeps the contract it has had since
         // the table existed.
-        self.issue_token(account.id, name, scopes, None).await
+        self.issue_token(actor_id, account.id, name, scopes, None)
+            .await
     }
 
     /// Issues a token to the account asking. See [`Self::own_api_tokens`].
@@ -274,11 +275,13 @@ impl DomainServices {
             (Some(only), None) | (None, Some(only)) => Some(only),
             (None, None) => None,
         };
-        self.issue_token(actor_id, name, scopes, expires_at).await
+        self.issue_token(actor_id, actor_id, name, scopes, expires_at)
+            .await
     }
 
     async fn issue_token(
         &self,
+        actor_id: Uuid,
         account_id: Uuid,
         name: &str,
         scopes: &[String],
@@ -303,11 +306,14 @@ impl DomainServices {
         let record = self
             .db
             .create_api_token(
-                account_id,
-                name,
-                &security::token_hash(&token),
-                &scopes,
-                expires_at,
+                crate::database::NewApiToken {
+                    actor_id,
+                    user_id: account_id,
+                    name,
+                    token_hash: &security::token_hash(&token),
+                    scopes: &scopes,
+                    expires_at,
+                },
                 now_ms(),
             )
             .await?;

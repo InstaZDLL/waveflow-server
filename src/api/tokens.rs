@@ -161,7 +161,7 @@ pub async fn create_own_api_token(
 /// A token belonging to somebody else answers as a missing one — here the
 /// blur is exactly right, because something *is* being looked up and naming
 /// another tenant's token must not confirm that it exists.
-#[utoipa::path(delete, path = "/api/v2/api-tokens/{token_id}", tag = "account", params(("token_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(delete, path = "/api/v2/api-tokens/{token_id}", tag = "account", params(("token_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn revoke_own_api_token(
     State(state): State<AppState>,
     Path(token_id): Path<Uuid>,
