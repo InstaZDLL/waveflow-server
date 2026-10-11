@@ -322,12 +322,19 @@ h3 {
  * enough to be seen, short enough that nobody waits on it. **No latency is
  * added** — the new screen is already built, and this animates the swap.
  *
+ * The group is named alongside the two halves, and not only for tidiness:
+ * its animation is what gates the end of the transition, so the whole thing
+ * is dismantled when every animation on it finishes. Setting the duration on
+ * `old` and `new` alone left the visible cross-fade over at 140ms and the
+ * page held as a snapshot for the remaining 110.
+ *
  * The reduced motion block is the second line of defence: `main.tsx` does not
  * start a transition at all when the setting is on, and this catches a reader
  * who turns it on without reloading. No `!important` — author styles already
  * beat the user agent, and `animation: none` clears the name, which a more
  * specific rule setting only a duration cannot restore.
  */
+::view-transition-group(root),
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 140ms;
