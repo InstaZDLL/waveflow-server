@@ -34,9 +34,9 @@ function when(milliseconds: number, locale: Locale): string {
 /**
  * The clients holding a credential on this account.
  *
- * Revoked ones are left out rather than shown struck through: this list
- * answers "who can read my library", and a credential that cannot is not an
- * answer to it. The administration screen keeps the full history.
+ * Revoked and expired ones are left out rather than shown struck through:
+ * this list answers "who can read my library", and a credential that cannot
+ * is not an answer to it. The administration screen keeps the full history.
  */
 function RegisteredClients() {
   const { locale, t } = useI18n();
@@ -70,7 +70,18 @@ function RegisteredClients() {
     }
   }
 
-  const live = (value ?? []).filter((token) => token.revoked_at === null);
+  // **Expired as well as revoked.** This list answers who *can* read the
+  // library, and a credential past its expiry cannot — the lookup on the
+  // server refuses it, so showing it here would name a device that has
+  // already stopped. Revoked ones were always left out; expiry only became
+  // reachable when a self-minted credential started carrying one, and the
+  // reason to leave it out is the same reason.
+  const now = Date.now();
+  const live = (value ?? []).filter(
+    (token) =>
+      token.revoked_at === null &&
+      (typeof token.expires_at !== "number" || token.expires_at > now),
+  );
 
   return (
     <article className="settings-panel">

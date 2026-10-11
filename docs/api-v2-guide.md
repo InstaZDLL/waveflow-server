@@ -1042,6 +1042,8 @@ administrator:
 ```bash
 curl https://music.example.com/api/v2/api-tokens   -H "Authorization: Bearer ACCESS_TOKEN"
 
+curl -X POST https://music.example.com/api/v2/api-tokens   -H "Authorization: Bearer ACCESS_TOKEN"   -H "Content-Type: application/json"   -d '{"name":"the kitchen speaker","scopes":[]}'
+
 curl -X DELETE https://music.example.com/api/v2/api-tokens/TOKEN_UUID   -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 

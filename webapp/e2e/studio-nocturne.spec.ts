@@ -121,6 +121,18 @@ function freshClients(): Client[] {
       last_used_at: null,
       revoked_at: 1_695_000_000_000,
     },
+    {
+      // Not revoked, and past its expiry, which the server refuses. It became
+      // a reachable shape when a self-minted credential started carrying an
+      // expiry, and it has to be left out for the reason the revoked one is.
+      id: "client-3",
+      name: "a tablet whose year ran out",
+      scopes: [],
+      expires_at: 1_600_000_000_000,
+      created_at: 1_560_000_000_000,
+      last_used_at: 1_590_000_000_000,
+      revoked_at: null,
+    },
   ];
 }
 let scanFails = false;
@@ -2829,10 +2841,14 @@ test("shows the clients that can read the library, and revokes one", async ({
   await expect(
     clients.getByRole("heading", { name: "Registered clients" }),
   ).toBeVisible();
-  // One of the two, because the other is revoked.
+  // One of the three: the second is revoked and the third is past its
+  // expiry, and neither can read the library any more.
   await expect(clients.getByRole("listitem")).toHaveCount(1);
   await expect(clients.getByText("the kitchen speaker")).toBeVisible();
   await expect(clients.getByText("a laptop that is gone")).toHaveCount(0);
+  await expect(
+    clients.getByText("a tablet whose year ran out"),
+  ).toHaveCount(0);
 
   // Registering one shows the secret, once, and the list follows.
   await clients.getByLabel("What it is for").fill("my phone");
