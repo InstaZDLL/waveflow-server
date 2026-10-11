@@ -269,7 +269,8 @@ Browse and search pages accept `offset >= 0` and `1 <= limit <= 500`.
 `GET /api/v2/albums` and `/artists` additionally accept an optional
 `library_id`. A `SongItem` contains stable `id`, optional `album_id` and
 `artist_id`, metadata, `artwork_hash`, and the full-file BLAKE3 `full_hash`. It
-also carries the decoded audio properties `sample_rate`, `channels` and
+also carries what the file is — `codec`, `suffix`, `size`, `bitrate`,
+`duration_ms` — and the decoded audio properties `sample_rate`, `channels` and
 `bit_depth`, the per-account `play_count` and `last_played_at`, and the
 structured `artists` (every credit in tag order, each `{id, name}`) and `genres`
 lists, plus the tag fields `musicbrainz_id` (the MusicBrainz recording
