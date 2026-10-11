@@ -1,9 +1,6 @@
+import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 
-// `?raw`, not `node:fs`: there is no `@types/node` in this client and adding
-// one so a test can read a file beside it would be a dependency for the sake
-// of a dependency. Vite hands the stylesheet over as a string, and
-// `vite-env.d.ts` already references `vite/client`, so this is typed.
 import css from "./styles.css?raw";
 
 /**
@@ -20,6 +17,19 @@ import css from "./styles.css?raw";
  * neither is a step in a rhythm. So the check bounds itself by the scale's own
  * range instead of carrying an allowlist that would need a reason written
  * beside every entry and would grow without anybody deciding to let it.
+ *
+ * **And it reads the sheet with a parser.** Five findings in four review
+ * rounds went to a version that walked the text by hand, and every one of them
+ * was the same mistake wearing a different hat: a line is not a unit of CSS.
+ * A declaration can span lines, two can share one, a token block can open and
+ * close inside one with a rule either side, and a comment is text that only
+ * looks like CSS. `postcss` — which Vite already uses for this very file —
+ * answers all of that by construction: declarations with their own line
+ * numbers, comments that are not declarations, and a parent whose selector
+ * says whether this is a block that defines the steps.
+ *
+ * The fixtures below predate it and are kept, because they are what each rule
+ * means. That they now pass without being argued for is the point.
  */
 
 const SMALLEST_STEP = 0.25;
@@ -28,128 +38,60 @@ const LARGEST_STEP = 5;
 const SPACING_OR_TYPE =
   /^(padding|margin|gap|row-gap|column-gap)(-[a-z-]+)?$|^font-size$/;
 
-const STEP_DECLARATION = /--((?:space|text)-[a-z0-9]+):\s*([0-9.]+)rem;/g;
-
+/** A block whose declarations define the scale, which cannot use it. */
 const TOKEN_SELECTOR = /(:root|\[data-theme)/;
 
-/**
- * The stylesheet with its comments blanked, line for line.
- *
- * Both walks below read text that only looks like CSS, so a comment is a
- * second source of it. A comment mentioning `:root` ahead of a rule had that
- * rule masked as a token block on the strength of a word in prose; a comment
- * sitting between a brace and a property lost the declaration, because it
- * stood where the delimiter should have been. Neither is in the sheet today,
- * out of fifty-one comments — which is luck rather than a property.
- */
-function withoutComments(css: string): string {
-  const out = css.split("");
-  let at = 0;
-  for (;;) {
-    const open = css.indexOf("/*", at);
-    if (open === -1) return out.join("");
-    const close = css.indexOf("*/", open + 2);
-    const end = close === -1 ? css.length - 1 : close + 1;
-    for (let k = open; k <= end; k += 1) {
-      if (out[k] !== "\n") out[k] = " ";
-    }
-    at = end + 1;
-  }
-}
+type Declaration = {
+  property: string;
+  value: string;
+  line: number;
+  /** Inside a block that defines the tokens. */
+  defining: boolean;
+};
 
-/**
- * The stylesheet with every token-defining block blanked out, line for line.
- *
- * **Blanked rather than skipped, and that distinction cost two rounds.** A
- * line is not a unit of CSS: a token block can open and close inside one, and
- * a rule can share the line with it either side. Skipping the line took the
- * rule with it; walking the line took the tokens as rules. Replacing the
- * block's own characters with spaces leaves the rest of the line to be read
- * normally, and every line number intact for the report.
- */
-function withoutTokenBlocks(css: string): string {
-  const out = css.split("");
-  let at = 0;
-  while (at < css.length) {
-    const open = css.indexOf("{", at);
-    if (open === -1) break;
-    // What sits between the last rule's end and this brace — not everything
-    // since the cursor, which for a nested rule would drag the enclosing
-    // block's own declarations into the selector and match on them.
-    const selector = css.slice(at, open).split(/[};]/).pop() ?? "";
-    if (!TOKEN_SELECTOR.test(selector)) {
-      // Descend instead of jumping past: an `@media` carries ordinary rules,
-      // and nothing stops a token block from sitting inside one.
-      at = open + 1;
-      continue;
-    }
-    let depth = 0;
-    let close = open;
-    for (; close < css.length; close += 1) {
-      if (css[close] === "{") depth += 1;
-      else if (css[close] === "}") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    const to = Math.min(close, css.length - 1);
-    for (let k = open - selector.length; k <= to; k += 1) {
-      if (out[k] !== "\n") out[k] = " ";
-    }
-    at = to + 1;
-  }
-  return out.join("");
-}
-
-/** Walks declarations outside the blocks that define the tokens. */
-function eachDeclaration(
-  css: string,
-  visit: (property: string, value: string, line: number) => void,
-): void {
-  const masked = withoutTokenBlocks(withoutComments(css));
-  // **Over the whole sheet, not line by line.** A declaration is bounded by
-  // `;` and braces, and nothing says it fits on one line — three in this sheet
-  // already do not, `main`'s padding among them. Two earlier versions of this
-  // walk split on newlines first and so read only the opening line of each,
-  // which left the assertion below incomplete for the sheet as it stands and
-  // not merely for some future edit.
-  //
-  // The line is then counted from the offset, so a value spanning lines is
-  // still reported at the line its property sits on.
-  const declarations = /(?:^|[;{}])\s*([a-z-]+)\s*:\s*([^;{}]*)/g;
-  for (const declaration of masked.matchAll(declarations)) {
-    const at =
-      (declaration.index ?? 0) + declaration[0].indexOf(declaration[1]);
-    const line = masked.slice(0, at).split("\n").length;
-    visit(declaration[1], declaration[2], line);
-  }
+function declarations(source: string): Declaration[] {
+  const found: Declaration[] = [];
+  postcss.parse(source).walkDecls((declaration) => {
+    const parent = declaration.parent;
+    const selector =
+      parent !== undefined && parent.type === "rule" ? parent.selector : "";
+    found.push({
+      property: declaration.prop,
+      value: declaration.value,
+      line: declaration.source?.start?.line ?? 0,
+      defining: TOKEN_SELECTOR.test(selector),
+    });
+  });
+  return found;
 }
 
 /** Every raw `rem` inside the scale's range, outside the token blocks. */
-function offScale(css: string): string[] {
+function offScale(source: string): string[] {
   const found: string[] = [];
-  eachDeclaration(css, (property, value, line) => {
-    if (!SPACING_OR_TYPE.test(property)) return;
+  for (const { property, value, line, defining } of declarations(source)) {
+    if (defining || !SPACING_OR_TYPE.test(property)) continue;
     // **The sign is read, and the magnitude is what is compared.** A `-3rem`
     // is a step used without being named, not a different kind of value: all
     // four negatives in this sheet landed exactly on a step, which is what
     // showed that leaving them out was a gap rather than a decision. A pull
-    // backwards is written `calc(var(--space-12) * -1)` now.
+    // backwards is written `calc(var(--space-12) * -1)`.
     for (const raw of value.match(/(?<![\w.])-?\d+(?:\.\d+)?rem\b/g) ?? []) {
       const asked = Math.abs(Number.parseFloat(raw));
       if (asked === 0) continue;
       if (asked < SMALLEST_STEP / 2 || asked > LARGEST_STEP) continue;
       found.push(`line ${line}: ${property}: ${raw}`);
     }
-  });
+  }
   return found;
 }
 
 /** The steps the stylesheet declares, in rem. */
-function stepsOf(css: string): Record<string, number> {
+function stepsOf(source: string): Record<string, number> {
   const steps: Record<string, number> = {};
-  for (const match of css.matchAll(STEP_DECLARATION)) {
-    steps[match[1]] = Number(match[2]);
+  for (const { property, value } of declarations(source)) {
+    const name = /^--((?:space|text)-[a-z0-9]+)$/.exec(property);
+    const rem = /^([0-9.]+)rem$/.exec(value.trim());
+    if (name && rem) steps[name[1]] = Number(rem[1]);
   }
   return steps;
 }
@@ -200,8 +142,11 @@ function topLevelParts(inner: string): string[] {
 }
 
 /** Each rhythm `clamp()` whose floor ended up above its ceiling. */
-function crossedRanges(css: string): { crossed: string[]; checked: number } {
-  const steps = stepsOf(css);
+function crossedRanges(source: string): {
+  crossed: string[];
+  checked: number;
+} {
+  const steps = stepsOf(source);
   const resolve = (part: string): number | null => {
     const token = /var\(--((?:space|text)-[a-z0-9]+)\)/.exec(part);
     if (token) return steps[token[1]] ?? null;
@@ -211,8 +156,8 @@ function crossedRanges(css: string): { crossed: string[]; checked: number } {
 
   const crossed: string[] = [];
   let checked = 0;
-  eachDeclaration(css, (property, value) => {
-    if (!SPACING_OR_TYPE.test(property)) return;
+  for (const { property, value, defining } of declarations(source)) {
+    if (defining || !SPACING_OR_TYPE.test(property)) continue;
     for (const inner of clampsIn(value)) {
       const parts = topLevelParts(inner);
       if (parts.length !== 3) continue;
@@ -223,7 +168,7 @@ function crossedRanges(css: string): { crossed: string[]; checked: number } {
         crossed.push(`${property}: clamp(${inner})`);
       }
     }
-  });
+  }
   return { crossed, checked };
 }
 
@@ -272,119 +217,104 @@ describe("the spacing and type scale", () => {
     expect(crossed).toEqual([]);
     // Pinned, so a walk that stops finding them cannot make the line above
     // vacuous. Twenty-two, not the nineteen this said at first: three sit
-    // inside a longer value — one of them wrapped in a `calc()` to negate it —
-    // and a check that only read a `clamp()` occupying the whole value walked
-    // past all three while its count still looked thorough.
+    // inside a longer value — one wrapped in a `calc()` to negate it — and a
+    // check that only read a `clamp()` occupying the whole value walked past
+    // all three while its count still looked thorough.
     expect(checked).toBe(22);
   });
 
   it("finds the shapes it exists to refuse", () => {
-    // The checks have to be able to fail for their reasons, and the stylesheet
-    // is the wrong place to prove that from. `0.65rem` is what this pass
-    // removes: a tenth away from a step, in a property that carries rhythm.
+    // Every rule above has to be able to fail for its own reason, and the
+    // stylesheet is the wrong place to prove that from. `0.65rem` is what this
+    // pass removes: a tenth away from a step, in a property that carries
+    // rhythm.
     expect(offScale(".a {\n  gap: 0.65rem;\n}")).toEqual([
       "line 2: gap: 0.65rem",
     ]);
-    // The same defect written flat, which an anchored pattern missed.
+    // Written flat, which an anchored line pattern missed.
     expect(offScale(".a { gap: 0.65rem; }")).toEqual(["line 1: gap: 0.65rem"]);
-    // And several on one line, so the walk is not merely finding the first.
+    // Two on one line, which a pattern eating its own delimiter gave up on.
     expect(offScale(".a { gap: 0.65rem; padding: 0.3rem; }")).toEqual([
       "line 1: gap: 0.65rem",
       "line 1: padding: 0.3rem",
     ]);
-    const twoSteps = ":root {\n  --space-2: 0.5rem;\n  --space-8: 2rem;\n}\n";
-    expect(
-      crossedRanges(
-        twoSteps +
-          ".a {\n  font-size: clamp(var(--space-8), 2vw, var(--space-2));\n}",
-      ).crossed,
-    ).toEqual(["font-size: clamp(var(--space-8), 2vw, var(--space-2))"]);
-    // **One inside a longer value, and one wrapped to be negated.** Both
-    // shapes are in this sheet, and a check reading only a whole-value
-    // `clamp()` saw neither.
-    expect(
-      crossedRanges(
-        twoSteps +
-          ".a {\n  padding: var(--space-2) clamp(var(--space-8), 2vw, var(--space-2)) 0;\n}",
-      ).crossed,
-    ).toEqual(["padding: clamp(var(--space-8), 2vw, var(--space-2))"]);
-    expect(
-      crossedRanges(
-        twoSteps +
-          ".a {\n  margin: calc(clamp(var(--space-8), 2vw, var(--space-2)) * -1);\n}",
-      ).crossed,
-    ).toEqual(["margin: clamp(var(--space-8), 2vw, var(--space-2))"]);
-    // Two in one value are both read, so the walk is not stopping at the first.
-    expect(
-      crossedRanges(
-        twoSteps +
-          ".a {\n  padding: clamp(var(--space-8), 2vw, var(--space-2))\n    clamp(var(--space-8), 1vw, var(--space-2));\n}",
-      ).crossed,
-    ).toHaveLength(2);
-
-    // And the shapes neither of them may flag.
-    expect(offScale(".a {\n  gap: 0.05rem;\n}")).toEqual([]);
-    expect(offScale(".a {\n  padding-bottom: 6.4rem;\n}")).toEqual([]);
-    // A dimension is not rhythm, whatever its size.
-    expect(offScale(".a {\n  width: 0.65rem;\n}")).toEqual([]);
-    // Nor the block that defines the steps, on two lines or on one.
-    expect(offScale(":root {\n  --space-3: 0.75rem;\n}")).toEqual([]);
-    expect(offScale(":root { --space-3: 0.75rem; }")).toEqual([]);
-
-    // **And a rule sharing the line with that block is still read.** Skipping
-    // the whole line hid it, which is the blind spot the first remedy traded
-    // for the one it closed — either side of the block, since a blank at one
-    // end proves nothing about the other.
-    expect(
-      offScale(":root { --space-3: 0.75rem; } .a { gap: 0.65rem; }"),
-    ).toEqual(["line 1: gap: 0.65rem"]);
-    expect(
-      offScale(".a { gap: 0.65rem; } :root { --space-3: 0.75rem; }"),
-    ).toEqual(["line 1: gap: 0.65rem"]);
-    // A token block inside an `@media`, which is why the walk descends rather
-    // than jumping past a block whose selector does not match.
-    expect(
-      offScale(
-        "@media (hover: none) {\n  :root { --space-3: 0.75rem; }\n  .a { gap: 0.65rem; }\n}",
-      ),
-    ).toEqual(["line 3: gap: 0.65rem"]);
-
-    // **A declaration that does not fit on one line.** Three in this sheet
-    // already do not, and a walk that split on newlines first read only the
-    // opening line of each. Reported at the line the property sits on, which
-    // is where a reader would look for it.
+    // A declaration that does not fit on one line — three in this sheet do
+    // not. Reported at the line its property sits on, where a reader looks.
     expect(
       offScale(".a {\n  padding: var(--space-4)\n    0.65rem;\n}"),
     ).toEqual(["line 2: padding: 0.65rem"]);
-    expect(
-      offScale(".a {\n  margin: 0 auto\n    0.3rem\n    var(--space-4);\n}"),
-    ).toEqual(["line 2: margin: 0.3rem"]);
-
-    // **A negative is a step too.** This read one as a different kind of value
-    // and skipped it, which was a gap dressed as a decision: all four
-    // negatives in the sheet landed exactly on a step, so they were steps used
-    // without being named. The sign is read and the magnitude compared, and
-    // the sheet writes a pull backwards as `calc(var(--space-12) * -1)`.
+    // A negative is a step used without being named, not another kind of
+    // value: all four in this sheet landed exactly on a step.
     expect(offScale(".a {\n  margin: -0.65rem;\n}")).toEqual([
       "line 2: margin: -0.65rem",
     ]);
-    expect(offScale(".a {\n  margin: calc(var(--space-12) * -1);\n}")).toEqual(
-      [],
-    );
-
-    // **A comment is not CSS, and both walks read text that looks like it.**
-    // A `:root` mentioned in prose masked the rule after it as a token block,
-    // and a comment standing between a brace and a property swallowed the
-    // declaration behind it.
+    // A comment is text that only looks like CSS: one mentioning `:root`
+    // masked the rule after it, and one between a brace and a property
+    // swallowed the declaration behind it.
     expect(
       offScale("/* :root is the token block */ .a { gap: 0.65rem; }"),
     ).toEqual(["line 1: gap: 0.65rem"]);
     expect(offScale(".a { /* a note */ gap: 0.65rem; }")).toEqual([
       "line 1: gap: 0.65rem",
     ]);
-    // A comment spanning lines leaves the numbering alone.
     expect(
       offScale(".a {\n  /* two\n     lines */\n  gap: 0.65rem;\n}"),
     ).toEqual(["line 4: gap: 0.65rem"]);
+
+    // And the shapes it must not flag.
+    expect(offScale(".a {\n  gap: 0.05rem;\n}")).toEqual([]);
+    expect(offScale(".a {\n  padding-bottom: 6.4rem;\n}")).toEqual([]);
+    // A dimension is not rhythm, whatever its size.
+    expect(offScale(".a {\n  width: 0.65rem;\n}")).toEqual([]);
+    // A pull backwards written in terms of the scale.
+    expect(offScale(".a {\n  margin: calc(var(--space-12) * -1);\n}")).toEqual(
+      [],
+    );
+    // Nor the block that defines the steps, on two lines or on one — nor a
+    // rule sharing the line with it, either side.
+    expect(offScale(":root {\n  --space-3: 0.75rem;\n}")).toEqual([]);
+    expect(offScale(":root { --space-3: 0.75rem; }")).toEqual([]);
+    expect(
+      offScale(":root { --space-3: 0.75rem; } .a { gap: 0.65rem; }"),
+    ).toEqual(["line 1: gap: 0.65rem"]);
+    expect(
+      offScale(".a { gap: 0.65rem; } :root { --space-3: 0.75rem; }"),
+    ).toEqual(["line 1: gap: 0.65rem"]);
+    // A token block inside an `@media`, which a walk that jumped past a
+    // non-matching block would never have reached.
+    expect(
+      offScale(
+        "@media (hover: none) {\n  :root { --space-3: 0.75rem; }\n  .a { gap: 0.65rem; }\n}",
+      ),
+    ).toEqual(["line 3: gap: 0.65rem"]);
+  });
+
+  it("finds a fluid range that crosses, wherever it sits", () => {
+    const twoSteps = ":root {\n  --space-2: 0.5rem;\n  --space-8: 2rem;\n}\n";
+    expect(
+      crossedRanges(
+        `${twoSteps}.a {\n  font-size: clamp(var(--space-8), 2vw, var(--space-2));\n}`,
+      ).crossed,
+    ).toEqual(["font-size: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    // One inside a longer value, and one wrapped to be negated. Both shapes
+    // are in this sheet, and a check reading only a whole-value `clamp()` saw
+    // neither.
+    expect(
+      crossedRanges(
+        `${twoSteps}.a {\n  padding: var(--space-2) clamp(var(--space-8), 2vw, var(--space-2)) 0;\n}`,
+      ).crossed,
+    ).toEqual(["padding: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    expect(
+      crossedRanges(
+        `${twoSteps}.a {\n  margin: calc(clamp(var(--space-8), 2vw, var(--space-2)) * -1);\n}`,
+      ).crossed,
+    ).toEqual(["margin: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    // Two in one value are both read, so the walk is not stopping at the
+    // first.
+    expect(
+      crossedRanges(
+        `${twoSteps}.a {\n  padding: clamp(var(--space-8), 2vw, var(--space-2))\n    clamp(var(--space-8), 1vw, var(--space-2));\n}`,
+      ).crossed,
+    ).toHaveLength(2);
   });
 });
