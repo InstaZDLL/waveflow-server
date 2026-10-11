@@ -185,12 +185,15 @@ function LyricsView({ song }: { song: Song }) {
   const { sheet, active, keys, state } = useLyricSheet(song.id);
   const column = useRef<HTMLOListElement | null>(null);
 
-  // **Before paint, and only when the line actually moved.** `useEffect` would
-  // let the new line show at the bottom of the column for a frame before the
-  // scroll caught up. `active` as the only dependency means a progress tick
-  // that stays on the same line costs nothing.
+  // **Before paint, and only when there is something to do.** `useEffect`
+  // would let the new line show at the bottom of the column for a frame before
+  // the scroll caught up. And a progress tick that stays on the same line
+  // changes none of the three dependencies, so it costs nothing.
   useLayoutEffect(() => {
-    if (active < 0) return;
+    // `sheet` is read here and not only named below: there is no column
+    // without one, and a dependency the body never touches is a decorative
+    // dependency — which is exactly what the linter says about it.
+    if (!sheet || active < 0) return;
     const list = column.current;
     const line = list?.children[active];
     if (!list || !line) return;
@@ -214,7 +217,13 @@ function LyricsView({ song }: { song: Song }) {
       // works — so it is the gliding that goes, not the following.
       behavior: reduced ? "auto" : "smooth",
     });
-  }, [active, reduced]);
+    // `sheet` as well as `active`, for the track change where the two
+    // sheets agree on the index. Moving to the next track early in it leaves
+    // `active` at 0, which it already was — so without this the column keeps
+    // the previous track's scroll and the opening line of the new one is above
+    // the fold. The object is react-query's and stable between renders, so
+    // naming it costs no extra run.
+  }, [active, reduced, sheet]);
 
   // Inside the view's own frame, like the empty state below it: a column that
   // appears out of nowhere once the words land is a jump the wrapper absorbs.

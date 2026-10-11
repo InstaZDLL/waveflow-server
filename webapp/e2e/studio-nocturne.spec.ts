@@ -3217,18 +3217,29 @@ test("centres a sheet that lands after the head has moved", async ({
     release = resolve;
   });
 
-  await page.goto("/playing?view=lyrics");
-  // Waiting, not empty: the view's frame is there and the column is not.
-  await expect(page.locator(".lyrics-view")).toContainText("Loading");
-  await expect(page.locator(".lyrics-view ol")).toHaveCount(0);
+  try {
+    await page.goto("/playing?view=lyrics");
+    // Waiting, not empty: the view's frame is there and the column is not.
+    await expect(page.locator(".lyrics-view")).toContainText("Loading");
+    await expect(page.locator(".lyrics-view ol")).toHaveCount(0);
 
-  // The head moves while there is no sheet to mark, so `active` stays -1 and
-  // the effect has nothing to do.
-  for (let press = 0; press < 20; press += 1) {
-    await page.keyboard.press("ArrowRight");
+    // The head moves while there is no sheet to mark, so `active` stays -1
+    // and the effect has nothing to do.
+    for (let press = 0; press < 20; press += 1) {
+      await page.keyboard.press("ArrowRight");
+    }
+  } finally {
+    // **Released whatever happened.** An assertion failing above would leave
+    // the route waiting on this promise for ever, and the context teardown
+    // waiting on the route — so the test would not fail, it would hang. The
+    // reset in `beforeEach` guards the tests after this one, not this one.
+    //
+    // The two gates added with the credential panels, and the canvas one
+    // above them, carry the same hazard and are left as they are: wrapping
+    // them means restructuring three tests this branch has no other reason to
+    // touch.
+    release();
   }
-
-  release();
   const column = page.locator(".lyrics-view ol");
   await expect(column).toBeVisible();
   await expect(
