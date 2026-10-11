@@ -81,23 +81,23 @@ function eachDeclaration(
   css: string,
   visit: (property: string, value: string, line: number) => void,
 ): void {
-  withoutTokenBlocks(css)
-    .split("\n")
-    .forEach((line, index) => {
-      // **Every declaration on the line, not the line as one declaration.**
-      // The rule is about the stylesheet and not about how it happens to be
-      // formatted today: `.a { gap: 0.65rem; }` is the same defect written
-      // flat, and an anchored pattern walked straight past it.
-      //
-      // The terminator is looked at rather than eaten: consuming the `;`
-      // leaves the next declaration without the delimiter its own match needs,
-      // so a line carrying two of them gave one up.
-      const declarations =
-        /(?:^|[;{])\s*([a-z-]+)\s*:\s*([^{};]*?)\s*(?=[;{}]|$)/g;
-      for (const declaration of line.matchAll(declarations)) {
-        visit(declaration[1], declaration[2], index + 1);
-      }
-    });
+  const masked = withoutTokenBlocks(css);
+  // **Over the whole sheet, not line by line.** A declaration is bounded by
+  // `;` and braces, and nothing says it fits on one line — three in this sheet
+  // already do not, `main`'s padding among them. Two earlier versions of this
+  // walk split on newlines first and so read only the opening line of each,
+  // which left the assertion below incomplete for the sheet as it stands and
+  // not merely for some future edit.
+  //
+  // The line is then counted from the offset, so a value spanning lines is
+  // still reported at the line its property sits on.
+  const declarations = /(?:^|[;{}])\s*([a-z-]+)\s*:\s*([^;{}]*)/g;
+  for (const declaration of masked.matchAll(declarations)) {
+    const at =
+      (declaration.index ?? 0) + declaration[0].indexOf(declaration[1]);
+    const line = masked.slice(0, at).split("\n").length;
+    visit(declaration[1], declaration[2], line);
+  }
 }
 
 /** Every raw `rem` inside the scale's range, outside the token blocks. */
@@ -247,5 +247,22 @@ describe("the spacing and type scale", () => {
         "@media (hover: none) {\n  :root { --space-3: 0.75rem; }\n  .a { gap: 0.65rem; }\n}",
       ),
     ).toEqual(["line 3: gap: 0.65rem"]);
+
+    // **A declaration that does not fit on one line.** Three in this sheet
+    // already do not, and a walk that split on newlines first read only the
+    // opening line of each. Reported at the line the property sits on, which
+    // is where a reader would look for it.
+    expect(
+      offScale(".a {\n  padding: var(--space-4)\n    0.65rem;\n}"),
+    ).toEqual(["line 2: padding: 0.65rem"]);
+    expect(
+      offScale(".a {\n  margin: 0 auto\n    0.3rem\n    var(--space-4);\n}"),
+    ).toEqual(["line 2: margin: 0.3rem"]);
+
+    // **What it deliberately does not read: a negative.** `-3rem` is a step
+    // pulled backwards rather than a value beside one, and the sheet uses two
+    // of them to undo a container's own padding. Flagging them would be noise
+    // about a number that is already on the scale.
+    expect(offScale(".a {\n  margin: -0.65rem;\n}")).toEqual([]);
   });
 });
