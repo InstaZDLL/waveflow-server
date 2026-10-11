@@ -82,6 +82,27 @@ macro_rules! song_year_clause {
     };
 }
 
+/// The song projection, wrapped so an ordering can name its own output.
+///
+/// Mirrors [`album_scope!`], and for the same reason: `song_select!` computes
+/// `play_count`, `last_played_at`, `starred_at` and `user_rating` as output
+/// columns, and an `ORDER BY` placed outside the subquery can name them.
+/// Inside, each correlated subquery would have to be written twice — once in
+/// the projection and once in the ordering — and the two copies would drift.
+///
+/// It folds in [`song_folder_clause!`], so the library narrowing binds twice
+/// here rather than at every call site.
+macro_rules! song_scope {
+    () => {
+        concat!(
+            "SELECT * FROM (",
+            song_select!(),
+            song_folder_clause!(),
+            ") AS s"
+        )
+    };
+}
+
 macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
@@ -767,6 +788,73 @@ pub struct AlbumListQuery {
     pub genre: Option<String>,
     /// Bounds for [`AlbumOrder::ByYear`], inclusive. Supplying them reversed is
     /// how Subsonic asks for descending years, and that is preserved here.
+    pub from_year: Option<i64>,
+    pub to_year: Option<i64>,
+    pub page: BrowsePage,
+}
+
+/// How a song listing is ordered.
+///
+/// The same vocabulary as [`AlbumOrder`], so one catalogue does not answer to
+/// two spellings, plus `alphabeticalByAlbum`, which an album listing has no
+/// use for and a song listing does: it is sleeve order across the catalogue.
+///
+/// **A missing tag sorts last here, where an album listing sorts it first.**
+/// `list_albums` orders on `COALESCE(album_artist_name, '')`, so an album
+/// with no credited artist leads the list; these orderings say `NULLS LAST`.
+/// The divergence is deliberate and one-way: `list_albums` is the single
+/// implementation behind `getAlbumList2`, whose ordering four clients were
+/// replayed against, so correcting it there is an observable wire change under
+/// a frozen contract. Correcting it here costs nothing, because nothing has
+/// read this route yet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SongOrder {
+    #[default]
+    AlphabeticalByName,
+    AlphabeticalByArtist,
+    AlphabeticalByAlbum,
+    Newest,
+    Highest,
+    Frequent,
+    Recent,
+    Starred,
+    Random,
+    ByYear,
+    ByGenre,
+}
+
+impl FromStr for SongOrder {
+    type Err = ServiceError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(match value {
+            "alphabeticalByName" => Self::AlphabeticalByName,
+            "alphabeticalByArtist" => Self::AlphabeticalByArtist,
+            "alphabeticalByAlbum" => Self::AlphabeticalByAlbum,
+            "newest" => Self::Newest,
+            "highest" => Self::Highest,
+            "frequent" => Self::Frequent,
+            "recent" => Self::Recent,
+            "starred" => Self::Starred,
+            "random" => Self::Random,
+            "byYear" => Self::ByYear,
+            "byGenre" => Self::ByGenre,
+            _ => return Err(ServiceError::Invalid),
+        })
+    }
+}
+
+/// One song listing request.
+#[derive(Debug, Clone, Default)]
+pub struct SongListQuery {
+    /// Restrict to these libraries. Empty means every library the user can see.
+    pub library_ids: Vec<Uuid>,
+    pub order: SongOrder,
+    /// Required by [`SongOrder::ByGenre`], ignored otherwise — the same rule
+    /// [`AlbumListQuery::genre`] follows.
+    pub genre: Option<String>,
+    /// Bounds for [`SongOrder::ByYear`], inclusive. Supplied reversed, they ask
+    /// for descending years, as they do for albums.
     pub from_year: Option<i64>,
     pub to_year: Option<i64>,
     pub page: BrowsePage,
