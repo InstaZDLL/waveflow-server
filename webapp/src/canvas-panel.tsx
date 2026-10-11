@@ -5,7 +5,7 @@ import { ApiError, placeCanvas, removeCanvas, type Song } from "./api";
 import { canvasRefusal, usePrefersReducedMotion } from "./canvas";
 import { type TranslationKey, useI18n } from "./i18n";
 import { mayPlaceCanvas, useLibraryScope } from "./library-scope";
-import { useReload } from "./pages";
+import { useReload } from "./page-shell";
 import { canvasQuery } from "./queries";
 
 /**

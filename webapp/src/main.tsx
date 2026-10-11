@@ -31,6 +31,7 @@ import {
   mayUploadTo,
   useLibraryScope,
 } from "./library-scope";
+import { Waiting } from "./page-shell";
 import {
   AdminPage,
   AlbumPage,
@@ -51,7 +52,6 @@ import {
   SearchPage,
   SharesPage,
   SongsPage,
-  Waiting,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider, ThemePicker } from "./preferences";

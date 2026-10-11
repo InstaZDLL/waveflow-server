@@ -12,7 +12,7 @@ import {
 import type { HashRequest, HashResponse } from "./hash-worker";
 import { type TranslationKey, useI18n } from "./i18n";
 import { mayUploadTo, useLibraryScope } from "./library-scope";
-import { PageHeader } from "./pages";
+import { PageHeader } from "./page-shell";
 import {
   extensionOf,
   isUploadable,

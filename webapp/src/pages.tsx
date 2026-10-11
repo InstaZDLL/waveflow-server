@@ -4,14 +4,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import {
-  type FormEvent,
-  Fragment,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
 import {
   type Album,
@@ -58,6 +51,7 @@ import { CanvasStage } from "./canvas";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
+import { Loading, PageHeader, useReload, Waiting } from "./page-shell";
 import { usePlayer, usePlayerProgress } from "./player";
 import {
   administrationQuery,
@@ -90,89 +84,6 @@ import {
  * does not wait.
  */
 const SEARCH_DEBOUNCE_MS = 250;
-
-const SKELETON_KEYS = [
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-];
-
-/**
- * Ask again for what a mutation has just made wrong.
- *
- * Every screen below used to hold a `revision` counter and put it in a
- * dependency list, so that bumping it re-ran the load. That worked, and it
- * re-ran exactly one screen: a playlist created here and a playlist listed
- * elsewhere were two loads of the same thing with no idea of each other.
- * Invalidating by key reaches every reader of that answer, which is what
- * "it changed" actually means.
- */
-export function useReload(queryKey: readonly unknown[]) {
-  const client = useQueryClient();
-  return () => {
-    void client.invalidateQueries({ queryKey });
-  };
-}
-
-/**
- * A wait with nothing shaped to promise. The skeleton below stands in for a
- * grid of covers, which would be a lie on a page that has none.
- */
-export function Waiting() {
-  const { t } = useI18n();
-  return (
-    <p className="muted" role="status" aria-busy="true">
-      {t("common.loading")}
-    </p>
-  );
-}
-
-/**
- * Takes whatever a failed load threw.
- *
- * `unknown` rather than `string`, so a caller hands over what it was given
- * instead of unwrapping it first. A query rejects with an `Error`; the hook
- * this replaced narrowed to a message before the screen ever saw it, and every
- * call site would otherwise have had to repeat that narrowing.
- */
-export function Loading({ error }: { error: unknown }) {
-  const { t } = useI18n();
-  if (error) {
-    const detail =
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : null;
-    return (
-      <div className="error-state" role="alert">
-        <strong>{t("common.loadError")}</strong>
-        <p>{detail}</p>
-      </div>
-    );
-  }
-  return (
-    <div
-      className="skeleton-grid"
-      role="status"
-      aria-label={t("common.loading")}
-      aria-busy="true"
-    >
-      {SKELETON_KEYS.map((key) => (
-        <div className="skeleton-card" key={key}>
-          <span />
-          <i />
-          <i />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -2009,27 +1920,6 @@ export function AdminPage() {
       </div>
       <NowPlayingPanel />
     </section>
-  );
-}
-
-export function PageHeader({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  /** Omitted while the count it would state is not known yet. */
-  detail?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <header className="page-header">
-      <div className="page-heading">
-        <h2>{title}</h2>
-        {detail ? <p className="muted">{detail}</p> : null}
-      </div>
-      {children ? <div className="page-controls">{children}</div> : null}
-    </header>
   );
 }
 
