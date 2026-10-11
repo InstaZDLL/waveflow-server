@@ -237,6 +237,29 @@ Les paroles sont un cas à part : le serveur les sert (`getLyrics`,
 `getLyricsBySongId`), le client les lit sur « En écoute », mais il n'existe pas
 de vue dédiée.
 
+> **État au 2026-10-11 (#213).** Les deux vues existent. « En écoute » porte
+> trois modes, portés par la **localisation** et non par un état de composant :
+> `detail` (inchangé), `?view=lyrics` et `?view=immersive`. La raison du
+> paramètre de recherche est le bouton Retour — sur un téléphone, c'est la
+> pression que tout le monde fait pour quitter ce dans quoi on est, et un mode
+> gardé en `useState` l'aurait avalée pour sortir de l'écran entier.
+>
+> La vue paroles ajoute deux choses que la bande ne pouvait pas donner : la
+> ligne chantée est **tenue au centre**, et là où le serveur fournit des
+> minutages chaque ligne est un **bouton qui s'y déplace**. Une feuille sans
+> minutages n'obtient ni l'un ni l'autre, et le dit en n'ayant aucun bouton.
+>
+> La vue immersive est un `<dialog>` ouvert par `showModal` — le piège de
+> focus, Échap et l'inertie derrière viennent de la plateforme, comme pour la
+> feuille de navigation. Elle **porte les commandes de transport**, parce
+> qu'elle couvre la barre du lecteur : une vue qui remplit l'écran et ne laisse
+> aucun moyen de mettre en pause est un piège et non un mode.
+>
+> Au passage, `PlayingPage` a quitté `pages.tsx` pour son propre module —
+> 2 301 lignes contre 1 238 pour les trois modules de page réunis — et
+> `EmptyState` a rejoint `page-shell.tsx`, où vivaient déjà `Loading`,
+> `Waiting` et `PageHeader`.
+
 ### L'espacement, et le « carton »
 
 Constat de séance : des menus trop serrés, et une interface qui « fait

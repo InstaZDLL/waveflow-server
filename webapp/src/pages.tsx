@@ -18,13 +18,11 @@ import {
   createShare,
   createUser,
   currentUser,
-  deleteBookmark,
   deletePlaylist,
   deleteShare,
   formatDuration,
   getAlbum,
   isAllowedRedirect,
-  type LyricsLine,
   listRandomSongs,
   login,
   type Playlist,
@@ -35,7 +33,6 @@ import {
   type Song,
   type SongSort,
   safeInternalPath,
-  setBookmark,
   setFavorite,
   setLibraryMember,
   setRating,
@@ -47,13 +44,17 @@ import {
   watchScan,
 } from "./api";
 import { Artwork } from "./artwork";
-import { CanvasStage } from "./canvas";
-import { FileQuality } from "./file-quality";
 import { type TranslationKey, useI18n } from "./i18n";
 import { Icon } from "./icons";
 import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
-import { Loading, PageHeader, useReload, Waiting } from "./page-shell";
-import { usePlayer, usePlayerProgress } from "./player";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+  useReload,
+  Waiting,
+} from "./page-shell";
+import { usePlayer } from "./player";
 import {
   administrationQuery,
   albumQuery,
@@ -61,13 +62,11 @@ import {
   apiTokensQuery,
   artistQuery,
   artistsQuery,
-  bookmarksQuery,
   favoriteTracksQuery,
   genreSongsQuery,
   genresQuery,
   historyTracksQuery,
   libraryMembersQuery,
-  lyricsQuery,
   nowPlayingQuery,
   playlistsQuery,
   randomSongsQuery,
@@ -1199,186 +1198,6 @@ export function RandomPage() {
 }
 
 /**
- * The line a synced lyric sheet is on at `seconds`. Lines carry their own start
- * in milliseconds and arrive in order, so this is the last one already begun;
- * `-1` before the first. An unsynced sheet has no starts and never highlights.
- */
-export function currentLyricLine(lines: LyricsLine[], seconds: number): number {
-  let current = -1;
-  for (const [index, line] of lines.entries()) {
-    if (line.start === undefined || line.start > seconds * 1000) break;
-    current = index;
-  }
-  return current;
-}
-
-function Lyrics({ trackId }: { trackId: string }) {
-  const { t } = useI18n();
-  const progress = usePlayerProgress();
-  const { data: value, error } = useQuery(lyricsQuery(trackId));
-  const sheet = value?.structuredLyrics[0];
-  const active = sheet?.synced
-    ? currentLyricLine(sheet.line, progress.position)
-    : -1;
-  // A refrain repeats word for word and an unsynced sheet has no start to key
-  // on, so the line's text alone is not unique. Numbering the repetitions is
-  // what the queue does with the same problem.
-  const keys = useMemo(() => {
-    const seen = new Map<string, number>();
-    return (sheet?.line ?? []).map((line) => {
-      const occurrence = seen.get(line.value) ?? 0;
-      seen.set(line.value, occurrence + 1);
-      return `${line.value}-${occurrence}`;
-    });
-  }, [sheet]);
-
-  if (error) return <p className="muted">{t("lyrics.none")}</p>;
-  if (!value) return <p className="muted">{t("common.loading")}</p>;
-  if (!sheet || sheet.line.length === 0)
-    return <p className="muted">{t("lyrics.none")}</p>;
-  return (
-    <div className="lyrics">
-      <h3>
-        {sheet.displayTitle}
-        {sheet.displayArtist ? <small>{sheet.displayArtist}</small> : null}
-      </h3>
-      <ol aria-label={t("lyrics.label")}>
-        {sheet.line.map((line, index) => (
-          <li
-            key={keys[index]}
-            className={index === active ? "on" : undefined}
-            aria-current={index === active ? "true" : undefined}
-          >
-            {line.value || " "}
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-export function PlayingPage() {
-  const player = usePlayer();
-  const progress = usePlayerProgress();
-  const { t } = useI18n();
-  const reload = useReload(bookmarksQuery().queryKey);
-  const [busy, setBusy] = useState(false);
-  const { data: bookmarks } = useQuery(bookmarksQuery());
-  const current = player.current;
-
-  /**
-   * One bookmark per track, replaced rather than added — so this button reads
-   * "save" whether or not the track already has one, and saving again simply
-   * moves it to where the head is now.
-   */
-  async function saveHere(song: Song) {
-    setBusy(true);
-    try {
-      await setBookmark(song.id, progress.position * 1000);
-      reload();
-    } catch {
-      // Nothing is lost: the head has not moved and the old bookmark stands.
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function forget(trackId: string) {
-    try {
-      await deleteBookmark(trackId);
-      reload();
-    } catch {
-      // Same: the list simply does not change.
-    }
-  }
-
-  return (
-    <section>
-      <PageHeader
-        title={t("nav.playing")}
-        detail={current ? undefined : t("playing.idle")}
-      >
-        {current ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void saveHere(current)}
-          >
-            {t("bookmarks.save")}
-          </button>
-        ) : null}
-      </PageHeader>
-
-      {current ? (
-        <div className="playing">
-          <CanvasStage trackId={current.id}>
-            <Artwork
-              artworkId={current.artwork_hash}
-              title={current.title}
-              className="cover large"
-            />
-          </CanvasStage>
-          <div className="playing-detail">
-            <span className="eyebrow">
-              {current.album ?? t("common.album")}
-            </span>
-            <h2>{current.title}</h2>
-            <p className="muted">
-              {current.artist ?? t("common.unknownArtist")}
-            </p>
-            {/* Under the names and above the words: what the file is belongs
-                with the track and not with the lyrics, and a listener who
-                came here to read along should not have to pass it twice. */}
-            <FileQuality song={current} />
-            <Lyrics trackId={current.id} />
-          </div>
-        </div>
-      ) : (
-        <EmptyState message={t("playing.empty")} />
-      )}
-
-      {bookmarks?.length ? (
-        <article className="collection">
-          <header className="collection-header">
-            <div>
-              <h3>{t("bookmarks.title")}</h3>
-              <span className="muted">{t("bookmarks.detail")}</span>
-            </div>
-          </header>
-          <ul className="list bookmark-list">
-            {bookmarks.map((bookmark) => (
-              <li key={bookmark.song.id}>
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => player.play([bookmark.song], 0)}
-                >
-                  <strong>{bookmark.song.title}</strong>
-                  <small className="muted">
-                    {bookmark.song.artist ?? t("common.unknownArtist")}
-                  </small>
-                </button>
-                <span className="muted">
-                  {formatDuration(bookmark.position_ms)}
-                </span>
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() => void forget(bookmark.song.id)}
-                  aria-label={`${t("bookmarks.forget")}: ${bookmark.song.title}`}
-                >
-                  {t("bookmarks.forget")}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </article>
-      ) : null}
-    </section>
-  );
-}
-
-/**
  * The statuses `scan_job.status` holds. Looked up rather than cast: an unknown
  * key makes `translate` read a property of `undefined` and takes the page down,
  * so a status this table does not know is shown as it came.
@@ -1988,14 +1807,6 @@ function normalizeFilter(value: string) {
 
 function matches(haystack: string | null, needle: string) {
   return haystack ? fold(haystack).includes(needle) : false;
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="empty-state">
-      <p>{message}</p>
-    </div>
-  );
 }
 
 export function AlbumPage({ albumId }: { albumId: string }) {
