@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     authentication::now_ms,
-    database::{AccountRecord, AccountRole, ApiTokenRecord, Database},
+    database::{AccountRecord, AccountRole, ApiTokenRecord, Database, SubsonicCredentialStatus},
     lyrics::{self, LyricsList, StructuredLyrics},
     security::{self, EncryptedSecret, SecretBox},
     sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},

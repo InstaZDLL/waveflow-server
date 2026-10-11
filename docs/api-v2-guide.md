@@ -954,8 +954,10 @@ Admin Bearer tokens can manage:
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
 | API tokens | `GET/POST /api/v2/admin/users/{username}/tokens`, `DELETE /api/v2/admin/users/{username}/tokens/{token_id}` |
 
-An account manages **its own** clients without any of this: see
-[its own clients](#its-own-clients) below.
+An account manages **its own** clients without any of this, and changes or
+switches off **its own** Subsonic password: see
+[its own clients](#its-own-clients) and
+[its own Subsonic password](#its-own-subsonic-password) below.
 
 Starting a scan needs more than membership. A scan walks the owner's files and
 takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
@@ -1003,6 +1005,11 @@ of hashing a whole file to be told `library_closed`.
 `accepts_canvas`, on the same list, is the same kind of decision for canvases,
 made with `waveflow library set-canvas`. It is a separate door: a library
 closed to files may take loops, and the reverse.
+
+Setting a Subsonic credential is administrative, because it is what opens the
+Subsonic facade to an account at all. Changing or switching off one that
+already exists is not: see
+[its own Subsonic password](#its-own-subsonic-password) below.
 
 Setting a Subsonic credential returns a new API key exactly once:
 
@@ -1147,6 +1154,78 @@ working.
 
 The `token create` CLI command remains, for bootstrapping an instance that
 has no administrator session yet. Both paths go through the same service.
+
+### Its own Subsonic password
+
+The dedicated Subsonic password is the key to the facade, and it is typed into
+third-party clients, on phones — the ordinary way an application password
+leaks. Its owner can change it or switch it off:
+
+| Route | Effect |
+|---|---|
+| `GET /api/v2/subsonic-credential` | whether this account holds one, and since when |
+| `PUT /api/v2/subsonic-credential` | replaces the password **and** the API key |
+| `DELETE /api/v2/subsonic-credential` | switches it off |
+
+```bash
+# null when the account holds none, rather than a 404
+curl https://music.example.com/api/v2/subsonic-credential \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+curl -X PUT https://music.example.com/api/v2/subsonic-credential \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"a replacement of at least twelve characters"}'
+
+curl -X DELETE https://music.example.com/api/v2/subsonic-credential \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+```json
+{ "created_at": 1757000000000, "updated_at": 1757900000000 }
+```
+
+**There is no `POST`, and that is the design rather than an omission.** An
+account holding no credential cannot reach the facade at all, so creating one
+does not narrow a door already open — it opens one. Whether every account may
+open that door onto the server is the operator's decision, and these routes do
+not take it. Rotating or switching off a credential that already exists takes
+nothing from the operator: the door is open, and these change the key or shut
+it. So `PUT` on an account holding none answers **404** and creates nothing.
+
+**The API key moves with the password.** A leaked `wfsk_` key authenticates on
+its own, so rotating one half would answer "my key has leaked" with a new
+password and the same working key. The new key is returned once, like every
+other secret here; only its hash is stored. Every Subsonic client of that
+account stops working until the new password is entered in each of them —
+which is the point, and worth saying in an interface before the button is
+pressed.
+
+**And the rotation is refused to a credential that could not hand on what it
+returns**, with **403**. A `wfsk_` key carries neither scopes nor an expiry,
+because the facade reads neither — so unlike an API token it cannot be narrowed
+to match the credential that asked for it, and the only honest bound is on the
+caller:
+
+- a **scoped** caller is refused, since a token restricted to `write` would
+  walk out holding an unrestricted key on the facade;
+- an **expiring** caller is refused, since a token good until tomorrow would
+  walk out holding a key that never stops. That is the same escalation in the
+  other currency, and the one the self-minted token answers with
+  `min(policy, caller)` — there is no `min` to take on a key carrying no
+  deadline at all.
+
+A signed-in session passes both, which is where the button lives.
+
+**Switching it off is bounded by neither**, deliberately: it hands on no
+authority, it takes some away. A narrowed or expiring credential closing a door
+its own account holds is the one act always safe to allow, and refusing it
+would leave a compromised account unable to act on the news with the credential
+it has in hand. Switching off a credential that is not there answers **404**.
+
+The Subsonic `changePassword` method is **not** this route and still requires
+an administrator. It is part of the frozen v2.0-beta contract, and the native
+surface is where a new rule belongs.
 
 ## Errors and retry rules
 

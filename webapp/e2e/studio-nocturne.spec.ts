@@ -98,6 +98,23 @@ type Client = {
   revoked_at: number | null;
 };
 let ownClients: Client[] = [];
+/**
+ * The Subsonic credential this account holds, or `null` for none.
+ *
+ * Two states and not one: the panel says different things about "you hold
+ * none" and "the request has not answered", so the mock has to be able to say
+ * the first.
+ */
+let ownSubsonicCredential: { created_at: number; updated_at: number } | null =
+  null;
+/** Every registration the clients route received. */
+let clientWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let clientGate: Promise<void> = Promise.resolve();
+/** Every method the credential route received, in order. */
+let subsonicWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let subsonicGate: Promise<void> = Promise.resolve();
 function freshClients(): Client[] {
   return [
     {
@@ -473,10 +490,41 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (url.pathname === "/api/v2/subsonic-credential") {
+      const method = route.request().method();
+      if (method !== "GET") {
+        subsonicWrites.push(method);
+        await subsonicGate;
+      }
+      if (method === "PUT") {
+        // Rotation, never creation: an account holding none gets a 404, the
+        // way the server answers it, so a panel that offered the control
+        // anyway would fail here.
+        if (ownSubsonicCredential === null) {
+          await route.fulfill({ status: 404, json: { error: "not found" } });
+          return;
+        }
+        ownSubsonicCredential = {
+          ...ownSubsonicCredential,
+          updated_at: 1_700_990_000_000,
+        };
+        await route.fulfill({ json: { api_key: "wfsk_shown_once_only" } });
+        return;
+      }
+      if (method === "DELETE") {
+        ownSubsonicCredential = null;
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+      await route.fulfill({ json: ownSubsonicCredential });
+      return;
+    }
     // Before the administrative `/tokens` branch below, which would swallow
     // it: this path is the account asking about itself.
     if (url.pathname === "/api/v2/api-tokens") {
       if (route.request().method() === "POST") {
+        clientWrites.push("POST");
+        await clientGate;
         const asked = route.request().postDataJSON() as { name: string };
         const created: Client = {
           id: `client-${ownClients.length + 1}`,
@@ -797,6 +845,9 @@ test.beforeEach(async ({ page }) => {
   membersFail = false;
   tokensFail = false;
   ownClients = freshClients();
+  // An account the operator has granted one, because that is the state the
+  // panel is about: it rotates and switches off, and never creates.
+  ownSubsonicCredential = { created_at: 1_700_000_000_000, updated_at: 1_700_000_000_000 };
   scanFails = false;
   scanDrops = false;
   corrections = [];
@@ -2837,7 +2888,13 @@ test("shows the clients that can read the library, and revokes one", async ({
 }) => {
   await page.goto("/settings");
 
-  const clients = page.locator(".settings-panel").last();
+  // Located by its heading rather than by its position. `.last()` named this
+  // panel until a second self-scoped panel was added below it, and a locator
+  // that depends on the order of the page silently follows whatever lands at
+  // the end.
+  const clients = page
+    .locator(".settings-panel")
+    .filter({ has: page.getByRole("heading", { name: "Registered clients" }) });
   await expect(
     clients.getByRole("heading", { name: "Registered clients" }),
   ).toBeVisible();
@@ -2865,4 +2922,151 @@ test("shows the clients that can read the library, and revokes one", async ({
     .click();
   await expect(clients.getByText("the kitchen speaker")).toHaveCount(0);
   await expect(clients.getByRole("listitem")).toHaveCount(1);
+
+  // **And a second press while the registration is out sends nothing.** Two
+  // registrations mint two credentials and only one secret reaches the
+  // screen: the other is a credential on this library whose secret nobody
+  // holds. This panel shipped without the guard; the one below it has the
+  // same one now, for the same reason.
+  let release = () => {};
+  clientGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  clientWrites = [];
+  const register = clients.getByRole("button", { name: "Register" });
+  await clients.getByLabel("What it is for").fill("a slow tablet");
+  await register.click();
+  await expect.soft(register).toBeDisabled();
+  await register.click({ force: true });
+  await register.click({ force: true });
+  release();
+  await expect(register).toBeEnabled();
+  expect(clientWrites).toEqual(["POST"]);
+});
+
+/**
+ * The account changes its own Subsonic password, and switches it off.
+ *
+ * That password is typed into third-party clients, on phones, which is the
+ * ordinary way an application password leaks. Until this panel its owner could
+ * do neither — both server routes were administrative — so answering "my key
+ * has leaked" meant finding an operator.
+ */
+test("changes the Subsonic password, then switches it off", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+
+  const subsonic = page
+    .locator(".settings-panel")
+    .filter({ has: page.getByRole("heading", { name: "Subsonic password" }) });
+  await expect(subsonic).toBeVisible();
+  // Set and never changed, so one date and not two.
+  await expect(subsonic.getByText(/^set /)).toBeVisible();
+  await expect(subsonic.getByText(/last changed/)).toHaveCount(0);
+
+  // **The key moves with the password**, and it is shown once. A leaked
+  // `wfsk_` key authenticates on its own, so a rotation that kept it would
+  // answer nothing.
+  await subsonic.getByLabel("New password").fill("a long enough replacement");
+  await subsonic.getByRole("button", { name: "Change it" }).click();
+  await expect(page.getByText("wfsk_shown_once_only")).toBeVisible();
+  await expect(subsonic.getByText(/last changed/)).toBeVisible();
+
+  // **Asked twice.** The account cannot put this credential back without an
+  // operator, so the first press only arms the second. `exact` because
+  // "Yes, switch it off" contains "Switch it off", and the default substring
+  // match would make every locator here ambiguous.
+  const off = subsonic.getByRole("button", {
+    name: "Switch it off",
+    exact: true,
+  });
+  const reallyOff = subsonic.getByRole("button", {
+    name: "Yes, switch it off",
+  });
+  await off.click();
+  await expect(off).toHaveCount(0);
+  // Backing out leaves the credential exactly as it was.
+  await subsonic.getByRole("button", { name: "Cancel" }).click();
+  await expect(off).toBeVisible();
+  await expect(reallyOff).toHaveCount(0);
+  await expect(subsonic.getByText(/^set /)).toBeVisible();
+
+  // Switching it off leaves the panel saying the account holds none — and
+  // offering nothing, because creating one opens the facade to an account and
+  // that is the operator's decision.
+  await off.click();
+  await reallyOff.click();
+  await expect(
+    subsonic.getByText(
+      "You have no Subsonic password, so no Subsonic client can read your library. Ask the administrator for one.",
+    ),
+  ).toBeVisible();
+  await expect(subsonic.getByLabel("New password")).toHaveCount(0);
+  await expect(
+    subsonic.getByRole("button", { name: "Change it" }),
+  ).toHaveCount(0);
+});
+
+/**
+ * A short password is refused before it is sent.
+ *
+ * The server answers 422 under twelve characters, but that arrives after the
+ * person has committed to the password they chose — and the panel would have
+ * nothing to say about which of the two failures it was.
+ */
+test("refuses a Subsonic password under twelve characters", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+
+  const subsonic = page
+    .locator(".settings-panel")
+    .filter({ has: page.getByRole("heading", { name: "Subsonic password" }) });
+  await subsonic.getByLabel("New password").fill("abcdefghijk");
+  await subsonic.getByRole("button", { name: "Change it" }).click();
+  await expect(subsonic.getByText("Use at least 12 characters.")).toBeVisible();
+  // Nothing was sent: the credential still reads as never changed.
+  await expect(subsonic.getByText(/last changed/)).toHaveCount(0);
+  await expect(page.getByText("wfsk_shown_once_only")).toHaveCount(0);
+});
+
+/**
+ * A second press while the rotation is out sends nothing.
+ *
+ * **This one is about a secret, not about tidiness.** Each rotation mints a key
+ * and stores its hash, so two in flight leave the second one's hash stored
+ * while the panel may have settled on the first one's key — a `wfsk_` key
+ * already dead, shown for a credential whose whole point is that it is shown
+ * once. The person copies it into their clients and the working key is never
+ * shown again.
+ */
+test("sends one rotation however many times the button is pressed", async ({
+  page,
+}) => {
+  let release = () => {};
+  subsonicGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await page.goto("/settings");
+  const subsonic = page
+    .locator(".settings-panel")
+    .filter({ has: page.getByRole("heading", { name: "Subsonic password" }) });
+  const change = subsonic.getByRole("button", { name: "Change it" });
+
+  await subsonic.getByLabel("New password").fill("a long enough replacement");
+  await change.click();
+  // **Soft**, which is the only `expect.soft` in this file and earns it: the
+  // disabled state is the mechanism and the request count below is the
+  // consequence, and a hard failure here would stop the test before the
+  // consequence was ever measured. Removing the guard has to show both.
+  await expect.soft(change).toBeDisabled();
+  await change.click({ force: true });
+  await change.click({ force: true });
+
+  release();
+  await expect(page.getByText("wfsk_shown_once_only")).toBeVisible();
+  await expect(change).toBeEnabled();
+  expect(subsonicWrites).toEqual(["PUT"]);
 });

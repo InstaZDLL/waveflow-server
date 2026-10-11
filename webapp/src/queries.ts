@@ -29,6 +29,7 @@ import {
   listSongs,
   listUncertainScrobbles,
   listUsers,
+  readOwnSubsonicCredential,
   SONG_PAGE,
   type SongSort,
   search,
@@ -241,6 +242,18 @@ export const ownApiTokensQuery = () =>
   queryOptions({
     queryKey: ["own-api-tokens"],
     queryFn: listOwnApiTokens,
+  });
+
+/**
+ * Whether this account holds a Subsonic credential.
+ *
+ * One of these, like the clients listing beside it, because the page it sits
+ * on is about this account.
+ */
+export const ownSubsonicCredentialQuery = () =>
+  queryOptions({
+    queryKey: ["own-subsonic-credential"],
+    queryFn: readOwnSubsonicCredential,
   });
 
 export const libraryMembersQuery = (libraryId: string, open: boolean) =>
