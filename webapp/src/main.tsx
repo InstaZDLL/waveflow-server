@@ -10,7 +10,13 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { type RefObject, StrictMode, useEffect, useRef } from "react";
+import {
+  type RefObject,
+  StrictMode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -300,6 +306,11 @@ function MoreSheet({
  * The first screen is not faded. It arrives under the first-load screen,
  * which is still covering the viewport and fading out on its own, so an
  * animation beneath it would be work nobody can see.
+ *
+ * `useLayoutEffect` and not `useEffect`, which runs after the browser has
+ * painted: the new screen would appear at full opacity, then jump to zero as
+ * the animation took its first keyframe. One frame of flicker on every
+ * navigation, from the thing whose whole purpose is to remove one.
  */
 function FadingOutlet() {
   const pathname = useRouterState({
@@ -307,7 +318,7 @@ function FadingOutlet() {
   });
   const frame = useRef<HTMLDivElement>(null);
   const shown = useRef<string | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const first = shown.current === null;
     shown.current = pathname;
     const element = frame.current;
