@@ -43,17 +43,32 @@ function eachDeclaration(
     const wasTokens = inTokens;
     // A scale cannot be written in terms of itself, so `:root` and the theme
     // overrides beside it are skipped.
-    if (depth === 0 && opens > 0 && /(:root|\[data-theme)/.test(line)) {
-      inTokens = true;
-    }
+    const startsTokens =
+      depth === 0 && opens > 0 && /(:root|\[data-theme)/.test(line);
+    if (startsTokens) inTokens = true;
     depth += opens - closes;
     if (depth <= 0) {
       inTokens = false;
       depth = 0;
     }
-    if (wasTokens || inTokens) return;
-    const declaration = /^\s*([a-z-]+)\s*:\s*(.+?);?\s*$/.exec(line);
-    if (declaration) visit(declaration[1], declaration[2], index + 1);
+    // `startsTokens` as well as the two flags: a `:root { --space-1: 0.25rem; }`
+    // written on one line opens and closes in the same breath, so `inTokens`
+    // is already back to false by the time this runs.
+    if (wasTokens || inTokens || startsTokens) return;
+    // **Every declaration on the line, not the line as one declaration.** The
+    // rule is about the stylesheet and not about how it happens to be
+    // formatted today: `.a { gap: 0.65rem; }` is the same defect written
+    // flat, and an anchored pattern would walk straight past it the day a
+    // formatter setting changes or somebody writes a rule by hand.
+    //
+    // The terminator is looked at rather than eaten: consuming the `;` leaves
+    // the next declaration without the delimiter its own match needs, so a
+    // line carrying two of them gave up one — found by asserting on two.
+    const declarations =
+      /(?:^|[;{])\s*([a-z-]+)\s*:\s*([^{};]*?)\s*(?=[;{}]|$)/g;
+    for (const declaration of line.matchAll(declarations)) {
+      visit(declaration[1], declaration[2], index + 1);
+    }
   });
 }
 
@@ -164,6 +179,13 @@ describe("the spacing and type scale", () => {
     expect(offScale(".a {\n  gap: 0.65rem;\n}")).toEqual([
       "line 2: gap: 0.65rem",
     ]);
+    // The same defect written flat, which an anchored pattern missed.
+    expect(offScale(".a { gap: 0.65rem; }")).toEqual(["line 1: gap: 0.65rem"]);
+    // And several on one line, so the walk is not merely finding the first.
+    expect(offScale(".a { gap: 0.65rem; padding: 0.3rem; }")).toEqual([
+      "line 1: gap: 0.65rem",
+      "line 1: padding: 0.3rem",
+    ]);
     expect(
       crossedRanges(
         ":root {\n  --space-2: 0.5rem;\n  --space-8: 2rem;\n}\n" +
@@ -176,7 +198,8 @@ describe("the spacing and type scale", () => {
     expect(offScale(".a {\n  padding-bottom: 6.4rem;\n}")).toEqual([]);
     // A dimension is not rhythm, whatever its size.
     expect(offScale(".a {\n  width: 0.65rem;\n}")).toEqual([]);
-    // Nor the block that defines the steps.
+    // Nor the block that defines the steps, on two lines or on one.
     expect(offScale(":root {\n  --space-3: 0.75rem;\n}")).toEqual([]);
+    expect(offScale(":root { --space-3: 0.75rem; }")).toEqual([]);
   });
 });
