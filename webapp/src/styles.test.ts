@@ -38,8 +38,25 @@ const LARGEST_STEP = 5;
 const SPACING_OR_TYPE =
   /^(padding|margin|gap|row-gap|column-gap)(-[a-z-]+)?$|^font-size$/;
 
-/** A block whose declarations define the scale, which cannot use it. */
-const TOKEN_SELECTOR = /(:root|\[data-theme)/;
+/**
+ * One selector that defines the scale rather than using it.
+ *
+ * **Anchored, and with no combinator allowed.** A substring test read
+ * `:root .a { … }` as a token block and quietly excluded an ordinary rule —
+ * `:root` is where the steps are declared, but `:root` *followed by anything
+ * descendant* is a rule like any other. Pseudo-classes and attributes stay,
+ * because the sheet's second token block is `:root:not(.dark)`.
+ */
+const TOKEN_SELECTOR = /^(:root|\[data-theme[^\]]*\])[^\s>+~,]*$/;
+
+/** Whether every selector in a list defines tokens. */
+function definesTokens(selector: string): boolean {
+  const parts = selector
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  return parts.length > 0 && parts.every((part) => TOKEN_SELECTOR.test(part));
+}
 
 type Declaration = {
   property: string;
@@ -59,7 +76,7 @@ function declarations(source: string): Declaration[] {
       property: declaration.prop,
       value: declaration.value,
       line: declaration.source?.start?.line ?? 0,
-      defining: TOKEN_SELECTOR.test(selector),
+      defining: definesTokens(selector),
     });
   });
   return found;
@@ -287,6 +304,25 @@ describe("the spacing and type scale", () => {
         "@media (hover: none) {\n  :root { --space-3: 0.75rem; }\n  .a { gap: 0.65rem; }\n}",
       ),
     ).toEqual(["line 3: gap: 0.65rem"]);
+
+    // **`:root` followed by a descendant is a rule like any other.** A
+    // substring test read it as a token block and excluded it in silence.
+    expect(offScale(":root .a { gap: 0.65rem; }")).toEqual([
+      "line 1: gap: 0.65rem",
+    ]);
+    expect(offScale(":root > .a { gap: 0.65rem; }")).toEqual([
+      "line 1: gap: 0.65rem",
+    ]);
+    // A list where one part is a rule and the other a token block is a rule.
+    expect(offScale(":root, .a { gap: 0.65rem; }")).toEqual([
+      "line 1: gap: 0.65rem",
+    ]);
+    // While the two the sheet actually declares its steps in stay excluded,
+    // pseudo-class and all.
+    expect(offScale(":root:not(.dark) { --space-3: 0.75rem; }")).toEqual([]);
+    expect(
+      offScale(':root,\n[data-theme="dark"] {\n  --space-3: 0.75rem;\n}'),
+    ).toEqual([]);
   });
 
   it("finds a fluid range that crosses, wherever it sits", () => {
