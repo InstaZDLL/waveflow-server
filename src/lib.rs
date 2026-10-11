@@ -737,15 +737,41 @@ pub fn app(config: &Config, state: AppState) -> Router {
             config.request_timeout,
         ));
 
-    let router = Router::new()
+    // What may be compressed, kept apart from what may not.
+    //
+    // The exclusion is **structural rather than conditional**: the media
+    // routes and the Subsonic facade are merged outside this group, so no
+    // predicate decides whether a stream is compressed — the layer never sees
+    // one. Compressing an already-compressed body spends CPU for nothing, and
+    // a body that arrives re-encoded is a body whose length and ranges no
+    // longer describe the file a player is seeking through.
+    //
+    // `CompressionLayer::new()` carries tower-http's `DefaultPredicate`, which
+    // leaves alone anything under 32 bytes, images, gRPC and — load-bearing
+    // here — `text/event-stream`: the scan event feed lives on `/api/v2` and
+    // would otherwise be buffered into silence by its own encoder.
+    //
+    // The Subsonic facade is out for a reason worth writing down, because it
+    // costs a real gain: it serves every method through one route,
+    // `/rest/{method}`, so a catalogue listing and an audio stream arrive by
+    // the same path. Separating them there would mean trusting a content-type
+    // predicate with the correctness of byte-range playback, which is the one
+    // thing in this server that four clients were replayed to establish.
+    let compressible = Router::new()
         .merge(ordinary)
+        // Anything no API route claimed is served by the embedded web client:
+        // a built asset, or the shell for a client-side route. This is what
+        // the layer is mostly for — the built client leaves raw at roughly
+        // 497 kB and about 152 kB gzipped.
+        .fallback(webui::handler)
+        .layer(tower_http::compression::CompressionLayer::new());
+
+    let router = Router::new()
+        .merge(compressible)
         // Media bodies can outlive the ordinary API timeout. FFmpeg and
         // disconnected consumers are bounded by MediaService itself.
         .merge(media::router(state.clone()))
         .merge(subsonic::router(state))
-        // Anything no API route claimed is served by the embedded web client:
-        // a built asset, or the shell for a client-side route.
-        .fallback(webui::handler)
         .layer(DefaultBodyLimit::max(16 * 1024));
 
     // CORS goes on first so that the request-id and trace layers end up
