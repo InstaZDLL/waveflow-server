@@ -1040,11 +1040,16 @@ account lists, registers and revokes **its own** tokens at `/api/v2/api-tokens`
 administrator:
 
 ```bash
-curl https://music.example.com/api/v2/api-tokens   -H "Authorization: Bearer ACCESS_TOKEN"
+curl https://music.example.com/api/v2/api-tokens \
+  -H "Authorization: Bearer ACCESS_TOKEN"
 
-curl -X POST https://music.example.com/api/v2/api-tokens   -H "Authorization: Bearer ACCESS_TOKEN"   -H "Content-Type: application/json"   -d '{"name":"the kitchen speaker","scopes":[]}'
+curl -X POST https://music.example.com/api/v2/api-tokens \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"the kitchen speaker","scopes":[]}'
 
-curl -X DELETE https://music.example.com/api/v2/api-tokens/TOKEN_UUID   -H "Authorization: Bearer ACCESS_TOKEN"
+curl -X DELETE https://music.example.com/api/v2/api-tokens/TOKEN_UUID \
+  -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
 This is safe because a token is never a promotion: the account's role is
