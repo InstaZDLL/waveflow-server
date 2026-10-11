@@ -1107,12 +1107,24 @@ cannot be added without choosing what it needs — the compiler asks. This
 matters because the previous release stored scopes, returned them from the API
 and printed them from the CLI while reading them nowhere.
 
-Issuing a token is administrative: an account cannot mint one for itself. A
-token carries the authority of the account it belongs to, so who may create one
-is a question about the instance rather than about the account, and the answer
-is the same from the CLI and from the API. `DELETE` revokes one; the token
-stops authenticating immediately, and revoking it again answers `404`,
-because it is already not working.
+**Minting a token for *another* account is administrative**, and these routes
+are that: naming a username is the administrative act, and the answer is the
+same from the CLI and from the API. An account mints, lists and revokes **its
+own** through `/api/v2/api-tokens` and needs nobody — see
+[its own clients](#its-own-clients) above for why that is safe and what bounds
+it.
+
+This paragraph used to say that an account could not mint one for itself at
+all, on the reasoning that a token carries the authority of the account it
+belongs to and so who may create one is a question about the instance. The
+first half is true and the conclusion did not follow: a token carries that
+authority and never more, because the role is checked apart from the scopes. So
+the question is about the account, and the sentence was keeping a listener from
+seeing which devices read their own library.
+
+`DELETE` revokes one on either path; the token stops authenticating
+immediately, and revoking it again answers `404`, because it is already not
+working.
 
 The `token create` CLI command remains, for bootstrapping an instance that
 has no administrator session yet. Both paths go through the same service.

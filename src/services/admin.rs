@@ -249,9 +249,15 @@ impl DomainServices {
         // Bounded in time as well as in scope, and **only here**. See the
         // field on `Config`: an operator provisioning a service account is a
         // different act from a person clicking a button in their settings.
+        // Bounded at both ends of the conversion. `as_millis` is a `u128`
+        // and `as i64` truncates it, so a TTL an operator set absurdly high
+        // could have landed negative — an expiry already in the past, which
+        // fails closed but reads as a bug — or wrapped somewhere plausible.
+        // Saturating instead: an unrepresentable lifetime becomes the longest
+        // one this column can hold, which is what asking for forever means.
         let expires_at = self
             .api_token_ttl
-            .map(|ttl| now_ms() + ttl.as_millis() as i64);
+            .map(|ttl| now_ms().saturating_add(i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX)));
         self.issue_token(actor_id, name, scopes, expires_at).await
     }
 
