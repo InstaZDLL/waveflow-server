@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 export type IconName =
   | "albums"
   | "artists"
+  | "songs"
   | "search"
   | "genres"
   | "random"
@@ -110,6 +111,13 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <path d="M4 6h10M4 11h10M4 16h7" />
       <path d="M18 5v10.5a2.5 2.5 0 1 1-2-2.4V7l5-1.5" />
+    </>
+  ),
+  songs: (
+    <>
+      <path d="M4 7h11M4 12h11M4 17h6" />
+      <circle cx="17.5" cy="16.5" r="2.5" />
+      <path d="M20 16.5V8l-3 1" />
     </>
   ),
   queue: (

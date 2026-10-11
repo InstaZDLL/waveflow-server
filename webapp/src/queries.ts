@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import {
   type AlbumSort,
@@ -25,8 +25,11 @@ import {
   listScrobbleDestinations,
   listScrobbleLinks,
   listShares,
+  listSongs,
   listUncertainScrobbles,
   listUsers,
+  SONG_PAGE,
+  type SongSort,
   search,
 } from "./api";
 import { playsByInstant, scrobbleRows, tracksToName } from "./scrobbling";
@@ -51,6 +54,23 @@ export const albumsQuery = (sort: AlbumSort, scope: string | undefined) =>
   queryOptions({
     queryKey: ["albums", sort, scope ?? null],
     queryFn: () => listAlbums(sort, scope),
+  });
+
+/**
+ * The catalogue's songs, a page at a time.
+ *
+ * The only infinite query here, and the only one that needs to be: every
+ * other listing is small enough to hold whole. A short page is the end —
+ * the route has no total to send, and inventing one would mean a second
+ * `COUNT(*)` over the same filter on every request.
+ */
+export const songsQuery = (sort: SongSort, scope: string | undefined) =>
+  infiniteQueryOptions({
+    queryKey: ["songs", sort, scope ?? null],
+    queryFn: ({ pageParam }) => listSongs(sort, scope, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.length < SONG_PAGE ? undefined : lastParam + SONG_PAGE,
   });
 
 export const albumQuery = (albumId: string) =>
@@ -184,7 +204,13 @@ export const searchQuery = (needle: string, scope: string | undefined) =>
     // screen has to re-ask, or the page keeps answering for the library it
     // left.
     queryKey: ["search", needle, scope ?? null],
-    queryFn: () => search(needle, scope),
+    // The signal is the query's own: a needle superseded while its request is
+    // still out is abandoned rather than left to finish into a cache entry
+    // nobody will read. It costs the screen nothing — every needle is its own
+    // key, so an answer that arrives late lands under the key it was asked
+    // for and not over the one on screen — and it stops a search box from
+    // spending one round trip per keystroke on the server.
+    queryFn: ({ signal }) => search(needle, scope, signal),
     enabled: needle.length > 0,
   });
 

@@ -50,6 +50,7 @@ import {
   RandomPage,
   SearchPage,
   SharesPage,
+  SongsPage,
   Waiting,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
@@ -64,6 +65,7 @@ const navigation: Array<{
   to:
     | "/"
     | "/artists"
+    | "/songs"
     | "/genres"
     | "/search"
     | "/favourites"
@@ -85,6 +87,7 @@ const navigation: Array<{
 }> = [
   { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
   { to: "/artists", labelKey: "nav.artists", icon: "artists" },
+  { to: "/songs", labelKey: "nav.songs", icon: "songs" },
   { to: "/genres", labelKey: "nav.genres", icon: "genres" },
   { to: "/search", labelKey: "nav.search", icon: "search", primary: true },
   { to: "/playing", labelKey: "nav.playing", icon: "lyrics", primary: true },
@@ -391,6 +394,12 @@ const albumRoute = createRoute({
   },
 });
 
+const songsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/songs",
+  component: SongsPage,
+});
+
 const artistsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/artists",
@@ -513,6 +522,7 @@ const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
     albumsRoute,
     albumRoute,
+    songsRoute,
     artistsRoute,
     artistRoute,
     genresRoute,
