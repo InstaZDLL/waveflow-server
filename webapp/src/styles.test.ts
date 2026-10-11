@@ -124,6 +124,51 @@ function stepsOf(css: string): Record<string, number> {
   return steps;
 }
 
+/**
+ * The contents of every `clamp()` in a value, by balanced parentheses.
+ *
+ * **Not only one that is the whole value.** `padding: var(--space-12)
+ * clamp(…) var(--space-20)` carries one in the middle, and a `calc()` wraps
+ * another to negate it — three in this sheet, which a `startsWith` walked past
+ * while the count still read nineteen and looked thorough.
+ */
+function clampsIn(value: string): string[] {
+  const found: string[] = [];
+  let at = 0;
+  for (;;) {
+    const start = value.indexOf("clamp(", at);
+    if (start === -1) return found;
+    let depth = 0;
+    let end = start + "clamp".length;
+    for (; end < value.length; end += 1) {
+      if (value[end] === "(") depth += 1;
+      else if (value[end] === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    found.push(value.slice(start + "clamp(".length, end));
+    at = end + 1;
+  }
+}
+
+/** A comma-separated list, split only where the commas are not nested. */
+function topLevelParts(inner: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let at = 0; at < inner.length; at += 1) {
+    if (inner[at] === "(") depth += 1;
+    else if (inner[at] === ")") depth -= 1;
+    else if (inner[at] === "," && depth === 0) {
+      parts.push(inner.slice(from, at).trim());
+      from = at + 1;
+    }
+  }
+  parts.push(inner.slice(from).trim());
+  return parts;
+}
+
 /** Each rhythm `clamp()` whose floor ended up above its ceiling. */
 function crossedRanges(css: string): { crossed: string[]; checked: number } {
   const steps = stepsOf(css);
@@ -138,15 +183,15 @@ function crossedRanges(css: string): { crossed: string[]; checked: number } {
   let checked = 0;
   eachDeclaration(css, (property, value) => {
     if (!SPACING_OR_TYPE.test(property)) return;
-    if (!value.startsWith("clamp(")) return;
-    const inner = value.slice(value.indexOf("(") + 1, value.lastIndexOf(")"));
-    const parts = inner.split(/,(?![^()]*\))/).map((part) => part.trim());
-    if (parts.length !== 3) return;
-    checked += 1;
-    const floor = resolve(parts[0]);
-    const ceiling = resolve(parts[2]);
-    if (floor !== null && ceiling !== null && floor > ceiling) {
-      crossed.push(`${property}: ${value}`);
+    for (const inner of clampsIn(value)) {
+      const parts = topLevelParts(inner);
+      if (parts.length !== 3) continue;
+      checked += 1;
+      const floor = resolve(parts[0]);
+      const ceiling = resolve(parts[2]);
+      if (floor !== null && ceiling !== null && floor > ceiling) {
+        crossed.push(`${property}: clamp(${inner})`);
+      }
     }
   });
   return { crossed, checked };
@@ -196,8 +241,11 @@ describe("the spacing and type scale", () => {
     const { crossed, checked } = crossedRanges(css);
     expect(crossed).toEqual([]);
     // Pinned, so a walk that stops finding them cannot make the line above
-    // vacuous.
-    expect(checked).toBe(19);
+    // vacuous. Twenty-two, not the nineteen this said at first: three sit
+    // inside a longer value — one of them wrapped in a `calc()` to negate it —
+    // and a check that only read a `clamp()` occupying the whole value walked
+    // past all three while its count still looked thorough.
+    expect(checked).toBe(22);
   });
 
   it("finds the shapes it exists to refuse", () => {
@@ -214,12 +262,35 @@ describe("the spacing and type scale", () => {
       "line 1: gap: 0.65rem",
       "line 1: padding: 0.3rem",
     ]);
+    const twoSteps = ":root {\n  --space-2: 0.5rem;\n  --space-8: 2rem;\n}\n";
     expect(
       crossedRanges(
-        ":root {\n  --space-2: 0.5rem;\n  --space-8: 2rem;\n}\n" +
+        twoSteps +
           ".a {\n  font-size: clamp(var(--space-8), 2vw, var(--space-2));\n}",
       ).crossed,
     ).toEqual(["font-size: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    // **One inside a longer value, and one wrapped to be negated.** Both
+    // shapes are in this sheet, and a check reading only a whole-value
+    // `clamp()` saw neither.
+    expect(
+      crossedRanges(
+        twoSteps +
+          ".a {\n  padding: var(--space-2) clamp(var(--space-8), 2vw, var(--space-2)) 0;\n}",
+      ).crossed,
+    ).toEqual(["padding: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    expect(
+      crossedRanges(
+        twoSteps +
+          ".a {\n  margin: calc(clamp(var(--space-8), 2vw, var(--space-2)) * -1);\n}",
+      ).crossed,
+    ).toEqual(["margin: clamp(var(--space-8), 2vw, var(--space-2))"]);
+    // Two in one value are both read, so the walk is not stopping at the first.
+    expect(
+      crossedRanges(
+        twoSteps +
+          ".a {\n  padding: clamp(var(--space-8), 2vw, var(--space-2))\n    clamp(var(--space-8), 1vw, var(--space-2));\n}",
+      ).crossed,
+    ).toHaveLength(2);
 
     // And the shapes neither of them may flag.
     expect(offScale(".a {\n  gap: 0.05rem;\n}")).toEqual([]);
