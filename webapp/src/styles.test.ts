@@ -33,6 +33,31 @@ const STEP_DECLARATION = /--((?:space|text)-[a-z0-9]+):\s*([0-9.]+)rem;/g;
 const TOKEN_SELECTOR = /(:root|\[data-theme)/;
 
 /**
+ * The stylesheet with its comments blanked, line for line.
+ *
+ * Both walks below read text that only looks like CSS, so a comment is a
+ * second source of it. A comment mentioning `:root` ahead of a rule had that
+ * rule masked as a token block on the strength of a word in prose; a comment
+ * sitting between a brace and a property lost the declaration, because it
+ * stood where the delimiter should have been. Neither is in the sheet today,
+ * out of fifty-one comments — which is luck rather than a property.
+ */
+function withoutComments(css: string): string {
+  const out = css.split("");
+  let at = 0;
+  for (;;) {
+    const open = css.indexOf("/*", at);
+    if (open === -1) return out.join("");
+    const close = css.indexOf("*/", open + 2);
+    const end = close === -1 ? css.length - 1 : close + 1;
+    for (let k = open; k <= end; k += 1) {
+      if (out[k] !== "\n") out[k] = " ";
+    }
+    at = end + 1;
+  }
+}
+
+/**
  * The stylesheet with every token-defining block blanked out, line for line.
  *
  * **Blanked rather than skipped, and that distinction cost two rounds.** A
@@ -81,7 +106,7 @@ function eachDeclaration(
   css: string,
   visit: (property: string, value: string, line: number) => void,
 ): void {
-  const masked = withoutTokenBlocks(css);
+  const masked = withoutTokenBlocks(withoutComments(css));
   // **Over the whole sheet, not line by line.** A declaration is bounded by
   // `;` and braces, and nothing says it fits on one line — three in this sheet
   // already do not, `main`'s padding among them. Two earlier versions of this
@@ -105,8 +130,13 @@ function offScale(css: string): string[] {
   const found: string[] = [];
   eachDeclaration(css, (property, value, line) => {
     if (!SPACING_OR_TYPE.test(property)) return;
-    for (const raw of value.match(/(?<![\w.-])\d+(?:\.\d+)?rem\b/g) ?? []) {
-      const asked = Number.parseFloat(raw);
+    // **The sign is read, and the magnitude is what is compared.** A `-3rem`
+    // is a step used without being named, not a different kind of value: all
+    // four negatives in this sheet landed exactly on a step, which is what
+    // showed that leaving them out was a gap rather than a decision. A pull
+    // backwards is written `calc(var(--space-12) * -1)` now.
+    for (const raw of value.match(/(?<![\w.])-?\d+(?:\.\d+)?rem\b/g) ?? []) {
+      const asked = Math.abs(Number.parseFloat(raw));
       if (asked === 0) continue;
       if (asked < SMALLEST_STEP / 2 || asked > LARGEST_STEP) continue;
       found.push(`line ${line}: ${property}: ${raw}`);
@@ -330,10 +360,31 @@ describe("the spacing and type scale", () => {
       offScale(".a {\n  margin: 0 auto\n    0.3rem\n    var(--space-4);\n}"),
     ).toEqual(["line 2: margin: 0.3rem"]);
 
-    // **What it deliberately does not read: a negative.** `-3rem` is a step
-    // pulled backwards rather than a value beside one, and the sheet uses two
-    // of them to undo a container's own padding. Flagging them would be noise
-    // about a number that is already on the scale.
-    expect(offScale(".a {\n  margin: -0.65rem;\n}")).toEqual([]);
+    // **A negative is a step too.** This read one as a different kind of value
+    // and skipped it, which was a gap dressed as a decision: all four
+    // negatives in the sheet landed exactly on a step, so they were steps used
+    // without being named. The sign is read and the magnitude compared, and
+    // the sheet writes a pull backwards as `calc(var(--space-12) * -1)`.
+    expect(offScale(".a {\n  margin: -0.65rem;\n}")).toEqual([
+      "line 2: margin: -0.65rem",
+    ]);
+    expect(offScale(".a {\n  margin: calc(var(--space-12) * -1);\n}")).toEqual(
+      [],
+    );
+
+    // **A comment is not CSS, and both walks read text that looks like it.**
+    // A `:root` mentioned in prose masked the rule after it as a token block,
+    // and a comment standing between a brace and a property swallowed the
+    // declaration behind it.
+    expect(
+      offScale("/* :root is the token block */ .a { gap: 0.65rem; }"),
+    ).toEqual(["line 1: gap: 0.65rem"]);
+    expect(offScale(".a { /* a note */ gap: 0.65rem; }")).toEqual([
+      "line 1: gap: 0.65rem",
+    ]);
+    // A comment spanning lines leaves the numbering alone.
+    expect(
+      offScale(".a {\n  /* two\n     lines */\n  gap: 0.65rem;\n}"),
+    ).toEqual(["line 4: gap: 0.65rem"]);
   });
 });

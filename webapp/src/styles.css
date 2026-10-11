@@ -528,7 +528,7 @@ h3 {
 }
 
 .scope-note {
-  margin: -1rem 0 var(--space-6);
+  margin: calc(var(--space-4) * -1) 0 var(--space-6);
   font-size: var(--text-xs);
 }
 
@@ -998,8 +998,8 @@ main {
   display: flex;
   align-items: flex-end;
   gap: clamp(var(--space-6), 4vw, var(--space-16));
-  margin: -3rem calc(clamp(var(--space-6), 4vw, var(--space-20)) * -1)
-    var(--space-8);
+  margin: calc(var(--space-12) * -1)
+    calc(clamp(var(--space-6), 4vw, var(--space-20)) * -1) var(--space-8);
   padding: var(--space-20) clamp(var(--space-6), 4vw, var(--space-20))
     var(--space-12);
   border-bottom: 1px solid var(--line);
@@ -1743,7 +1743,7 @@ button.danger {
   .detail-header,
   .artist-hero {
     align-items: flex-end;
-    margin: -1.5rem -1rem var(--space-6);
+    margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) var(--space-6);
     padding: var(--space-16) var(--space-4) var(--space-6);
   }
 
