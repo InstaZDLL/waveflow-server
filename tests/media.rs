@@ -828,3 +828,126 @@ async fn transcode_status_reports_the_ceilings_it_enforces() {
         "one account may not outrun the whole server"
     );
 }
+
+/// The client is compressed; the stream is not, and still accepts ranges.
+///
+/// Both halves in one test because either alone is reassuring and neither is
+/// evidence. A layer applied to the whole router would pass the first; a layer
+/// applied nowhere would pass the second.
+///
+/// The fixture is a **WAV**, chosen rather than tolerated: it is uncompressed
+/// audio, so it is precisely the body an encoder would squeeze happily — and
+/// precisely the body a player walks through by byte offset. An `image/` or
+/// `text/event-stream` probe would pass whether or not the media routes sit
+/// outside the layer, because tower-http's default predicate already leaves
+/// those alone. Audio is the only content type here that the predicate would
+/// have compressed, so it is the only one that can tell the two arrangements
+/// apart.
+#[tokio::test]
+async fn the_client_is_compressed_and_the_stream_is_left_alone() {
+    let (_temp, config, state) = test_app().await;
+    let password = "correct horse battery staple";
+    let hash = security::hash_password(password).unwrap();
+    let owner = state
+        .db
+        .create_account("compress-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("compress-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Plain.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Compression library",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Compression library".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "compress-owner", password).await;
+
+    // The web client, which is what the layer is for.
+    let shell = router
+        .clone()
+        .oneshot(
+            Request::get("/")
+                .header("accept-encoding", "gzip, br")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shell.status(), StatusCode::OK);
+    assert!(
+        shell.headers().contains_key("content-encoding"),
+        "the shell arrived uncompressed: {:?}",
+        shell.headers()
+    );
+
+    // And the stream, which it must never reach. Asked without a range, so the
+    // answer is a whole 200 body: `Content-Range` is the one thing tower-http
+    // refuses to compress on its own, so a 206 would pass this assertion even
+    // with the layer wrapped around everything.
+    let stream = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/tracks/{}/stream", track.id))
+                .header("authorization", format!("Bearer {token}"))
+                .header("accept-encoding", "gzip, br")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), StatusCode::OK);
+    assert!(
+        !stream.headers().contains_key("content-encoding"),
+        "the stream was re-encoded: {:?}",
+        stream.headers()
+    );
+    // Re-encoding would have taken these two with it, and they are what a
+    // player seeks on.
+    assert_eq!(
+        stream
+            .headers()
+            .get("accept-ranges")
+            .and_then(|value| value.to_str().ok()),
+        Some("bytes")
+    );
+    let declared: u64 = stream.headers()["content-length"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let on_disk = std::fs::metadata(music.join("Plain.wav")).unwrap().len();
+    assert_eq!(
+        declared, on_disk,
+        "the declared length no longer describes the file a client would seek through"
+    );
+    let bytes = stream.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..4], b"RIFF", "the body is no longer a WAV");
+    assert_eq!(bytes.len() as u64, on_disk);
+}
