@@ -107,6 +107,20 @@ let ownClients: Client[] = [];
  */
 let ownSubsonicCredential: { created_at: number; updated_at: number } | null =
   null;
+/**
+ * The saved positions the playing screen lists under the track.
+ *
+ * Empty by default, which is what it was: `/api/v2/bookmarks` fell through to
+ * the mock's 404, so the list the screen renders was never drawn by any test.
+ * One that needs the page taller than the viewport fills it.
+ */
+let bookmarks: Array<{
+  position_ms: number;
+  comment: string | null;
+  created_at: number;
+  updated_at: number;
+  song: { id: string; title: string; artist: string | null };
+}> = [];
 /** Every registration the clients route received. */
 let clientWrites: string[] = [];
 /** Held open by the double-press test; instant for everyone else. */
@@ -490,6 +504,10 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    if (url.pathname === "/api/v2/bookmarks") {
+      await route.fulfill({ json: bookmarks });
+      return;
+    }
     if (url.pathname === "/api/v2/subsonic-credential") {
       const method = route.request().method();
       if (method !== "GET") {
@@ -845,6 +863,19 @@ test.beforeEach(async ({ page }) => {
   membersFail = false;
   tokensFail = false;
   ownClients = freshClients();
+  bookmarks = [];
+  // **Reset here, and they were not.** These four reached the mock without
+  // reaching this block, because a `replace` whose needle had already been
+  // reformatted did nothing and said nothing. So `subsonicWrites`
+  // accumulated across every test a worker ran, and the rotation assertion
+  // passed only because its test and the one that writes before it happened to
+  // land in different workers. A gate is worse: a test that fails before
+  // releasing one leaves it pending, and every later test in that worker waits
+  // on the route for ever.
+  subsonicWrites = [];
+  subsonicGate = Promise.resolve();
+  clientWrites = [];
+  clientGate = Promise.resolve();
   // An account the operator has granted one, because that is the state the
   // panel is about: it rotates and switches off, and never creates.
   ownSubsonicCredential = { created_at: 1_700_000_000_000, updated_at: 1_700_000_000_000 };
@@ -3248,4 +3279,86 @@ test("opens the immersive view, and Back leaves the view and not the screen", as
     .click();
   await expect(page.locator("dialog.immersive")).toHaveCount(0);
   await expect(page).toHaveURL(/\/playing$/);
+});
+
+/**
+ * The sung line is held in view, and only the column moves to do it.
+ *
+ * `scrollIntoView` scrolls every scrollable ancestor it has, the window
+ * included, so each new sung line dragged the whole page back to the words —
+ * and somebody reading the saved positions underneath was hauled upwards every
+ * few seconds. The column scrolls itself now.
+ *
+ * The head is moved with the keyboard rather than by pressing a line, because
+ * Playwright scrolls an element into view before clicking it and that scroll
+ * would be the one under test. Twelve saved positions are there to make the
+ * page taller than the viewport: without something below the fold, "the window
+ * did not scroll" is true however the scrolling is done.
+ */
+test("holds the sung line in view without dragging the page", async ({
+  page,
+}) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: true,
+      line: Array.from({ length: 40 }, (_, index) => ({
+        start: index * 5_000,
+        value: `line number ${index}`,
+      })),
+    },
+  ]);
+  bookmarks = Array.from({ length: 12 }, (_, index) => ({
+    position_ms: index * 1_000,
+    comment: null,
+    created_at: 1,
+    updated_at: 1,
+    song: {
+      id: `saved-${index}`,
+      title: `Somewhere to pick up ${index}`,
+      artist: "Rue Delacour",
+    },
+  }));
+
+  await page.goto("/playing?view=lyrics");
+  const column = page.locator(".lyrics-view ol");
+  await expect(column).toBeVisible();
+  // The list the screen renders under the track, drawn by a test at last.
+  await expect(page.locator(".bookmark-list li")).toHaveCount(12);
+  const scrollable = await page.evaluate(
+    () => document.documentElement.scrollHeight > window.innerHeight,
+  );
+  expect(scrollable).toBe(true);
+
+  // **Scrolled down to the saved positions first, which is the whole case.**
+  // With the column fully on screen there is nothing for an ancestor scroll to
+  // do, so the page stays put however the following is written — the complaint
+  // was about a reader who had scrolled away from the words and kept being
+  // hauled back to them.
+  await page.evaluate(() => window.scrollTo(0, 400));
+  const before = await page.evaluate(() => window.scrollY);
+  expect(before).toBeGreaterThan(0);
+
+  // Twenty presses of five seconds each: the player listens on the window, and
+  // a modal dialog is the only thing that would be in the way.
+  for (let press = 0; press < 20; press += 1) {
+    await page.keyboard.press("ArrowRight");
+  }
+
+  // The head moved, which is also the proof that a line's own press would
+  // seek: both go through `player.seek`, and the position is React state
+  // rather than something read back off an element that is playing nothing.
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "line number 20" }),
+  ).toHaveAttribute("aria-current", "true");
+
+  // Smooth scrolling settles over frames, so the column is polled rather than
+  // read once.
+  await expect
+    .poll(() => column.evaluate((list) => list.scrollTop))
+    .toBeGreaterThan(0);
+  // And the page did not move under the reader.
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
 });

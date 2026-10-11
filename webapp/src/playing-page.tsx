@@ -191,9 +191,24 @@ function LyricsView({ song }: { song: Song }) {
   // that stays on the same line costs nothing.
   useLayoutEffect(() => {
     if (active < 0) return;
-    const line = column.current?.children[active];
-    line?.scrollIntoView({
-      block: "center",
+    const list = column.current;
+    const line = list?.children[active];
+    if (!list || !line) return;
+    // **The column and nothing else.** `scrollIntoView` scrolls every
+    // scrollable ancestor it has, the window included, so each new sung line
+    // would drag the whole page back to the words — and somebody reading the
+    // bookmarks underneath would be hauled upwards every few seconds.
+    //
+    // Measured from boxes rather than from `offsetTop`, which is relative to
+    // whichever ancestor happens to be positioned: two rectangles need no
+    // assumption about where the list sits in the document.
+    const lineBox = line.getBoundingClientRect();
+    const listBox = list.getBoundingClientRect();
+    list.scrollTo({
+      top:
+        list.scrollTop +
+        (lineBox.top - listBox.top) -
+        (listBox.height - lineBox.height) / 2,
       // A sheet that jumps rather than glides, for whoever asked for less
       // motion. The following itself is not decoration — it is how the view
       // works — so it is the gliding that goes, not the following.

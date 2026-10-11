@@ -1981,8 +1981,14 @@ button.danger {
 }
 
 /* The artwork over everything else. A dialog, so the focus trap, Escape and
-   the inertness behind come from the platform. */
-.immersive {
+   the inertness behind come from the platform.
+
+   **`[open]`, or the closed dialog is laid out.** `display: flex` from an
+   author sheet outranks the `dialog:not([open]) { display: none }` the browser
+   brings, and the element stays mounted between the close and the navigation
+   that follows it — so it would appear in the page's own flow, 100vw by 100vh
+   and outside the top layer, for as long as that took. */
+.immersive[open] {
   display: flex;
   flex-direction: column;
   align-items: center;
