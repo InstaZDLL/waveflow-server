@@ -3070,3 +3070,174 @@ test("sends one rotation however many times the button is pressed", async ({
   await expect(change).toBeEnabled();
   expect(subsonicWrites).toEqual(["PUT"]);
 });
+
+/**
+ * The words as the subject of the screen, and what timings buy.
+ *
+ * A sheet that carries them gets two things the strip cannot give: the sung
+ * line is held in view, and every line is a button that seeks to it. A sheet
+ * without them gets neither — and says so by having no buttons at all, rather
+ * than promising a jump it cannot compute.
+ *
+ * No audio is served in these runs, so the head stays at zero and the first
+ * line is the sung one. That is enough to tell a marked line from an unmarked
+ * one; what it deliberately does not claim is that pressing a line moved the
+ * head, which without a stream would be a measurement of nothing.
+ */
+test("gives the words a view of their own, with timings where there are any", async ({
+  page,
+}) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: true,
+      line: [
+        { start: 0, value: "the lamps come on along the quay" },
+        { start: 5_000, value: "and the water keeps the light" },
+        { start: 12_500, value: "the lamps come on along the quay" },
+      ],
+    },
+  ]);
+
+  await page.goto("/playing");
+  await page.getByRole("link", { name: "Lyrics", exact: true }).click();
+
+  const view = page.locator(".lyrics-view");
+  await expect(view).toBeVisible();
+  await expect(page).toHaveURL(/\?view=lyrics$/);
+  // The strip is gone, not duplicated: one view at a time, or the words would
+  // be on the screen twice and the sung line marked in two places.
+  await expect(page.locator(".playing")).toHaveCount(0);
+
+  // The head is at zero, so the first line is the one being sung — and a
+  // refrain repeated word for word does not take the mark with it.
+  const lines = view.getByRole("listitem");
+  await expect(lines).toHaveCount(3);
+  await expect(lines.nth(0)).toHaveAttribute("aria-current", "true");
+  await expect(lines.nth(2)).not.toHaveAttribute("aria-current", "true");
+
+  // **Every line is a button, and its name is the time rather than the
+  // words.** A screen reader announcing "press to jump to the lamps come on
+  // along the quay" reads the line twice and says nothing about what pressing
+  // does.
+  await expect(view.getByRole("button")).toHaveCount(3);
+  await expect(view.getByRole("button", { name: "Jump to 0:05" })).toBeVisible();
+  await expect(
+    view.getByText("This sheet carries timings — press a line to jump to it."),
+  ).toBeVisible();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // **The switcher says where it is, once.** All three entries point at one
+  // path, and the router counts a link carrying no search as matching every
+  // search — so this read `['Detail', 'Lyrics']` before `activeOptions` was
+  // made exact, and the screen claimed to be in two views at once. A count
+  // rather than one attribute: the defect was an extra mark, which an
+  // assertion on the right one passes straight through.
+  const current = page.locator('.view-switcher a[aria-current="page"]');
+  await expect(current).toHaveText("Lyrics");
+  await page.goto("/playing");
+  await expect(page.locator(".playing")).toBeVisible();
+  await expect(current).toHaveText("Detail");
+
+  // And a mode this build does not know is not a mode: the detail view
+  // stands, rather than a blank screen or a crash.
+  await page.goto("/playing?view=karaoke");
+  await expect(page.locator(".playing")).toBeVisible();
+  await expect(page.locator(".lyrics-view")).toHaveCount(0);
+});
+
+/**
+ * A sheet without timings offers no seeking, and does not pretend to follow.
+ *
+ * The same view, the other half of the rule: `synced` is the server's statement
+ * that the lines carry starts, and everything this view adds over the strip
+ * hangs off it.
+ */
+test("offers no seeking on a sheet that carries no timings", async ({
+  page,
+}) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: null,
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: false,
+      line: [
+        { value: "the lamps come on along the quay" },
+        { value: "and the water keeps the light" },
+      ],
+    },
+  ]);
+
+  await page.goto("/playing?view=lyrics");
+
+  const view = page.locator(".lyrics-view");
+  await expect(view.getByRole("listitem")).toHaveCount(2);
+  await expect(view.getByRole("button")).toHaveCount(0);
+  await expect(
+    view.getByText("This sheet carries timings — press a line to jump to it."),
+  ).toHaveCount(0);
+  // Nothing is marked: an unsynced sheet has no start to compare against, and
+  // weighting a line would be a claim about where the track is.
+  await expect(view.locator("[aria-current]")).toHaveCount(0);
+});
+
+/**
+ * The immersive view, and the two things that make it a mode rather than a trap.
+ *
+ * It **carries transport controls**, because it covers the player bar: a view
+ * that fills the screen with a cover and leaves no way to pause is a trap. And
+ * it **lives in the location**, so Back leaves the view rather than the screen
+ * — which is the press everybody makes on a phone, and the whole reason the
+ * mode is a search parameter instead of a `useState`.
+ */
+test("opens the immersive view, and Back leaves the view and not the screen", async ({
+  page,
+}) => {
+  await page.goto("/playing");
+  await page.getByRole("link", { name: "Immersive" }).click();
+
+  const immersive = page.locator("dialog.immersive");
+  await expect(immersive).toBeVisible();
+  await expect(page).toHaveURL(/\?view=immersive$/);
+  await expect(immersive.locator(".immersive-cover")).toBeVisible();
+  // The transport, so the mode can be sat in.
+  for (const name of ["Previous track", "Play", "Next track"]) {
+    await expect(immersive.getByRole("button", { name })).toBeVisible();
+  }
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // **Escape, which is the platform's and not ours.** `<dialog>` answers it,
+  // and the navigation hangs off the close rather than off the key, so the
+  // button below and this press go through one closer.
+  await page.keyboard.press("Escape");
+  await expect(immersive).toHaveCount(0);
+  await expect(page).toHaveURL(/\/playing$/);
+  await expect(page.locator(".playing")).toBeVisible();
+
+  // And Back, from inside the view, leaves the view.
+  await page.getByRole("link", { name: "Immersive" }).click();
+  await expect(page.locator("dialog.immersive")).toBeVisible();
+  await page.goBack();
+  await expect(page.locator("dialog.immersive")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/playing$/);
+  await expect(page.locator(".playing")).toBeVisible();
+
+  // The close button takes the same route out.
+  await page.getByRole("link", { name: "Immersive" }).click();
+  await page
+    .getByRole("button", { name: "Leave the immersive view" })
+    .click();
+  await expect(page.locator("dialog.immersive")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/playing$/);
+});

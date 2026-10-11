@@ -40,7 +40,6 @@ import {
   HistoryPage,
   LoginPage,
   NotFoundPage,
-  PlayingPage,
   PlaylistsPage,
   QueuePage,
   RandomPage,
@@ -49,6 +48,7 @@ import {
   SongsPage,
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
+import { PlayingPage } from "./playing-page";
 import { PreferencesProvider } from "./preferences";
 import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";

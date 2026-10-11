@@ -1,0 +1,520 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+
+import {
+  deleteBookmark,
+  formatDuration,
+  type LyricsLine,
+  type Song,
+  type StructuredLyrics,
+  setBookmark,
+} from "./api";
+import { Artwork } from "./artwork";
+import { CanvasStage, usePrefersReducedMotion } from "./canvas";
+import { FileQuality } from "./file-quality";
+import { type TranslationKey, useI18n } from "./i18n";
+import { Icon } from "./icons";
+import { EmptyState, PageHeader, useReload } from "./page-shell";
+import { usePlayer, usePlayerProgress } from "./player";
+import { bookmarksQuery, lyricsQuery } from "./queries";
+
+/**
+ * What the playing screen is showing.
+ *
+ * Three ways to look at one track, and `detail` is the one that was there
+ * before: the cover beside the names, with the words as a strip under them.
+ * `lyrics` makes those words the subject instead of a column inside something
+ * else, and `immersive` gives the artwork — and the canvas, where the track
+ * carries one — the whole viewport.
+ */
+export type PlayingView = "detail" | "lyrics" | "immersive";
+
+/**
+ * The view a location asks for, or `detail` for anything it does not.
+ *
+ * **In the URL rather than in a `useState`**, and the reason is the Back
+ * button. On a phone, Back is what everybody presses to leave the thing they
+ * are in; held in component state, the immersive view would swallow that press
+ * and Back would leave the playing screen altogether. A location also makes
+ * "read along to this" a link somebody can keep.
+ *
+ * Only the two modes that are not the default are spelled, so an ordinary
+ * visit stays `/playing` and nobody reads `?view=detail`. Anything else — a
+ * mode this build does not know, a number, a hostile string — reads as
+ * `detail`, because an unknown mode is not a mode and the screen still has to
+ * show something.
+ */
+export function playingView(search: unknown): PlayingView {
+  const asked =
+    typeof search === "object" && search !== null
+      ? (search as { view?: unknown }).view
+      : undefined;
+  return asked === "lyrics" || asked === "immersive" ? asked : "detail";
+}
+
+/**
+ * The line a synced lyric sheet is on at `seconds`. Lines carry their own start
+ * in milliseconds and arrive in order, so this is the last one already begun;
+ * `-1` before the first. An unsynced sheet has no starts and never highlights.
+ */
+export function currentLyricLine(lines: LyricsLine[], seconds: number): number {
+  let current = -1;
+  for (const [index, line] of lines.entries()) {
+    if (line.start === undefined || line.start > seconds * 1000) break;
+    current = index;
+  }
+  return current;
+}
+
+/**
+ * The sheet a track travels with, and where in it the playing head is.
+ *
+ * Shared by the strip and the dedicated view below, so the two cannot disagree
+ * about which line is being sung — or about how a refrain is keyed, which is
+ * the part that is easy to get subtly different twice.
+ */
+function useLyricSheet(trackId: string) {
+  const progress = usePlayerProgress();
+  const { data: value, error } = useQuery(lyricsQuery(trackId));
+  const sheet: StructuredLyrics | undefined = value?.structuredLyrics[0];
+  const active = sheet?.synced
+    ? currentLyricLine(sheet.line, progress.position)
+    : -1;
+  // A refrain repeats word for word and an unsynced sheet has no start to key
+  // on, so the line's text alone is not unique. Numbering the repetitions is
+  // what the queue does with the same problem.
+  const keys = useMemo(() => {
+    const seen = new Map<string, number>();
+    return (sheet?.line ?? []).map((line) => {
+      const occurrence = seen.get(line.value) ?? 0;
+      seen.set(line.value, occurrence + 1);
+      return `${line.value}-${occurrence}`;
+    });
+  }, [sheet]);
+  return {
+    sheet,
+    active,
+    keys,
+    // Three states and not two: a sheet that has not arrived is not a track
+    // without words, and saying "no lyrics" while the request is out is a
+    // claim about the track.
+    state: error
+      ? "none"
+      : !value
+        ? "waiting"
+        : sheet?.line.length
+          ? "sheet"
+          : "none",
+  } as const;
+}
+
+/** The words beside the cover, as the detail view has always shown them. */
+function LyricsStrip({ trackId }: { trackId: string }) {
+  const { t } = useI18n();
+  const { sheet, active, keys, state } = useLyricSheet(trackId);
+
+  if (state === "waiting")
+    return <p className="muted">{t("common.loading")}</p>;
+  if (state === "none" || !sheet)
+    return <p className="muted">{t("lyrics.none")}</p>;
+  return (
+    <div className="lyrics">
+      <h3>
+        {sheet.displayTitle}
+        {sheet.displayArtist ? <small>{sheet.displayArtist}</small> : null}
+      </h3>
+      <ol aria-label={t("lyrics.label")}>
+        {sheet.line.map((line, index) => (
+          <li
+            key={keys[index]}
+            className={index === active ? "on" : undefined}
+            aria-current={index === active ? "true" : undefined}
+          >
+            {line.value || " "}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * The words as the subject of the screen.
+ *
+ * Two things the strip cannot do, and they are why this view exists rather
+ * than being the strip with a larger font. It **holds the sung line in view**,
+ * so a listener reads along without touching anything — which is the whole
+ * point of a server that supplies timings. And where those timings exist, a
+ * line is a **button that seeks to it**: the sheet becomes a way to move
+ * through the track, not only a thing to read.
+ *
+ * A sheet without timings gets neither, and says so by having no buttons at
+ * all. Rendering an unsynced line as something pressable would promise a seek
+ * the sheet cannot compute.
+ */
+function LyricsView({ song }: { song: Song }) {
+  const { t } = useI18n();
+  const player = usePlayer();
+  const reduced = usePrefersReducedMotion();
+  const { sheet, active, keys, state } = useLyricSheet(song.id);
+  const column = useRef<HTMLOListElement | null>(null);
+
+  // **Before paint, and only when the line actually moved.** `useEffect` would
+  // let the new line show at the bottom of the column for a frame before the
+  // scroll caught up. `active` as the only dependency means a progress tick
+  // that stays on the same line costs nothing.
+  useLayoutEffect(() => {
+    if (active < 0) return;
+    const line = column.current?.children[active];
+    line?.scrollIntoView({
+      block: "center",
+      // A sheet that jumps rather than glides, for whoever asked for less
+      // motion. The following itself is not decoration — it is how the view
+      // works — so it is the gliding that goes, not the following.
+      behavior: reduced ? "auto" : "smooth",
+    });
+  }, [active, reduced]);
+
+  if (state === "waiting")
+    return <p className="muted">{t("common.loading")}</p>;
+  if (state === "none" || !sheet)
+    return (
+      <div className="lyrics-view">
+        <EmptyState message={t("lyrics.none")} />
+      </div>
+    );
+
+  return (
+    <div className="lyrics-view">
+      <header>
+        <h2>{sheet.displayTitle}</h2>
+        <p className="muted">
+          {sheet.displayArtist ?? song.artist ?? t("common.unknownArtist")}
+        </p>
+        {sheet.synced ? (
+          <p className="muted">
+            <small>{t("lyrics.seekHint")}</small>
+          </p>
+        ) : null}
+      </header>
+      <ol ref={column} aria-label={t("lyrics.label")}>
+        {sheet.line.map((line, index) => {
+          const at = line.start;
+          const on = index === active;
+          return (
+            <li
+              key={keys[index]}
+              className={on ? "on" : undefined}
+              aria-current={on ? "true" : undefined}
+            >
+              {sheet.synced && at !== undefined ? (
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => player.seek(at / 1000)}
+                  // The time, not the words: a screen reader announcing
+                  // "press to jump to the lamps come on along the quay" reads
+                  // the line twice and says nothing about what pressing does.
+                  aria-label={t("lyrics.seekTo", {
+                    when: formatDuration(at),
+                  })}
+                >
+                  {line.value || " "}
+                </button>
+              ) : (
+                line.value || " "
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * The artwork, and the canvas where there is one, over everything else.
+ *
+ * A native `<dialog>` opened with `showModal`, which is where the focus trap,
+ * the Escape key and the inertness of the page behind come from — the same
+ * reasoning the navigation sheet records, and the same reason not to hand-roll
+ * an overlay.
+ *
+ * **It carries transport controls because it covers the player bar.** A view
+ * that fills the screen with a cover and leaves no way to pause is a trap
+ * rather than a mode. The keyboard shortcuts keep working regardless: the
+ * player listens on the window, which a modal dialog does not intercept.
+ */
+function ImmersiveView({ song }: { song: Song }) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const player = usePlayer();
+  const progress = usePlayerProgress();
+  const frame = useRef<HTMLDialogElement | null>(null);
+  // Set while this component is going away, so the close that unmounting
+  // causes is told apart from the close a person asked for. Without it,
+  // leaving the screen by any other route would navigate back onto it.
+  const leaving = useRef(false);
+
+  useLayoutEffect(() => {
+    const dialog = frame.current;
+    if (!dialog) return;
+    dialog.showModal();
+    return () => {
+      leaving.current = true;
+      if (dialog.open) dialog.close();
+    };
+  }, []);
+
+  return (
+    // **One closer.** The button closes the dialog and nothing else; the
+    // navigation hangs off `onClose`, which Escape and the backdrop reach too.
+    // A button that both closed and navigated would be a second closer, and a
+    // second closer is a second thing to get out of step.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: dismissing by keyboard is Escape, which <dialog> handles natively
+    <dialog
+      ref={frame}
+      className="immersive"
+      aria-label={t("playing.immersiveTitle")}
+      onClose={() => {
+        if (!leaving.current) void navigate({ to: "/playing", search: {} });
+      }}
+      onClick={(event) => {
+        if (event.target === frame.current) frame.current?.close();
+      }}
+    >
+      <CanvasStage trackId={song.id} className="immersive-stage">
+        <Artwork
+          artworkId={song.artwork_hash}
+          title={song.title}
+          className="cover immersive-cover"
+        />
+      </CanvasStage>
+      <div className="immersive-detail">
+        <span className="eyebrow">{song.album ?? t("common.album")}</span>
+        <h2>{song.title}</h2>
+        <p className="muted">{song.artist ?? t("common.unknownArtist")}</p>
+        <p className="muted">
+          <small>
+            {formatDuration(progress.position * 1000)}
+            {" / "}
+            {formatDuration(progress.duration * 1000)}
+          </small>
+        </p>
+        <div className="immersive-transport">
+          <button
+            type="button"
+            aria-label={t("player.previous")}
+            onClick={() => player.previous()}
+          >
+            <Icon name="previous" />
+          </button>
+          <button
+            type="button"
+            className="primary"
+            aria-label={t(player.playing ? "player.pause" : "player.play")}
+            onClick={() => player.toggle()}
+          >
+            <Icon name={player.playing ? "pause" : "play"} />
+          </button>
+          <button
+            type="button"
+            aria-label={t("player.next")}
+            onClick={() => player.next()}
+          >
+            <Icon name="next" />
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        className="immersive-close"
+        aria-label={t("playing.leaveImmersive")}
+        onClick={() => frame.current?.close()}
+      >
+        <Icon name="close" />
+      </button>
+    </dialog>
+  );
+}
+
+/** The three ways to look at the track, as links, because the view is a place. */
+function ViewSwitcher() {
+  const { t } = useI18n();
+  const entries: Array<{
+    view: PlayingView;
+    search: Record<string, string>;
+    label: TranslationKey;
+  }> = [
+    { view: "detail", search: {}, label: "playing.viewDetail" },
+    { view: "lyrics", search: { view: "lyrics" }, label: "playing.viewLyrics" },
+    {
+      view: "immersive",
+      search: { view: "immersive" },
+      label: "playing.viewImmersive",
+    },
+  ];
+  return (
+    <nav className="view-switcher" aria-label={t("playing.viewLabel")}>
+      {entries.map((entry) => (
+        <Link
+          key={entry.view}
+          to="/playing"
+          search={entry.search}
+          // **`exact`, and the default would be wrong here.** All three
+          // links point at one path, and the router counts a link whose
+          // search is `{}` as matching every search there is — so `Detail`
+          // was marked current on `?view=lyrics` as well and the switcher
+          // claimed to be in two views at once. Measured rather than
+          // reasoned about: the reading was `['Detail', 'Lyrics']`, and it
+          // is `['Lyrics']` with this.
+          //
+          // The router marks it and this component does not, although it
+          // knows which view is showing. Two things setting one attribute is
+          // how they start disagreeing, and the one that survives is whichever
+          // the library applies last.
+          activeOptions={{ exact: true, includeSearch: true }}
+        >
+          {t(entry.label)}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+export function PlayingPage() {
+  const player = usePlayer();
+  const progress = usePlayerProgress();
+  const { t } = useI18n();
+  const reload = useReload(bookmarksQuery().queryKey);
+  const [busy, setBusy] = useState(false);
+  const { data: bookmarks } = useQuery(bookmarksQuery());
+  const current = player.current;
+  const view = playingView(useSearch({ strict: false }));
+
+  /**
+   * One bookmark per track, replaced rather than added — so this button reads
+   * "save" whether or not the track already has one, and saving again simply
+   * moves it to where the head is now.
+   */
+  async function saveHere(song: Song) {
+    setBusy(true);
+    try {
+      await setBookmark(song.id, progress.position * 1000);
+      reload();
+    } catch {
+      // Nothing is lost: the head has not moved and the old bookmark stands.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function forget(trackId: string) {
+    try {
+      await deleteBookmark(trackId);
+      reload();
+    } catch {
+      // Same: the list simply does not change.
+    }
+  }
+
+  return (
+    <section>
+      <PageHeader
+        title={t("nav.playing")}
+        detail={current ? undefined : t("playing.idle")}
+      >
+        {current ? (
+          <>
+            <ViewSwitcher />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void saveHere(current)}
+            >
+              {t("bookmarks.save")}
+            </button>
+          </>
+        ) : null}
+      </PageHeader>
+
+      {current ? (
+        <>
+          {/* The immersive view is laid over the screen rather than put in
+              its place, so leaving it returns to a page that was never torn
+              down — and the detail stays beneath it for the frame the dialog
+              takes to open. */}
+          {view === "immersive" ? <ImmersiveView song={current} /> : null}
+          {view === "lyrics" ? (
+            <LyricsView song={current} />
+          ) : (
+            <div className="playing">
+              <CanvasStage trackId={current.id}>
+                <Artwork
+                  artworkId={current.artwork_hash}
+                  title={current.title}
+                  className="cover large"
+                />
+              </CanvasStage>
+              <div className="playing-detail">
+                <span className="eyebrow">
+                  {current.album ?? t("common.album")}
+                </span>
+                <h2>{current.title}</h2>
+                <p className="muted">
+                  {current.artist ?? t("common.unknownArtist")}
+                </p>
+                {/* Under the names and above the words: what the file is belongs
+                    with the track and not with the lyrics, and a listener who
+                    came here to read along should not have to pass it twice. */}
+                <FileQuality song={current} />
+                <LyricsStrip trackId={current.id} />
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState message={t("playing.empty")} />
+      )}
+
+      {bookmarks?.length ? (
+        <article className="collection">
+          <header className="collection-header">
+            <div>
+              <h3>{t("bookmarks.title")}</h3>
+              <span className="muted">{t("bookmarks.detail")}</span>
+            </div>
+          </header>
+          <ul className="list bookmark-list">
+            {bookmarks.map((bookmark) => (
+              <li key={bookmark.song.id}>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => player.play([bookmark.song], 0)}
+                >
+                  <strong>{bookmark.song.title}</strong>
+                  <small className="muted">
+                    {bookmark.song.artist ?? t("common.unknownArtist")}
+                  </small>
+                </button>
+                <span className="muted">
+                  {formatDuration(bookmark.position_ms)}
+                </span>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => void forget(bookmark.song.id)}
+                  aria-label={`${t("bookmarks.forget")}: ${bookmark.song.title}`}
+                >
+                  {t("bookmarks.forget")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </article>
+      ) : null}
+    </section>
+  );
+}

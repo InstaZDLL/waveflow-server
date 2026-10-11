@@ -127,3 +127,18 @@ export function PageHeader({
     </header>
   );
 }
+
+/**
+ * Nothing to show, said once and the same way everywhere.
+ *
+ * Moved here from `pages` when the playing screen became its own module: a
+ * second copy of four lines is how two screens start saying "nothing here"
+ * with different spacing.
+ */
+export function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="empty-state">
+      <p>{message}</p>
+    </div>
+  );
+}

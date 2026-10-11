@@ -62,9 +62,18 @@ export function usePrefersReducedMotion(): boolean {
 export function CanvasStage({
   trackId,
   children,
+  className,
 }: {
   trackId: string;
   children: ReactNode;
+  /**
+   * An extra class for the stage, for a caller that lays it out differently —
+   * the immersive view fills the viewport with it where the playing screen
+   * puts it beside the names. Named by the caller rather than selected through
+   * its parent: `.immersive .canvas-stage` would be a deeper selector than
+   * `.canvas-stage` itself and would quietly outrank it everywhere.
+   */
+  className?: string;
 }) {
   const reduced = usePrefersReducedMotion();
   const [source, setSource] = useState<{
@@ -93,7 +102,7 @@ export function CanvasStage({
   // next one's cover while its own answer is still out.
   const url = !reduced && source?.trackId === trackId ? source.url : null;
   return (
-    <div className="canvas-stage">
+    <div className={className ? `canvas-stage ${className}` : "canvas-stage"}>
       {children}
       {url ? <CanvasVideo key={url} url={url} /> : null}
     </div>
