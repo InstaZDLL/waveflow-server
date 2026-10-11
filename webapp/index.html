@@ -80,6 +80,31 @@
       <img src="/logo.svg" alt="" width="88" height="88" />
     </div>
     <div id="root"></div>
+    <!-- The screen must not outlive a client that never arrives.
+         `dismissSplash` is the ordinary way out and it runs from the bundle,
+         so a bundle that fails to parse, or throws before React's first
+         commit, would leave a pulsing mark over the viewport for as long as
+         the tab stayed open — worse than a blank page, because a blank page
+         at least looks broken instead of looking like it is working.
+
+         Ten seconds: past any load this is meant to dress, and short enough
+         that a client which is not coming becomes visible. What it reveals is
+         an empty `#root`, which is exactly what this page showed before the
+         screen existed — the ceiling restores the old failure rather than
+         inventing a new one.
+
+         A `window.onerror` handler would notice sooner, and is not used: any
+         unrelated non-fatal error would then take the screen away early, and
+         the ceiling already covers the case it would catch.
+
+         Inline on purpose. A fallback for the bundle cannot live in the
+         bundle. -->
+    <script>
+      setTimeout(function () {
+        var splash = document.getElementById("splash");
+        if (splash && !splash.dataset.leaving) splash.remove();
+      }, 10000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

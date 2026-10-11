@@ -2619,3 +2619,36 @@ test("ships the first-load screen in the document, drawn from the one logo", asy
   await expect(page.locator("#splash")).toHaveCount(0);
   await expect(page.locator(".page-frame")).toBeVisible();
 });
+
+/**
+ * The first-load screen leaves even when the client never arrives.
+ *
+ * `dismissSplash` runs from the bundle, so it cannot be what rescues a bundle
+ * that fails to load: a reader would be left with a pulsing mark over the
+ * whole viewport for as long as the tab stayed open — worse than a blank
+ * page, which at least looks broken rather than looking like it is working.
+ *
+ * Eleven seconds of patience here, against a ten-second ceiling. It is the
+ * slowest test in this file and it earns it: an untested fallback for a
+ * failure nobody reproduces is the kind that turns out not to work on the one
+ * day it matters.
+ */
+test("takes the first-load screen away even when the bundle never loads", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+
+  // Every script the document asks for is refused, so React never mounts and
+  // nothing in the bundle can clean up after it.
+  await page.route("**/*.js", (route) => route.abort());
+  await page.route("**/src/main.tsx", (route) => route.abort());
+
+  await page.goto("/");
+  // Up, and covering the page: this is the state the ceiling exists for.
+  await expect(page.locator("#splash")).toBeVisible();
+
+  await expect(page.locator("#splash")).toHaveCount(0, { timeout: 11_000 });
+  // What is revealed is an empty root — the page as it was before this screen
+  // existed. The ceiling restores the old failure rather than inventing one.
+  await expect(page.locator("#root")).toBeEmpty();
+});
