@@ -84,13 +84,16 @@ impl DomainServices {
             ),
             (SongOrder::AlphabeticalByArtist, _) => concat!(
                 song_scope!(),
-                " ORDER BY artist_display COLLATE NOCASE NULLS LAST,                    title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " ORDER BY artist_display COLLATE NOCASE NULLS LAST, \
+                  title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             // Sleeve order once inside an album: a disc before its tracks, and
             // an untagged one after everything that says where it belongs.
             (SongOrder::AlphabeticalByAlbum, _) => concat!(
                 song_scope!(),
-                " ORDER BY album_title COLLATE NOCASE NULLS LAST,                    disc_number NULLS LAST, track_number NULLS LAST,                    title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " ORDER BY album_title COLLATE NOCASE NULLS LAST, \
+                  disc_number NULLS LAST, track_number NULLS LAST, \
+                  title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::Newest, _) => concat!(
                 song_scope!(),
@@ -101,34 +104,43 @@ impl DomainServices {
             // carrying everything it has not.
             (SongOrder::Highest, _) => concat!(
                 song_scope!(),
-                " WHERE user_rating > 0                   ORDER BY user_rating DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE user_rating > 0 \
+                  ORDER BY user_rating DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::Frequent, _) => concat!(
                 song_scope!(),
-                " WHERE play_count > 0                   ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE play_count > 0 \
+                  ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::Recent, _) => concat!(
                 song_scope!(),
-                " WHERE last_played_at IS NOT NULL                   ORDER BY last_played_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE last_played_at IS NOT NULL \
+                  ORDER BY last_played_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::Starred, _) => concat!(
                 song_scope!(),
-                " WHERE starred_at IS NOT NULL                   ORDER BY starred_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE starred_at IS NOT NULL \
+                  ORDER BY starred_at DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::Random, _) => {
                 concat!(song_scope!(), " ORDER BY RANDOM() LIMIT ? OFFSET ?")
             }
             (SongOrder::ByYear, true) => concat!(
                 song_scope!(),
-                " WHERE year IS NOT NULL AND year BETWEEN ? AND ?                   ORDER BY year, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::ByYear, false) => concat!(
                 song_scope!(),
-                " WHERE year IS NOT NULL AND year BETWEEN ? AND ?                   ORDER BY year DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE year IS NOT NULL AND year BETWEEN ? AND ? \
+                  ORDER BY year DESC, title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
             (SongOrder::ByGenre, _) => concat!(
                 song_scope!(),
-                " WHERE EXISTS (SELECT 1 FROM track_genre tg                     JOIN genre g ON g.id=tg.genre_id                     WHERE tg.track_id=s.id AND g.canonical_name=?)                   ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
+                " WHERE EXISTS (SELECT 1 FROM track_genre tg \
+                  JOIN genre g ON g.id=tg.genre_id \
+                  WHERE tg.track_id=s.id AND g.canonical_name=?) \
+                  ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?"
             ),
         };
         let mut statement = sqlx::query(sql)

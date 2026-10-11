@@ -1,8 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
-
-import { useI18n } from "./i18n";
-
 /**
  * The frame a page sits in: its header, its wait, its failure, and the way it
  * says something changed.
@@ -22,6 +17,13 @@ import { useI18n } from "./i18n";
  * visit to every route. That trade is not worth making, and saying so is the
  * point of this paragraph.
  */
+
+import { useQueryClient } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+
+import { useI18n } from "./i18n";
+
+/** Eight placeholder cards, keyed by name because their order is their only identity. */
 const SKELETON_KEYS = [
   "one",
   "two",
