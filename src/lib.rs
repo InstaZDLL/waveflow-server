@@ -474,21 +474,25 @@ fn annotate_scope_refusals(openapi: &mut utoipa::openapi::OpenApi) {
 /// Reads are skipped: a GET carries no operation id and cannot conflict.
 fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
     use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
-    use utoipa::openapi::{Required, ResponseBuilder, Schema, Type};
+    use utoipa::openapi::{RefOr, Required, ResponseBuilder, Schema, Type};
 
+    // utoipa 6 holds a parameter list as `RefOr`, so a parameter built here
+    // is wrapped on the way in rather than pushed bare.
     let header = |name: &str, description: &str| {
-        ParameterBuilder::new()
-            .name(name)
-            .parameter_in(ParameterIn::Header)
-            .required(Required::False)
-            .description(Some(description.to_owned()))
-            .schema(Some(Schema::Object({
-                let mut object = utoipa::openapi::Object::new();
-                object.schema_type = utoipa::openapi::schema::SchemaType::new(Type::String);
-                object.format = Some(utoipa::openapi::SchemaFormat::Custom("uuid".to_owned()));
-                object
-            })))
-            .build()
+        RefOr::T(
+            ParameterBuilder::new()
+                .name(name)
+                .parameter_in(ParameterIn::Header)
+                .required(Required::False)
+                .description(Some(description.to_owned()))
+                .schema(Some(Schema::Object({
+                    let mut object = utoipa::openapi::Object::new();
+                    object.schema_type = utoipa::openapi::schema::SchemaType::new(Type::String);
+                    object.format = Some(utoipa::openapi::SchemaFormat::Custom("uuid".to_owned()));
+                    object
+                })))
+                .build(),
+        )
     };
 
     for item in openapi.paths.paths.values_mut() {
@@ -907,6 +911,7 @@ mod tests {
     /// nothing said so.
     #[test]
     fn the_scrobbling_routes_advertise_no_operation_id_protocol() {
+        use utoipa::openapi::RefOr;
         use utoipa::OpenApi;
 
         let openapi = super::ApiDoc::openapi();
@@ -933,7 +938,13 @@ mod tests {
                     .parameters
                     .iter()
                     .flatten()
-                    .map(|parameter| parameter.name.as_str())
+                    .map(|parameter| match parameter {
+                        RefOr::T(parameter) => parameter.name.as_str(),
+                        RefOr::Ref(reference) => panic!(
+                            "{path} advertises a parameter by reference ({}), which this check cannot read",
+                            reference.ref_location
+                        ),
+                    })
                     .collect();
                 assert!(
                     !names.contains(&super::api::OPERATION_ID_HEADER),
@@ -949,6 +960,78 @@ mod tests {
             checked, 5,
             "two on the link, two on the queue, and the Last.fm authorisation — a count that \
              falls if a route is added without deciding which protocol it belongs to"
+        );
+    }
+
+    /// Every `user-data` mutation advertises both headers and a `409`.
+    ///
+    /// Written because nothing asserted the presence of what
+    /// `annotate_mutation_headers` injects — only its absence on the
+    /// scrobbling routes. An annotation that stopped injecting would have made
+    /// that neighbouring test pass more easily, and the document would have
+    /// lost the operation-id protocol with a green suite.
+    ///
+    /// `user-data` is the tag the annotation selects on, so this walk asks the
+    /// same question the pass answers rather than a wider one it never claimed.
+    #[test]
+    fn every_user_data_mutation_advertises_the_operation_id_protocol() {
+        use utoipa::openapi::RefOr;
+        use utoipa::OpenApi;
+
+        // Thirteen today: the favourite, rating, play-queue and now-playing
+        // mutations. A new one lands here deliberately, not silently.
+        let expected = 13;
+        let openapi = super::ApiDoc::openapi();
+        let mut checked = 0;
+        for (path, item) in &openapi.paths.paths {
+            for operation in [
+                item.put.as_ref(),
+                item.post.as_ref(),
+                item.delete.as_ref(),
+                item.patch.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !operation
+                    .tags
+                    .as_ref()
+                    .is_some_and(|tags| tags.iter().any(|tag| tag == "user-data"))
+                {
+                    continue;
+                }
+                assert!(
+                    operation.responses.responses.contains_key("409"),
+                    "{path} takes an operation id without documenting the conflict it can answer"
+                );
+                let names: Vec<&str> = operation
+                    .parameters
+                    .iter()
+                    .flatten()
+                    .map(|parameter| match parameter {
+                        RefOr::T(parameter) => parameter.name.as_str(),
+                        RefOr::Ref(reference) => panic!(
+                            "{path} advertises a parameter by reference ({}), which this check cannot read",
+                            reference.ref_location
+                        ),
+                    })
+                    .collect();
+                assert!(
+                    names.contains(&super::api::OPERATION_ID_HEADER),
+                    "{path} mutates without advertising an operation id"
+                );
+                assert!(
+                    names.contains(&super::api::DEVICE_ID_HEADER),
+                    "{path} mutates without advertising a device id"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(
+            checked, expected,
+            "{checked} tagged mutations examined, not {expected} — a walk that stops finding \
+             them makes every assertion above vacuous, so the count is pinned rather than \
+             merely non-zero"
         );
     }
 
