@@ -2708,7 +2708,7 @@ test("says what the file is on the playing screen", async ({ page }) => {
   // glance, and six separate assertions would pass on a line that listed
   // them backwards.
   await expect(facts).toHaveText(
-    "Lossless · FLAC · 957 kbps · 44.1 kHz · 16 bit · 2 ch · 26.7 MB",
+    "Lossless · FLAC · 957 kbps · 44.1 kHz · 16 bit · 2 ch · 28 MB",
   );
 
   // Four of five steps lit: lossless, and not the hi-res band above it.

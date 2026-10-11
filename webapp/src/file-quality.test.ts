@@ -5,6 +5,7 @@ import {
   containerName,
   fileSize,
   kilohertz,
+  MEGABYTE,
   QUALITY_STEPS,
   type QualityBand,
   qualityBand,
@@ -162,19 +163,27 @@ describe("a measurement in the reader's notation", () => {
   it("names the byte unit in the language, not in a symbol", () => {
     // `Mo` and `ko` in French, which is why the unit is a translation and
     // not a string appended here.
-    expect(fileSize(27_983_872, "en")).toEqual({
+    expect(fileSize(27_900_000, "en")).toEqual({
       key: "file.megabytes",
-      size: "26.7",
+      size: "27.9",
     });
-    expect(fileSize(27_983_872, "fr")).toEqual({
+    expect(fileSize(27_900_000, "fr")).toEqual({
       key: "file.megabytes",
-      size: "26,7",
+      size: "27,9",
     });
     // Below a megabyte it steps down, and a kilobyte count has no fraction
     // worth showing.
     expect(fileSize(400_000, "en")).toEqual({
       key: "file.kilobytes",
-      size: "391",
+      size: "400",
     });
+    // **Decimal, because the label is.** Dividing by 1024 here and writing
+    // `MB` named 10⁶ bytes and showed 2⁰ ones; one megabyte exactly must
+    // read as one.
+    expect(fileSize(MEGABYTE, "en")).toEqual({
+      key: "file.megabytes",
+      size: "1",
+    });
+    expect(fileSize(MEGABYTE - 1, "en").key).toBe("file.kilobytes");
   });
 });

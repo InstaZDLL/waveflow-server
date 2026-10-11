@@ -117,10 +117,20 @@ export function kilohertz(rate: number, locale: Locale): string {
   return formatNumber(rate / 1000, locale, 1);
 }
 
+/** A megabyte, and a kilobyte, as the labels beside them mean them. */
+export const MEGABYTE = 1_000_000;
+const KILOBYTE = 1_000;
+
 /**
  * Bytes as the unit a person reads — MB above a megabyte, kB below — with the
  * unit itself left to the translation, because it is `Mo` and `ko` in
  * French and not a symbol that travels.
+ *
+ * **Decimal divisors, because the labels are decimal units.** This divided by
+ * 1024 and wrote `MB`, which names 10⁶ bytes; the binary one is `MiB`. Of
+ * the two ways to agree with itself, this is the one that does not put an
+ * unfamiliar symbol in front of somebody who came here to listen to music —
+ * and it is what the server's own `size` is counted in.
  *
  * Returns the key and the number rather than the finished string, so the
  * caller holds the only `t` and this stays testable without one.
@@ -129,12 +139,12 @@ export function fileSize(
   bytes: number,
   locale: Locale,
 ): { key: TranslationKey; size: string } {
-  return bytes >= 1024 * 1024
-    ? {
-        key: "file.megabytes",
-        size: formatNumber(bytes / (1024 * 1024), locale, 1),
-      }
-    : { key: "file.kilobytes", size: formatNumber(bytes / 1024, locale, 0) };
+  return bytes >= MEGABYTE
+    ? { key: "file.megabytes", size: formatNumber(bytes / MEGABYTE, locale, 1) }
+    : {
+        key: "file.kilobytes",
+        size: formatNumber(bytes / KILOBYTE, locale, 0),
+      };
 }
 
 /**
