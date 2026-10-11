@@ -68,6 +68,36 @@ export function currentLyricLine(lines: LyricsLine[], seconds: number): number {
 }
 
 /**
+ * What the lyrics panel has to say, from what the query holds.
+ *
+ * **Three states and not two**: a sheet that has not arrived is not a track
+ * without words, and saying "no lyrics" while the request is out is a claim
+ * about the track.
+ *
+ * **And words already held beat a failed attempt.** The cache serves an answer
+ * for thirty seconds, so coming back to this view later revalidates — and a
+ * revalidation that failed used to blank the sheet and print "no lyrics travel
+ * with this file", which is a false statement about a track whose words were on
+ * the screen a moment earlier. A failure decides only when there is nothing to
+ * show.
+ *
+ * That ordering is also why the scroll effect below does not watch this value:
+ * the column it scrolls can no longer be torn down and rebuilt while a sheet is
+ * held, so the only remount left is one where `active` moves with it.
+ */
+export function lyricSheetState(answer: {
+  /** The query holds an answer, even a stale one. */
+  answered: boolean;
+  /** The last attempt failed. */
+  failed: boolean;
+  /** How many lines the first sheet carries. */
+  lines: number;
+}): "waiting" | "sheet" | "none" {
+  if (answer.answered) return answer.lines > 0 ? "sheet" : "none";
+  return answer.failed ? "none" : "waiting";
+}
+
+/**
  * The sheet a track travels with, and where in it the playing head is.
  *
  * Shared by the strip and the dedicated view below, so the two cannot disagree
@@ -96,17 +126,12 @@ function useLyricSheet(trackId: string) {
     sheet,
     active,
     keys,
-    // Three states and not two: a sheet that has not arrived is not a track
-    // without words, and saying "no lyrics" while the request is out is a
-    // claim about the track.
-    state: error
-      ? "none"
-      : !value
-        ? "waiting"
-        : sheet?.line.length
-          ? "sheet"
-          : "none",
-  } as const;
+    state: lyricSheetState({
+      answered: value !== undefined,
+      failed: error !== null,
+      lines: sheet?.line.length ?? 0,
+    }),
+  };
 }
 
 /** The words beside the cover, as the detail view has always shown them. */
@@ -278,7 +303,14 @@ function ImmersiveView({ song }: { song: Song }) {
       className="immersive"
       aria-label={t("playing.immersiveTitle")}
       onClose={() => {
-        if (!leaving.current) void navigate({ to: "/playing", search: {} });
+        // **`replace`, or Back reopens what was just closed.** Pushing
+        // would leave `/playing → ?view=immersive → /playing` in the
+        // history, so the next Back press would land on the immersive entry
+        // and open the view again — the opposite of the reason the mode is in
+        // the location at all. Replacing swaps the immersive entry for the
+        // detail one, and Back goes past both.
+        if (!leaving.current)
+          void navigate({ to: "/playing", search: {}, replace: true });
       }}
       onClick={(event) => {
         if (event.target === frame.current) frame.current?.close();

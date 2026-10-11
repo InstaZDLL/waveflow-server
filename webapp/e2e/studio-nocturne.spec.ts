@@ -3225,6 +3225,14 @@ test("opens the immersive view, and Back leaves the view and not the screen", as
   await expect(page).toHaveURL(/\/playing$/);
   await expect(page.locator(".playing")).toBeVisible();
 
+  // **And Back does not reopen what Escape just closed.** The close replaces
+  // the immersive entry rather than pushing a detail one on top of it.
+  // Pushing left `/playing → ?view=immersive → /playing` in the history, so
+  // this press landed back on the immersive entry and opened the view again —
+  // the opposite of the reason the mode is in the location.
+  await page.goBack();
+  await expect(page.locator("dialog.immersive")).toHaveCount(0);
+
   // And Back, from inside the view, leaves the view.
   await page.getByRole("link", { name: "Immersive" }).click();
   await expect(page.locator("dialog.immersive")).toBeVisible();
