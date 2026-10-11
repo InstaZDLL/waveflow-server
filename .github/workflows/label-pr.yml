@@ -22,7 +22,7 @@ concurrency:
 jobs:
   scope:
     name: Apply scope labels from changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read
@@ -41,7 +41,7 @@ jobs:
 
   type:
     name: Apply type:* labels from the PR title
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read
@@ -71,7 +71,7 @@ jobs:
 
   size:
     name: Apply size:* labels from diff line count
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read

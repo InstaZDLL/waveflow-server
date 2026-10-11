@@ -41,10 +41,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Linux runner is pinned rather than `ubuntu-latest`, here and in every
+  # other workflow in this directory. GitHub moves that label to a new OS
+  # generation on a date it announces, and the move arrives as a red build on
+  # whatever pull request happens to be open — a failure nobody in the diff
+  # caused and nobody can reproduce locally. Pinning makes the upgrade a commit
+  # somebody writes, reviews and can revert.
+  #
+  # It also makes the release matrix symmetric: the arm64 half was already
+  # `ubuntu-24.04-arm`, so `latest` on the amd64 half meant the two
+  # architectures of one image could be built on two OS generations.
+  #
+  # Raise this deliberately, together across the directory, not by reaching for
+  # `latest` again.
+
   # SQLite v2 tests create their own temporary data directories.
   linux:
-    name: Rust (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: Rust (ubuntu-24.04)
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +145,7 @@ jobs:
   # have broken the container build and nothing else, discovered on a tag.
   msrv:
     name: Minimum supported Rust version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
