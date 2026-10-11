@@ -69,6 +69,22 @@ const en = {
   "clients.registered": "registered {when}",
   "clients.used": "last used {when}",
   "clients.unused": "never used",
+  "subsonic.title": "Subsonic password",
+  "subsonic.detail":
+    "The separate password Subsonic clients sign in with. Changing it replaces the API key too, so a leaked one stops working.",
+  "subsonic.set": "set {when}",
+  "subsonic.changed": "last changed {when}",
+  "subsonic.password": "New password",
+  "subsonic.rotate": "Change it",
+  "subsonic.revoke": "Switch it off",
+  "subsonic.once":
+    "Copy this API key now. Only its hash is stored, so it is shown once and never again:",
+  "subsonic.gone":
+    "Your Subsonic clients will stop working until you set it again in each of them.",
+  "subsonic.none":
+    "You have no Subsonic password, so no Subsonic client can read your library. Ask the administrator for one.",
+  "subsonic.short": "Use at least 12 characters.",
+  "subsonic.error": "That did not work. Nothing changed.",
   "quality.label": "File quality",
   "quality.unknown": "Unknown",
   "quality.low": "Low",
@@ -533,6 +549,22 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "clients.registered": "enregistré le {when}",
   "clients.used": "dernier usage le {when}",
   "clients.unused": "jamais utilisé",
+  "subsonic.title": "Mot de passe Subsonic",
+  "subsonic.detail":
+    "Le mot de passe distinct avec lequel les clients Subsonic se connectent. Le changer remplace aussi la clé d’API, donc une clé divulguée cesse de fonctionner.",
+  "subsonic.set": "défini le {when}",
+  "subsonic.changed": "dernier changement le {when}",
+  "subsonic.password": "Nouveau mot de passe",
+  "subsonic.rotate": "Le changer",
+  "subsonic.revoke": "Le désactiver",
+  "subsonic.once":
+    "Copiez cette clé d’API maintenant. Seule son empreinte est conservée : elle est montrée une fois et jamais plus :",
+  "subsonic.gone":
+    "Vos clients Subsonic cesseront de fonctionner jusqu’à ce que vous le redéfinissiez dans chacun d’eux.",
+  "subsonic.none":
+    "Vous n’avez pas de mot de passe Subsonic, donc aucun client Subsonic ne peut lire votre bibliothèque. Demandez-en un à l’administrateur.",
+  "subsonic.short": "Utilisez au moins 12 caractères.",
+  "subsonic.error": "Cela n’a pas fonctionné. Rien n’a changé.",
   "quality.label": "Qualité du fichier",
   "quality.unknown": "Inconnue",
   "quality.low": "Faible",

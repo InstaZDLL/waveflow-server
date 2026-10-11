@@ -36,6 +36,7 @@ mod probes;
 mod scrobbling;
 mod setup;
 mod shares;
+mod subsonic_credential;
 mod sync;
 mod tokens;
 mod tracks;
@@ -57,6 +58,7 @@ pub use probes::*;
 pub use scrobbling::*;
 pub use setup::*;
 pub use shares::*;
+pub use subsonic_credential::*;
 pub use sync::*;
 pub use tokens::*;
 pub use tracks::*;
@@ -163,6 +165,16 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/api-tokens/{token_id}",
             delete(revoke_own_api_token),
+        )
+        // Self-scoped, beside the API tokens and for the same reason: the
+        // credential belongs to the account, so answering for it does not need
+        // the instance. No POST — creating one where none exists opens the
+        // facade to an account, which is the operator's decision.
+        .route(
+            "/api/v2/subsonic-credential",
+            get(own_subsonic_credential)
+                .put(rotate_own_subsonic_credential)
+                .delete(revoke_own_subsonic_credential),
         )
         .route("/api/v2/favorites", get(list_favorites))
         .route(

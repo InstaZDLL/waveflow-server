@@ -155,6 +155,97 @@ impl DomainServices {
     }
 
     /// The API tokens issued to one account, as an administrator asks.
+    /// Whether the asking account holds a Subsonic credential, and since when.
+    ///
+    /// Self-scoped, where the two above are administrative, and never carrying
+    /// the password. It exists so the settings panel can tell the two cases
+    /// apart: an account with no credential has nothing to rotate and must not
+    /// be offered a button that answers 404.
+    pub async fn own_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Option<SubsonicCredentialStatus>, ServiceError> {
+        self.db
+            .subsonic_credential_status(actor_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Replaces the asking account's own Subsonic password and API key.
+    ///
+    /// **Rotation, never creation.** `rotate_subsonic_credential` is an
+    /// `UPDATE`, so an account holding no credential gets `NotFound` and the
+    /// facade stays shut to it. Opening that door is the operator's decision
+    /// and this path does not take it; what it takes is the answer to "my key
+    /// has leaked", which until now needed an operator even though the
+    /// credential belongs to the account.
+    ///
+    /// **Refused to a credential that could not hand on what this returns.** A
+    /// `wfsk_` key carries no scopes and no expiry, because the facade reads
+    /// neither — `subsonic::auth` resolves a principal from
+    /// `credential_by_api_key` alone, and the `subsonic_credential` table has
+    /// no column for either. So unlike an API token, the credential this
+    /// returns cannot be narrowed to match its caller, and the only honest
+    /// bound is the caller itself:
+    ///
+    /// - a **scoped** caller is refused, since a token restricted to `write`
+    ///   would walk out holding an unrestricted key on the facade;
+    /// - an **expiring** caller is refused, since a token good until tomorrow
+    ///   would walk out holding a key that never stops — the same escalation
+    ///   in the other currency, and the one `create_own_api_token` answers
+    ///   with `min(policy, caller)`. There is no `min` to take here.
+    ///
+    /// A session passes both: it carries no scopes unless its grant did, and
+    /// no expiry by design, because authorising something longer-lived than
+    /// itself is what a session is for. So this is a thing a person does while
+    /// signed in, which is also where the button lives.
+    pub async fn rotate_own_subsonic_credential(
+        &self,
+        actor_id: Uuid,
+        actor_scopes: &[String],
+        actor_expires_at: Option<i64>,
+        password: &str,
+    ) -> Result<String, ServiceError> {
+        if !actor_scopes.is_empty() || actor_expires_at.is_some() {
+            return Err(ServiceError::Forbidden);
+        }
+        if password.len() < 12 {
+            return Err(ServiceError::Invalid);
+        }
+        let encrypted = self.secret_box.encrypt(password.as_bytes())?;
+        let api_key = security::generate_token("wfsk_");
+        let api_key_hash = security::token_hash(&api_key);
+        if self
+            .db
+            .rotate_subsonic_credential(actor_id, actor_id, &encrypted, &api_key_hash, now_ms())
+            .await?
+        {
+            Ok(api_key)
+        } else {
+            Err(ServiceError::NotFound)
+        }
+    }
+
+    /// Switches off the asking account's own Subsonic credential.
+    ///
+    /// **Bounded by nothing, where the rotation is bounded twice**, and the
+    /// asymmetry is the point: this hands on no authority, it takes some away.
+    /// A narrowed or expiring credential closing a door its account holds is
+    /// doing the one thing that is always safe to allow, and refusing it would
+    /// leave a compromised account unable to act on the news with the
+    /// credential it has in hand.
+    pub async fn revoke_own_subsonic_credential(&self, actor_id: Uuid) -> Result<(), ServiceError> {
+        if self
+            .db
+            .revoke_subsonic_credential(actor_id, actor_id, now_ms())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(ServiceError::NotFound)
+        }
+    }
+
     pub async fn api_tokens(
         &self,
         actor_id: Uuid,
