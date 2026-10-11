@@ -1072,7 +1072,7 @@ lookup since the table existed, and was never written.
 **And never later than the credential that asked.** A token expiring tomorrow
 minting one that expires in a year, and that one another, would make the
 deadline decorative after a single hop. So a request arriving on an API token
-gets the earlier of the policy and the caller own expiry — the scope rule
+gets the earlier of the policy and the caller's own expiry — the scope rule
 applied to time, since a credential hands on no more than it holds in either
 currency.
 

@@ -29,6 +29,12 @@ pub(super) const ADMIN_SCOPE: &str = "admin";
 pub(super) const WRITE_SCOPE: &str = "write";
 
 impl Access {
+    /// Every level, so a caller can ask about all of them without writing the
+    /// list again. [`DomainServices::create_own_api_token`] does: bounding
+    /// what a credential may hand on means comparing authority, and authority
+    /// is these three.
+    pub(crate) const ALL: [Self; 3] = [Self::Read, Self::Write, Self::Admin];
+
     /// Whether a credential carrying `scopes` may do this.
     ///
     /// An empty list is unrestricted: a session, an OAuth grant and a token
@@ -40,7 +46,7 @@ impl Access {
     /// without needing a vocabulary of every possible scope. `admin` implies
     /// `write`: a credential trusted to create accounts is not usefully barred
     /// from creating a playlist, and the surprise would be the other way round.
-    fn granted_by(self, scopes: &[String]) -> bool {
+    pub(crate) fn granted_by(self, scopes: &[String]) -> bool {
         if scopes.is_empty() {
             return true;
         }

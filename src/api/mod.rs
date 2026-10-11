@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{authentication::AuthError, AppState};
 
-mod access;
+pub(crate) mod access;
 mod auth;
 mod bookmarks;
 mod catalog;

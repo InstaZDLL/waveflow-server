@@ -1276,4 +1276,18 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
         expires_at > tomorrow,
         "a session should hand on the policy lifetime, not a day"
     );
+    // 4. **The bound is authority, not spelling.** An administrator credential
+    //    narrowed to `admin` may mint a write-only client for a script: that
+    //    is a narrowing, and `admin` admits `write`. Compared on strings it
+    //    was refused — which fails closed and is still the wrong answer.
+    let mut narrowing = json_request(
+        "/api/v2/admin/users/ttl-user/tokens",
+        serde_json::json!({ "name": "a write-only script", "scopes": ["write"] }),
+    );
+    narrowing.headers_mut().insert(
+        "authorization",
+        format!("Bearer {narrow_admin}").parse().unwrap(),
+    );
+    let narrower = router.oneshot(narrowing).await.unwrap();
+    assert_eq!(narrower.status(), StatusCode::CREATED);
 }

@@ -617,11 +617,29 @@ fn bound_by_caller(actor_scopes: &[String], requested: &[String]) -> Result<(), 
         .iter()
         .map(|scope| scope.trim().to_owned())
         .collect();
-    if wanted.is_empty()
-        || !wanted
+    if wanted.is_empty() {
+        return Err(ServiceError::Forbidden);
+    }
+    // **Compared as authority, not as strings.** The rule is that a credential
+    // hands on no more than it holds, and what it holds is a set of
+    // permissions rather than a set of spellings: `admin` admits `write`, so
+    // an administrator's narrowed token asking for a write-only one for a
+    // script is a narrowing and must be allowed. String equality refused it,
+    // which fails closed and is still wrong.
+    //
+    // Read from `Access::granted_by` rather than restated here. That is the
+    // one table of scope implications in this server, and a second copy of it
+    // would be a second copy to keep in step — the shape of defect this
+    // session has spent its day on. The dependency direction is backwards for
+    // it, a domain module reaching into the surface: the smaller wart of the
+    // two.
+    let grants_more = wanted.iter().any(|scope| {
+        let alone = [scope.clone()];
+        crate::api::access::Access::ALL
             .iter()
-            .all(|scope| actor_scopes.iter().any(|held| held == scope))
-    {
+            .any(|level| level.granted_by(&alone) && !level.granted_by(actor_scopes))
+    });
+    if grants_more {
         return Err(ServiceError::Forbidden);
     }
     Ok(())
