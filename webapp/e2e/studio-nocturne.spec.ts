@@ -83,6 +83,46 @@ let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma mus
 /** Flipped by the two tests that check a failure is shown as one. */
 let membersFail = false;
 let tokensFail = false;
+/**
+ * The clients this account has registered, as the self-scoped route answers
+ * them. Mutable, because the test registers one and revokes one and the point
+ * is that the list follows.
+ */
+type Client = {
+  id: string;
+  name: string;
+  scopes: string[];
+  expires_at: number | null;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+};
+let ownClients: Client[] = [];
+function freshClients(): Client[] {
+  return [
+    {
+      id: "client-1",
+      name: "the kitchen speaker",
+      scopes: [],
+      expires_at: 1_800_000_000_000,
+      created_at: 1_700_000_000_000,
+      last_used_at: 1_700_600_000_000,
+      revoked_at: null,
+    },
+    {
+      // Already revoked, so the page has something it must leave out: this
+      // list answers who can read the library, and a credential that cannot
+      // is not an answer to it.
+      id: "client-2",
+      name: "a laptop that is gone",
+      scopes: [],
+      expires_at: null,
+      created_at: 1_690_000_000_000,
+      last_used_at: null,
+      revoked_at: 1_695_000_000_000,
+    },
+  ];
+}
 let scanFails = false;
 /** The stream never answers at all, which is what a lost network looks like. */
 let scanDrops = false;
@@ -421,6 +461,38 @@ async function mockAuthenticatedApi(page: Page) {
       });
       return;
     }
+    // Before the administrative `/tokens` branch below, which would swallow
+    // it: this path is the account asking about itself.
+    if (url.pathname === "/api/v2/api-tokens") {
+      if (route.request().method() === "POST") {
+        const asked = route.request().postDataJSON() as { name: string };
+        const created: Client = {
+          id: `client-${ownClients.length + 1}`,
+          name: asked.name,
+          scopes: [],
+          expires_at: 1_900_000_000_000,
+          created_at: 1_700_900_000_000,
+          last_used_at: null,
+          revoked_at: null,
+        };
+        ownClients = [created, ...ownClients];
+        await route.fulfill({
+          status: 201,
+          json: { ...created, secret: "wfapi_shown_once_and_never_again" },
+        });
+        return;
+      }
+      await route.fulfill({ json: ownClients });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/api-tokens/")) {
+      const id = url.pathname.split("/").pop();
+      ownClients = ownClients.map((client) =>
+        client.id === id ? { ...client, revoked_at: 1_700_950_000_000 } : client,
+      );
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
     if (url.pathname.endsWith("/tokens")) {
       if (tokensFail) {
         await route.fulfill({ status: 500, json: { error: "boom" } });
@@ -712,6 +784,7 @@ test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
   membersFail = false;
   tokensFail = false;
+  ownClients = freshClients();
   scanFails = false;
   scanDrops = false;
   corrections = [];
@@ -744,10 +817,15 @@ test("renders the studio shell and persists appearance preferences", async ({
   await expect(page.getByText("Post", { exact: true })).toBeVisible();
   await expect(page.getByText("Vespertine", { exact: true })).toBeVisible();
 
-  const preferences =
-    testInfo.project.name === "mobile"
-      ? page.locator(".mobile-header")
-      : page.locator(".sidebar");
+  // **The pickers live on the Settings page now**, not in the sidebar footer
+  // and not in the mobile header. They are settings and not destinations, and
+  // they sat under thirteen navigation entries; there is no copy left behind,
+  // because two ways to ask one question is the thing that move was about.
+  await page.goto("/settings");
+  await expect(
+    page.getByRole("heading", { name: "Settings" }),
+  ).toBeVisible();
+  const preferences = page.locator(".settings-panel").first();
   const theme = preferences.getByLabel("Theme");
   await theme.selectOption({ index: 1 });
   const selectedTheme = await theme.inputValue();
@@ -759,6 +837,12 @@ test("renders the studio shell and persists appearance preferences", async ({
   await language.selectOption("fr");
   await expect(page.getByRole("link", { name: "Recherche" }).first()).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+  // And nowhere else: a picker still reachable from the corridor would mean
+  // the move had added a place rather than chosen one.
+  await expect(page.locator(".sidebar").getByLabel("Thème")).toHaveCount(0);
+  await expect(page.locator(".mobile-header").getByLabel("Thème")).toHaveCount(
+    0,
+  );
 
   if (testInfo.project.name === "mobile") {
     await expect(page.locator(".mobile-navigation")).toBeVisible();
@@ -2013,10 +2097,12 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
 });
 
 /**
- * The mobile bar holds six slots and the client has fifteen screens. Until
+ * The mobile bar holds six slots and the client has sixteen screens. Until
  * 2026-09-15 the other eight were reachable by typing their address and by
  * nothing else: the sidebar that carries them is `display: none` below 820px.
- * The ninth is Songs, added with the listing itself.
+ * The ninth is Songs, added with the listing itself, and the tenth is
+ * Settings — which is where the theme and the language went when they stopped
+ * living in the sidebar footer.
  * Seven of the eight had been in that state since lot A, and no test saw it —
  * every mobile case here navigates by `page.goto`.
  */
@@ -2058,12 +2144,13 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The nine the bar cannot hold — including the two this account is
+  // The ten the bar cannot hold — including the two this account is
   // entitled to as an administrator of a library that takes files.
   for (const name of [
     "Artists",
     "Songs",
     "Genres",
+    "Settings",
     "Random",
     "Recently played",
     "Shares",
@@ -2075,7 +2162,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(9);
+  await expect(sheet.getByRole("link")).toHaveCount(10);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -2718,4 +2805,48 @@ test("says what the file is on the playing screen", async ({ page }) => {
     "aria-hidden",
     "true",
   );
+});
+
+/**
+ * The clients holding a credential on this account, which nothing showed
+ * before.
+ *
+ * The material existed and was reachable only by the instance administrator,
+ * buried in a disclosure on a screen an ordinary account cannot open. So a
+ * listener could not find out which devices were reading their library, let
+ * alone stop one.
+ *
+ * A revoked credential is left out rather than struck through: this list
+ * answers who **can** read the library, and one that cannot is not an answer
+ * to that question. The administration screen keeps the full history.
+ */
+test("shows the clients that can read the library, and revokes one", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+
+  const clients = page.locator(".settings-panel").last();
+  await expect(
+    clients.getByRole("heading", { name: "Registered clients" }),
+  ).toBeVisible();
+  // One of the two, because the other is revoked.
+  await expect(clients.getByRole("listitem")).toHaveCount(1);
+  await expect(clients.getByText("the kitchen speaker")).toBeVisible();
+  await expect(clients.getByText("a laptop that is gone")).toHaveCount(0);
+
+  // Registering one shows the secret, once, and the list follows.
+  await clients.getByLabel("What it is for").fill("my phone");
+  await clients.getByRole("button", { name: "Register" }).click();
+  await expect(
+    page.getByText("wfapi_shown_once_and_never_again"),
+  ).toBeVisible();
+  await expect(clients.getByRole("listitem")).toHaveCount(2);
+
+  // And revoking stops one. The row goes, because the row is the answer to
+  // "who can read my library".
+  await clients
+    .getByRole("button", { name: "Revoke: the kitchen speaker" })
+    .click();
+  await expect(clients.getByText("the kitchen speaker")).toHaveCount(0);
+  await expect(clients.getByRole("listitem")).toHaveCount(1);
 });

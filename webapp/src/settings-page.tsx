@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { createOwnApiToken, revokeOwnApiToken } from "./api";
-import { type Locale, LanguagePicker, useI18n } from "./i18n";
+import { LanguagePicker, type Locale, useI18n } from "./i18n";
 import { Loading, PageHeader, useReload } from "./page-shell";
 import { ThemePicker } from "./preferences";
 import { ownApiTokensQuery } from "./queries";

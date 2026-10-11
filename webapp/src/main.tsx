@@ -18,11 +18,7 @@ import {
   forgetOnSessionChange,
   logout,
 } from "./api";
-import {
-  I18nProvider,
-  type TranslationKey,
-  useI18n,
-} from "./i18n";
+import { I18nProvider, type TranslationKey, useI18n } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import {
   LibraryPicker,
@@ -54,9 +50,9 @@ import {
 } from "./pages";
 import { PlayerBar, PlayerProvider } from "./player";
 import { PreferencesProvider } from "./preferences";
-import { SettingsPage } from "./settings-page";
 import { createQueryClient } from "./query-client";
 import { ScrobblingPage } from "./scrobbling-page";
+import { SettingsPage } from "./settings-page";
 import { dismissSplash } from "./splash";
 import { TrackEditorPage } from "./track-editor";
 import { UploadPage } from "./upload-page";
