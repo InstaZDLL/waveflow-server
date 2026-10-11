@@ -107,6 +107,14 @@ let ownClients: Client[] = [];
  */
 let ownSubsonicCredential: { created_at: number; updated_at: number } | null =
   null;
+/** Every registration the clients route received. */
+let clientWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let clientGate: Promise<void> = Promise.resolve();
+/** Every method the credential route received, in order. */
+let subsonicWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let subsonicGate: Promise<void> = Promise.resolve();
 function freshClients(): Client[] {
   return [
     {
@@ -484,6 +492,10 @@ async function mockAuthenticatedApi(page: Page) {
     }
     if (url.pathname === "/api/v2/subsonic-credential") {
       const method = route.request().method();
+      if (method !== "GET") {
+        subsonicWrites.push(method);
+        await subsonicGate;
+      }
       if (method === "PUT") {
         // Rotation, never creation: an account holding none gets a 404, the
         // way the server answers it, so a panel that offered the control
@@ -511,6 +523,8 @@ async function mockAuthenticatedApi(page: Page) {
     // it: this path is the account asking about itself.
     if (url.pathname === "/api/v2/api-tokens") {
       if (route.request().method() === "POST") {
+        clientWrites.push("POST");
+        await clientGate;
         const asked = route.request().postDataJSON() as { name: string };
         const created: Client = {
           id: `client-${ownClients.length + 1}`,
@@ -2908,6 +2922,26 @@ test("shows the clients that can read the library, and revokes one", async ({
     .click();
   await expect(clients.getByText("the kitchen speaker")).toHaveCount(0);
   await expect(clients.getByRole("listitem")).toHaveCount(1);
+
+  // **And a second press while the registration is out sends nothing.** Two
+  // registrations mint two credentials and only one secret reaches the
+  // screen: the other is a credential on this library whose secret nobody
+  // holds. This panel shipped without the guard; the one below it has the
+  // same one now, for the same reason.
+  let release = () => {};
+  clientGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  clientWrites = [];
+  const register = clients.getByRole("button", { name: "Register" });
+  await clients.getByLabel("What it is for").fill("a slow tablet");
+  await register.click();
+  await expect.soft(register).toBeDisabled();
+  await register.click({ force: true });
+  await register.click({ force: true });
+  release();
+  await expect(register).toBeEnabled();
+  expect(clientWrites).toEqual(["POST"]);
 });
 
 /**
@@ -2995,4 +3029,44 @@ test("refuses a Subsonic password under twelve characters", async ({
   // Nothing was sent: the credential still reads as never changed.
   await expect(subsonic.getByText(/last changed/)).toHaveCount(0);
   await expect(page.getByText("wfsk_shown_once_only")).toHaveCount(0);
+});
+
+/**
+ * A second press while the rotation is out sends nothing.
+ *
+ * **This one is about a secret, not about tidiness.** Each rotation mints a key
+ * and stores its hash, so two in flight leave the second one's hash stored
+ * while the panel may have settled on the first one's key — a `wfsk_` key
+ * already dead, shown for a credential whose whole point is that it is shown
+ * once. The person copies it into their clients and the working key is never
+ * shown again.
+ */
+test("sends one rotation however many times the button is pressed", async ({
+  page,
+}) => {
+  let release = () => {};
+  subsonicGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await page.goto("/settings");
+  const subsonic = page
+    .locator(".settings-panel")
+    .filter({ has: page.getByRole("heading", { name: "Subsonic password" }) });
+  const change = subsonic.getByRole("button", { name: "Change it" });
+
+  await subsonic.getByLabel("New password").fill("a long enough replacement");
+  await change.click();
+  // **Soft**, which is the only `expect.soft` in this file and earns it: the
+  // disabled state is the mechanism and the request count below is the
+  // consequence, and a hard failure here would stop the test before the
+  // consequence was ever measured. Removing the guard has to show both.
+  await expect.soft(change).toBeDisabled();
+  await change.click({ force: true });
+  await change.click({ force: true });
+
+  release();
+  await expect(page.getByText("wfsk_shown_once_only")).toBeVisible();
+  await expect(change).toBeEnabled();
+  expect(subsonicWrites).toEqual(["PUT"]);
 });

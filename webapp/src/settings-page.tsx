@@ -49,11 +49,19 @@ function RegisteredClients() {
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  // The same guard as the panel below, for the same reason and not merely for
+  // symmetry: registering twice mints two credentials, and only one secret
+  // reaches the screen — the other is a credential on this library whose
+  // secret nobody holds. It was shipped without one; two panels side by side
+  // where one guards and the other does not would leave a reader wondering
+  // which is right.
+  const [busy, setBusy] = useState(false);
   const { data: value, error } = useQuery(ownApiTokensQuery());
 
   async function register(event: FormEvent) {
     event.preventDefault();
     setFailed(false);
+    setBusy(true);
     try {
       const created = await createOwnApiToken(name);
       setName("");
@@ -62,16 +70,21 @@ function RegisteredClients() {
       reload();
     } catch {
       setFailed(true);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function revoke(id: string) {
     setFailed(false);
+    setBusy(true);
     try {
       await revokeOwnApiToken(id);
       reload();
     } catch {
       setFailed(true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -100,7 +113,9 @@ function RegisteredClients() {
           aria-label={t("clients.name")}
           required
         />
-        <button type="submit">{t("clients.register")}</button>
+        <button type="submit" disabled={busy}>
+          {t("clients.register")}
+        </button>
       </form>
       {failed ? <p className="error">{t("clients.error")}</p> : null}
       {secret ? (
@@ -138,6 +153,7 @@ function RegisteredClients() {
               <button
                 type="button"
                 className="danger"
+                disabled={busy}
                 onClick={() => void revoke(token.id)}
                 aria-label={`${t("clients.revoke")}: ${token.name}`}
               >
@@ -175,6 +191,21 @@ function SubsonicPassword() {
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [failed, setFailed] = useState<"error" | "short" | null>(null);
+  // **One request at a time, and here that is about a secret rather than
+  // about tidiness.** Each rotation mints a key and stores its hash, so two
+  // in flight leave the second one's hash stored while `setApiKey` may have
+  // settled on the first one's key. The panel would then show a `wfsk_` key
+  // that is already dead, for a credential whose whole point is that it is
+  // shown once — the person copies it into their clients and the working key
+  // is never shown again. The same press on the switch-off gets a 404 for its
+  // second attempt and reports "nothing changed" about a credential that is
+  // gone.
+  //
+  // `disabled` and nothing more, which is what `canvas-panel` and the album
+  // cards do for the same class of defect: React flushes a click's state
+  // update before dispatching the next click, so the second press lands on a
+  // button that is already refusing.
+  const [busy, setBusy] = useState(false);
   // **Asked twice, where revoking a client is not.** Revoking one client of
   // several takes away something the account can register again by itself.
   // This takes away the only Subsonic credential it has, every Subsonic client
@@ -198,6 +229,7 @@ function SubsonicPassword() {
     }
     setFailed(null);
     setArming(false);
+    setBusy(true);
     try {
       const rotated = await rotateOwnSubsonicCredential(password);
       setPassword("");
@@ -206,18 +238,23 @@ function SubsonicPassword() {
       reload();
     } catch {
       setFailed("error");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function switchOff() {
     setFailed(null);
     setArming(false);
+    setBusy(true);
     try {
       await revokeOwnSubsonicCredential();
       setApiKey(null);
       reload();
     } catch {
       setFailed("error");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -267,7 +304,9 @@ function SubsonicPassword() {
               autoComplete="new-password"
               required
             />
-            <button type="submit">{t("subsonic.rotate")}</button>
+            <button type="submit" disabled={busy}>
+              {t("subsonic.rotate")}
+            </button>
           </form>
           <p className="muted">
             <small>{t("subsonic.gone")}</small>
@@ -277,6 +316,7 @@ function SubsonicPassword() {
               <button
                 type="button"
                 className="danger"
+                disabled={busy}
                 onClick={() => void switchOff()}
               >
                 {t("subsonic.confirm")}
