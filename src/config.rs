@@ -199,16 +199,25 @@ pub struct Config {
     pub instance_key_path: PathBuf,
     pub artwork_dir: PathBuf,
     pub db_max_connections: u32,
-    /// How long opening the database may take before the pool gives up.
-    /// `WAVEFLOW_DB_ACQUIRE_TIMEOUT_MS`, five seconds by default.
+    /// How long taking a connection out of the pool may take before it gives
+    /// up. `WAVEFLOW_DB_ACQUIRE_TIMEOUT_MS`, five seconds by default.
     ///
-    /// This bounds a cold boot, not a query: the first thing it covers is
-    /// creating the file and establishing the connection the migrations then
-    /// run on. Five seconds is ample on a warm disk and has proved too tight
-    /// on a loaded CI runner, where three separate test targets have failed
-    /// at `Database::open` with "pool timed out while waiting for an open
-    /// connection" — a timeout, never a wrong answer. A deployment on slow
-    /// or contended storage can raise it rather than fail to start.
+    /// **Every checkout, for the life of the process** — not only the boot.
+    /// sqlx applies it to each `acquire`, so it covers creating the file and
+    /// establishing the connection the migrations run on, and equally a
+    /// request waiting for a free connection once every one of
+    /// `db_max_connections` is busy. It does **not** bound the SQL that runs
+    /// once a connection is in hand; lock contention between writers is
+    /// `sqlite_busy_timeout`.
+    ///
+    /// So raising it trades failing fast for waiting: a saturated server
+    /// holds a request longer instead of refusing it. Five seconds is ample
+    /// on a warm disk — sqlx's own default is thirty — and has proved too
+    /// tight on a loaded CI runner, where three separate test targets have
+    /// failed at `Database::open` with "pool timed out while waiting for an
+    /// open connection". Either way the only thing this can produce is a
+    /// timeout, never a wrong answer, and a deployment on slow or contended
+    /// storage can raise it rather than fail to start.
     pub db_acquire_timeout: Duration,
     pub sqlite_busy_timeout: Duration,
     pub access_token_ttl: Duration,
