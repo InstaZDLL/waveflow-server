@@ -40,10 +40,14 @@ export function dismissSplash(): void {
   splash.dataset.leaving = "pending";
   const remaining = Math.max(0, FLOOR_MS - performance.now());
   window.setTimeout(() => {
+    // The attribute both starts the fade and lifts `pointer-events`, so the
+    // page beneath becomes clickable from this instant rather than from the
+    // removal 180ms later — which matters most where the fade is disabled and
+    // the screen is invisible for all of it.
     splash.dataset.leaving = "true";
-    // Removed rather than left hidden: an element over the whole viewport
-    // still takes a click even at zero opacity, and an accessibility sweep
-    // still walks it.
+    // Removed as well as hidden: an element over the whole viewport is still
+    // walked by an accessibility sweep, and `pointer-events` is no reason to
+    // leave one lying about.
     window.setTimeout(() => splash.remove(), FADE_MS);
   }, remaining);
 }

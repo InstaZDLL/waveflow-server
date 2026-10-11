@@ -2655,6 +2655,19 @@ test("takes the first-load screen away even when the bundle never loads", async 
   // Up, and covering the page: this is the state the ceiling exists for.
   await expect(page.locator("#splash")).toBeVisible();
 
+  // While it is up is the only moment the leaving state can be read on the
+  // real element. Marked by hand rather than waited for: what is checked is
+  // the rule, not the clock. Without `pointer-events: none` the layer keeps
+  // taking clicks for the length of the fade — and for all of it under
+  // `prefers-reduced-motion`, where it is already invisible.
+  await page.locator("#splash").evaluate((element: HTMLElement) => {
+    element.dataset.leaving = "true";
+  });
+  await expect(page.locator("#splash")).toHaveCSS("pointer-events", "none");
+  await page.locator("#splash").evaluate((element: HTMLElement) => {
+    delete element.dataset.leaving;
+  });
+
   await expect(page.locator("#splash")).toHaveCount(0, { timeout: 11_000 });
   // What is revealed is an empty root — the page as it was before this screen
   // existed. The ceiling restores the old failure rather than inventing one.
