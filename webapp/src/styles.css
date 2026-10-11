@@ -348,6 +348,42 @@ h3 {
   }
 }
 
+/**
+ * What the file is, under the track's names on the playing screen.
+ *
+ * Five discrete steps rather than a filled proportion: the bands are a
+ * summary of fields that do not share one scale — a bitrate and a bit depth
+ * are not points on the same line — and a continuous bar would be claiming a
+ * precision none of them carry.
+ */
+.file-quality {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+
+.quality-meter {
+  display: flex;
+  gap: 0.2rem;
+  align-items: center;
+}
+
+.quality-meter span {
+  width: 1.4rem;
+  height: 0.3rem;
+  border-radius: 0.15rem;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.quality-meter span.on {
+  background: var(--accent-400);
+}
+
+.file-facts {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
 .primary-navigation {
   display: grid;
   gap: 0.24rem;

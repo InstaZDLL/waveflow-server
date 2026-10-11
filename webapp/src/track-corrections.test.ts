@@ -47,6 +47,18 @@ const song: SongCredits = {
   user_rating: null,
   artists: [{ id: "artist-1", name: "Björk" }],
   genres: ["Trip Hop"],
+  // Filled because the type requires it, and worth nothing as evidence: this
+  // fixture is built from `Song`, so it agrees with the declaration by
+  // construction and could never contradict it. What the server actually
+  // sends is asserted in `the_technical_fields_reach_the_wire_and_match_the_file`,
+  // against the bytes of a real file. These tests are about corrections.
+  codec: "FLAC",
+  suffix: "flac",
+  size: 28_000_000,
+  bitrate: 957,
+  sample_rate: 44_100,
+  channels: 2,
+  bit_depth: 16,
 };
 
 function tracked(overrides: Partial<TrackOverrideValues> = {}): TrackOverrides {

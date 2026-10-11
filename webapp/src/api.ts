@@ -55,6 +55,27 @@ export type Song = {
   disc: number | null;
   starred_at: number | null;
   user_rating: number | null;
+  /**
+   * What the file is, as the scan read it.
+   *
+   * Every one of these has been on the wire since `SongItem` gained it and
+   * was simply not declared here. `the_technical_fields_reach_the_wire_and_match_the_file`
+   * asserts them against the bytes of the file itself, which is the only
+   * side that can: these declarations are claims about the server, and the
+   * mocks in this client are built from them, so a mock can never contradict
+   * one.
+   *
+   * Optional where a format has nothing to report — `bit_depth` on a lossy
+   * codec, `bitrate` on a container the reader could not measure — rather
+   * than zero, which would be a measurement.
+   */
+  codec: string | null;
+  suffix: string;
+  size: number;
+  bitrate: number | null;
+  sample_rate: number | null;
+  channels: number | null;
+  bit_depth: number | null;
 };
 
 export type AlbumDetail = Album & { songs: Song[] };
