@@ -67,7 +67,12 @@ export const albumsQuery = (sort: AlbumSort, scope: string | undefined) =>
 export const songsQuery = (sort: SongSort, scope: string | undefined) =>
   infiniteQueryOptions({
     queryKey: ["songs", sort, scope ?? null],
-    queryFn: ({ pageParam }) => listSongs(sort, scope, pageParam),
+    // The signal is handed on so a page still in flight when the sort or the
+    // library changes is abandoned instead of finishing into a key nobody
+    // will read. A page is two hundred rows, which is the largest answer this
+    // client asks for.
+    queryFn: ({ pageParam, signal }) =>
+      listSongs(sort, scope, pageParam, SONG_PAGE, signal),
     initialPageParam: 0,
     getNextPageParam: (last, _pages, lastParam) =>
       last.length < SONG_PAGE ? undefined : lastParam + SONG_PAGE,

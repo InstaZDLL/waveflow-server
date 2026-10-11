@@ -586,6 +586,7 @@ export const listSongs = (
   libraryId: string | undefined,
   offset: number,
   limit = SONG_PAGE,
+  signal?: AbortSignal,
 ) =>
   call<Song[]>(
     `/api/v2/songs?${new URLSearchParams(
@@ -595,6 +596,7 @@ export const listSongs = (
         limit: String(limit),
       }),
     )}`,
+    { signal },
   );
 
 /** Albums in the requested order, scoped to `libraryId` when one is given. */

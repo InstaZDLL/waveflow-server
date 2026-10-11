@@ -267,7 +267,6 @@ const ALBUM_SORTS: Array<{ value: AlbumSort; labelKey: TranslationKey }> = [
   { value: "byYear", labelKey: "browse.sortByYear" },
 ];
 
-/** Render the album catalogue for the active library. */
 /**
  * The orderings this menu offers, in the album menu's order plus one.
  *
@@ -306,8 +305,14 @@ export function SongsPage() {
   const { t } = useI18n();
   const [sort, setSort] = useState<SongSort>("alphabeticalByName");
   const scope = useScopeId();
-  const { data, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useInfiniteQuery(songsQuery(sort, scope));
+  const {
+    data,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = useInfiniteQuery(songsQuery(sort, scope));
   const songs = useMemo(() => data?.pages.flat() ?? [], [data]);
 
   const controls = (
@@ -374,12 +379,23 @@ export function SongsPage() {
           >
             {isFetchingNextPage ? t("songs.loading") : t("songs.loadMore")}
           </button>
+          {/* A page that failed to load has to say so. `Loading` is no use
+              here — the pages already loaded are on screen and must stay
+              there, so this is a line beside the button that asks again, not
+              a state replacing the listing. Without it the button simply came
+              back to life and the catalogue silently stopped growing. */}
+          {isFetchNextPageError ? (
+            <p className="error" role="alert">
+              {t("songs.loadMoreError")}
+            </p>
+          ) : null}
         </div>
       )}
     </section>
   );
 }
 
+/** Render the album catalogue for the active library. */
 export function AlbumsPage() {
   const { t } = useI18n();
   const [sort, setSort] = useState<AlbumSort>("alphabeticalByName");

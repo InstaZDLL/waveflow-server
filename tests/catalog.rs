@@ -839,6 +839,12 @@ async fn genre_matching_is_canonical_on_every_surface() {
     let listed =
         json_body(native("/api/v2/songs?sort=byGenre&genre=hip%20hop&limit=50".into()).await).await;
     assert_eq!(listed.as_array().expect("a list").len(), 3);
+    // This fixture holds three tracks and all three are that one genre, so the
+    // line above would answer three even from a filter that was dropped. A
+    // genre nobody uses is what separates the two here.
+    let unused_here =
+        json_body(native("/api/v2/songs?sort=byGenre&genre=Polka&limit=50".into()).await).await;
+    assert!(unused_here.as_array().expect("a list").is_empty());
     // And unfiltered it is a listing, not a refusal.
     assert_eq!(
         native("/api/v2/songs".into()).await.status(),
@@ -2444,11 +2450,33 @@ async fn the_songs_listing_answers_the_whole_catalogue_orders_it_and_pages_it() 
     // The last row carries no artist and no album. That is the row the
     // `NULLS LAST` claim is about: under `COALESCE(x, '')`, which is what the
     // album listing does, it would lead both alphabetical answers.
-    for (index, (title, album, artist, track)) in [
-        ("Zephyr", Some("Anvil Hours"), Some("Beta Person"), Some(2)),
-        ("Anvil", Some("Anvil Hours"), Some("Beta Person"), Some(1)),
-        ("Marrow", Some("Zenith Field"), Some("Aria Lux"), Some(1)),
-        ("Orphan", None, None, None),
+    //
+    // One row carries a different genre. Without it the genre assertion below
+    // could not fail: `browse_input` tags every row "Ambient", so asking for
+    // Ambient would answer four whether the filter applied or was dropped.
+    for (index, (title, album, artist, track, genre)) in [
+        (
+            "Zephyr",
+            Some("Anvil Hours"),
+            Some("Beta Person"),
+            Some(2),
+            "Ambient",
+        ),
+        (
+            "Anvil",
+            Some("Anvil Hours"),
+            Some("Beta Person"),
+            Some(1),
+            "Ambient",
+        ),
+        (
+            "Marrow",
+            Some("Zenith Field"),
+            Some("Aria Lux"),
+            Some(1),
+            "Dub",
+        ),
+        ("Orphan", None, None, None, "Ambient"),
     ]
     .into_iter()
     .enumerate()
@@ -2464,6 +2492,7 @@ async fn the_songs_listing_answers_the_whole_catalogue_orders_it_and_pages_it() 
         input.album = album.map(str::to_owned);
         input.album_artist = album.and(artist).map(str::to_owned);
         input.artist = artist.map(str::to_owned);
+        input.genre = Some(genre.to_owned());
         state
             .db
             .apply_catalog_track(library_id, scan_id, &input, None, false)
@@ -2553,12 +2582,20 @@ async fn the_songs_listing_answers_the_whole_catalogue_orders_it_and_pages_it() 
         .await
         .unwrap();
     assert_eq!(no_genre.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    // Three of the four, and the fourth reachable by its own genre. Counted
+    // **and named**: a count alone would be satisfied by a filter that
+    // dropped the wrong row, and asking only for the genre three rows share
+    // would be satisfied by no filter at all.
+    let ambient = titles(&router, &token, "?sort=byGenre&genre=Ambient").await;
+    assert_eq!(ambient, ["Anvil", "Orphan", "Zephyr"]);
     assert_eq!(
-        titles(&router, &token, "?sort=byGenre&genre=Ambient")
-            .await
-            .len(),
-        4
+        titles(&router, &token, "?sort=byGenre&genre=Dub").await,
+        ["Marrow"]
     );
+    // And a genre nobody uses is empty rather than everything.
+    assert!(titles(&router, &token, "?sort=byGenre&genre=Polka")
+        .await
+        .is_empty());
 
     // 7. An ordering nobody implements is refused rather than silently
     //    replaced by the default.
