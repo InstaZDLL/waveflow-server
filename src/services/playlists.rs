@@ -773,6 +773,16 @@ impl DomainServices {
             // `./`, and `%` written as `%25`. Both are about the reader on the
             // other side, which is also this one.
             //
+            // A backslash needs no escape, and that is a measured claim rather
+            // than an assumption: every `relative_path` in the catalogue is
+            // written by `scanner::relative_path`, which folds `\` into `/`
+            // before the row exists — `apply_catalog_tracks` is reached from
+            // the scanner alone, and the metadata re-apply reuses the stored
+            // string. So the source of this line cannot carry one. (That the
+            // scanner turns a legal `\` in a Unix file name into a separator
+            // is its own defect, upstream of here and not fixable from an
+            // export.)
+            //
             // A line starting with `#` is a directive by the format's own
             // definition, so a track at a library's root called `#1 Hit.flac`
             // written bare would be read as a comment and **disappear without
