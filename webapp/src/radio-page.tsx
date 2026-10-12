@@ -49,6 +49,27 @@ export function isBlockedAsMixedContent(
   return pageProtocol === "https:" && streamUrl.trim().startsWith("http:");
 }
 
+/**
+ * Whether a failed play attempt is still worth telling the reader about.
+ *
+ * Two ways it is not, both reachable by ordinary use of the list. **A stale
+ * attempt**: starting a second station replaces the `src` of the one element
+ * every station plays from, which rejects the first station's pending
+ * `play()` — and that rejection lands after the second station is already on
+ * screen, so reporting it would blame a station that is playing perfectly
+ * well. **An interruption**: pressing stop while a station is still loading
+ * rejects the same promise with `AbortError`, which is the page doing what it
+ * was asked rather than a station that cannot be reached.
+ */
+export function reportsPlaybackFailure(
+  attempt: number,
+  current: number,
+  failure?: unknown,
+): boolean {
+  if (attempt !== current) return false;
+  return !(failure instanceof DOMException && failure.name === "AbortError");
+}
+
 type Draft = { name: string; stream_url: string; homepage_url: string };
 
 const emptyDraft: Draft = { name: "", stream_url: "", homepage_url: "" };
@@ -65,6 +86,15 @@ export function RadioPage() {
   const [playing, setPlaying] = useState<RadioStation | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
+  /**
+   * Which play attempt the page is showing.
+   *
+   * One element serves every station, so starting a second one — or stopping
+   * the first — rejects the pending `play()` of the first. That rejection
+   * arrives *after* the new state is set, and without this counter it would
+   * report a failure about a station nobody is waiting for any more.
+   */
+  const attempt = useRef(0);
 
   // A station is not a track: it has no duration to seek in, no id the queue
   // could persist and nothing to scrobble, so it plays from its own element
@@ -72,6 +102,10 @@ export function RadioPage() {
   // which is what these two effects keep.
   useEffect(() => {
     if (playing && player.playing) {
+      // Counted up here as well as in `stopPlaying`: this pause rejects the
+      // same promise, and the station it belonged to is no longer the one on
+      // screen.
+      attempt.current += 1;
       audio.current?.pause();
       setPlaying(null);
     }
@@ -95,19 +129,22 @@ export function RadioPage() {
     if (player.playing) player.toggle();
     const element = audio.current ?? new Audio();
     audio.current = element;
-    element.onerror = () => {
+    attempt.current += 1;
+    const mine = attempt.current;
+    const failed = (failure?: unknown) => {
+      if (!reportsPlaybackFailure(mine, attempt.current, failure)) return;
       setPlaybackError(true);
       setPlaying(null);
     };
+    element.onerror = () => failed();
     element.src = station.stream_url;
     setPlaying(station);
-    void element.play().catch(() => {
-      setPlaybackError(true);
-      setPlaying(null);
-    });
+    void element.play().catch(failed);
   }
 
   function stopPlaying() {
+    // Before the pause, which is what rejects the attempt's promise.
+    attempt.current += 1;
     audio.current?.pause();
     setPlaying(null);
   }

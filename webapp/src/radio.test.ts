@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isBlockedAsMixedContent, isPlayableAddress } from "./radio-page";
+import {
+  isBlockedAsMixedContent,
+  isPlayableAddress,
+  reportsPlaybackFailure,
+} from "./radio-page";
 
 describe("a station address", () => {
   it("is absolute http or https, as the server also insists", () => {
@@ -42,6 +46,34 @@ describe("a clear-text stream on a TLS page", () => {
     // not catch the secure address on the strength of the first four letters.
     expect(
       isBlockedAsMixedContent("  https://radio.example.org/s", "https:"),
+    ).toBe(false);
+  });
+});
+
+describe("a play attempt that failed", () => {
+  it("reports only when it is still the one on screen, and not when it was interrupted", () => {
+    // The ordinary failure: this attempt is current, and the station is
+    // genuinely unreachable.
+    expect(
+      reportsPlaybackFailure(3, 3, new DOMException("no", "NotSupportedError")),
+    ).toBe(true);
+    // An element error carries no failure value at all, and still reports.
+    expect(reportsPlaybackFailure(3, 3)).toBe(true);
+
+    // A second station was started while this one was loading. Its rejection
+    // arrives after the new station is on screen; blaming it would put an
+    // error over a station that is playing.
+    expect(
+      reportsPlaybackFailure(2, 3, new DOMException("aborted", "AbortError")),
+    ).toBe(false);
+    expect(reportsPlaybackFailure(2, 3)).toBe(false);
+
+    // Stop was pressed while this one was loading. `pause()` rejects the
+    // pending promise with `AbortError`, which is the page obeying rather than
+    // a station that cannot be reached — and the counter has moved, so either
+    // rule alone would catch this one.
+    expect(
+      reportsPlaybackFailure(3, 3, new DOMException("aborted", "AbortError")),
     ).toBe(false);
   });
 });
