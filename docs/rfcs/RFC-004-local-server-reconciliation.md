@@ -1,196 +1,193 @@
-# RFC-004 — Réconciliation locale ↔ serveur
+# RFC-004 — Local ↔ server reconciliation
 
-- **Statut** : Proposed
-- **Côté serveur** : rien à implémenter. La décision 1 le dit elle-même — le
-  premier incrément M5 ne modifie ni le catalogue serveur ni `/api/v2`. Cette
-  RFC vit ici comme référence du contrat que le desktop consomme.
-- **Date** : 2026-08-17
-- **Auteurs** : projet WaveFlow
-- **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
-  [RFC-003](RFC-003-waveflow-sync-v2.md) et du RFC-005 Desktop
+- **Status**: Proposed
+- **Server side**: nothing to implement. Decision 1 says so itself — the first
+  M5 increment changes neither the server catalogue nor `/api/v2`. This RFC
+  lives here as the reference for the contract the desktop consumes.
+- **Date**: 2026-08-17
+- **Authors**: the WaveFlow project
+- **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
+  [RFC-003](RFC-003-waveflow-sync-v2.md) and Desktop RFC-005
   `remote-source-and-sync-v2`
 
-## Problème
+## Problem
 
-WaveFlow Desktop présente aujourd'hui deux catalogues séparés : ses fichiers
-locaux et le catalogue autoritaire de WaveFlow Server. Cette séparation est
-correcte pour M4, mais elle empêche de reconnaître qu'un fichier local est la
-même copie binaire qu'une piste distante. Elle empêche notamment de convertir
-explicitement une playlist d'une source vers l'autre ou de préférer le fichier
-local lorsqu'il est disponible.
+WaveFlow Desktop presents two separate catalogues today: its local files and
+WaveFlow Server's authoritative catalogue. That separation is correct for M4,
+but it makes it impossible to recognise that a local file is the same byte-for-byte
+copy as a remote track. In particular it rules out explicitly converting a
+playlist from one source to the other, or preferring the local file when it is
+available.
 
-La réconciliation ne doit jamais fabriquer une identité à partir de
-métadonnées. Un titre, un artiste, une durée ou même un ensemble de ces valeurs
-peut désigner plusieurs enregistrements, éditions ou encodages.
+Reconciliation must never manufacture an identity out of metadata. A title, an
+artist, a duration — or even a set of those values — can name several
+recordings, editions or encodings.
 
-## Décision 1 — le lien est une donnée Desktop
+## Decision 1 — the link is Desktop data
 
-Le premier incrément M5 ne modifie ni le catalogue serveur ni `/api/v2`.
-WaveFlow Server publie déjà pour chaque piste son UUID stable, sa taille et son
-`full_hash`, défini comme BLAKE3 non keyed, hexadécimal, sur le fichier entier.
-Le Desktop possède seul l'identifiant de sa piste locale et l'accès à son
-fichier ; il persiste donc le lien dans la base du profil concerné.
+The first M5 increment changes neither the server catalogue nor `/api/v2`.
+WaveFlow Server already publishes, for every track, its stable UUID, its size
+and its `full_hash`, defined as unkeyed BLAKE3 in hexadecimal over the whole
+file. Desktop alone holds the identifier of its local track and access to its
+file, so it persists the link in the database of the profile concerned.
 
-Le lien est strictement un-à-un et contient au minimum :
+The link is strictly one-to-one and holds at least:
 
-- l'identifiant local stable ;
-- l'identifiant distant, scoped par le profil et le serveur ;
-- la méthode (`exact_full_hash` ou `confirmed_mbid`) ;
-- la preuve utilisée et les dates de confirmation/vérification ;
-- un état `confirmed`, `stale` ou `rejected`.
+- the stable local identifier;
+- the remote identifier, scoped by profile and server;
+- the method (`exact_full_hash` or `confirmed_mbid`);
+- the proof used and the confirmation/verification dates;
+- a state of `confirmed`, `stale` or `rejected`.
 
-Les contraintes uniques portent sur les deux identifiants. Une copie locale ou
-distante supplémentaire est une ambiguïté à résoudre, jamais un deuxième lien
-automatique. Une synchronisation multi-appareils de ces liens demanderait un
-contrat serveur séparé ; elle est hors du premier incrément M5.
+The unique constraints are on both identifiers. An extra local or remote copy is
+an ambiguity to resolve, never a second automatic link. Synchronising these
+links across devices would need a separate server contract; it is outside the
+first M5 increment.
 
-## Décision 2 — seul un hash complet exact et unique lie automatiquement
+## Decision 2 — only an exact and unique full hash links automatically
 
-Le `track.file_hash` actuel du Desktop n'est pas comparable à `full_hash` : il
-inclut la taille et n'échantillonne que le début et la fin des gros fichiers.
-Le Desktop doit utiliser son calcul BLAKE3 intégral déjà disponible.
+Desktop's current `track.file_hash` is not comparable to `full_hash`: it folds
+in the size and samples only the beginning and the end of large files. Desktop
+must use the whole-file BLAKE3 computation it already has.
 
-Pour éviter de relire toute la bibliothèque :
+To avoid re-reading the entire library:
 
-1. indexer les pistes distantes accessibles par `(size, full_hash)` ;
-2. ne calculer le hash complet que pour les fichiers locaux dont la taille a au
-   moins un candidat distant ;
-3. lier automatiquement uniquement lorsqu'un seul fichier local accessible et
-   une seule piste distante accessible partagent le hash complet ;
-4. présenter toute multiplicité comme une candidature à confirmer.
+1. index the reachable remote tracks by `(size, full_hash)`;
+2. compute the full hash only for local files whose size has at least one remote
+   candidate;
+3. link automatically only when exactly one reachable local file and exactly one
+   reachable remote track share the full hash;
+4. present any multiplicity as a candidate to confirm.
 
-Le hash empreinte le fichier, pas l'audio décodé. Deux encodages ou deux fichiers
-portant des tags différents ne correspondent donc pas, même s'ils représentent
-le même enregistrement.
+The hash fingerprints the file, not the decoded audio. Two encodings, or two
+files carrying different tags, therefore do not match even when they are the
+same recording.
 
-## Décision 3 — MBID reste une candidature confirmée
+## Decision 3 — an MBID stays a candidate to confirm
 
-Un identifiant MusicBrainz ne provoque jamais de liaison automatique : plusieurs
-pressages, encodages ou copies peuvent partager un identifiant d'enregistrement.
-Une correspondance MBID peut seulement créer une candidature que l'utilisateur
-confirme après avoir vu les deux sources.
+A MusicBrainz identifier never causes an automatic link: several pressings,
+encodings or copies can share one recording identifier. An MBID match can only
+raise a candidate that the user confirms after seeing both sources.
 
-Le serveur ne stocke actuellement aucun MBID. La branche MBID ne peut commencer
-qu'après l'ajout explicite des identifiants canoniques nécessaires au scanner,
-au catalogue et au contrat public. En leur absence, M5 fonctionne entièrement
-avec le hash complet ; il ne déduit pas un MBID depuis le titre ou l'artiste.
+The server currently stores no MBID. The MBID branch cannot begin until the
+canonical identifiers the scanner, the catalogue and the public contract need
+have been added explicitly. Without them, M5 works entirely off the full hash;
+it does not infer an MBID from a title or an artist.
 
-## Décision 4 — aucun rapprochement flou
+## Decision 4 — no fuzzy matching
 
-Le titre, l'artiste, l'album, la durée, le numéro de piste, la taille seule et
-toute combinaison de ces champs sont interdits pour confirmer un lien. Ils
-peuvent uniquement aider l'utilisateur à lire une proposition déjà fondée sur
-un hash exact ambigu ou un MBID.
+Title, artist, album, duration, track number, size alone and any combination of
+those fields are forbidden as grounds for confirming a link. They may only help
+the user read a proposal already founded on an ambiguous exact hash or on an
+MBID.
 
-Un candidat rejeté ne réapparaît pas tant que sa preuve (hash ou MBID) n'a pas
-changé. Cette mémoire évite de harceler l'utilisateur avec la même suggestion.
+A rejected candidate does not come back until its proof — hash or MBID — has
+changed. That memory is what keeps the same suggestion from pestering the user.
 
-## Décision 5 — survie aux déplacements et changements
+## Decision 5 — surviving moves and changes
 
-Le lien référence les identifiants stables des deux catalogues, jamais leurs
-chemins ou leurs métadonnées. Il survit donc à un déplacement et à un changement
-de tags lorsque les scanners conservent les identifiants.
+The link references the stable identifiers of both catalogues, never their paths
+or their metadata. It therefore survives a move and a tag change, as long as the
+scanners keep the identifiers.
 
-Si les octets du fichier changent et que son hash complet ne correspond plus à
-la preuve enregistrée, le lien devient `stale`. Il n'est ni supprimé ni dirigé
-silencieusement vers une autre piste. Une nouvelle vérification ou confirmation
-est nécessaire.
+If the file's bytes change and its full hash no longer matches the recorded
+proof, the link becomes `stale`. It is neither deleted nor silently pointed at
+another track. A fresh verification or confirmation is required.
 
-Une piste indisponible conserve son lien. La disponibilité décide seulement de
-la source de lecture utilisable à cet instant.
+An unavailable track keeps its link. Availability decides only which playback
+source is usable at that moment.
 
-## Décision 6 — politique de lecture proposée
+## Decision 6 — the proposed playback policy
 
-Pour une piste liée, le Desktop préfère le fichier local lorsqu'il est
-disponible et lisible, puis bascule sur le flux serveur. L'interface indique la
-source active et permet de la forcer pour la session courante. Une piste non
-liée conserve le comportement de sa source d'origine.
+For a linked track, Desktop prefers the local file when it is available and
+readable, then falls back to the server stream. The interface says which source
+is active and allows forcing it for the current session. An unlinked track keeps
+the behaviour of its own source.
 
-Le lien ne transforme pas la piste locale en piste serveur et ne fusionne pas
-les catalogues. Les UUID distants continuent de nommer les mutations et données
-utilisateur détenues par le serveur.
+A link does not turn the local track into a server track and does not merge the
+catalogues. Remote UUIDs go on naming the mutations and the user data the server
+owns.
 
-## Décision 7 — aucune fusion implicite des données utilisateur
+## Decision 7 — no implicit merge of user data
 
-Créer ou confirmer un lien ne modifie aucun favori, note, historique, compteur,
-playlist ou file d'attente.
+Creating or confirming a link changes no favourite, rating, history, counter,
+playlist or queue.
 
-- **Favoris et notes** : restent propres à leur source. Une copie explicite peut
-  être proposée dans un sens choisi par l'utilisateur ; il n'existe pas de
-  règle automatique de victoire.
-- **Historique et compteurs** : les événements historiques restent dans leur
-  autorité d'origine. Un affichage peut calculer un total combiné sans le
-  persister. Une nouvelle lecture peut alimenter une fois l'historique local et,
-  si elle possède un lien distant, émettre un scrobble idempotent vers le
-  serveur ; ce sont deux projections du même événement, pas deux lectures.
-- **Playlists** : une action explicite publie une playlist locale vers le
-  serveur ou matérialise une playlist serveur localement. Un aperçu signale les
-  pistes non liées ou ambiguës avant validation. Il n'existe aucune fusion
-  silencieuse de listes ordonnées.
-- **File d'attente** : la source de lecture active reste propriétaire de sa
-  file. Aucun lien ne fusionne automatiquement les deux files.
+- **Favourites and ratings**: they stay proper to their source. An explicit copy
+  may be offered in a direction the user chooses; there is no automatic rule
+  about which one wins.
+- **History and counters**: historical events stay with their original
+  authority. A display may compute a combined total without persisting it. A new
+  play may feed the local history once and, if it has a remote link, emit an
+  idempotent scrobble to the server; those are two projections of one event, not
+  two plays.
+- **Playlists**: an explicit action publishes a local playlist to the server or
+  materialises a server playlist locally. A preview names the unlinked or
+  ambiguous tracks before it is confirmed. There is no silent merge of ordered
+  lists.
+- **Queue**: the active playback source owns its queue. No link merges the two
+  queues automatically.
 
-## Sécurité et isolation
+## Security and isolation
 
-Le Desktop ne considère que les pistes distantes visibles par le compte lié.
-Un retrait d'accès rend le lien inutilisable sans révéler de nouvelles données.
-Les chemins locaux ne quittent jamais l'appareil. Le premier incrément n'envoie
-au serveur ni liens, ni inventaire local, ni nouveau hash.
+Desktop considers only the remote tracks the linked account can see. Withdrawing
+access makes the link unusable without revealing anything new. Local paths never
+leave the device. The first increment sends the server no links, no local
+inventory and no new hash.
 
-## Parcours utilisateur minimal
+## The minimal user journey
 
-1. lancer une analyse des correspondances depuis la source distante ;
-2. voir les liens exacts automatiques, les candidats ambigus et les rejets ;
-3. confirmer ou rejeter un candidat ;
-4. voir et modifier la préférence de lecture d'une piste liée ;
-5. convertir explicitement une playlist avec un aperçu des éléments non liés ;
-6. relancer la vérification après une modification de fichier ou d'accès.
+1. start a match analysis from the remote source;
+2. see the automatic exact links, the ambiguous candidates and the rejections;
+3. confirm or reject a candidate;
+4. see and change the playback preference of a linked track;
+5. convert a playlist explicitly, with a preview of the unlinked items;
+6. run the verification again after a file or access change.
 
 ## Validation
 
-La porte M5 exige au minimum :
+The M5 gate requires at least:
 
-- correspondance exacte unique et calcul intégral vérifié sur des fichiers
-  MP3, AAC, FLAC et WAV ;
-- même taille mais contenu différent : aucun lien ;
-- doublons locaux ou distants : aucune liaison automatique ;
-- déplacement local et distant : lien conservé ;
-- changement de tags modifiant les octets : lien `stale`, jamais réassigné ;
-- métadonnées identiques sans hash exact : aucun lien ;
-- suppression d'appartenance à une bibliothèque : aucune fuite de catalogue ;
-- conversion de playlist avec pistes liées, non liées et ambiguës ;
-- confirmation d'un lien : aucune mutation implicite des données utilisateur ;
-- fichiers réels de la bibliothèque de validation, sans aucune écriture de tags.
+- a unique exact match and a verified whole-file computation over MP3, AAC, FLAC
+  and WAV files;
+- same size, different content: no link;
+- local or remote duplicates: no automatic link;
+- a local and a remote move: the link is kept;
+- a tag change that alters the bytes: the link goes `stale`, never reassigned;
+- identical metadata with no exact hash: no link;
+- membership removed from a library: no catalogue leak;
+- a playlist conversion with linked, unlinked and ambiguous tracks;
+- confirming a link: no implicit mutation of user data;
+- real files from the validation library, with no tag writing at all.
 
-## Séquence d'implémentation
+## Implementation sequence
 
-1. migration et repository Desktop pour les liens ;
-2. découverte par taille puis hash complet, avec annulation et progression ;
-3. écran de confirmation et gestion des états ;
-4. sélection local-first avec repli serveur ;
-5. conversion explicite des playlists ;
-6. actions explicites sur favoris/notes et affichage des historiques ;
-7. MBID seulement après un contrat de données dédié ;
-8. portabilité multi-appareils seulement dans un RFC ultérieur.
+1. a Desktop migration and repository for the links;
+2. discovery by size then by full hash, with cancellation and progress;
+3. the confirmation screen and the state handling;
+4. local-first selection with a server fallback;
+5. explicit playlist conversion;
+6. explicit actions on favourites/ratings, and combined history displays;
+7. MBID only after a dedicated data contract;
+8. portability across devices only in a later RFC.
 
-## Arbitrages à accepter avant implémentation
+## Trade-offs to accept before implementation
 
-Ce RFC propose les valeurs conservatrices suivantes :
+This RFC proposes the following conservative values:
 
-1. **lecture local-first**, avec repli serveur ;
-2. **aucune copie automatique** des favoris ou notes lors d'un lien ;
-3. historiques stockés séparément, avec total combiné seulement en affichage ;
-4. liens **locaux au profil Desktop** pour le premier incrément M5.
+1. **local-first playback**, with a server fallback;
+2. **no automatic copy** of favourites or ratings when a link is made;
+3. histories stored separately, with a combined total in the display only;
+4. links **local to the Desktop profile** for the first M5 increment.
 
-Changer l'un de ces quatre choix modifie l'expérience ou le modèle de données ;
-ils doivent donc être approuvés avant de passer le RFC à `Accepted` et de
-commencer l'implémentation.
+Changing any of those four alters the experience or the data model, so they have
+to be approved before this RFC moves to `Accepted` and implementation begins.
 
-## Hors périmètre
+## Out of scope
 
-- reconnaissance acoustique ou hash de l'audio décodé ;
-- rapprochement flou fondé sur les métadonnées ;
-- réécriture des tags ou des fichiers audio ;
-- fusion physique des catalogues local et distant ;
-- synchronisation serveur des chemins ou de l'inventaire local ;
-- biographie, images d'artiste ou enrichissement provenant de services tiers.
+- acoustic fingerprinting, or hashing the decoded audio;
+- fuzzy matching founded on metadata;
+- rewriting tags or audio files;
+- physically merging the local and remote catalogues;
+- synchronising local paths or inventory to the server;
+- biography, artist images or enrichment from third-party services.
