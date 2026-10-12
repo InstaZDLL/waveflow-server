@@ -1,567 +1,543 @@
-# RFC-008 — Réception d'un fichier
+# RFC-008 — Receiving a file
 
-- **Statut** : Proposed
-- **Implémentée par** : [#149](https://github.com/InstaZDLL/waveflow-server/pull/149)
-  (la négociation), [#150](https://github.com/InstaZDLL/waveflow-server/pull/150)
-  (l'apply rendu indépendant du scan), [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)
-  (le transfert). Le champ *Statut* ci-dessus ne bascule jamais dans ce projet :
-  c'est cette ligne qui dit ce qui tourne.
-- **Date** : 2026-08-26
-- **Révisée** : 2026-09-15, après revue externe. La dernière question ouverte —
-  le partage d'un même blob entre bibliothèques — est tranchée par la
-  décision 9 ci-dessous, et par la négative. **Cette RFC n'a plus de question
-  ouverte.**
-- **Auteurs** : projet WaveFlow
-- **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
+- **Status**: Proposed
+- **Implemented by**: [#149](https://github.com/InstaZDLL/waveflow-server/pull/149)
+  (the negotiation), [#150](https://github.com/InstaZDLL/waveflow-server/pull/150)
+  (the apply made independent of the scan), [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)
+  (the transfer). The *Status* field above never flips in this project: this
+  line is the one that says what is running.
+- **Date**: 2026-08-26
+- **Revised**: 2026-09-15, after an external review. The last open question —
+  sharing one blob between libraries — is settled by decision 9 below, and in
+  the negative. **This RFC has no open question left.**
+- **Authors**: the WaveFlow project
+- **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md)
-- **Rend possible** : l'équilibrage des deux sources côté desktop, et l'asset
-  vidéo par piste
+- **Makes possible**: balancing the two sources on the desktop, and the
+  per-track video asset
 
-## Problème
+## Problem
 
-Rien dans `/api/v2` n'accepte d'audio entrant. Le serveur est une source ; il
-n'est pas un dépôt. Le desktop veut téléverser automatiquement les morceaux qui
-manquent au serveur, ce qui suppose exactement l'inverse.
+Nothing in `/api/v2` accepts incoming audio. The server is a source; it is not a
+deposit. The desktop wants to upload automatically the tracks the server is
+missing, which assumes exactly the opposite.
 
-C'est la plus lourde des quatre demandes qu'il a formulées, et pas parce qu'elle
-demande beaucoup de code. Elle demande peu. Elle change ce qu'est le serveur :
-recevoir un fichier, c'est **dépenser le disque de quelqu'un d'autre, de façon
-définitive**. Presque toutes les décisions ci-dessous découlent de cette phrase.
+It is the heaviest of the four requests it has made, and not because it asks for
+much code. It asks for little. It changes what the server *is*: receiving a file
+is **spending somebody else's disk, permanently**. Almost every decision below
+follows from that sentence.
 
-## Décision 1 — une bibliothèque opte, elle ne subit pas
+## Decision 1 — a library opts in, it is not subjected
 
-Deux verrous, et ils répondent à deux questions différentes.
+Two locks, and they answer two different questions.
 
-Le rôle dit **qui** : `Owner` ou `Manager`, la même paire que
-[`may_scan`](../../src/database.rs) et que la correction de métadonnées, parce
-qu'un membre qui peut déjà dépenser le disque du propriétaire sur un rescan est
-le même niveau de confiance.
+The role says **who**: `Owner` or `Manager`, the same pair as
+[`may_scan`](../../src/database.rs) and as metadata correction, because a member
+who can already spend the owner's disk on a rescan is the same level of trust.
 
-Un drapeau `library.accepts_uploads`, faux par défaut, dit **où**. Un serveur
-existant ne devient pas un dépôt parce qu'il a été mis à jour ; son opérateur le
-décide bibliothèque par bibliothèque. Sans ce drapeau, le rôle suffirait à faire
-d'une installation de lecture seule une installation qui grossit — un changement
-que personne n'aurait demandé.
+A `library.accepts_uploads` flag, false by default, says **where**. An existing
+server does not become a deposit because it was updated; its operator decides
+library by library. Without that flag, the role alone would turn a read-only
+installation into one that grows — a change nobody would have asked for.
 
-Un rôle `Uploader` distinct — un membre qui téléverse sans pouvoir rescanner —
-est concevable et n'est pas inventé ici. Les deux verrous existants suffisent à
-commencer ; un troisième se décide quand un usage le réclame, pas avant.
+A distinct `Uploader` role — a member who uploads without being able to rescan —
+is conceivable and is not invented here. The two existing locks are enough to
+start; a third is decided when a use demands it, not before.
 
-Les deux verrous sont réévalués **à chaque étape** : la négociation, chaque
-fragment, la validation. Une session n'est pas une autorisation qu'on emporte.
+Both locks are re-evaluated **at every step**: the negotiation, every fragment,
+the commit. A session is not an authorization one carries away.
 
-Le serveur a déjà cette règle ailleurs, et pour la même raison : un ticket de
-lecture rejoue la vérification d'appartenance à chaque redemption, « so revoking
-access takes effect immediately instead of lasting until the ticket expires ».
-Une session de téléversement dure bien plus longtemps qu'un ticket et coûte
-bien plus cher : un membre exclu, ou une bibliothèque refermée par son
-opérateur, doit cesser d'écrire à la requête suivante — pas à la fin d'un
-transfert commencé avant. Le fragment est refusé, la validation aussi, la zone
-de travail est nettoyée et la réservation rendue ; le refus prend la forme du
-verdict correspondant, ou un 404 quand c'est l'appartenance elle-même qui a
-disparu.
+The server already has this rule elsewhere, and for the same reason: a playback
+ticket replays the membership check on every redemption, "so revoking access
+takes effect immediately instead of lasting until the ticket expires". An upload
+session lasts far longer than a ticket and costs far more: a member who is
+excluded, or a library its operator has closed again, must stop writing on the
+next request — not at the end of a transfer that began before. The fragment is
+refused, so is the commit, the working area is cleaned and the reservation
+returned; the refusal takes the shape of the corresponding verdict, or a 404
+when it is membership itself that has gone.
 
-## Décision 2 — l'empreinte avant les octets
+## Decision 2 — the hash before the bytes
 
-Le téléversement se négocie avant de transférer quoi que ce soit. Le client
-annonce ce qu'il a — `full_hash`, taille, extension — et le serveur répond par un
-**verdict nommé**.
+An upload is negotiated before anything is transferred. The client announces
+what it has — `full_hash`, size, extension — and the server answers with a
+**named verdict**.
 
-| Verdict | Sens | Suite pour le client |
+| Verdict | Meaning | What follows for the client |
 | --- | --- | --- |
-| `present` | la bibliothèque visée détient déjà ces octets | rien à transférer |
-| `accepted` | session ouverte : identifiant, fragment attendu, expiration | transférer |
-| `unsupported_format` | extension hors `AUDIO_EXTENSIONS` | définitif |
-| `too_large` | au-dessus du plafond par fichier | définitif |
-| `quota_exceeded` | la bibliothèque n'a plus la place | réessayable plus tard |
-| `library_closed` | `accepts_uploads` est faux | définitif jusqu'à l'opérateur |
-| `too_many_sessions` | plafond de sessions simultanées atteint | réessayable |
-
-Un verdict, jamais un booléen. `known` / `unknown` disait deux choses à la fois —
-« je ne l'ai pas » et « vas-y » — et taisait les quatre refus qui doivent
-pourtant arriver ici : **c'est le seul moment où un refus est bon marché**, avant
-le premier octet plutôt qu'après le dernier. Les nommer est ce qui permet au
-client de distinguer ce qu'il ne doit jamais réessayer de ce qu'il peut
-réessayer.
-
-Une précision que la table ne peut pas porter : `library_closed` ne concerne
-qu'un appelant qui a le droit d'être là. Un non-membre, ou un membre au rôle
-insuffisant, reçoit un 404 comme partout ailleurs — le RFC-002 pose que
-`Forbidden` s'y confond, et une réponse « fermée » confirmerait l'existence de la
-bibliothèque à qui n'y a pas droit.
-
-Les formats acceptés sont ceux que le scanner sait indexer —
-`waveflow_core::scanner::AUDIO_EXTENSIONS` et rien d'autre. Accepter un fichier
-que le catalogue ne saura pas lire serait accepter d'occuper de l'espace pour
-rien.
-
-### `present` veut dire : dans cette bibliothèque
-
-La recherche d'empreinte est bornée à la bibliothèque visée. Deux raisons, et la
-seconde n'est pas une préférence.
-
-L'index existe déjà pour ce cas :
-`track_library_hash_idx ON track(library_id, full_hash, is_available)`. Chercher
-par bibliothèque est la forme que le schéma sert.
-
-Et une recherche globale **confirmerait une existence**. Un membre de la
-bibliothèque B qui annonce une empreinte et s'entend répondre `present` alors que
-seule A détient ces octets vient d'apprendre quelque chose sur une bibliothèque
-qu'il ne peut pas voir. Le RFC-002 pose que 404 confond l'absent et l'étranger ;
-une déduplication globale serait exactement l'oracle que cette règle interdit.
-Elle laisserait aussi B croire qu'elle possède une piste qu'elle n'a pas.
-
-Le partage d'un même blob entre bibliothèques — rattachement, lien matériel,
-copie interne — a été laissé ouvert ici jusqu'au 2026-09-15. **La décision 9 le
-tranche, et par la négative** : deux bibliothèques, deux fichiers, deux quotas.
-
-### La négociation se fait par lot
-
-Cinq mille candidats ne feront pas cinq mille allers-retours. La négociation
-prend un tableau d'empreintes et rend un tableau de verdicts.
-
-Avec une conséquence à ne pas manquer : la limite de corps du routeur est de
-seize kilo-octets (décision 4), soit deux cents empreintes environ une fois le
-JSON compté. Le lot est donc **borné explicitement**, et cette route porte sa
-propre limite de corps comme celle des fragments. Un lot trop grand est refusé
-pour ce qu'il est, jamais tronqué en silence.
-
-Le desktop signale que le gros de la déduplication se fera chez lui, hors ligne :
-son miroir de catalogue recopie déjà le `full_hash` de chaque piste, que la
-projection native expose. La négociation sert les cas isolés et les autres
-clients, pas le volume — une raison de plus de ne pas sur-construire ici.
-
-### Une session se retrouve, elle ne se duplique pas
-
-Une négociation portant une empreinte pour laquelle une session est déjà ouverte,
-pour le même compte et la même bibliothèque, **rend cette session** — pas une
-seconde. Sinon chaque redémarrage du client abandonne une zone de travail et,
-avec la réservation ci-dessous, immobilise du quota que rien ne libère.
-
-Le nombre de sessions simultanées par compte est plafonné, comme le transcodage
-l'est déjà par `WAVEFLOW_TRANSCODE_PER_USER_LIMIT`. Un client à cinq mille
-fichiers ouvre autant de sessions qu'il a le droit d'en tenir, pas cinq mille.
-
-### Le quota se réserve à l'ouverture
-
-Vérifier le quota à la négociation sans rien retenir laisserait deux sessions de
-quatre gigaoctets franchir le contrôle avec cinq gigaoctets libres, et le
-dépassement n'apparaîtrait qu'une fois le disque écrit.
-
-La taille annoncée est donc **réservée** à l'ouverture, rendue à l'expiration ou
-à l'échec, et le total revérifié à la validation. Les deux, pas l'un ou l'autre :
-la réservation empêche la course, la revérification rattrape ce que la
-réservation avait seulement supposé.
-
-Une validation réussie ne rend pas la réservation : elle la **convertit**, dans
-la même transaction que la piste. Rendre puis recompter laisserait un intervalle
-pendant lequel l'espace est libre des deux côtés — le fichier est sur le disque
-et le quota ne le compte pas encore — et deux validations simultanées passeraient
-par ce trou. La réservation cesse d'être une promesse au moment où elle devient
-une dépense, sans jamais cesser d'être l'une ou l'autre.
-
-## Décision 3 — l'empreinte annoncée n'établit jamais rien
-
-Le serveur recalcule le `full_hash` à la validation et refuse si les deux
-diffèrent, en jetant ce qui a été reçu.
-
-L'empreinte annoncée sert à **éviter un transfert**, jamais à **établir une
-identité**. La distinction n'est pas théorique : une identité fondée sur ce que
-le client affirme laisserait n'importe quel membre autorisé faire passer un
-fichier pour un autre, et la déduplication de la décision 2 deviendrait un moyen
-de substitution plutôt qu'une économie.
-
-La taille annoncée est bornée de la même façon, mais plus tôt : le serveur compte
-ce qu'il reçoit et interrompt la session dès que le compte dépasse la taille
-annoncée, sans attendre l'empreinte.
-
-Ce n'est pas un second contrôle d'identité — une empreinte qui correspond
-garantit déjà la taille, ce sont les mêmes octets. C'est ce qui empêche un client
-qui ment d'écrire quarante gigaoctets avant que l'empreinte ait l'occasion de le
-prendre en défaut.
-
-## Décision 4 — fragmenté, et la limite globale ne bouge pas
-
-Le routeur pose `DefaultBodyLimit::max(16 * 1024)`. Ce n'est pas un oubli : une
-API dont chaque route accepte seize kilo-octets ne peut pas être noyée par un
-corps de requête, et cette propriété vaut d'être gardée.
-
-La route de téléversement porte donc **sa propre borne, par fragment**, et ne
-relève pas la limite du routeur. Un plafond global de plusieurs mégaoctets
-donnerait à chaque route du serveur — y compris celles qui n'attendent qu'un
-identifiant — une surface qu'aucune n'a demandée.
-
-Fragmenté aussi parce que le desktop l'a bien posé : plusieurs milliers de
-morceaux sur une liaison domestique ne passent pas en une fois.
-
-### Une reprise ne doit pas dépendre d'un accusé reçu
-
-Une session porte son identifiant, la bibliothèque, le compte, l'empreinte et la
-taille annoncées, l'extension, les octets reçus, l'index du fragment attendu et
-son expiration. Cet état **se lit**, de sorte qu'un client qui redémarre demande
-où il en est au lieu de le déduire.
-
-Trois cas à l'arrivée d'un fragment `N`, et un seul est une erreur :
-
-- `N == attendu` — écrit, l'attendu avance.
-- `N < attendu` — déjà reçu. Réponse idempotente, avec l'attendu courant.
-- `N > attendu` — conflit, avec l'attendu courant.
-
-Le deuxième cas mérite d'être écrit plutôt que subi. Un fragment écrit dont
-l'accusé se perd est le cas ordinaire d'une liaison qui coupe, pas une faute du
-client ; le traiter comme un rejet rendrait le protocole fragile là où il devait
-justement absorber les coupures. Le troisième est refusé pour la raison inverse :
-un fragment sauté laisse un trou que seule l'empreinte finale révélerait,
-beaucoup trop tard.
-
-## Décision 5 — le serveur nomme le fichier, et il le nomme par son empreinte
-
-Le client ne propose jamais de chemin, pas même un nom.
+| `present` | the target library already holds these bytes | nothing to transfer |
+| `accepted` | a session is open: identifier, expected fragment, expiry | transfer |
+| `unsupported_format` | the extension is outside `AUDIO_EXTENSIONS` | final |
+| `too_large` | above the per-file ceiling | final |
+| `quota_exceeded` | the library has no room left | retryable later |
+| `library_closed` | `accepts_uploads` is false | final until the operator acts |
+| `too_many_sessions` | the concurrent-session ceiling is reached | retryable |
+
+A verdict, never a boolean. `known` / `unknown` said two things at once — "I do
+not have it" and "go ahead" — and kept silent about the four refusals that
+nevertheless have to arrive here: **this is the only moment where a refusal is
+cheap**, before the first byte rather than after the last. Naming them is what
+lets a client tell what it must never retry from what it may.
+
+One precision the table cannot carry: `library_closed` concerns only a caller
+who has the right to be there. A non-member, or a member whose role is
+insufficient, gets a 404 like everywhere else — RFC-002 holds that `Forbidden`
+is folded into it, and a "closed" answer would confirm the library's existence
+to somebody with no right to know.
+
+The formats accepted are the ones the scanner can index —
+`waveflow_core::scanner::AUDIO_EXTENSIONS` and nothing else. Accepting a file
+the catalogue will not be able to read would be accepting to occupy space for
+nothing.
+
+### `present` means: in this library
+
+The hash lookup is bounded to the target library. Two reasons, and the second is
+not a preference.
+
+The index already exists for that case:
+`track_library_hash_idx ON track(library_id, full_hash, is_available)`. Looking
+up by library is the shape the schema serves.
+
+And a global lookup **would confirm an existence**. A member of library B who
+announces a hash and hears `present` when only A holds those bytes has just
+learned something about a library they cannot see. RFC-002 holds that a 404
+blurs the absent and the foreign; a global deduplication would be exactly the
+oracle that rule forbids. It would also leave B believing it owns a track it
+does not have.
+
+Sharing one blob between libraries — attaching, hard-linking, an internal copy —
+was left open here until 2026-09-15. **Decision 9 settles it, and in the
+negative**: two libraries, two files, two quotas.
+
+### The negotiation happens in batches
+
+Five thousand candidates will not make five thousand round trips. The
+negotiation takes an array of hashes and returns an array of verdicts.
+
+With one consequence not to miss: the router's body limit is sixteen kilobytes
+(decision 4), which is about two hundred hashes once the JSON is counted. The
+batch is therefore **explicitly bounded**, and this route carries its own body
+limit like the fragments' route. An oversized batch is refused for what it is,
+never truncated in silence.
+
+The desktop reports that the bulk of the deduplication will happen on its side,
+offline: its catalogue mirror already copies every track's `full_hash`, which
+the native projection exposes. The negotiation serves isolated cases and other
+clients, not the volume — one more reason not to over-build here.
+
+### A session is found again, it is not duplicated
+
+A negotiation carrying a hash for which a session is already open, for the same
+account and the same library, **returns that session** — not a second one.
+Otherwise every client restart abandons a working area and, with the reservation
+below, ties up quota that nothing frees.
+
+The number of concurrent sessions per account is capped, as transcoding already
+is by `WAVEFLOW_TRANSCODE_PER_USER_LIMIT`. A client with five thousand files
+opens as many sessions as it is allowed to hold, not five thousand.
+
+### The quota is reserved when the session opens
+
+Checking the quota at negotiation without holding anything back would let two
+four-gigabyte sessions pass the check with five gigabytes free, and the overrun
+would appear only once the disk was written.
+
+The announced size is therefore **reserved** when the session opens, returned on
+expiry or on failure, and the total re-checked at the commit. Both, not one or
+the other: the reservation prevents the race, the re-check catches up with what
+the reservation had only assumed.
+
+A successful commit does not return the reservation: it **converts** it, in the
+same transaction as the track. Returning then recounting would leave an interval
+during which the space is free on both sides — the file is on the disk and the
+quota does not count it yet — and two simultaneous commits would go through that
+hole. The reservation stops being a promise at the moment it becomes a spend,
+without ever ceasing to be one or the other.
+
+## Decision 3 — an announced hash never establishes anything
+
+The server recomputes the `full_hash` at the commit and refuses if the two
+differ, throwing away what was received.
+
+The announced hash serves to **avoid a transfer**, never to **establish an
+identity**. The distinction is not theoretical: an identity founded on what the
+client asserts would let any authorized member pass one file off as another, and
+decision 2's deduplication would become a means of substitution rather than an
+economy.
+
+The announced size is bounded the same way, but earlier: the server counts what
+it receives and interrupts the session as soon as the count exceeds the
+announced size, without waiting for the hash.
 
-Toute une famille de problèmes disparaît avec cette phrase : la traversée de
-répertoire, l'écrasement d'un fichier que l'opérateur avait rangé lui-même, la
-collision entre deux téléversements simultanés. Aucun de ces problèmes n'a besoin
-d'être résolu s'il n'est jamais posé.
-
-Le fichier atterrit dans un sous-répertoire que le serveur possède, **à
-l'intérieur de la racine de la bibliothèque**, pour que le scan ordinaire le
-trouve sans qu'on lui apprenne un second endroit où regarder. Jamais un lien
-symbolique — le parcours les refuse déjà, délibérément.
-
-Reste sous quel nom, et la question a une réponse : **par empreinte**, pas par
-tags.
-
-Ranger par artiste / album / titre donne une arborescence qu'un opérateur
-reconnaît, et c'est le seul argument en sa faveur. Contre lui : les tags bougent.
-Une correction de métadonnées, une reprise du RFC-006, un retag par l'opérateur
-change le nom que le chemin aurait figé — et le serveur se retrouve devant un
-choix qu'il n'avait aucune raison de poser : déplacer le fichier, ou garder un
-chemin qui ment.
-
-Le projet a déjà tranché cette question dans l'autre sens, ailleurs. Une
-correction de métadonnées ne réécrit jamais le fichier ; elle vit à côté de lui.
-**Le fichier ne bouge pas.** Ranger par tags réintroduirait exactement le
-couplage que cette décision a écarté, du côté du stockage cette fois — un
-catalogue logique qui commande une organisation physique.
-
-Par empreinte, mais **avec son extension** : `<full_hash>.<extension>`, prise
-dans l'ensemble validé à la négociation. Ce n'est pas de la cosmétique. Le
-parcours ne reconnaît un fichier que par son extension — c'est la même règle qui
-rend un fragment `.part` invisible à la décision 6 — donc un fichier nommé de sa
-seule empreinte serait invisible lui aussi, et le rattrapage de la décision 7,
-qui compte sur le prochain scan pour ramasser un orphelin, ne ramasserait rien.
-Les deux moitiés de cette règle vont ensemble : ce qui est incomplet n'a pas
-d'extension, ce qui est complet en a une.
-
-L'arborescence lisible n'est pas perdue : elle redevient ce qu'elle est, une vue
-— une exportation, si elle est demandée un jour — et non la représentation
-interne.
-
-## Décision 6 — rien de partiel n'est jamais visible
-
-Les fragments s'écrivent **dans le répertoire de destination lui-même**, sous un
-nom qui ne porte pas d'extension audio : `<uuid>.part` jusqu'au renommage final.
-
-La première version de cette RFC plaçait la zone de travail hors de la racine, ce
-qui se contredisait : une zone temporaire système peut être sur un autre montage,
-et `rename()` cesse alors d'être atomique — il devient une copie suivie d'un
-effacement, avec une fenêtre pendant laquelle un fichier tronqué existe. Écrire
-au même endroit que la destination donne le même système de fichiers
-gratuitement, et il n'y a plus de déplacement entre montages à espérer.
-
-Restait l'invisibilité, et elle vient d'une règle qui existe déjà. Le parcours ne
-saute aucun répertoire — `WalkDir::new(root).follow_links(false)`, sans
-`filter_entry` : un répertoire caché serait bel et bien visité, et compter sur le
-point de tête aurait été une illusion. Ce que le parcours filtre, c'est
-l'extension. Un fragment nommé `.part` est donc inindexable **par construction**,
-sans qu'on ait à apprendre au scanner un chemin à éviter — une règle
-supplémentaire qu'une refonte du parcours pourrait casser en silence.
-
-Deux invariants, tous deux structurels désormais :
-
-- la zone de travail est sur le même système de fichiers que la destination ;
-- rien d'incomplet ne porte une extension que le scan reconnaît.
-
-Un scan qui croiserait un fichier à moitié écrit l'indexerait comme une piste
-tronquée, avec une empreinte qui cesserait d'être vraie une seconde plus tard.
-Ces deux invariants rendent ce croisement impossible plutôt qu'improbable.
-
-## Décision 7 — la piste existe à la validation
-
-La validation ne se contente pas de poser le fichier : elle l'applique par le
-chemin ordinaire du scan, et la piste existe immédiatement.
-
-Le serveur sait déjà faire exactement cela depuis la correction des métadonnées
-— lire un fichier et l'appliquer sans passer par un scan complet. Réutiliser ce
-chemin plutôt qu'en écrire un second donne trois choses d'un coup : la piste est
-consultable dès la réponse, le flux d'événements de bibliothèque l'annonce comme
-n'importe quel autre changement, et ce que la validation écrit est par
-construction ce qu'un scan aurait écrit.
-
-L'alternative — poser le fichier et attendre le prochain scan — laisserait le
-client devant un téléversement réussi et un catalogue qui l'ignore, sans rien
-pour savoir combien de temps.
-
-### L'extension n'est pas une preuve
-
-N'importe quel fichier renommé en `.flac` franchit le contrôle de la négociation,
-qui ne voit qu'une chaîne. La validation, elle, lit réellement le fichier : si
-l'extraction échoue, le téléversement est refusé et la zone de travail nettoyée.
-
-Ce contrôle n'est pas une pièce à écrire — c'est la décision ci-dessus.
-Appliquer le fichier par le chemin du scan, c'est le faire lire par le même
-extracteur ; ce qu'il ne sait pas lire n'entre pas.
-
-### L'ordre, parce qu'il n'y a pas de transaction commune
-
-SQLite et le système de fichiers ne partagent aucune transaction. L'ordre est
-donc une décision, pas un détail d'implémentation :
-
-1. la taille reçue correspond à la taille annoncée ;
-2. l'empreinte recalculée correspond à l'empreinte annoncée ;
-3. renommage atomique vers son nom définitif ;
-4. le fichier s'ouvre et s'extrait réellement ;
-5. une seule transaction SQLite : la piste et l'événement de bibliothèque.
-
-Une panne entre 3 et 5 laisse un fichier orphelin sur le disque, que le prochain
-scan ramasse — c'est très exactement ce qu'un scan sait faire, et le fichier
-porte déjà son nom définitif. L'ordre inverse laisserait une ligne de catalogue
-qui pointe vers rien : un état que rien ne répare tout seul et que chaque lecture
-rencontre.
-
-L'extraction vient après le renommage et non avant, contrairement à ce que la
-première version de cette RFC posait. L'extracteur choisit sa branche DSD sur
-l'extension du fichier : lire un fragment nommé `.part` prendrait la mauvaise
-branche et refuserait un DSF parfaitement valide. Et la fenêtre que cet ordre
-ouvre est vide — un fichier que l'extracteur ne sait pas lire n'est pas
-indexable par un scan non plus, puisque c'est le même extracteur. Ce qui ne
-s'ouvre pas est retiré, sans que rien ait pu s'y accrocher entre-temps.
-
-L'événement de bibliothèque appartient à la même transaction que la piste, ce que
-`record_library_event` impose déjà par sa signature — elle prend la transaction,
-pas la connexion.
-
-### Un rejeu ne duplique pas la piste
-
-Une validation rejouée après que le renommage a réussi — la transaction a échoué,
-ou un scan est passé entre-temps — retrouve le fichier à son nom définitif.
-L'identité d'une piste se résout d'abord par son chemin, et le chemin est
-maintenant celui d'une piste qui existe : l'application la met à jour au lieu
-d'en créer une seconde. C'est le cas ordinaire d'un scan, pas un cas
-particulier du téléversement.
-
-Ce qu'un rejeu peut produire en double, c'est l'événement. Il n'a pas de clé
-d'idempotence, et il n'en reçoit pas ici : un `upsert` énonce un état, pas un
-delta, donc un client qui le reçoit deux fois relit deux fois la même piste et
-n'en tire rien de faux. Importer l'`operation_id` du RFC-003 coûterait la
-colonne, sa contrainte et la fusion des deux vocabulaires que le RFC-007 sépare
-délibérément, pour supprimer une relecture. Le jour où un genre d'événement
-énoncera un delta plutôt qu'un état, la question se reposera — et ce sera une
-question du RFC-007.
-
-### Un fichier reçu n'a pas de scan, et le dit
-
-Le chemin d'application demandait l'identifiant du scan qui écrit la piste. Un
-téléversement n'en a pas : aucun parcours n'a eu lieu.
-
-Trois issues, et deux sont mauvaises. Inscrire un faux job de scan mettrait dans
-l'historique un fait qui n'a pas eu lieu, et ce mensonge ressortirait ailleurs —
-métriques, purge, écran d'administration. Élargir la contrainte `CHECK` de
-`scan_job.trigger` obligerait à reconstruire la table, pour déclarer qu'un
-téléversement est une sorte de scan alors qu'il n'en est pas une.
-
-La colonne est déjà `NULL`able. C'est la signature qui était trop étroite : elle
-prend maintenant un identifiant optionnel, et `NULL` veut dire **cette ligne ne
-vient pas d'un scan** — jamais « scan inconnu ». Appliquer au catalogue n'est pas
-intrinsèquement une opération du scanner, et la signature est l'endroit où cela
-cesse d'être sous-entendu.
-
-Ce sens n'existe que si la balayeuse de fin de scan le respecte, et elle ne le
-faisait pas : elle traitait `NULL` comme « jamais vu », donc comme disparu. Un
-fichier reçu pendant qu'un scan tourne aurait été marqué indisponible par ce
-scan — dont le parcours avait commencé avant que le fichier existe — et une
-suppression aurait été annoncée à tous les clients quelques secondes après son
-arrivée. Une ligne sans scan n'est donc balayée que si elle précède le scan
-courant, cas où le parcours aurait effectivement dû la trouver. Le premier scan
-qui passe sur un fichier reçu l'estampille, et il rejoint le cas ordinaire pour
-de bon.
-
-### La réponse rend l'identifiant et l'empreinte
-
-La réponse de validation porte l'identifiant de la piste créée et son
-`full_hash`.
-
-C'est ce que le desktop a demandé, et l'argument est juste : à cet instant, et à
-cet instant seulement, les deux côtés savent que leur fichier et cette piste sont
-les mêmes octets. Le lien de réconciliation s'écrit gratuitement. Sans ces deux
-champs, le client attend le prochain parcours de catalogue pour découvrir sa
-propre piste, puis relit le fichier entier pour l'y relier — pour une information
-que le serveur détenait déjà au moment de répondre.
-
-### Ce dont la réussite ne dépend pas
-
-La réponse ne dépend que de ce que le serveur a lu dans le fichier lui-même.
-Toute opération ultérieure sur cette piste, d'où qu'elle vienne, est un
-changement de bibliothèque comme un autre et voyage par le flux du RFC-007 —
-elle ne retient jamais la réponse.
-
-Le mot « enrichissement » circule dans les schémas d'architecture ; il ne
-correspond à rien dans le code, et le RFC-007 dit pourquoi il n'entre pas dans le
-vocabulaire tant que personne ne l'a décidé. Cette RFC ne l'introduit pas
-davantage : elle pose l'invariant — l'indexation locale est synchrone, tout le
-reste est un événement — qui reste vrai si une telle étape existe un jour.
-
-## Décision 8 — ce que la réception ne fait pas
-
-**`uploadRole` reste faux.** La façade Subsonic n'accepte pas de téléversement,
-et l'annoncer parce qu'une route native existe ferait essayer des clients qui
-échoueraient. Le champ décrit la façade, pas le serveur.
-
-**Pas de transcodage à l'entrée.** Le serveur stocke ce qu'on lui donne. Un
-plafond de qualité au téléversement est une décision du client, qui seul sait ce
-que coûte sa liaison.
-
-**Pas de remplacement.** Un téléversement dont l'empreinte est déjà connue
-s'arrête à la décision 2. Substituer un fichier à un autre est une opération
-différente, avec ses propres questions, et elle n'est pas demandée.
-
-**La suppression est hors périmètre.** La première version disait « pas de
-suppression », ce qui figeait plus que cette RFC n'a le droit de figer. Un client
-capable de remplir un disque et incapable de retirer ce qu'il vient d'y déposer
-par erreur sera rapporté comme un défaut, pas comme une limite assumée — et le
-nettoyage d'une session expirée ou refusée est déjà une suppression que le
-serveur doit écrire de toute façon. Ce que cette RFC décide, c'est qu'elle
-n'ouvre pas de route de suppression. Pas qu'il n'y en aura jamais.
-
-## Décision 9 — deux bibliothèques, deux fichiers, deux quotas
-
-**Ajoutée le 2026-09-15, après revue externe.** C'était la dernière question
-ouverte de cette RFC, et la décision 2 la reportait en disant que le partage
-d'un blob « n'est pas exclu pour toujours, mais il demande de décider ces
-frontières ». Les voici, et la réponse est non.
-
-**Le même contenu dans A et dans B, ce sont deux fichiers sur le disque et deux
-dépenses de quota.** La négociation reste strictement bornée à la bibliothèque
-visée : même si le serveur sait par ailleurs que ces octets existent ailleurs,
-cela ne change ni le verdict, ni le transfert, ni la validation, ni ce qui est
-compté.
-
-### Pourquoi le canvas a pu et pourquoi l'audio ne peut pas
-
-La [RFC-009](RFC-009-track-canvas.md) partage ses blobs, et sa décision 11 dit
-exactement ce qu'on aimerait reprendre : les octets se partagent, l'existence de
-l'empreinte non, et chaque bibliothèque paie la sienne. Ce qui rend cela
-possible n'est pas une audace qui manquerait ici : c'est que le canvas a **un
-magasin global**, `canvas_dir`, sous le répertoire de données, et que rien n'y
-accède sans passer par `canvas_for_user`, qui vérifie l'appartenance.
-
-L'audio n'a pas de magasin. La décision 5 pose que le fichier reçu se range
-**dans l'arbre de sa bibliothèque** — `<racine>/.waveflow-managed/<empreinte>.<extension>`
-— précisément pour que le scan ordinaire le découvre, sans second modèle de
-stockage. Le lieu du fichier *est* son appartenance.
-
-Vouloir partager quand même laisse quatre voies, et chacune se ferme :
-
-- **Le lien matériel** demande un seul système de fichiers, ce que deux racines
-  choisies par un opérateur ne garantissent pas. Et il fait des deux chemins les
-  mêmes octets : une racine de bibliothèque est un répertoire que son opérateur
-  ouvre et modifie, donc retaguer le fichier de A retaguerait celui de B. C'est
-  la pire des frontières — invisible, et découverte par ses effets.
-- **Le lien symbolique** était déjà écarté par la décision 5 — « jamais un lien
-  symbolique, le parcours les refuse déjà » — et ce n'est pas une
-  recommandation : le scan marche en `follow_links(false)` et saute tout
-  `is_symlink()` (`src/scanner.rs`), donc un blob lié ne serait jamais indexé.
-  L'option portable et bon marché est donc fermée depuis le premier jour de
-  cette RFC, et non par la présente décision.
-- **Un magasin global adressé par contenu**, avec des références, reviendrait à
-  défaire la décision 5 et à apprendre au scanner un deuxième modèle de
-  stockage. C'est une autre RFC, pas une optimisation.
-- **Le reflink** serait le plus sain et dépend du système de fichiers. Il ne
-  peut pas devenir un invariant de ce serveur.
-
-### Et la déduplication avant transfert reste interdite
-
-Il resterait à ne pas transférer deux fois les mêmes octets. C'est justement
-l'oracle que la décision 2 ferme : une empreinte qui répondrait `present` parce
-qu'une *autre* bibliothèque la détient apprend à son annonceur l'existence d'un
-fichier qu'il ne peut pas voir, et lui fait croire qu'il possède une piste qu'il
-n'a pas. Le gain de bande passante ne paie pas la fuite.
-
-### La porte laissée ouverte, et sa serrure
-
-Une **déduplication physique transparente** reste possible plus tard — un
-reflink quand le système de fichiers le permet, avec repli sur la copie —
-**à trois conditions, toutes les trois** : qu'elle ne crée aucun oracle entre
-bibliothèques, qu'elle ne rende le fichier d'une bibliothèque dépendant de celui
-d'une autre, et qu'elle ne change rien au contrat d'API. C'est-à-dire : une
-optimisation de stockage, appliquée après validation, qu'aucun membre ne peut
-observer. Tout ce qui se remarque depuis une API est un changement de
-sémantique et relève d'une décision, pas d'une optimisation.
-
-## Ce que cette RFC change ailleurs
-
-**`library_event` doit porter l'appareil d'origine.**
-
-La table n'a ni `operation_id` ni appareil d'origine, et son commentaire de
-migration dit pourquoi : « nothing here is client-originated yet — a scan writes
-every row ». Ce n'était déjà plus vrai à la fusion de l'écriture de métadonnées,
-et le téléversement en éloigne encore le serveur.
-
-Sans cette colonne, un client reçoit **son propre téléversement** par le flux
-comme une piste qu'il découvre, et le traite comme une découverte. Le journal
-utilisateur porte `origin_device_id` depuis son premier jour, exactement pour
-cela. La colonne manquante est une dette du RFC-007 plutôt qu'une question de
-celui-ci ; elle y est notée.
-
-## Un coût côté client, à assumer plutôt qu'à découvrir
-
-`full_hash` couvre le fichier entier. Le condensé que le desktop tient localement
-est un condensé tête-et-queue — le même compromis que `quick_hash` ici, et pour
-la même raison : ne pas relire la bibliothèque entière à chaque scan.
-
-« Téléverser tout ce qui manque » impose donc une lecture intégrale de la
-bibliothèque locale, une fois. C'est acceptable, et c'est déjà ce que demande la
-réconciliation, mais c'est une décision à prendre les yeux ouverts plutôt qu'une
-surprise à l'implémentation.
-
-## Ce qui reste ouvert
-
-**Rien, depuis le 2026-09-15.** Deux des trois questions ont été tranchées en
-implémentant, la troisième par la décision 9. Le titre de cette section est
-gardé tel quel plutôt que réécrit : ce qu'elle raconte maintenant, c'est
-comment chacune s'est fermée, et par quoi. C'est la ligne *Implémentée par* de
-l'en-tête qu'il faut lire pour le code, pas cette section : elle nomme des PR,
-et une PR se vérifie.
-
-- ~~**Les valeurs** : plafond par fichier, quota par bibliothèque, taille de
-  fragment, taille d'un lot de négociation, sessions simultanées par compte,
-  expiration d'une session.~~ Choisies en implémentant, livrées par la
-  [#149](https://github.com/InstaZDLL/waveflow-server/pull/149) et portées par
-  `UploadLimits` dans `src/config.rs`, chacune derrière sa variable
-  d'environnement : **1 Gio** par fichier, **50 Gio** de quota par bibliothèque,
-  des fragments de **4 Mio**, des lots de **200** offres, **4** sessions
-  simultanées par compte, une expiration à **24 h**. `validate_uploads` les
-  recoupe au démarrage plutôt que de laisser un réglage en contredire un autre —
-  un fragment ne peut pas dépasser le plafond d'un fichier, ni ce plafond le
-  quota.
-- ~~**Le nettoyage des zones de travail abandonnées** : à l'expiration, au
-  démarrage, ou les deux.~~ Les deux, et un troisième moment que la question
-  n'avait pas vu : `spawn_upload_sweeper` (`src/services/uploads.rs`, livré par
-  la [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)) passe au
-  démarrage puis une fois par durée de vie de session, et **chaque négociation
-  balaie avant de compter un quota** — c'est là que le nettoyage compte
-  vraiment, puisque c'est la négociation qui décide. Un fichier abandonné vit
-  donc au plus deux fois la durée promise à sa session. Chaque session est
-  balayée sous son propre verrou, et le fichier part avant sa ligne : l'ordre
-  inverse laisse l'orphelin que ce balayage existe pour ramasser.
-- ~~**Le partage d'un même blob entre bibliothèques**, qui demande d'abord de
-  décider ce que ces frontières signifient.~~ Tranché le 2026-09-15 par la
-  **décision 9**, et par la négative : deux bibliothèques, deux fichiers, deux
-  quotas. La question était restée ouverte parce que la
-  [RFC-009](RFC-009-track-canvas.md) semblait montrer la voie — sa décision 11
-  partage les octets d'un canvas sans partager l'existence de l'empreinte. La
-  revue a montré pourquoi l'audio ne peut pas la suivre : le canvas a un
-  magasin global, l'audio range son fichier dans l'arbre de sa bibliothèque
-  (décision 5), et le lieu du fichier *est* son appartenance. Ce qui se reprend
-  de la décision 11, c'est sa seule moitié confidentialité, que la décision 2
-  posait déjà ici.
+That is not a second identity check — a hash that matches already guarantees the
+size, they are the same bytes. It is what stops a client that lies from writing
+forty gigabytes before the hash gets the chance to catch it out.
+
+## Decision 4 — fragmented, and the global limit does not move
+
+The router sets `DefaultBodyLimit::max(16 * 1024)`. That is not an oversight: an
+API whose every route accepts sixteen kilobytes cannot be drowned by a request
+body, and that property is worth keeping.
+
+The upload route therefore carries **its own bound, per fragment**, and does not
+raise the router's limit. A global ceiling of several megabytes would give every
+route on the server — including those that expect only an identifier — a surface
+none of them asked for.
+
+Fragmented also because the desktop put it well: several thousand tracks over a
+home connection do not go in one piece.
+
+### A resume must not depend on an acknowledgement received
+
+A session carries its identifier, the library, the account, the announced hash
+and size, the extension, the bytes received, the index of the expected fragment
+and its expiry. That state **can be read**, so that a client which restarts asks
+where it stands instead of inferring it.
+
+Three cases when a fragment `N` arrives, and only one is an error:
+
+- `N == expected` — written, the expectation advances.
+- `N < expected` — already received. An idempotent answer, with the current
+  expectation.
+- `N > expected` — a conflict, with the current expectation.
+
+The second case deserves writing down rather than being endured. A fragment that
+was written and whose acknowledgement is lost is the ordinary case of a
+connection dropping, not a client fault; treating it as a rejection would make
+the protocol fragile exactly where it was meant to absorb drops. The third is
+refused for the opposite reason: a skipped fragment leaves a hole only the final
+hash would reveal, far too late.
+
+## Decision 5 — the server names the file, and it names it by its hash
+
+The client never proposes a path, not even a name.
+
+A whole family of problems disappears with that sentence: directory traversal,
+overwriting a file the operator had filed themselves, a collision between two
+simultaneous uploads. None of those problems needs solving if it is never posed.
+
+The file lands in a subdirectory the server owns, **inside the library root**, so
+that the ordinary scan finds it without being taught a second place to look.
+Never a symbolic link — the walk already refuses them, deliberately.
+
+What remains is under what name, and the question has an answer: **by hash**,
+not by tags.
+
+Filing by artist / album / title gives a tree an operator recognises, and that is
+the only argument in its favour. Against it: tags move. A metadata correction, a
+pass of RFC-006, a retag by the operator changes the name the path would have
+frozen — and the server finds itself facing a choice it had no reason to pose:
+move the file, or keep a path that lies.
+
+The project has already settled that question the other way, elsewhere. A
+metadata correction never rewrites the file; it lives beside it. **The file does
+not move.** Filing by tags would reintroduce exactly the coupling that decision
+set aside, on the storage side this time — a logical catalogue commanding a
+physical organisation.
+
+By hash, but **with its extension**: `<full_hash>.<extension>`, taken from the
+set validated at the negotiation. That is not cosmetic. The walk only recognises
+a file by its extension — the same rule that makes a `.part` fragment invisible
+in decision 6 — so a file named by its hash alone would be invisible too, and
+decision 7's catch-up, which counts on the next scan to pick up an orphan, would
+pick up nothing. The two halves of that rule go together: what is incomplete has
+no extension, what is complete has one.
+
+The readable tree is not lost: it goes back to being what it is, a view — an
+export, if it is ever asked for — and not the internal representation.
+
+## Decision 6 — nothing partial is ever visible
+
+Fragments are written **in the destination directory itself**, under a name that
+carries no audio extension: `<uuid>.part` until the final rename.
+
+The first version of this RFC placed the working area outside the root, which
+contradicted itself: a system temporary area can be on another mount, and
+`rename()` then stops being atomic — it becomes a copy followed by a delete,
+with a window during which a truncated file exists. Writing in the same place as
+the destination gives the same filesystem for free, and there is no longer any
+cross-mount move to hope for.
+
+What remained was invisibility, and it comes from a rule that already exists.
+The walk skips no directory — `WalkDir::new(root).follow_links(false)`, with no
+`filter_entry`: a hidden directory would indeed be visited, and counting on the
+leading dot would have been an illusion. What the walk filters is the extension.
+A fragment named `.part` is therefore unindexable **by construction**, without
+having to teach the scanner a path to avoid — an extra rule a rework of the walk
+could break in silence.
+
+Two invariants, both structural now:
+
+- the working area is on the same filesystem as the destination;
+- nothing incomplete carries an extension the scan recognises.
+
+A scan that came across a half-written file would index it as a truncated track,
+with a hash that would stop being true a second later. Those two invariants make
+that encounter impossible rather than improbable.
+
+## Decision 7 — the track exists at the commit
+
+The commit does not merely place the file: it applies it through the ordinary
+scan path, and the track exists immediately.
+
+The server already knows how to do exactly that, since metadata correction —
+read a file and apply it without going through a full scan. Reusing that path
+rather than writing a second one gives three things at once: the track is
+readable as of the response, the library event stream announces it like any
+other change, and what the commit writes is by construction what a scan would
+have written.
+
+The alternative — place the file and wait for the next scan — would leave the
+client with a successful upload and a catalogue that ignores it, with nothing to
+say for how long.
+
+### An extension is not proof
+
+Any file renamed to `.flac` passes the negotiation's check, which sees only a
+string. The commit, on the other hand, really reads the file: if the extraction
+fails, the upload is refused and the working area cleaned.
+
+That check is not a piece to write — it is the decision above. Applying the file
+through the scan path means having it read by the same extractor; what it cannot
+read does not get in.
+
+### The order, because there is no shared transaction
+
+SQLite and the filesystem share no transaction. The order is therefore a
+decision, not an implementation detail:
+
+1. the size received matches the size announced;
+2. the recomputed hash matches the announced hash;
+3. an atomic rename to its final name;
+4. the file really opens and extracts;
+5. one single SQLite transaction: the track and the library event.
+
+A crash between 3 and 5 leaves an orphan file on the disk, which the next scan
+picks up — that is exactly what a scan knows how to do, and the file already
+carries its final name. The reverse order would leave a catalogue row pointing
+at nothing: a state nothing repairs on its own and that every read meets.
+
+The extraction comes after the rename and not before, contrary to what the first
+version of this RFC held. The extractor chooses its DSD branch on the file's
+extension: reading a fragment named `.part` would take the wrong branch and
+refuse a perfectly valid DSF. And the window that order opens is empty — a file
+the extractor cannot read is not indexable by a scan either, since it is the
+same extractor. What does not open is removed, with nothing having been able to
+latch onto it in the meantime.
+
+The library event belongs to the same transaction as the track, which
+`record_library_event` already imposes by its signature — it takes the
+transaction, not the connection.
+
+### A replay does not duplicate the track
+
+A commit replayed after the rename succeeded — the transaction failed, or a scan
+passed in the meantime — finds the file under its final name. A track's identity
+resolves first by its path, and the path is now that of a track that exists: the
+apply updates it instead of creating a second one. That is the ordinary case of
+a scan, not a special case of uploading.
+
+What a replay can produce twice is the event. It has no idempotence key, and it
+gets none here: an `upsert` states a state, not a delta, so a client receiving it
+twice re-reads the same track twice and draws nothing false from it. Importing
+RFC-003's `operation_id` would cost the column, its constraint and the merging
+of the two vocabularies RFC-007 deliberately keeps apart, to remove a re-read.
+The day an event kind states a delta rather than a state, the question will come
+back — and it will be an RFC-007 question.
+
+### A received file has no scan, and says so
+
+The apply path required the identifier of the scan writing the track. An upload
+has none: no walk took place.
+
+Three ways out, and two are bad. Recording a fake scan job would put a fact that
+never happened into the history, and that lie would come out elsewhere —
+metrics, purge, the administration screen. Widening `scan_job.trigger`'s `CHECK`
+constraint would force the table to be rebuilt, in order to declare that an
+upload is a kind of scan when it is not one.
+
+The column is already `NULL`able. It was the signature that was too narrow: it
+now takes an optional identifier, and `NULL` means **this row does not come from
+a scan** — never "unknown scan". Applying to the catalogue is not intrinsically
+a scanner operation, and the signature is where that stops being implied.
+
+That meaning exists only if the end-of-scan sweeper respects it, and it did not:
+it treated `NULL` as "never seen", hence as gone. A file received while a scan
+was running would have been marked unavailable by that scan — whose walk had
+begun before the file existed — and a deletion would have been announced to
+every client seconds after its arrival. A row with no scan is therefore swept
+only if it predates the current scan, the case where the walk should indeed have
+found it. The first scan to pass over a received file stamps it, and it joins the
+ordinary case for good.
+
+### The response returns the identifier and the hash
+
+The commit response carries the created track's identifier and its `full_hash`.
+
+That is what the desktop asked for, and the argument is right: at that moment,
+and only at that moment, both sides know that their file and this track are the
+same bytes. The reconciliation link is written for free. Without those two
+fields, the client waits for the next catalogue walk to discover its own track,
+then re-reads the whole file to link it — for information the server already
+held as it answered.
+
+### What success does not depend on
+
+The response depends only on what the server read in the file itself. Any later
+operation on that track, wherever it comes from, is a library change like any
+other and travels through RFC-007's stream — it never holds the response back.
+
+The word "enrichment" goes around in the architecture diagrams; it corresponds
+to nothing in the code, and RFC-007 says why it does not enter the vocabulary
+until somebody has decided on it. This RFC does not introduce it either: it lays
+down the invariant — local indexing is synchronous, everything else is an
+event — which stays true if such a step ever exists.
+
+## Decision 8 — what receiving does not do
+
+**`uploadRole` stays false.** The Subsonic facade does not accept uploads, and
+announcing it because a native route exists would make clients try and fail. The
+field describes the facade, not the server.
+
+**No transcoding on the way in.** The server stores what it is given. A quality
+ceiling at upload time is the client's decision; it alone knows what its
+connection costs.
+
+**No replacement.** An upload whose hash is already known stops at decision 2.
+Substituting one file for another is a different operation, with questions of
+its own, and it is not asked for.
+
+**Deletion is out of scope.** The first version said "no deletion", which froze
+more than this RFC has the right to freeze. A client able to fill a disk and
+unable to remove what it has just put there by mistake will be reported as a
+defect, not as an accepted limit — and cleaning up an expired or refused session
+is already a deletion the server has to write anyway. What this RFC decides is
+that it does not open a deletion route. Not that there will never be one.
+
+## Decision 9 — two libraries, two files, two quotas
+
+**Added on 2026-09-15, after an external review.** It was this RFC's last open
+question, and decision 2 deferred it by saying that sharing a blob "is not
+excluded for ever, but it requires deciding what those boundaries mean". Here
+they are, and the answer is no.
+
+**The same content in A and in B is two files on the disk and two quota
+spends.** The negotiation stays strictly bounded to the target library: even if
+the server happens to know that those bytes exist elsewhere, that changes
+neither the verdict, nor the transfer, nor the commit, nor what is counted.
+
+### Why the canvas could and why audio cannot
+
+[RFC-009](RFC-009-track-canvas.md) shares its blobs, and its decision 11 says
+exactly what one would like to reuse: the bytes are shared, the existence of the
+hash is not, and each library pays for its own. What makes that possible is not
+a boldness missing here: it is that the canvas has **a global store**,
+`canvas_dir`, under the data directory, and that nothing reaches it without
+going through `canvas_for_user`, which checks membership.
+
+Audio has no store. Decision 5 holds that a received file is filed **in its
+library's tree** —
+`<root>/.waveflow-managed/<hash>.<extension>` — precisely so that the ordinary
+scan discovers it, with no second storage model. The file's location *is* its
+membership.
+
+Wanting to share anyway leaves four ways, and each one closes:
+
+- **A hard link** requires a single filesystem, which two roots chosen by an
+  operator do not guarantee. And it makes both paths the same bytes: a library
+  root is a directory its operator opens and modifies, so retagging A's file
+  would retag B's. That is the worst kind of boundary — invisible, and
+  discovered through its effects.
+- **A symbolic link** was already ruled out by decision 5 — "never a symbolic
+  link, the walk already refuses them" — and that is not a recommendation: the
+  scan runs with `follow_links(false)` and skips anything `is_symlink()`
+  (`src/scanner.rs`), so a linked blob would never be indexed. The portable,
+  cheap option has therefore been closed since this RFC's first day, and not by
+  the present decision.
+- **A global content-addressed store** with references would mean undoing
+  decision 5 and teaching the scanner a second storage model. That is another
+  RFC, not an optimisation.
+- **A reflink** would be the soundest and depends on the filesystem. It cannot
+  become an invariant of this server.
+
+### And deduplication before the transfer stays forbidden
+
+What would remain is not transferring the same bytes twice. That is precisely
+the oracle decision 2 closes: a hash answering `present` because *another*
+library holds it teaches its announcer that a file it cannot see exists, and
+makes it believe it owns a track it does not have. The bandwidth saved does not
+pay for the leak.
+
+### The door left open, and its lock
+
+A **transparent physical deduplication** stays possible later — a reflink where
+the filesystem allows it, falling back to a copy — **on three conditions, all
+three**: that it creates no oracle between libraries, that it does not make one
+library's file depend on another's, and that it changes nothing in the API
+contract. That is: a storage optimisation, applied after the commit, that no
+member can observe. Anything noticeable from an API is a change of semantics and
+is a matter for a decision, not for an optimisation.
+
+## What this RFC changes elsewhere
+
+**`library_event` must carry the originating device.**
+
+The table has neither `operation_id` nor an originating device, and its
+migration comment says why: "nothing here is client-originated yet — a scan
+writes every row". That was already untrue when metadata writing merged, and
+uploading takes the server further from it.
+
+Without that column, a client receives **its own upload** through the stream as
+a track it is discovering, and treats it as a discovery. The user journal has
+carried `origin_device_id` since its first day, for exactly this. The missing
+column is an RFC-007 debt rather than a question for this one; it is noted there.
+
+## A cost on the client, to be accepted rather than discovered
+
+`full_hash` covers the whole file. The digest the desktop keeps locally is a
+head-and-tail digest — the same compromise as `quick_hash` here, and for the
+same reason: not re-reading the whole library on every scan.
+
+"Upload everything that is missing" therefore requires reading the local library
+in full, once. That is acceptable, and it is already what reconciliation
+requires, but it is a decision to take with eyes open rather than a surprise at
+implementation time.
+
+## What is still open
+
+**Nothing, since 2026-09-15.** Two of the three questions were settled while
+implementing, the third by decision 9. This section's title is kept as it was
+rather than rewritten: what it now recounts is how each one closed, and by what.
+For the code it is the *Implemented by* line in the header that must be read,
+not this section: it names pull requests, and a pull request can be checked.
+
+- ~~**The values**: per-file ceiling, per-library quota, fragment size,
+  negotiation batch size, concurrent sessions per account, session expiry.~~
+  Chosen while implementing, delivered by
+  [#149](https://github.com/InstaZDLL/waveflow-server/pull/149) and carried by
+  `UploadLimits` in `src/config.rs`, each behind its environment variable:
+  **1 GiB** per file, a **50 GiB** quota per library, **4 MiB** fragments,
+  batches of **200** offers, **4** concurrent sessions per account, a **24 h**
+  expiry. `validate_uploads` cross-checks them at start-up rather than letting
+  one setting contradict another — a fragment cannot exceed a file's ceiling,
+  nor that ceiling the quota.
+- ~~**Cleaning up abandoned working areas**: on expiry, at start-up, or both.~~
+  Both, and a third moment the question had not seen: `spawn_upload_sweeper`
+  (`src/services/uploads.rs`, delivered by
+  [#151](https://github.com/InstaZDLL/waveflow-server/pull/151)) passes at
+  start-up and then once per session lifetime, and **every negotiation sweeps
+  before counting a quota** — that is where the cleaning really counts, since it
+  is the negotiation that decides. An abandoned file therefore lives at most
+  twice the lifetime promised to its session. Every session is swept under its
+  own lock, and the file goes before its row: the reverse order leaves the
+  orphan this sweep exists to pick up.
+- ~~**Sharing one blob between libraries**, which first requires deciding what
+  those boundaries mean.~~ Settled on 2026-09-15 by **decision 9**, and in the
+  negative: two libraries, two files, two quotas. The question had stayed open
+  because [RFC-009](RFC-009-track-canvas.md) seemed to show the way — its
+  decision 11 shares a canvas's bytes without sharing the existence of the hash.
+  The review showed why audio cannot follow it: the canvas has a global store,
+  audio files its file in its library's tree (decision 5), and the file's
+  location *is* its membership. What is reused from decision 11 is its
+  confidentiality half alone, which decision 2 already laid down here.
