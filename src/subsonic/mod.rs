@@ -38,6 +38,7 @@ mod media;
 mod nodes;
 mod playlists;
 mod protocol;
+mod radio;
 mod shares;
 mod userdata;
 
@@ -50,6 +51,7 @@ use media::*;
 use nodes::*;
 use playlists::*;
 use protocol::*;
+use radio::*;
 use shares::*;
 use userdata::*;
 
@@ -404,7 +406,13 @@ async fn dispatch(
         // server on a page it opens by default.
         "getSimilarSongs" => Ok(Node::new("similarSongs")),
         "getSimilarSongs2" => Ok(Node::new("similarSongs2")),
-        "getInternetRadioStations" => Ok(Node::new("internetRadioStations")),
+        // The last empty container to be filled. It is per account, which the
+        // reference server's list is not — see `src/subsonic/radio.rs` for that
+        // deviation and the one about `homePageUrl`'s spelling.
+        "getInternetRadioStations"
+        | "createInternetRadioStation"
+        | "updateInternetRadioStation"
+        | "deleteInternetRadioStation" => radio_stations(state, principal, method, params).await,
         // No avatars are stored, so the account genuinely has none. Code 70
         // says that; code 0 would blame the method instead of the data.
         "getAvatar" => Err(not_found()),

@@ -31,12 +31,39 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > Feishin row below records it as empty, which it was, and #215 has since filled
 > it from local play history — so that observation has stopped being true the
 > same way `getNowPlaying`'s child name did. `getArtistInfo`,
-> `getSimilarSongs`, `getSimilarSongs2` and `getInternetRadioStations` are
-> unchanged and still empty. **Two things to re-check in the next campaign**,
-> neither of which these runs can answer: whether the clients that call
-> `getTopSongs` render what they are now given, and that `topSongs.song`
-> decodes as a list — it had never carried a single child before, so nothing
-> had ever told the JSON renderer it was a collection.
+> `getSimilarSongs` and `getSimilarSongs2` are unchanged and still empty.
+> **Two things to re-check in the next campaign**, neither of which these runs
+> can answer: whether the clients that call `getTopSongs` render what they are
+> now given, and that `topSongs.song` decodes as a list — it had never carried
+> a single child before, so nothing had ever told the JSON renderer it was a
+> collection.
+>
+> **And `getInternetRadioStations` has stopped answering an empty container
+> too**, with #217, which also adds `createInternetRadioStation`,
+> `updateInternetRadioStation` and `deleteInternetRadioStation`. Every row
+> below that records it as empty was right when it was written. **Three
+> deliberate differences to carry into the next campaign**, because a client
+> may well notice them:
+>
+> 1. **The list is per account**, where the reference server keeps one global
+>    list only an administrator may change. A client built for that model sees
+>    its own stations and can edit them, which is the shape it expects; it
+>    simply never sees another account's. A station id belonging to somebody
+>    else answers error 70, like every other foreign id here.
+> 2. **`homePageUrl` out, `homepageUrl` in.** The specification spells the
+>    response attribute with a capital `P` and the request parameter without
+>    one. WaveFlow copies the asymmetry rather than correcting it, so a client
+>    that follows the document reads the field it set.
+> 3. **The server never connects to a station.** It validates the address as
+>    absolute `http` or `https`, stores it as typed and hands it over; the
+>    player is what reaches the station. A client on an HTTPS page therefore
+>    cannot play a clear-text station — that is the browser's mixed-content
+>    rule, not a server refusal, and the web client says so in advance.
+>
+> The three writes answer the bare envelope the specification documents, and
+> `internetRadioStations.internetRadioStation` is an array at any length — the
+> same latent JSON defect `topSongs.song` had, found the same way and fixed
+> before the container could ever answer with one child.
 >
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names

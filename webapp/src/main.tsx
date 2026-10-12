@@ -51,6 +51,7 @@ import { PlayerBar, PlayerProvider } from "./player";
 import { PlayingPage } from "./playing-page";
 import { PreferencesProvider } from "./preferences";
 import { createQueryClient } from "./query-client";
+import { RadioPage } from "./radio-page";
 import { ScrobblingPage } from "./scrobbling-page";
 import { SettingsPage } from "./settings-page";
 import { dismissSplash } from "./splash";
@@ -72,6 +73,7 @@ const navigation: Array<{
     | "/playlists"
     | "/queue"
     | "/shares"
+    | "/radio"
     | "/settings"
     | "/settings/scrobbling"
     | "/upload"
@@ -105,6 +107,7 @@ const navigation: Array<{
   },
   { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
   { to: "/shares", labelKey: "nav.shares", icon: "shares" },
+  { to: "/radio", labelKey: "nav.radio", icon: "radio" },
   { to: "/settings", labelKey: "nav.settings", icon: "admin" },
   {
     to: "/settings/scrobbling",
@@ -528,6 +531,12 @@ const sharesRoute = createRoute({
   component: SharesPage,
 });
 
+const radioRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/radio",
+  component: RadioPage,
+});
+
 // The path is the server's, not a preference. `lastfm_callback` redirects
 // here when a journey completes, so spelling it any other way puts the last
 // step of that journey on the not-found page.
@@ -585,6 +594,7 @@ const routeTree = rootRoute.addChildren([
     playlistsRoute,
     queueRoute,
     sharesRoute,
+    radioRoute,
     settingsRoute,
     scrobblingRoute,
     adminRoute,

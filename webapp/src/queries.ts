@@ -23,6 +23,7 @@ import {
   listNowPlaying,
   listOwnApiTokens,
   listPlaylists,
+  listRadioStations,
   listRandomSongs,
   listScrobbleDestinations,
   listScrobbleLinks,
@@ -141,6 +142,9 @@ export const sharesQuery = () =>
 
 export const bookmarksQuery = () =>
   queryOptions({ queryKey: ["bookmarks"], queryFn: listBookmarks });
+
+export const radioStationsQuery = () =>
+  queryOptions({ queryKey: ["radio-stations"], queryFn: listRadioStations });
 
 export const lyricsQuery = (trackId: string) =>
   queryOptions({

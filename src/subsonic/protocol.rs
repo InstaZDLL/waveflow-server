@@ -208,6 +208,10 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // Added with the container's first real answer: it held nothing,
             // so nothing had ever told it apart from an object.
             | ("topSongs", "song")
+            // The same case one mission later: `internetRadioStations` held
+            // nothing until #217, so nothing had ever told it apart from an
+            // object either.
+            | ("internetRadioStations", "internetRadioStation")
             | ("searchResult3" | "searchResult2", "artist" | "album" | "song")
             | ("playlists", "playlist")
             | ("playlist", "entry")
@@ -254,6 +258,11 @@ pub(super) fn empty_success_method(method: &str) -> bool {
             | "createBookmark"
             | "deleteBookmark"
             | "deleteShare"
+            // The three radio writes, as the specification has them: an empty
+            // envelope, and the client reads the list back.
+            | "createInternetRadioStation"
+            | "updateInternetRadioStation"
+            | "deleteInternetRadioStation"
             | "createUser"
             | "updateUser"
             | "deleteUser"

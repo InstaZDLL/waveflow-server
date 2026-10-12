@@ -269,6 +269,20 @@ let importAsks: Array<{ dryRun: boolean; name: string | null }> = [];
 /** What the export route was asked for, and what it answered. */
 let exportAsks: string[] = [];
 
+/**
+ * The account's radio stations, which this harness really does keep: the page
+ * writes and reads them back, so a mock answering a fixed list would pass a
+ * delete that deleted nothing.
+ */
+let stations: Array<{
+  id: string;
+  name: string;
+  stream_url: string;
+  homepage_url: string | null;
+  created_at: number;
+  updated_at: number;
+}> = [];
+
 const playlists = [
   {
     id: "playlist-1",
@@ -571,6 +585,49 @@ async function mockAuthenticatedApi(page: Page) {
           },
         ],
       });
+      return;
+    }
+    if (url.pathname === "/api/v2/radio-stations") {
+      if (route.request().method() === "POST") {
+        const draft = route.request().postDataJSON();
+        const created = {
+          id: `station-${stations.length + 1}`,
+          name: String(draft.name).trim(),
+          stream_url: draft.stream_url,
+          homepage_url: draft.homepage_url ?? null,
+          created_at: 1_700_000_000_000,
+          updated_at: 1_700_000_000_000,
+        };
+        stations = [...stations, created].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+        await route.fulfill({ status: 201, json: created });
+        return;
+      }
+      await route.fulfill({ json: stations });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/radio-stations/")) {
+      const id = url.pathname.slice("/api/v2/radio-stations/".length);
+      if (route.request().method() === "DELETE") {
+        stations = stations.filter((station) => station.id !== id);
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+      // A replacement: every field arrives, so an absent homepage clears it.
+      const draft = route.request().postDataJSON();
+      const replaced = {
+        id,
+        name: String(draft.name).trim(),
+        stream_url: draft.stream_url,
+        homepage_url: draft.homepage_url ?? null,
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_001,
+      };
+      stations = stations.map((station) =>
+        station.id === id ? replaced : station,
+      );
+      await route.fulfill({ json: replaced });
       return;
     }
     if (url.pathname === "/api/v2/bookmarks") {
@@ -992,6 +1049,7 @@ test.beforeEach(async ({ page }) => {
   bookmarks = [];
   importAsks = [];
   exportAsks = [];
+  stations = [];
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
   // **Reset here, and they were not.** These four reached the mock without
@@ -2514,8 +2572,10 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The ten the bar cannot hold — including the two this account is
-  // entitled to as an administrator of a library that takes files.
+  // The eleven the bar cannot hold — including the two this account is
+  // entitled to as an administrator of a library that takes files. `Radio`
+  // joined them with #217, and this count is what said so: a new entry in the
+  // sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -2524,6 +2584,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Random",
     "Recently played",
     "Shares",
+    "Radio",
     "Scrobbling",
     "Upload",
     "Admin",
@@ -2532,7 +2593,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(10);
+  await expect(sheet.getByRole("link")).toHaveCount(11);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -3699,4 +3760,79 @@ test("holds the sung line in view without dragging the page", async ({
     .toBeGreaterThan(0);
   // And the page did not move under the reader.
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+/**
+ * The radio page, which manages a list the catalogue knows nothing about.
+ *
+ * Worth its own test for one reason: a station is written and then read back,
+ * so every control here depends on the list the server holds rather than on
+ * what the page remembers. The harness keeps the list for that reason too — a
+ * mock answering a constant would let a delete that deletes nothing pass.
+ */
+test("keeps a list of radio stations, replacing rather than patching", async ({
+  page,
+}) => {
+  await page.goto("/radio");
+  await expect(
+    page.getByRole("heading", { name: "Radio", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No stations yet. Add one above."),
+  ).toBeVisible();
+
+  await page.getByLabel("Station name").fill("Radio Nova");
+  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await page.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  await page.getByRole("button", { name: "Add station" }).click();
+
+  const listed = page.locator(".resource-list li");
+  await expect(listed).toHaveCount(1);
+  await expect(listed.first()).toContainText("Radio Nova");
+  await expect(listed.first()).toContainText("https://nova.example.org/live");
+  await expect(
+    page.getByRole("link", { name: "Station page" }),
+  ).toHaveAttribute("href", "https://nova.example.org/");
+
+  // An address the server would refuse is refused here first, with a reason,
+  // and the button stays shut rather than sending a request to find out.
+  await page.getByLabel("Station name").fill("Elsewhere");
+  await page.getByLabel("Stream address").fill("mms://elsewhere.example.org/s");
+  await expect(
+    page.getByText("An address must start with http:// or https://."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add station" }),
+  ).toBeDisabled();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // Editing loads the station into the same form, and says what saving means:
+  // the page address is cleared because the form sends every field.
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("Station name")).toHaveValue("Radio Nova");
+  await expect(page.getByLabel("Station page (optional)")).toHaveValue(
+    "https://nova.example.org/",
+  );
+  await expect(
+    page.getByText(
+      "Saving replaces every field, so an empty page address clears the stored one.",
+    ),
+  ).toBeVisible();
+  await page.getByLabel("Station name").fill("Radio Nova Classics");
+  await page.getByLabel("Station page (optional)").fill("");
+  await page.getByRole("button", { name: "Save station" }).click();
+
+  await expect(listed.first()).toContainText("Radio Nova Classics");
+  // Cleared, which is the half a patch would have got wrong.
+  await expect(page.getByRole("link", { name: "Station page" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(listed).toHaveCount(0);
+  await expect(
+    page.getByText("No stations yet. Add one above."),
+  ).toBeVisible();
 });

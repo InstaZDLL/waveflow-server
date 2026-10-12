@@ -33,6 +33,7 @@ mod oauth;
 mod playback;
 mod playlists;
 mod probes;
+mod radio;
 mod scrobbling;
 mod setup;
 mod shares;
@@ -55,6 +56,7 @@ pub use oauth::*;
 pub use playback::*;
 pub use playlists::*;
 pub use probes::*;
+pub use radio::*;
 pub use scrobbling::*;
 pub use setup::*;
 pub use shares::*;
@@ -204,6 +206,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/bookmarks/{track_id}",
             put(set_bookmark).delete(delete_bookmark),
+        )
+        // One list per account, and `PUT` on the station because the protocol's
+        // update carries every field — see `src/api/radio.rs`.
+        .route(
+            "/api/v2/radio-stations",
+            get(list_radio_stations).post(create_radio_station),
+        )
+        .route(
+            "/api/v2/radio-stations/{station_id}",
+            get(get_radio_station)
+                .put(replace_radio_station)
+                .delete(delete_radio_station),
         )
         .route("/api/v2/scrobbles", post(create_scrobble))
         .route("/api/v2/history", get(list_history))
