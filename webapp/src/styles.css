@@ -1026,6 +1026,19 @@ main {
   box-shadow: var(--shadow);
 }
 
+/* The local history sits between the hero and the discography, so it takes the
+   rhythm a section has everywhere else rather than the browser default. */
+.artist-played {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.artist-played h3 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
 .list,
 .queue-list,
 .resource-list {

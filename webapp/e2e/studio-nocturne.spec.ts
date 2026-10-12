@@ -214,6 +214,28 @@ const albumDetail = {
   ],
 };
 
+/**
+ * The artist page's own answer: a name and its albums. The most played list is
+ * deliberately not in it — the page asks for that separately, because it
+ * changes every time something is played while the discography does not.
+ */
+const artistDetail = {
+  id: "artist-1",
+  name: "Björk",
+  album_count: 2,
+  artwork_hash: null,
+  albums,
+};
+
+/**
+ * What this account played, in the order the server ranked it. Reassigned by
+ * the test that empties it: an artist with no history must carry no heading
+ * rather than a heading over nothing.
+ */
+let artistPlayed: Array<ReturnType<typeof song>> = [];
+/** The limits the page asked for, so a screenful can be told from a catalogue. */
+let topSongAsks: Array<string | null> = [];
+
 const genres = [
   { name: "Art Pop", song_count: 412, album_count: 31 },
   { name: "Shoegaze", song_count: 233, album_count: 18 },
@@ -848,6 +870,28 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ status: 204, body: "" });
       return;
     }
+    if (url.pathname === "/api/v2/artists") {
+      await route.fulfill({
+        json: [
+          {
+            id: artistDetail.id,
+            name: artistDetail.name,
+            album_count: artistDetail.album_count,
+            artwork_hash: null,
+          },
+        ],
+      });
+      return;
+    }
+    if (url.pathname === "/api/v2/artists/artist-1/top-songs") {
+      topSongAsks.push(url.searchParams.get("limit"));
+      await route.fulfill({ json: artistPlayed });
+      return;
+    }
+    if (url.pathname === "/api/v2/artists/artist-1") {
+      await route.fulfill({ json: artistDetail });
+      return;
+    }
     if (url.pathname === "/api/v2/albums") {
       // Answering the order lets a test tell a refetch from a local re-sort.
       const sorted =
@@ -867,6 +911,8 @@ test.beforeEach(async ({ page }) => {
   tokensFail = false;
   ownClients = freshClients();
   bookmarks = [];
+  artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
+  topSongAsks = [];
   // **Reset here, and they were not.** These four reached the mock without
   // reaching this block, because a `replace` whose needle had already been
   // reformatted did nothing and said nothing. So `subsonicWrites`
@@ -1194,6 +1240,54 @@ test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+});
+
+/**
+ * An artist page carries what this account played, and nothing when it played
+ * nothing.
+ *
+ * The desktop client fills this part of an artist page from a remote service.
+ * This server queries none, so what is counted is local listening — which also
+ * means a fresh account sees no section at all, and that is the half worth
+ * pinning: a heading over an empty table would read as a broken feature rather
+ * than as an honest answer.
+ */
+test("an artist page shows this account's most played, and no heading without a history", async ({
+  page,
+}) => {
+  await page.goto("/artists/artist-1");
+  await expect(
+    page.getByRole("heading", { name: "Björk", level: 2 }),
+  ).toBeVisible();
+
+  await expect(
+    page.getByRole("heading", { name: "Most played here" }),
+  ).toBeVisible();
+  // The server ranked them; the client renders that order and does not re-sort.
+  await expect(page.locator(".artist-played .songs tbody tr")).toHaveCount(2);
+  await expect(
+    page.locator(".artist-played .song-title").first(),
+  ).toContainText("Cocoon");
+  // A screenful, not the discography.
+  expect(topSongAsks).toEqual(["10"]);
+  // And the albums are still what the page is.
+  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // Nothing played: the section is absent, not empty.
+  artistPlayed = [];
+  await page.goto("/artists/artist-1");
+  await expect(
+    page.getByRole("heading", { name: "Björk", level: 2 }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Most played here" }),
+  ).toHaveCount(0);
 });
 
 /**

@@ -2,6 +2,7 @@ import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import {
   type AlbumSort,
+  artistTopSongs,
   canvasUrl,
   getAlbum,
   getArtist,
@@ -96,6 +97,12 @@ export const artistQuery = (artistId: string) =>
   queryOptions({
     queryKey: ["artist", artistId],
     queryFn: () => getArtist(artistId),
+  });
+
+export const artistTopSongsQuery = (artistId: string) =>
+  queryOptions({
+    queryKey: ["artist-top-songs", artistId],
+    queryFn: () => artistTopSongs(artistId),
   });
 
 export const genresQuery = (scope: string | undefined) =>
