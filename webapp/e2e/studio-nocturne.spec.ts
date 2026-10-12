@@ -274,6 +274,9 @@ let exportAsks: string[] = [];
  * writes and reads them back, so a mock answering a fixed list would pass a
  * delete that deleted nothing.
  */
+/** Every write the radio page sent, so one click can be told from two. */
+let radioWrites: string[] = [];
+
 let stations: Array<{
   id: string;
   name: string;
@@ -589,6 +592,7 @@ async function mockAuthenticatedApi(page: Page) {
     }
     if (url.pathname === "/api/v2/radio-stations") {
       if (route.request().method() === "POST") {
+        radioWrites.push("POST");
         const draft = route.request().postDataJSON();
         const created = {
           id: `station-${stations.length + 1}`,
@@ -1050,6 +1054,7 @@ test.beforeEach(async ({ page }) => {
   importAsks = [];
   exportAsks = [];
   stations = [];
+  radioWrites = [];
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
   // **Reset here, and they were not.** These four reached the mock without
@@ -3835,4 +3840,76 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
   await expect(
     page.getByText("No stations yet. Add one above."),
   ).toBeVisible();
+});
+
+/**
+ * The form is closed for the length of a write, and the station playing is
+ * not.
+ *
+ * **The delay below is what makes this test able to fail.** Every other mock
+ * in this file answers instantly, and against an instant answer a guarded form
+ * and an unguarded one look identical: the save is over before a second click
+ * or a second edit could begin. Against a request that takes 300ms, a second
+ * click lands while the first is still out — which is how a second station
+ * appeared from one gesture, the server having no reason to refuse it.
+ */
+test("closes the form while a station is saving, and leaves listening alone", async ({
+  page,
+}) => {
+  await page.goto("/radio");
+  await page.getByLabel("Station name").fill("Radio Nova");
+  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await page.getByRole("button", { name: "Add station" }).click();
+  await expect(page.locator(".resource-list li")).toHaveCount(1);
+  expect(radioWrites).toEqual(["POST"]);
+
+  // Registered after the first station exists, so only the second save is slow.
+  await page.route("**/api/v2/radio-stations", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fallback();
+  });
+
+  await page.getByLabel("Station name").fill("FIP");
+  await page.getByLabel("Stream address").fill("https://fip.example.org/live");
+  await page.getByRole("button", { name: "Add station" }).click();
+
+  // Shut for the whole round trip: the button cannot be pressed again, and the
+  // fields cannot be refilled under a save that is about to clear them.
+  //
+  // **The button line below is not the one that distinguishes**, and saying so
+  // is cheaper than discovering it later: an empty form disables that button
+  // too, so with the guard removed this assertion still passes — it retries
+  // until the save lands and clears the fields. The field and row assertions
+  // after it, and the write count at the end, are what fail. Measured.
+  await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
+  await expect(page.getByLabel("Station name")).toBeDisabled();
+  await expect(page.getByLabel("Stream address")).toBeDisabled();
+  // And no edit can begin, which is what made a save clear a form somebody
+  // else had just filled.
+  await expect(page.getByRole("button", { name: "Edit" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete" })).toBeDisabled();
+  // Listening is the deliberate exception: it writes nothing, and a reader
+  // waiting on a save has no reason to lose the station they are hearing.
+  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+
+  // The second click of an impatient double-click, dispatched for real rather
+  // than waited for: `force` skips Playwright's own actionability check, so
+  // what refuses it is the browser declining to activate a disabled button.
+  // Without the guard this click sends a second POST and the account ends up
+  // with two identical stations from one gesture — which is what the count
+  // below would then show.
+  await page
+    .getByRole("button", { name: "Add station" })
+    .click({ force: true });
+
+  await expect(page.locator(".resource-list li")).toHaveCount(2);
+  // One gesture, one station. Two POSTs in all, one per click.
+  expect(radioWrites).toEqual(["POST", "POST"]);
+  // Open again, and empty, once the save has landed.
+  await expect(page.getByLabel("Station name")).toBeEnabled();
+  await expect(page.getByLabel("Station name")).toHaveValue("");
 });

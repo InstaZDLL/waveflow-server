@@ -1,5 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
   ApiError,
@@ -85,6 +91,21 @@ export function RadioPage() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<RadioStation | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
+  /**
+   * True while a write is in flight, which closes the form and the two
+   * per-station writes.
+   *
+   * **Not polish.** A second click on `Add station` before the first answered
+   * created a second station — the server has no reason to refuse one — and
+   * starting to edit another station mid-save made the save clear a form the
+   * reader had just filled, because `editing` and `draft` are read again
+   * after the `await`. Closing the form removes both, where comparing the
+   * values afterwards would have removed only the second (constats de revue,
+   * pris). Listening stays available throughout: it writes nothing, and a
+   * reader waiting on a save has no reason to lose the station they are
+   * hearing.
+   */
+  const [busy, setBusy] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
   /**
    * Which play attempt the page is showing.
@@ -95,21 +116,34 @@ export function RadioPage() {
    * report a failure about a station nobody is waiting for any more.
    */
   const attempt = useRef(0);
+  /**
+   * The same station as `playing`, readable after an `await`.
+   *
+   * `playing` is a render value, so a callback that resumes after a request
+   * sees whatever was playing when the request *left*. Deleting a station and
+   * then starting one during the round trip is enough to tell the two apart:
+   * the state says nothing is playing, and a stream is. Playback is not a
+   * mutation and stays available while a write is in flight, which is why
+   * this one needs a ref where the form below needs only `busy`.
+   */
+  const playingRef = useRef<RadioStation | null>(null);
+
+  const silence = useCallback(() => {
+    // Invalidated before the pause, because the pause is what rejects the
+    // attempt's promise.
+    attempt.current += 1;
+    audio.current?.pause();
+    playingRef.current = null;
+    setPlaying(null);
+  }, []);
 
   // A station is not a track: it has no duration to seek in, no id the queue
   // could persist and nothing to scrobble, so it plays from its own element
   // rather than through the queue player. The two must not sound at once,
   // which is what these two effects keep.
   useEffect(() => {
-    if (playing && player.playing) {
-      // Counted up here as well as in `stopPlaying`: this pause rejects the
-      // same promise, and the station it belonged to is no longer the one on
-      // screen.
-      attempt.current += 1;
-      audio.current?.pause();
-      setPlaying(null);
-    }
-  }, [player.playing, playing]);
+    if (playing && player.playing) silence();
+  }, [player.playing, playing, silence]);
 
   useEffect(
     () => () => {
@@ -134,23 +168,20 @@ export function RadioPage() {
     const failed = (failure?: unknown) => {
       if (!reportsPlaybackFailure(mine, attempt.current, failure)) return;
       setPlaybackError(true);
+      playingRef.current = null;
       setPlaying(null);
     };
     element.onerror = () => failed();
     element.src = station.stream_url;
+    playingRef.current = station;
     setPlaying(station);
     void element.play().catch(failed);
   }
 
-  function stopPlaying() {
-    // Before the pause, which is what rejects the attempt's promise.
-    attempt.current += 1;
-    audio.current?.pause();
-    setPlaying(null);
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
+    setBusy(true);
     setMutationError(null);
     // Sent whole, every time: the server replaces the station rather than
     // patching it, so an empty homepage field clears the stored one.
@@ -165,20 +196,31 @@ export function RadioPage() {
       } else {
         await createRadioStation(payload);
       }
+      // Safe to clear because the form was closed for the whole round trip:
+      // nothing the reader did in the meantime is being thrown away.
       setDraft(emptyDraft);
       setEditing(null);
       reload();
     } catch (failure) {
       const full = failure instanceof ApiError && failure.status === 409;
       setMutationError(full ? t("radio.full") : t("radio.saveError"));
+    } finally {
+      setBusy(false);
     }
   }
 
   async function remove(station: RadioStation) {
+    if (busy) return;
+    setBusy(true);
     setMutationError(null);
     try {
       await deleteRadioStation(station.id);
-      if (playing?.id === station.id) stopPlaying();
+      // Read from the ref, not from `playing`: the station playing now is not
+      // necessarily the one that was playing when this request left, and
+      // stopping on the stale value would either leave a deleted station
+      // sounding with no button to stop it, or stop a station the reader had
+      // just started.
+      if (playingRef.current?.id === station.id) silence();
       if (editing?.id === station.id) {
         setEditing(null);
         setDraft(emptyDraft);
@@ -186,6 +228,8 @@ export function RadioPage() {
       reload();
     } catch {
       setMutationError(t("radio.deleteError"));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -210,6 +254,7 @@ export function RadioPage() {
               setDraft({ ...draft, name: event.target.value })
             }
             required
+            disabled={busy}
           />
         </label>
         <label>
@@ -222,6 +267,7 @@ export function RadioPage() {
             }
             placeholder="https://radio.example.org/stream"
             required
+            disabled={busy}
           />
         </label>
         <label>
@@ -232,6 +278,7 @@ export function RadioPage() {
             onChange={(event) =>
               setDraft({ ...draft, homepage_url: event.target.value })
             }
+            disabled={busy}
           />
         </label>
         {addressRefused || homepageRefused ? (
@@ -241,12 +288,13 @@ export function RadioPage() {
           <p className="muted">{t("radio.mixedContent")}</p>
         ) : null}
         <div className="actions">
-          <button type="submit" disabled={!submittable}>
+          <button type="submit" disabled={!submittable || busy}>
             {editing ? t("radio.save") : t("radio.add")}
           </button>
           {editing ? (
             <button
               type="button"
+              disabled={busy}
               onClick={() => {
                 setEditing(null);
                 setDraft(emptyDraft);
@@ -289,9 +337,7 @@ export function RadioPage() {
               <button
                 type="button"
                 onClick={() =>
-                  playing?.id === station.id
-                    ? stopPlaying()
-                    : startPlaying(station)
+                  playing?.id === station.id ? silence() : startPlaying(station)
                 }
                 aria-label={
                   playing?.id === station.id
@@ -303,6 +349,7 @@ export function RadioPage() {
               </button>
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
                   setEditing(station);
                   setDraft({
@@ -317,6 +364,7 @@ export function RadioPage() {
               <button
                 type="button"
                 className="danger"
+                disabled={busy}
                 onClick={() => void remove(station)}
               >
                 {t("common.delete")}
