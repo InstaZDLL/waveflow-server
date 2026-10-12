@@ -88,8 +88,7 @@ Original downloads and streams use repository authorization and the M2 path guar
 
 The freeze exists to protect clients validated against v2.0-beta, not to preserve
 divergences from the specification. Where the two conflict, WaveFlow now follows
-OpenSubsonic. Three such deviations are accepted and all three are implemented.
-Each
+OpenSubsonic. Four such deviations are accepted and all four are implemented. Each
 requires the compatibility matrix in `docs/subsonic-compatibility.md` to be
 re-run before the next tag.
 
@@ -130,6 +129,21 @@ made it visible. Scanning is now reserved to `owner` and `manager`, enforced in
 the `scan_job` insert so both surfaces inherit it. This changes the native API,
 not only the Subsonic one, which is why it was raised as a decision rather than
 fixed as a defect.
+
+**An unsaved play queue has no element at all.** `getPlayQueue` answered a bare
+`<playQueue/>` before anything had been saved. The schema marks `username`,
+`changed` and `changedBy` all three `use="required"` on `PlayQueue`, so that
+element has no valid form for a queue that was never written, and the reference
+documents the omission rather than a shape: "an empty `<subsonic-response>` if
+no play queue has been saved". Filling it in was the other way out and is the
+worse one — `changed` and `changedBy` would have to be invented for something
+that was never changed. Navidrome takes a third route and emits the element
+carrying `username` alone, which is equally invalid against the schema and only
+exchanges one deviation for another; a client that copes with that shape copes
+with omission too, because omission is what Subsonic and Airsonic answer. This
+is an observable change on the one call a client makes at startup, which is why
+it was split out of #225 rather than carried with it, and why it is listed here
+rather than fixed quietly.
 
 ### Reconciliation
 

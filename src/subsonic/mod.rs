@@ -104,6 +104,22 @@ impl Node {
         }
     }
 
+    /// The answer that carries no payload at all.
+    ///
+    /// Distinct from an *empty* container: some methods have no
+    /// schema-conforming shape to answer with when they have nothing to say,
+    /// and for those the envelope alone is the answer. An element name can
+    /// never be empty, so the empty name is a sentinel no real node collides
+    /// with. See `empty_success_method` for the static half of the
+    /// same rule — that list is per method, this is per answer.
+    fn nothing() -> Self {
+        Self::new(String::new())
+    }
+
+    fn is_nothing(&self) -> bool {
+        self.name.is_empty()
+    }
+
     fn attr(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.attrs.insert(key.into(), value.into());
         self
@@ -354,7 +370,7 @@ async fn handle_inner(
     }
 
     let payload = dispatch(state, &principal, method, params).await?;
-    let root = if method == "ping" || empty_success_method(method) {
+    let root = if method == "ping" || empty_success_method(method) || payload.is_nothing() {
         ok_node()
     } else {
         ok_node().child(payload)

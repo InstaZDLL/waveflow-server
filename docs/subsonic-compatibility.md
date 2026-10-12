@@ -65,6 +65,17 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > same latent JSON defect `topSongs.song` had, found the same way and fixed
 > before the container could ever answer with one child.
 >
+> **And `getPlayQueue` no longer answers anything at all when nothing is
+> saved** (#229). The rows below were right: every client that opened against a
+> fresh account met a bare `<playQueue/>`, and none objected. That element is
+> invalid — the schema requires `username`, `changed` and `changedBy` on it —
+> so the envelope now carries no `playQueue` before a queue is written, which
+> is what subsonic.org documents. **To check in the next campaign**: that DSub
+> and Juliet, the two clients here that call the method, open a fresh account
+> without complaint. Neither can be broken by it in principle — omission is
+> what Subsonic and Airsonic answer, so a client that could not read it would
+> already fail against them — but "in principle" is what a campaign is for.
+>
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names
 > its sender. Each run is bounded by a burst in the request rate, corroborated
