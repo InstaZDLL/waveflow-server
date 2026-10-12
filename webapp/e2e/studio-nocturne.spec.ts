@@ -276,6 +276,8 @@ let exportAsks: string[] = [];
  */
 /** Every write the radio page sent, so one click can be told from two. */
 let radioWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let radioGate: Promise<void> = Promise.resolve();
 
 let stations: Array<{
   id: string;
@@ -593,6 +595,7 @@ async function mockAuthenticatedApi(page: Page) {
     if (url.pathname === "/api/v2/radio-stations") {
       if (route.request().method() === "POST") {
         radioWrites.push("POST");
+        await radioGate;
         const draft = route.request().postDataJSON();
         const created = {
           id: `station-${stations.length + 1}`,
@@ -1055,6 +1058,7 @@ test.beforeEach(async ({ page }) => {
   exportAsks = [];
   stations = [];
   radioWrites = [];
+  radioGate = Promise.resolve();
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
   // **Reset here, and they were not.** These four reached the mock without
@@ -3846,12 +3850,13 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
  * The form is closed for the length of a write, and the station playing is
  * not.
  *
- * **The delay below is what makes this test able to fail.** Every other mock
- * in this file answers instantly, and against an instant answer a guarded form
- * and an unguarded one look identical: the save is over before a second click
- * or a second edit could begin. Against a request that takes 300ms, a second
- * click lands while the first is still out — which is how a second station
- * appeared from one gesture, the server having no reason to refuse it.
+ * **The held request below is what makes this test able to fail.** Every other
+ * mock in this file answers instantly, and against an instant answer a guarded
+ * form and an unguarded one look identical: the save is over before a second
+ * click or a second edit could begin. A request held open until this test lets
+ * it go leaves the window open for as long as the assertions need — where a
+ * fixed delay would be a race the slowest runner loses (constat de revue,
+ * pris; the two tests above it hold their requests the same way).
  */
 test("closes the form while a station is saving, and leaves listening alone", async ({
   page,
@@ -3863,14 +3868,10 @@ test("closes the form while a station is saving, and leaves listening alone", as
   await expect(page.locator(".resource-list li")).toHaveCount(1);
   expect(radioWrites).toEqual(["POST"]);
 
-  // Registered after the first station exists, so only the second save is slow.
-  await page.route("**/api/v2/radio-stations", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.fallback();
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await route.fallback();
+  // Held from here on, so only the second save waits.
+  let release = () => {};
+  radioGate = new Promise<void>((resolve) => {
+    release = resolve;
   });
 
   await page.getByLabel("Station name").fill("FIP");
@@ -3880,11 +3881,12 @@ test("closes the form while a station is saving, and leaves listening alone", as
   // Shut for the whole round trip: the button cannot be pressed again, and the
   // fields cannot be refilled under a save that is about to clear them.
   //
-  // **The button line below is not the one that distinguishes**, and saying so
-  // is cheaper than discovering it later: an empty form disables that button
-  // too, so with the guard removed this assertion still passes — it retries
-  // until the save lands and clears the fields. The field and row assertions
-  // after it, and the write count at the end, are what fail. Measured.
+  // **Holding the request is what lets the first line below distinguish**, and
+  // it did not when the mock merely answered slowly: an empty form disables
+  // that button too, so the assertion retried until the save landed, cleared
+  // the fields and disabled the button for the other reason. Held open, the
+  // save cannot land, and removing the guard fails on this very line —
+  // measured both ways.
   await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
   await expect(page.getByLabel("Station name")).toBeDisabled();
   await expect(page.getByLabel("Stream address")).toBeDisabled();
@@ -3905,6 +3907,8 @@ test("closes the form while a station is saving, and leaves listening alone", as
   await page
     .getByRole("button", { name: "Add station" })
     .click({ force: true });
+
+  release();
 
   await expect(page.locator(".resource-list li")).toHaveCount(2);
   // One gesture, one station. Two POSTs in all, one per click.
