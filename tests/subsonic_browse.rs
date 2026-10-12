@@ -1261,6 +1261,11 @@ async fn an_artists_most_played_comes_from_local_history_on_both_surfaces() {
     );
 
     let one = facade("&artist=Harbour%20Bells&count=1".into()).await;
+    // Named rather than implied. A single child is the one case that catches
+    // the container collapsing back into an object, and `facade_titles` reads
+    // the shape through `as_array().unwrap_or_default()` — so a regression would
+    // fail on a list of titles and say nothing about the frozen rule it broke.
+    assert!(one["song"].is_array(), "topSongs.song is a list: {one}");
     assert_eq!(facade_titles(&one), ["Lamp Hymn"], "{one}");
 
     // A page of nothing is a valid request here, as it is for getAlbumList.
