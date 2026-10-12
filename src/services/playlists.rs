@@ -721,17 +721,28 @@ impl DomainServices {
     /// UTF-8, hence `.m3u8`, with no cleverness about it: the only honest
     /// reason the other encoding exists is that old files were written in it,
     /// which is a reading problem rather than a writing one.
+    ///
+    /// Answers the name beside the file so the caller needs no second read for
+    /// it. The handler had one, and this had another through `playlist_on`:
+    /// two full hydrations of up to ten thousand `SongItem`s and their
+    /// relations, to write a text file out of four columns.
     pub async fn export_playlist(
         &self,
         user_id: Uuid,
         playlist_id: Uuid,
-    ) -> Result<String, ServiceError> {
+    ) -> Result<(String, String), ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        // First, and for its refusal: a playlist of another account answers as
-        // one that does not exist.
-        let playlist = self
-            .playlist_on(&mut connection, user_id, playlist_id)
-            .await?;
+        // The name, and the refusal: a playlist of another account answers as
+        // one that does not exist. One column rather than `playlist_on`, which
+        // would hydrate every track of it to read a string.
+        let name = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM playlist WHERE id=? AND owner_user_id=?",
+        )
+        .bind(playlist_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or(ServiceError::NotFound)?;
         let rows = sqlx::query(
             "SELECT t.relative_path, COALESCE(ovr.title, t.title) AS title, \
                     t.artist_display, t.duration_ms \
@@ -749,7 +760,7 @@ impl DomainServices {
         .fetch_all(&mut *connection)
         .await?;
         let mut out = String::from("#EXTM3U\n");
-        out.push_str(&format!("#PLAYLIST:{}\n", one_line(&playlist.name)));
+        out.push_str(&format!("#PLAYLIST:{}\n", one_line(&name)));
         for row in rows {
             let path: String = row.try_get("relative_path")?;
             let title: String = row.try_get("title")?;
@@ -778,7 +789,7 @@ impl DomainServices {
                 one_line(&path).replace('%', "%25")
             ));
         }
-        Ok(out)
+        Ok((name, out))
     }
 }
 

@@ -141,12 +141,10 @@ pub async fn export_playlist(
     headers: HeaderMap,
 ) -> Result<([(header::HeaderName, String); 2], String), ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
-    let playlist = state
-        .services
-        .playlist(user.id, playlist_id)
-        .await
-        .map_err(service_error)?;
-    let file = state
+    // The name comes back with the file. Reading it through the playlist read
+    // model instead cost a full hydration of every track and its relations —
+    // twice over, since the service did the same — to label a download.
+    let (name, file) = state
         .services
         .export_playlist(user.id, playlist_id)
         .await
@@ -157,7 +155,7 @@ pub async fn export_playlist(
                 header::CONTENT_TYPE,
                 "audio/x-mpegurl; charset=utf-8".to_owned(),
             ),
-            (header::CONTENT_DISPOSITION, disposition(&playlist.name)),
+            (header::CONTENT_DISPOSITION, disposition(&name)),
         ],
         file,
     ))
