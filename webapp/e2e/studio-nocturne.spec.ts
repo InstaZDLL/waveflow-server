@@ -269,6 +269,25 @@ let importAsks: Array<{ dryRun: boolean; name: string | null }> = [];
 /** What the export route was asked for, and what it answered. */
 let exportAsks: string[] = [];
 
+/**
+ * The account's radio stations, which this harness really does keep: the page
+ * writes and reads them back, so a mock answering a fixed list would pass a
+ * delete that deleted nothing.
+ */
+/** Every write the radio page sent, so one click can be told from two. */
+let radioWrites: string[] = [];
+/** Held open by the double-press test; instant for everyone else. */
+let radioGate: Promise<void> = Promise.resolve();
+
+let stations: Array<{
+  id: string;
+  name: string;
+  stream_url: string;
+  homepage_url: string | null;
+  created_at: number;
+  updated_at: number;
+}> = [];
+
 const playlists = [
   {
     id: "playlist-1",
@@ -571,6 +590,51 @@ async function mockAuthenticatedApi(page: Page) {
           },
         ],
       });
+      return;
+    }
+    if (url.pathname === "/api/v2/radio-stations") {
+      if (route.request().method() === "POST") {
+        radioWrites.push("POST");
+        await radioGate;
+        const draft = route.request().postDataJSON();
+        const created = {
+          id: `station-${stations.length + 1}`,
+          name: String(draft.name).trim(),
+          stream_url: draft.stream_url,
+          homepage_url: draft.homepage_url ?? null,
+          created_at: 1_700_000_000_000,
+          updated_at: 1_700_000_000_000,
+        };
+        stations = [...stations, created].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+        await route.fulfill({ status: 201, json: created });
+        return;
+      }
+      await route.fulfill({ json: stations });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/radio-stations/")) {
+      const id = url.pathname.slice("/api/v2/radio-stations/".length);
+      if (route.request().method() === "DELETE") {
+        stations = stations.filter((station) => station.id !== id);
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+      // A replacement: every field arrives, so an absent homepage clears it.
+      const draft = route.request().postDataJSON();
+      const replaced = {
+        id,
+        name: String(draft.name).trim(),
+        stream_url: draft.stream_url,
+        homepage_url: draft.homepage_url ?? null,
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_001,
+      };
+      stations = stations.map((station) =>
+        station.id === id ? replaced : station,
+      );
+      await route.fulfill({ json: replaced });
       return;
     }
     if (url.pathname === "/api/v2/bookmarks") {
@@ -992,6 +1056,9 @@ test.beforeEach(async ({ page }) => {
   bookmarks = [];
   importAsks = [];
   exportAsks = [];
+  stations = [];
+  radioWrites = [];
+  radioGate = Promise.resolve();
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
   // **Reset here, and they were not.** These four reached the mock without
@@ -2514,8 +2581,10 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The ten the bar cannot hold — including the two this account is
-  // entitled to as an administrator of a library that takes files.
+  // The eleven the bar cannot hold — including the two this account is
+  // entitled to as an administrator of a library that takes files. `Radio`
+  // joined them with #217, and this count is what said so: a new entry in the
+  // sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -2524,6 +2593,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Random",
     "Recently played",
     "Shares",
+    "Radio",
     "Scrobbling",
     "Upload",
     "Admin",
@@ -2532,7 +2602,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(10);
+  await expect(sheet.getByRole("link")).toHaveCount(11);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -3699,4 +3769,151 @@ test("holds the sung line in view without dragging the page", async ({
     .toBeGreaterThan(0);
   // And the page did not move under the reader.
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+/**
+ * The radio page, which manages a list the catalogue knows nothing about.
+ *
+ * Worth its own test for one reason: a station is written and then read back,
+ * so every control here depends on the list the server holds rather than on
+ * what the page remembers. The harness keeps the list for that reason too — a
+ * mock answering a constant would let a delete that deletes nothing pass.
+ */
+test("keeps a list of radio stations, replacing rather than patching", async ({
+  page,
+}) => {
+  await page.goto("/radio");
+  await expect(
+    page.getByRole("heading", { name: "Radio", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No stations yet. Add one above."),
+  ).toBeVisible();
+
+  await page.getByLabel("Station name").fill("Radio Nova");
+  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await page.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  await page.getByRole("button", { name: "Add station" }).click();
+
+  const listed = page.locator(".resource-list li");
+  await expect(listed).toHaveCount(1);
+  await expect(listed.first()).toContainText("Radio Nova");
+  await expect(listed.first()).toContainText("https://nova.example.org/live");
+  await expect(
+    page.getByRole("link", { name: "Station page" }),
+  ).toHaveAttribute("href", "https://nova.example.org/");
+
+  // An address the server would refuse is refused here first, with a reason,
+  // and the button stays shut rather than sending a request to find out.
+  await page.getByLabel("Station name").fill("Elsewhere");
+  await page.getByLabel("Stream address").fill("mms://elsewhere.example.org/s");
+  await expect(
+    page.getByText("An address must start with http:// or https://."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add station" }),
+  ).toBeDisabled();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  // Editing loads the station into the same form, and says what saving means:
+  // the page address is cleared because the form sends every field.
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("Station name")).toHaveValue("Radio Nova");
+  await expect(page.getByLabel("Station page (optional)")).toHaveValue(
+    "https://nova.example.org/",
+  );
+  await expect(
+    page.getByText(
+      "Saving replaces every field, so an empty page address clears the stored one.",
+    ),
+  ).toBeVisible();
+  await page.getByLabel("Station name").fill("Radio Nova Classics");
+  await page.getByLabel("Station page (optional)").fill("");
+  await page.getByRole("button", { name: "Save station" }).click();
+
+  await expect(listed.first()).toContainText("Radio Nova Classics");
+  // Cleared, which is the half a patch would have got wrong.
+  await expect(page.getByRole("link", { name: "Station page" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(listed).toHaveCount(0);
+  await expect(
+    page.getByText("No stations yet. Add one above."),
+  ).toBeVisible();
+});
+
+/**
+ * The form is closed for the length of a write, and the station playing is
+ * not.
+ *
+ * **The held request below is what makes this test able to fail.** Every other
+ * mock in this file answers instantly, and against an instant answer a guarded
+ * form and an unguarded one look identical: the save is over before a second
+ * click or a second edit could begin. A request held open until this test lets
+ * it go leaves the window open for as long as the assertions need — where a
+ * fixed delay would be a race the slowest runner loses (constat de revue,
+ * pris; the two tests above it hold their requests the same way).
+ */
+test("closes the form while a station is saving, and leaves listening alone", async ({
+  page,
+}) => {
+  await page.goto("/radio");
+  await page.getByLabel("Station name").fill("Radio Nova");
+  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await page.getByRole("button", { name: "Add station" }).click();
+  await expect(page.locator(".resource-list li")).toHaveCount(1);
+  expect(radioWrites).toEqual(["POST"]);
+
+  // Held from here on, so only the second save waits.
+  let release = () => {};
+  radioGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await page.getByLabel("Station name").fill("FIP");
+  await page.getByLabel("Stream address").fill("https://fip.example.org/live");
+  await page.getByRole("button", { name: "Add station" }).click();
+
+  // Shut for the whole round trip: the button cannot be pressed again, and the
+  // fields cannot be refilled under a save that is about to clear them.
+  //
+  // **Holding the request is what lets the first line below distinguish**, and
+  // it did not when the mock merely answered slowly: an empty form disables
+  // that button too, so the assertion retried until the save landed, cleared
+  // the fields and disabled the button for the other reason. Held open, the
+  // save cannot land, and removing the guard fails on this very line —
+  // measured both ways.
+  await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
+  await expect(page.getByLabel("Station name")).toBeDisabled();
+  await expect(page.getByLabel("Stream address")).toBeDisabled();
+  // And no edit can begin, which is what made a save clear a form somebody
+  // else had just filled.
+  await expect(page.getByRole("button", { name: "Edit" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete" })).toBeDisabled();
+  // Listening is the deliberate exception: it writes nothing, and a reader
+  // waiting on a save has no reason to lose the station they are hearing.
+  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+
+  // The second click of an impatient double-click, dispatched for real rather
+  // than waited for: `force` skips Playwright's own actionability check, so
+  // what refuses it is the browser declining to activate a disabled button.
+  // Without the guard this click sends a second POST and the account ends up
+  // with two identical stations from one gesture — which is what the count
+  // below would then show.
+  await page
+    .getByRole("button", { name: "Add station" })
+    .click({ force: true });
+
+  release();
+
+  await expect(page.locator(".resource-list li")).toHaveCount(2);
+  // One gesture, one station. Two POSTs in all, one per click.
+  expect(radioWrites).toEqual(["POST", "POST"]);
+  // Open again, and empty, once the save has landed.
+  await expect(page.getByLabel("Station name")).toBeEnabled();
+  await expect(page.getByLabel("Station name")).toHaveValue("");
 });

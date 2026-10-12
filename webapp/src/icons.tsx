@@ -27,7 +27,8 @@ export type IconName =
   | "scrobbling"
   | "more"
   | "close"
-  | "upload";
+  | "upload"
+  | "radio";
 
 const paths: Record<IconName, ReactNode> = {
   // An arrow into a tray: a file going into the library.
@@ -138,6 +139,15 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="8" r="3" />
       <path d="M6 20v-2c0-3.3 2.7-6 6-6s6 2.7 6 6v2M19 4v4M17 6h4" />
+    </>
+  ),
+  // A mast between two arcs: sound arriving from somewhere that is not the
+  // library. Distinct from `scrobbling`, whose waves leave rather than arrive.
+  radio: (
+    <>
+      <circle cx="12" cy="9" r="2" />
+      <path d="M12 11v9" />
+      <path d="M8.1 5.1a7 7 0 0 0 0 7.8M15.9 5.1a7 7 0 0 1 0 7.8" />
     </>
   ),
   // Waves leaving a point: a listen going out to somewhere else.

@@ -397,12 +397,12 @@ that package, or lay the scale here.
 
 ### In the Subsonic facade
 
-Fifty-nine methods are served. The absences, with what the server says about
-them:
+Fifty-nine methods were served when this was surveyed, and the three radio
+writes of #217 bring it to sixty-two — a count carried forward rather than
+recensused. The absences, with what the server says about them:
 
 | Absent | Declared role | State |
 |---|---|---|
-| Internet radio (create/update/delete) | — | `getInternetRadioStations` returns an empty container (`src/subsonic/mod.rs:404`) |
 | Jukebox (`jukeboxControl`) | `jukeboxRole: false` | nothing |
 | Podcasts (7 methods) | `podcastRole: false` | nothing |
 | Chat (`getChatMessages`, `addChatMessage`) | `commentRole: false` | nothing |
@@ -411,9 +411,38 @@ them:
 | `search` (legacy v1) | — | `search2` and `search3` are served |
 
 **None of them is a lie**: every role is declared `false`, so a client does not
-offer the button. Radio is the only one that goes further — an empty container
+offer the button. Radio was the only one that went further — an empty container
 says "zero stations" and not "unsupported", which is the only choice the
-protocol leaves.
+protocol leaves, so a client could not read the absence as one.
+
+> **State on 2026-10-12 (#217).** Radio has left this table. The four methods
+> are served against a `radio_station` row per account, so the container now
+> says what it always claimed to: the number of stations this account keeps.
+>
+> **The question the issue asked to settle first — proxy or hand over — is
+> settled as hand over.** The server validates an address as absolute `http` or
+> `https`, stores it as typed and never connects to it. A server that fetched a
+> user-supplied URL would be a request forger aimed at whatever it can reach
+> from the inside, and refusing that role is what leaves the feature with no
+> allowlist, no timeout and no egress policy to get wrong.
+>
+> **Two deviations from the reference server**, both deliberate and both now in
+> `docs/subsonic-compatibility.md`: the list is per account rather than global
+> and administrator-only, because WaveFlow has no global library setting of any
+> kind; and `homePageUrl` is returned with a capital `P` while `homepageUrl`
+> sets it, which is the specification's own asymmetry.
+>
+> **And the JSON trap that #215 found waited here too.** `json_array_field` is
+> an allowlist, so `internetRadioStations.internetRadioStation` had never been
+> declared a collection — a container that has never held anything cannot have
+> been noticed. It is declared now, asserted at exactly one child, which is the
+> only length that tells an array from an object.
+>
+> **One limit, stated rather than hidden**: the web page plays a station from
+> its own audio element and stops it when the page is left. The queue player
+> assumes a track with a duration to seek in, an id to persist and something to
+> scrobble, and a stream has none of the three; carrying radio into the player
+> bar is a transport change, not a wiring change.
 
 ### In the server
 
@@ -521,7 +550,8 @@ speed** — and a split by route must not be sold as an optimisation.
 7. **The design pass** — spacings, hierarchy. To be treated as a subject, not as
    a list.
 8. **File information, a quality bar, a lyrics view, an immersive view.**
-9. **`.m3u` import**, then internet radio.
+9. **`.m3u` import**, then internet radio. *(Both done on 2026-10-12, #216
+   and #217.)*
 10. Smart playlists, jukebox, podcasts: real projects.
 
 ## 5. The split into pull requests

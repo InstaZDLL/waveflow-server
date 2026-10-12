@@ -55,16 +55,17 @@ On that foundation the gap is not functional. It is in the interface.
 
 ### What Navidrome does and WaveFlow does not do at all
 
-These five points ask for the server, not the screen. **Three are still not
-begun.** Two are closed, server and screen both: external scrobbling on
-2026-09-14 — see point 15 — and the `.m3u` import on 2026-10-12.
+These five points ask for the server, not the screen. **Two are still not
+begun.** Three are closed, server and screen both: external scrobbling on
+2026-09-14 — see point 15 — the `.m3u` import on 2026-10-12 and internet radio
+the same day.
 
 | | State in WaveFlow |
 | --- | --- |
 | **Smart playlists** (dynamic, iTunes style) | nothing |
 | **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/ui-and-missing-features-plan.md` |
 | **External scrobbling** — Last.fm, ListenBrainz, Maloja | done, RFC-010; server and screen, see point 15 |
-| **Internet radio** | `getInternetRadioStations` answers an empty container (`src/subsonic/mod.rs:404`) |
+| **Internet radio** | **done on 2026-10-12** (#217), one list per account, the four Subsonic methods, `/api/v2/radio-stations` and a page |
 | **Jukebox mode** | `jukeboxRole` is declared `false` (`src/subsonic/nodes.rs:319`) |
 
 Two gaps of degree come on top. Navidrome's **transcoding** is configured per
@@ -233,8 +234,18 @@ before being estimated. None is a prerequisite of `v2.0-beta`.
 > dialects, the encoding guessed from the bytes and not from the extension,
 > resolution by file name then by agreement on the parent folders, the
 > `#EXTINF` credit as a last resort, and a report of what could not be placed.
-> Plus the export, for the round trip. **Three remain**: smart playlists, radio
-> (#217), jukebox.
+> Plus the export, for the round trip.
+>
+> **And internet radio was decided and done the same day** (#217): a
+> `radio_station` row per account, the three Subsonic writes beside the getter
+> that had always answered an empty container, `/api/v2/radio-stations`, and a
+> page that manages the list and plays a station from its own element — the
+> queue player assumes a track with a duration, an id and something to
+> scrobble, and a stream has none of the three. **The decision the issue asked
+> for first**: the server stores an address and never fetches it, so the
+> feature reaches no host from inside the network it runs in.
+>
+> **Two remain**: smart playlists, jukebox.
 
 ### A sixteenth, which posing the fifteenth revealed
 

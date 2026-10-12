@@ -876,6 +876,48 @@ nothing. These are the same domain methods behind the Subsonic
 disagree, and bookmarks reach `/api/v2/sync/changes` under the `bookmark`
 entity type like every other piece of user data.
 
+## Internet radio
+
+One list of stations per account. `GET /api/v2/radio-stations` lists them by
+name; `POST /api/v2/radio-stations` takes
+`{"name": "Radio Nova", "stream_url": "https://nova.example.org/live",
+"homepage_url": null}` and answers `201` with the station.
+`GET`, `PUT` and `DELETE /api/v2/radio-stations/{station_id}` read, replace
+and remove one; a station belonging to another account answers `404`, like
+everything else that is not yours.
+
+**`PUT` and not `PATCH`, deliberately.** The body carries every field, so
+leaving `homepage_url` out clears it. That is what the Subsonic
+`updateInternetRadioStation` does — it requires the name and the address on
+every call — and both surfaces are the same domain method, so an absent field
+cannot mean two different things depending on the door.
+
+**The server never connects to a station.** The address is validated as
+absolute `http` or `https`, stored as typed and handed back; the player is
+what reaches the station. That is the whole security answer for the feature: a
+station is a URL somebody supplies, and a server that fetched one would be a
+request forger pointed at whatever it can reach. Two consequences worth
+designing for:
+
+- A clear-text station cannot play on a page served over HTTPS. The browser
+  refuses it as mixed content, and nothing the server could do changes that;
+  the web client says so before the address is saved.
+- A station that is offline fails in the player, not in a response. The server
+  has no way to know, and will not pretend to.
+
+An address that is not absolute `http`/`https` answers `422`, as does a blank
+name. A **blank `homepage_url` means none**: `""` and an absent field both
+clear it, because a form with the box left empty sends one or the other and
+means the same thing by both. The stream address is required and gets no such
+reading. A ceiling of 500 stations per account answers `409`: the request is well
+formed and the collection is full.
+
+Stations are account configuration rather than playback state, so they sit
+beside the API tokens and the scrobbling links and **do not appear in
+`/api/v2/sync/changes`**. The journal's `entity_type` vocabulary is
+CHECK-constrained, and admitting a new one is a contract change the desktop
+client has to be ready for.
+
 ## External scrobbling
 
 A listen recorded by `POST /api/v2/scrobbles` can also be forwarded to

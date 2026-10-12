@@ -191,6 +191,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::delete_user,
         api::set_subsonic_credential,
         api::revoke_subsonic_credential,
+        api::list_radio_stations,
+        api::get_radio_station,
+        api::create_radio_station,
+        api::replace_radio_station,
+        api::delete_radio_station,
         api::list_bookmarks,
         api::set_bookmark,
         api::delete_bookmark,
@@ -259,6 +264,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::LinkScrobbleRequest,
         api::RetriedScrobbleResponse,
         services::BookmarkItem,
+        services::RadioStationItem,
         services::UserItem,
         api::CreatePlaylistRequest,
         api::UpdatePlaylistRequest,
@@ -292,6 +298,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::SubsonicCredentialResponse,
         crate::database::SubsonicCredentialStatus,
         api::BookmarkRequest,
+        api::RadioStationRequest,
         api::CreateApiTokenRequest,
         api::CreateApiTokenResponse,
         database::ApiTokenRecord,
@@ -313,6 +320,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         ,(name = "sync", description = "Durable WaveFlow Desktop user-data synchronization")
         ,(name = "administration", description = "Administrative user and credential management")
         ,(name = "scrobbling", description = "Per-account authorisations at external listening services, and the queue behind them")
+        ,(name = "radio", description = "Internet radio stations, one list per account")
     )
 )]
 pub struct ApiDoc;

@@ -1011,6 +1011,25 @@ pub struct BookmarkItem {
     pub song: SongItem,
 }
 
+/// An internet radio station one account keeps.
+///
+/// Not a catalogue entity: no library, no tags, nothing scanned. The server
+/// stores the address and hands it to the client, and never fetches it — see
+/// `src/services/radio.rs` for why that single decision is the feature's security
+/// answer.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RadioStationItem {
+    pub id: Uuid,
+    pub name: String,
+    /// What a player is pointed at. Stored as the account typed it.
+    pub stream_url: String,
+    /// The station's own page, when it gave one. Omitting it on a write clears
+    /// it, because a station is replaced rather than patched.
+    pub homepage_url: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QueueItem {
     pub current: Option<Uuid>,
@@ -1214,6 +1233,7 @@ mod lastfm;
 mod library_events;
 mod playback;
 mod playlists;
+mod radio;
 mod scan;
 mod scrobbling;
 mod search;

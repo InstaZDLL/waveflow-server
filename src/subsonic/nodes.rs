@@ -351,6 +351,18 @@ pub(super) fn share_node(
         )
 }
 
+/// `homePageUrl` with a capital `P` is the specification's spelling on the way
+/// out, while the parameter that sets it is `homepageUrl`. Copying the
+/// asymmetry is what makes a client that follows the document read the field it
+/// asked for.
+pub(super) fn station_node(station: &crate::services::RadioStationItem) -> Node {
+    Node::new("internetRadioStation")
+        .attr("id", station.id.to_string())
+        .attr("name", station.name.clone())
+        .attr("streamUrl", station.stream_url.clone())
+        .maybe_attr("homePageUrl", station.homepage_url.clone())
+}
+
 pub(super) fn external_url(base: Option<&str>, path: &str) -> String {
     base.map_or_else(|| path.to_owned(), |base| format!("{base}{path}"))
 }
