@@ -205,6 +205,9 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             | ("albumList2", "album")
             | ("randomSongs", "song")
             | ("songsByGenre", "song")
+            // Added with the container's first real answer: it held nothing,
+            // so nothing had ever told it apart from an object.
+            | ("topSongs", "song")
             | ("searchResult3" | "searchResult2", "artist" | "album" | "song")
             | ("playlists", "playlist")
             | ("playlist", "entry")

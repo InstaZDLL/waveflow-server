@@ -64,4 +64,148 @@ impl DomainServices {
             albums,
         })
     }
+
+    /// The account's most played tracks of one artist, counted from local
+    /// history.
+    ///
+    /// The only part of an artist page WaveFlow can answer without a remote
+    /// source: `play_event` already holds what this account played and when,
+    /// and `song_select!` already projects it as `play_count`. What was missing
+    /// was a way to ask the question per artist.
+    ///
+    /// **Played at least once, or absent.** A most-played list padded with
+    /// tracks nobody has played is not a most-played list; it is the artist's
+    /// discography in an arbitrary order wearing that name. An account with no
+    /// history gets an empty list, which is the true answer.
+    ///
+    /// The counting is per account, like every other figure in the
+    /// projections — `play_count` is correlated on `m.user_id`, so two members
+    /// of one library see their own listening rather than the instance's.
+    pub async fn artist_top_songs(
+        &self,
+        user_id: Uuid,
+        artist_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        if limit <= 0 || limit > MAX_BROWSE_LIMIT {
+            return Err(ServiceError::Invalid);
+        }
+        let mut connection = self.db.pool().acquire().await?;
+        // Runs first and for its refusal: an artist in another account's
+        // library answers as one that does not exist, rather than as an empty
+        // list that would confirm the id.
+        self.authorize_entity_on(&mut connection, user_id, "artist", artist_id)
+            .await?;
+        self.top_songs_on(&mut connection, user_id, &[artist_id], limit)
+            .await
+    }
+
+    /// The same list, asked for by name — which is all `getTopSongs` sends.
+    ///
+    /// Matching is on `artist.canonical_name`, the one folding rule the rest of
+    /// the catalogue already uses, so a client echoing a name back at the
+    /// server finds the artist it was handed whatever the punctuation did on
+    /// the way.
+    ///
+    /// A name can name more than one artist — one per library — and every one
+    /// the account can reach contributes. Resolving to a single row would
+    /// silently answer for one library while the caller asked about a name.
+    /// An unknown name is an empty list rather than a refusal: the caller sent
+    /// a string, not an identifier, so there is no existence to blur and
+    /// nothing for an error code to say.
+    pub async fn artist_top_songs_by_name(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        limit: i64,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        if limit <= 0 || limit > MAX_BROWSE_LIMIT {
+            return Err(ServiceError::Invalid);
+        }
+        let canonical = waveflow_core::scanner::canonical_name(name);
+        let mut connection = self.db.pool().acquire().await?;
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT ar.id FROM artist ar \
+             JOIN library_member m ON m.library_id=ar.library_id \
+             WHERE m.user_id=? AND ar.canonical_name=? ORDER BY ar.id",
+        )
+        .bind(user_id.to_string())
+        .bind(&canonical)
+        .fetch_all(&mut *connection)
+        .await?
+        .into_iter()
+        .map(|id| {
+            Uuid::parse_str(&id)
+                .map_err(|error| ServiceError::Database(sqlx::Error::Decode(error.into())))
+        })
+        .collect::<Result<Vec<_>, ServiceError>>()?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.top_songs_on(&mut connection, user_id, &ids, limit)
+            .await
+    }
+
+    /// What both forms of the question share, so the definition of "this
+    /// artist's tracks" exists once.
+    ///
+    /// Two credits count, and they are the two an artist page shows: a track
+    /// that names the artist in its own `artist` role, and a track whose album
+    /// is credited to the artist as album artist. The second is read from
+    /// `album_participant`, the same relation [`Self::artist`] lists the albums
+    /// from — a classical record whose files credit performers per track would
+    /// otherwise have a page full of albums and a most-played list of nothing.
+    async fn top_songs_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        artist_ids: &[Uuid],
+        limit: i64,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        // No library narrowing: an artist id carries its own library, and a
+        // name resolves only inside the ones this account reaches.
+        let folders = folder_filter(&[]);
+        let ids = serde_json::to_string(artist_ids).map_err(|_| ServiceError::Invalid)?;
+        // The credit filter sits *inside* the projection and the play filter
+        // outside it, and the split is not cosmetic. `play_count` is a
+        // correlated count over `play_event` in the projection, so it is
+        // computed for every row the inner query emits — and the wrapper can
+        // only filter after that. `EXPLAIN QUERY PLAN` on both arrangements,
+        // measured rather than assumed: either way the walk is over the
+        // library's available tracks, but with the credit test inside, the
+        // per-track work before filtering is one covering-index probe of
+        // `track_participant`, and the count over the history runs for the
+        // artist's own tracks alone. With it outside, the count runs for every
+        // visible track — the same shape of degradation
+        // `play_event_user_submission_track_idx` was added to keep away from
+        // album listings. `play_count` itself cannot move inside: SQLite does
+        // not accept a result alias in `WHERE`, which is what the wrapper is
+        // for.
+        let mut songs = sqlx::query(concat!(
+            "SELECT * FROM (",
+            song_select!(),
+            song_folder_clause!(),
+            " AND (EXISTS (SELECT 1 FROM track_participant tp \
+                     WHERE tp.track_id=t.id AND tp.role='artist' \
+                       AND tp.artist_id IN (SELECT value FROM json_each(?))) \
+                OR EXISTS (SELECT 1 FROM album_participant ap \
+                     WHERE ap.album_id=t.album_id AND ap.role='albumartist' \
+                       AND ap.artist_id IN (SELECT value FROM json_each(?))))",
+            ") AS s WHERE play_count > 0 \
+             ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(&ids)
+        .bind(&ids)
+        .bind(limit)
+        .fetch_all(&mut *connection)
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(connection, user_id, &mut songs).await?;
+        Ok(songs)
+    }
 }

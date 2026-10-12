@@ -394,11 +394,14 @@ async fn dispatch(
         "getBookmarks" => bookmarks(state, principal).await,
         "createBookmark" => create_bookmark(state, principal, params).await,
         "deleteBookmark" => delete_bookmark(state, principal, params).await,
-        // Recommendation and radio surfaces WaveFlow does not compute. The
+        // An artist's most played tracks, counted from this account's own
+        // listening. Not a recommendation: the reference server asks a remote
+        // service what is popular, and this answers what was played here.
+        "getTopSongs" => top_songs(state, principal, params).await,
+        // The recommendation surfaces WaveFlow still does not compute. The
         // standard empty container is the honest answer and, unlike the
         // not-implemented error, does not read to a client as a broken
         // server on a page it opens by default.
-        "getTopSongs" => Ok(Node::new("topSongs")),
         "getSimilarSongs" => Ok(Node::new("similarSongs")),
         "getSimilarSongs2" => Ok(Node::new("similarSongs2")),
         "getInternetRadioStations" => Ok(Node::new("internetRadioStations")),

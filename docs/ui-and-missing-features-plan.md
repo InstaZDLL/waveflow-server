@@ -206,6 +206,38 @@ Reste faisable tout de suite et sans source externe : les **titres les plus
 écoutés** d'un artiste, que l'historique local sait calculer — ce qui remplit
 `getTopSongs` par la même occasion.
 
+> **État au 2026-10-12 (#215).** Fait, et le tableau ci-dessus perd sa
+> première ligne : `getTopSongs` ne rend plus un conteneur vide.
+>
+> **Ce qui est calculé n'est pas ce que calcule la référence.** Le serveur de
+> référence demande à un service distant ce qui est populaire ; celui-ci
+> compte ce que **ce compte** a écouté, dans `play_event`. C'est une question
+> plus étroite, et la seule que les données portent. Une fois dit ainsi, le
+> reste suit : un titre jamais écouté est **absent** et non dernier, deux
+> membres d'une même bibliothèque obtiennent deux réponses, et un compte neuf
+> obtient une liste vide — qui est la réponse vraie, pas une fonction
+> manquante. C'est pourquoi la page artiste n'affiche la section que lorsqu'il
+> y a un historique : un titre au-dessus d'un tableau vide se lirait comme une
+> panne.
+>
+> **Un titre compte pour un artiste de deux façons** : il le crédite dans son
+> propre rôle `artist`, ou son album est crédité à l'artiste comme
+> `albumartist` — la même relation `album_participant` dont la page tire
+> déjà ses albums. Sans la seconde, un disque dont les fichiers créditent les
+> interprètes piste par piste aurait une page pleine d'albums et une liste
+> vide.
+>
+> **Un défaut latent trouvé en remplissant le conteneur** : `topSongs.song`
+> sortait en JSON comme un **objet** dès qu'il n'y avait qu'un titre. Rien ne
+> l'avait jamais dit au moteur de rendu, parce que le conteneur n'avait jamais
+> rien contenu — le contrat gelé dit pourtant « les collections JSON sont des
+> tableaux même à un élément ». Le test l'a trouvé avant la revue.
+>
+> **Ce qui reste vide, et pourquoi** : `getSimilarSongs`,
+> `getSimilarSongs2`, `getArtistInfo`, `getArtistInfo2`. Rien de cela ne
+> se calcule sans source externe, et c'est **#218** — la RFC du moteur de
+> greffons — qui tranche la source, pas ce ticket.
+
 ### Ce que le serveur sait déjà, et ne dit pas
 
 Les métadonnées techniques sont **stockées et déjà projetées en SQL** —
