@@ -3231,6 +3231,11 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
         ),
         (905, "Moved/elsewhere.flac", "Pagan Poetry", "Björk"),
         (906, "Björk/Homogenic/03 Unravel.flac", "Unravel", "Björk"),
+        // Two names the format cannot carry as written: a line starting with
+        // "#" is a directive, and a "%" would come back percent-decoded.
+        // Reachable only through the export, which is where they are asserted.
+        (907, "#1 Hit.flac", "Number One", "Chart Band"),
+        (908, "Mix 100% Live.flac", "Hundred Percent", "Chart Band"),
     ] {
         let mut input = browse_input(index, title, "Vespertine", artist, Some(1), Some(1));
         input.relative_path = path.into();
@@ -3456,7 +3461,9 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
         "{text}"
     );
     assert!(
-        text.contains("#EXTINF:120,Björk - Hidden Place\nBjörk/Vespertine/01 Hidden Place.flac\n"),
+        text.contains(
+            "#EXTINF:120,Björk - Hidden Place\n./Björk/Vespertine/01 Hidden Place.flac\n"
+        ),
         "{text}"
     );
 
@@ -3474,6 +3481,66 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
         again["unresolved"].as_array().unwrap().len(),
         0,
         "an export this server wrote resolves whole: {again}"
+    );
+
+    // **The round trip for two names the format cannot carry naively.** A
+    // track at a library's root called "#1 Hit.flac" written bare would be read
+    // back as a comment and vanish without being reported — not even counted —
+    // and a "%" in a name would come back percent-decoded. The export prefixes
+    // "./" and escapes the "%", so what this server writes is what it reads.
+    // Raised in review, with both names named.
+    let awkward = state
+        .services
+        .list_songs(owner, &Default::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|song| song.title == "Number One" || song.title == "Hundred Percent")
+        .map(|song| song.id.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(awkward.len(), 2, "both awkward names are in the catalogue");
+    let created = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v2/playlists")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "name": "Awkward", "track_ids": awkward }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let awkward_id = json_body(created).await["id"].as_str().unwrap().to_owned();
+    let exported = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v2/playlists/{awkward_id}/export"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let text = body_text(exported).await;
+    assert!(
+        text.contains("./#1 Hit.flac\n") && text.contains("./Mix 100%25 Live.flac\n"),
+        "the writer puts both names where the reader can find them: {text}"
+    );
+    let (_status, back) = import(
+        "/api/v2/playlists/import?name=Awkward%20again&dry_run=true".into(),
+        text.into_bytes(),
+        token.clone(),
+    )
+    .await;
+    assert_eq!(back["entries"], 2, "neither line was read as a comment");
+    assert_eq!(
+        back["resolved"], 2,
+        "and neither name was mangled on the way back: {back}"
     );
 
     // A name is free text, and both outputs are structured. The file is

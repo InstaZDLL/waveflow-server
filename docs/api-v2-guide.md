@@ -793,8 +793,13 @@ curl "https://music.example.com/api/v2/playlists/PLAYLIST_UUID/export" \
   -H "Authorization: Bearer ACCESS_TOKEN" -OJ
 ```
 
-What this server writes, this server reads: an exported playlist re-imports with
-nothing unresolved, which is asserted rather than assumed.
+What this server writes, this server reads: an exported playlist re-imports
+with nothing unresolved, which is asserted rather than assumed — including for
+the two names the format cannot carry naively. A path is written with a `./`
+prefix and its `%` escaped as `%25`, because a line beginning with `#` is a
+directive by the format's own definition — a track called `#1 Hit.flac` at a
+library's root would otherwise be read back as a comment and vanish without
+being reported — and an unescaped `%` would come back percent-decoded.
 
 Other user-data routes:
 

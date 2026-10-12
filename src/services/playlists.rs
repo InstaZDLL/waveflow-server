@@ -759,11 +759,23 @@ impl DomainServices {
                 Some(artist) => format!("{} - {}", one_line(artist), one_line(&title)),
                 None => one_line(&title),
             };
+            // `./`, and `%` written as `%25`. Both are about the reader on the
+            // other side, which is also this one.
+            //
+            // A line starting with `#` is a directive by the format's own
+            // definition, so a track at a library's root called `#1 Hit.flac`
+            // written bare would be read as a comment and **disappear without
+            // being reported** — not even counted. And a path holding a `%`
+            // would come back percent-decoded, so `a%41.flac` would be read as
+            // `aA.flac` and match nothing. The prefix is dropped as a `.`
+            // segment and the escape decodes back to `%`, so what this writes
+            // is what the import reads — which is the round trip the guide
+            // claims and a test now asserts on exactly those two names.
             out.push_str(&format!(
-                "#EXTINF:{},{}\n{}\n",
+                "#EXTINF:{},{}\n./{}\n",
                 duration_ms / 1000,
                 credit,
-                one_line(&path)
+                one_line(&path).replace('%', "%25")
             ));
         }
         Ok(out)
