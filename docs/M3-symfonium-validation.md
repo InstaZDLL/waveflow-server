@@ -1,5 +1,15 @@
 # M3 — Subsonic/OpenSubsonic : état & handoff
 
+> **Kept in French, on purpose — 2026-10-12 (#222).** #222 moved this
+> repository's design documentation to English and left the two archives
+> alone. This one dates a client validation campaign to 2026-08-09:
+> translating it would rewrite a record rather than make a design easier to
+> read, and a record's value is that it says what was written at its date.
+> The decision is stated here so that the language reads as a choice and not
+> as an oversight; reversing it costs one translation and no risk. See the
+> "In the documentation" section of
+> [`ui-and-missing-features-plan.md`](ui-and-missing-features-plan.md).
+
 > Mise à jour (2026-08-09). La porte M3 est **fermée** : Symfonium 14.1.0 a
 > été validé sur un émulateur Android 17 via une URL HTTPS publique éphémère.
 >
