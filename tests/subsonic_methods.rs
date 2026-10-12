@@ -751,7 +751,11 @@ async fn internet_radio_stations_are_kept_per_account_and_handed_out_never_fetch
         &router,
         "createInternetRadioStation",
         &api_key,
-        "&name=alpha%20radio&streamUrl=http://alpha.example.org/stream",
+        // `homepageUrl=` and not an omitted parameter: a form with the box
+        // left blank sends the name with no value, and that means the station
+        // has no page rather than one spelled with zero characters. Refusing
+        // it would make clearing the field an error (constat de revue, pris).
+        "&name=alpha%20radio&streamUrl=http://alpha.example.org/stream&homepageUrl=",
     )
     .await;
     let two = subsonic_json(&router, "getInternetRadioStations", &api_key, "").await;
@@ -762,7 +766,8 @@ async fn internet_radio_stations_are_kept_per_account_and_handed_out_never_fetch
     assert_eq!(two.len(), 2);
     assert_eq!(two[0]["name"], "alpha radio");
     assert_eq!(two[1]["name"], "Zed Radio");
-    // Absent, not null: that station gave no homepage.
+    // Absent, not null: that station gave no homepage, and it said so with an
+    // empty value rather than by omitting the parameter.
     assert!(omits(&two[0], "homePageUrl"));
 
     // The update carries every field, so omitting the homepage clears it. That

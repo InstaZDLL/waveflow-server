@@ -86,7 +86,7 @@ impl DomainServices {
     ) -> Result<RadioStationItem, ServiceError> {
         let name = validated_name(name)?;
         let stream_url = validated_url(stream_url)?;
-        let homepage_url = homepage_url.map(validated_url).transpose()?;
+        let homepage_url = validated_homepage(homepage_url)?;
         let id = Uuid::new_v4();
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
@@ -148,7 +148,7 @@ impl DomainServices {
     ) -> Result<RadioStationItem, ServiceError> {
         let name = validated_name(name)?;
         let stream_url = validated_url(stream_url)?;
-        let homepage_url = homepage_url.map(validated_url).transpose()?;
+        let homepage_url = validated_homepage(homepage_url)?;
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut connection = self.db.pool().acquire().await?;
@@ -233,6 +233,23 @@ fn validated_name(name: &str) -> Result<String, ServiceError> {
     Ok(name.to_owned())
 }
 
+/// The optional homepage, where a blank value means "none".
+///
+/// A field left empty in a form arrives as `homepageUrl=` on the facade and as
+/// `"homepage_url": ""` natively, and in both cases the sender means the
+/// station has no page — not that it has one spelled with zero characters.
+/// Refusing it would make clearing the field an error on the only surface
+/// where a station is edited, and the two doors would disagree about it as
+/// well: the web client already sends `null` for an empty box, so a Subsonic
+/// client would have been the only one refused. The address itself is required
+/// and has no such reading, so an empty `streamUrl` stays invalid.
+fn validated_homepage(value: Option<&str>) -> Result<Option<String>, ServiceError> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(validated_url)
+        .transpose()
+}
+
 /// Absolute, and `http` or `https`.
 ///
 /// Stored as typed rather than as `Url` re-serialises it: a client that sends
@@ -306,6 +323,21 @@ mod tests {
         assert_eq!(validated_url("http:///stream").unwrap(), "http:///stream");
         assert!(validated_url("").is_err());
         assert!(validated_url(&format!("https://e.org/{}", "a".repeat(2_048))).is_err());
+    }
+
+    #[test]
+    fn a_blank_homepage_means_none_and_a_blank_address_never_does() {
+        assert_eq!(validated_homepage(None).unwrap(), None);
+        assert_eq!(validated_homepage(Some("")).unwrap(), None);
+        assert_eq!(validated_homepage(Some("   ")).unwrap(), None);
+        assert_eq!(
+            validated_homepage(Some("https://radio.example.org/")).unwrap(),
+            Some("https://radio.example.org/".to_owned())
+        );
+        // Still judged when it says something.
+        assert!(validated_homepage(Some("javascript:alert(1)")).is_err());
+        // And the address it sits beside gets no such reading: it is required.
+        assert!(validated_url("").is_err());
     }
 
     #[test]

@@ -906,7 +906,10 @@ designing for:
   has no way to know, and will not pretend to.
 
 An address that is not absolute `http`/`https` answers `422`, as does a blank
-name. A ceiling of 500 stations per account answers `409`: the request is well
+name. A **blank `homepage_url` means none**: `""` and an absent field both
+clear it, because a form with the box left empty sends one or the other and
+means the same thing by both. The stream address is required and gets no such
+reading. A ceiling of 500 stations per account answers `409`: the request is well
 formed and the collection is full.
 
 Stations are account configuration rather than playback state, so they sit

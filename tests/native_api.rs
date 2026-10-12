@@ -3812,6 +3812,24 @@ async fn radio_stations_round_trip_and_stay_inside_one_account() {
     assert_eq!(replaced["created_at"].as_i64().unwrap(), 1_000);
     assert_eq!(replaced["id"].as_str().unwrap(), station_id);
 
+    // An empty string clears it as well as an absent field does. A form sends
+    // one or the other depending on how it is written, and both say the
+    // station has no page — the Subsonic `homepageUrl=` case, answered here by
+    // the same service method (constat de revue, pris).
+    let (status, blanked) = call(
+        Method::PUT,
+        format!("/api/v2/radio-stations/{station_id}"),
+        token.clone(),
+        Some(serde_json::json!({
+            "name": "Radio Nova Classics",
+            "stream_url": "https://radio.example.org/classics.mp3",
+            "homepage_url": "",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(blanked["homepage_url"].is_null());
+
     // Another account: its own list is empty, and the owner's station is
     // unreachable on every verb. Missing and forbidden answer identically.
     let (status, foreign_list) = call(
