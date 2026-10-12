@@ -264,10 +264,28 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
         assert_eq!(starred2[field], starred[field], "{field}");
     }
 
+    // `getTopSongs` used to be in the list below, and is not a surface
+    // WaveFlow fails to compute any more: it answers an artist's most played
+    // tracks from local history, which is asserted in `subsonic_browse`. What
+    // belongs here is the shape of the answer when there is nothing to say —
+    // still the empty container, and still `ok`, because a name that names no
+    // artist is not an error.
+    let unknown = subsonic_json(
+        &router,
+        "getTopSongs",
+        api_key,
+        "&artist=nobody-in-this-catalogue&count=5",
+    )
+    .await;
+    assert_eq!(unknown["subsonic-response"]["status"], "ok");
+    assert_eq!(
+        unknown["subsonic-response"]["topSongs"],
+        serde_json::json!({})
+    );
+
     // Surfaces WaveFlow does not compute answer the standard empty container
     // rather than a not-implemented error.
     for (method, container) in [
-        ("getTopSongs", "topSongs"),
         ("getSimilarSongs", "similarSongs"),
         ("getSimilarSongs2", "similarSongs2"),
         ("getInternetRadioStations", "internetRadioStations"),

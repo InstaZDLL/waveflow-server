@@ -27,6 +27,17 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > deliberately during a beta rather than carried into a stable tag — the freeze
 > protects the clients that were validated, not a divergence from the schema.
 >
+> **And `getTopSongs` has since stopped answering an empty container.** The
+> Feishin row below records it as empty, which it was, and #215 has since filled
+> it from local play history — so that observation has stopped being true the
+> same way `getNowPlaying`'s child name did. `getArtistInfo`,
+> `getSimilarSongs`, `getSimilarSongs2` and `getInternetRadioStations` are
+> unchanged and still empty. **Two things to re-check in the next campaign**,
+> neither of which these runs can answer: whether the clients that call
+> `getTopSongs` render what they are now given, and that `topSongs.song`
+> decodes as a list — it had never carried a single child before, so nothing
+> had ever told the JSON renderer it was a collection.
+>
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names
 > its sender. Each run is bounded by a burst in the request rate, corroborated

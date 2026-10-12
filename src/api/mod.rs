@@ -144,6 +144,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/albums/{album_id}", get(get_album))
         .route("/api/v2/artists", get(list_artists))
         .route("/api/v2/artists/{artist_id}", get(get_artist))
+        .route(
+            "/api/v2/artists/{artist_id}/top-songs",
+            get(list_artist_top_songs),
+        )
         .route("/api/v2/search", get(search_catalog))
         .route("/api/v2/songs", get(list_songs))
         .route("/api/v2/songs/by-genre", get(list_songs_by_genre))

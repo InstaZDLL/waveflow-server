@@ -631,6 +631,21 @@ export const listArtists = (libraryId?: string) =>
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 /**
+ * An artist’s most played tracks, for this account.
+ *
+ * Its own request rather than a field on {@link getArtist}: the artist page
+ * already holds its albums from one cached answer, and this list changes every
+ * time something is played while that one does not.
+ *
+ * The server counts from local listening history and leaves out what has never
+ * been played, so a fresh account gets an empty list — which is the true
+ * answer, not a missing feature.
+ */
+export const artistTopSongs = (id: string, limit = 10) =>
+  call<Song[]>(
+    `/api/v2/artists/${id}/top-songs?${new URLSearchParams({ limit: String(limit) })}`,
+  );
+/**
  * Search, scoped to `libraryId` when one is given.
  *
  * Takes a `signal` because the search box asks on every keystroke now. `call`

@@ -351,6 +351,39 @@ pub(super) async fn songs_by_genre(
     Ok(Node::new("songsByGenre").children(songs.iter().map(song_node)))
 }
 
+/// `getTopSongs`: the artist's most played tracks, from this account's own
+/// history.
+///
+/// The one recommendation surface the catalogue can answer without a remote
+/// source, and the reason it stopped answering with an empty container. The
+/// reference server asks Last.fm what an artist's popular songs are; WaveFlow
+/// asks `play_event` what this account actually played, which is a different
+/// question with the same shape and the only one the data supports.
+///
+/// `artist` is a name, so an unknown one is an empty container rather than
+/// error 70: the caller sent a string, and nothing about the catalogue is
+/// revealed by an empty list. A missing `artist` is error 10, like every other
+/// required parameter.
+pub(super) async fn top_songs(
+    state: &AppState,
+    principal: &Principal,
+    params: &Params,
+) -> Result<Node, ProtocolError> {
+    let artist = params.first("artist").ok_or_else(missing)?;
+    // The specification's own default, and its own meaning for zero: a page of
+    // nothing is a valid request, as it is for getAlbumList.
+    let count = params.usize_or("count", 50, 500)?;
+    if count == 0 {
+        return Ok(Node::new("topSongs"));
+    }
+    let songs = state
+        .services
+        .artist_top_songs_by_name(principal.id, artist, count as i64)
+        .await
+        .map_err(service_protocol)?;
+    Ok(Node::new("topSongs").children(songs.iter().map(song_node)))
+}
+
 pub(super) async fn search(
     state: &AppState,
     principal: &Principal,

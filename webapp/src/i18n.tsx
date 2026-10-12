@@ -180,6 +180,7 @@ const en = {
     one: "{count} album in your library",
     other: "{count} albums in your library",
   },
+  "artists.mostPlayed": "Most played here",
   "favourites.detail": {
     one: "{count} saved track",
     other: "{count} saved tracks",
@@ -671,6 +672,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
     one: "{count} album dans votre bibliothèque",
     other: "{count} albums dans votre bibliothèque",
   },
+  "artists.mostPlayed": "Les plus écoutés ici",
   "favourites.detail": {
     one: "{count} piste enregistrée",
     other: "{count} pistes enregistrées",

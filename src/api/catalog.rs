@@ -70,6 +70,11 @@ pub struct SongBrowseQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TopSongQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct GenreSongQuery {
     pub genre: String,
     pub library_id: Option<Uuid>,
@@ -165,6 +170,31 @@ pub async fn get_artist(
     state
         .services
         .artist(user.id, artist_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// An artist's most played tracks, for this account.
+///
+/// Its own route rather than a field on [`get_artist`]: the artist page draws
+/// its albums from one answer the cache already holds, and the facade's
+/// `getTopSongs` asks this question alone. A field would have made both pay for
+/// the other.
+///
+/// `limit` defaults to ten, which is a screenful on the artist page; the
+/// service refuses anything above the catalogue ceiling.
+#[utoipa::path(get, path = "/api/v2/artists/{artist_id}/top-songs", tag = "catalog", params(("artist_id" = Uuid, Path), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::services::SongItem]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn list_artist_top_songs(
+    State(state): State<AppState>,
+    Path(artist_id): Path<Uuid>,
+    Query(query): Query<TopSongQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::SongItem>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .artist_top_songs(user.id, artist_id, query.limit.unwrap_or(10))
         .await
         .map(Json)
         .map_err(service_error)

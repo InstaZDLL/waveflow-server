@@ -62,6 +62,7 @@ import {
   apiTokensQuery,
   artistQuery,
   artistsQuery,
+  artistTopSongsQuery,
   favoriteTracksQuery,
   genreSongsQuery,
   genresQuery,
@@ -1897,6 +1898,15 @@ export function ArtistsPage() {
 export function ArtistPage({ artistId }: { artistId: string }) {
   const { t } = useI18n();
   const { data: value, error } = useQuery(artistQuery(artistId));
+  /**
+   * Asked beside the artist rather than with it, and never blocking it.
+   *
+   * The albums are what the page is; the most played list is what this account
+   * made of them. A desktop client fills this part of an artist page from a
+   * remote service, which this server queries none of — so what is counted
+   * here is local listening, and nothing else.
+   */
+  const { data: played } = useQuery(artistTopSongsQuery(artistId));
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -1914,6 +1924,15 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           </p>
         </div>
       </header>
+      {/* Shown only once there is a history to show. An artist nobody has
+          played has nothing to say here, and a heading above an empty table
+          would say it anyway. */}
+      {played && played.length > 0 ? (
+        <section className="artist-played">
+          <h3>{t("artists.mostPlayed")}</h3>
+          <SongTable songs={played} />
+        </section>
+      ) : null}
       <AlbumGrid albums={value.albums} />
     </section>
   );

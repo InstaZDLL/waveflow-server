@@ -240,6 +240,10 @@ curl https://music.example.com/api/v2/albums/ALBUM_UUID \
   -H "Authorization: Bearer ACCESS_TOKEN"
 curl https://music.example.com/api/v2/artists/ARTIST_UUID \
   -H "Authorization: Bearer ACCESS_TOKEN"
+
+# An artist's most played tracks, for this account; limit defaults to 10
+curl "https://music.example.com/api/v2/artists/ARTIST_UUID/top-songs?limit=10" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
 `GET /api/v2/songs/by-genre` takes a required `genre` and pages through it; `GET
@@ -247,6 +251,27 @@ curl https://music.example.com/api/v2/artists/ARTIST_UUID \
 `from_year` and `to_year`. Both match the genre on its canonical name like
 every other genre filter, and both are the native form of a Subsonic method
 (`getSongsByGenre`, `getRandomSongs`) resolving through the same service.
+
+`GET /api/v2/artists/{artist_id}/top-songs` answers that artist's most played
+tracks **for the calling account**, ordered by `play_count` and then by title.
+It is the native form of `getTopSongs`, through the same service.
+
+It is computed from local listening history alone — `play_event` — and not from
+any remote notion of popularity, because the server queries no remote source.
+Three consequences worth knowing before building on it:
+
+- **a track the account has never played is absent**, not last, so a fresh
+  account gets `[]` rather than a discography in an arbitrary order;
+- **the count is per account**, like `play_count` everywhere else, so two
+  members of one library get two different answers;
+- **a track counts for an artist two ways**: it credits the artist in its own
+  `artist` role, or its album is credited to the artist as album artist. The
+  second is what keeps a record whose files credit performers per track from
+  having a page full of albums and an empty most-played list.
+
+`limit` defaults to 10 and is bounded like every other listing
+(`1 <= limit <= 500`). An artist the account cannot reach answers `404`,
+indistinguishably from one that does not exist.
 
 `GET /api/v2/search` applies `offset` to all three kinds, and accepts
 `artist_offset`, `album_offset` and `song_offset` to page one of them on its
