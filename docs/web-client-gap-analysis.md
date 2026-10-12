@@ -65,7 +65,7 @@ pas commencés ; le scrobbling externe est clos**, serveur et écran, depuis le
 | | État dans WaveFlow |
 | --- | --- |
 | **Playlists intelligentes** (dynamiques, à la iTunes) | rien |
-| **Import automatique des `.m3u`** | rien |
+| **Import automatique des `.m3u`** | **fait le 2026-10-12** (#216), import et export, serveur et écran — voir `docs/ui-and-missing-features-plan.md` |
 | **Scrobbling externe** — Last.fm, ListenBrainz, Maloja | fait, RFC-010 ; serveur et écran, voir le point 15 |
 | **Radio internet** | `getInternetRadioStations` répond un conteneur vide (`src/subsonic/mod.rs:404`) |
 | **Mode jukebox** | `jukeboxRole` est déclaré `false` (`src/subsonic/nodes.rs:319`) |
@@ -231,6 +231,13 @@ Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
 
 Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
 décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
+
+> **L'import `.m3u` a été décidé et fait le 2026-10-12** (#216) : les deux
+> dialectes, l'encodage deviné sur les octets et non sur l'extension, la
+> résolution par nom de fichier puis par accord des dossiers parents, le crédit
+> `#EXTINF` en dernier recours, et un rapport de ce qui n'a pas été placé. Plus
+> l'export, pour l'aller-retour. **Trois restent** : playlists intelligentes,
+> radio (#217), jukebox.
 
 ### Un seizième, que poser le quinzième a révélé
 

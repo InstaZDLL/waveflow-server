@@ -3544,6 +3544,7 @@ dependencies = [
  "libc",
  "lofty",
  "md-5",
+ "percent-encoding",
  "rand 0.10.3",
  "reqwest",
  "rust-embed",

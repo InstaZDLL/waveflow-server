@@ -2373,6 +2373,58 @@ button.danger {
   font-size: var(--text-xs);
 }
 
+/* The playlist import, on the playlists page: a panel rather than a page,
+   because it is one file and one decision. */
+.import-panel {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-8);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel-soft);
+}
+
+.import-panel h3,
+.import-panel p {
+  margin: 0;
+}
+
+.import-preview {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* The list of what would be lost. Scrollable rather than endless: a file from
+   another player can disagree with this catalogue on hundreds of lines, and a
+   report that pushes the Import button off the screen cannot be acted on. */
+.import-unresolved {
+  max-height: 14rem;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.import-unresolved li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.import-unresolved code {
+  overflow-wrap: anywhere;
+}
+
+.import-line {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .upload-formats {
   margin: var(--space-2) 0 var(--space-6);
   font-size: var(--text-xs);

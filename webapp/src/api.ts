@@ -105,6 +105,34 @@ export type Playlist = {
   songs: Song[];
 };
 
+/**
+ * What an import made of a playlist file.
+ *
+ * `unresolved` is the point of it. An import that quietly produced a shorter
+ * playlist would be worse than a refused one, so the server names every entry
+ * it could not place, and a dry run asks for the whole answer before anything
+ * is created.
+ */
+export type PlaylistImport = {
+  /** The playlist as created; `null` for a dry run. */
+  playlist: Playlist | null;
+  name: string;
+  /** How the server read the bytes: `.m3u` is frequently not UTF-8. */
+  encoding: "utf-8" | "windows-1252";
+  /** Targets the file named, placed or not. */
+  entries: number;
+  resolved: number;
+  unresolved: UnresolvedEntry[];
+};
+
+export type UnresolvedEntry = {
+  /** One-based line in the file, so a report reads against it. */
+  line: number;
+  entry: string;
+  title: string | null;
+  reason: "no-match" | "ambiguous" | "not-a-path" | "duplicate";
+};
+
 export type Favorite = {
   entity_type: string;
   entity_id: string;
@@ -417,9 +445,31 @@ async function call<T>(
   /** Set only by the attempt a renewal has already paid for. */
   renewed = false,
 ): Promise<T> {
+  return parse<T>(await request(path, init, retry, renewed));
+}
+
+/**
+ * One round trip, with the session renewal every caller depends on.
+ *
+ * Split out of {@link call} rather than copied: `/playlists/{id}/export`
+ * answers a file and not JSON, and a second spelling of the renewal would be a
+ * second chance to get the generation guard wrong.
+ */
+async function request(
+  path: string,
+  init: RequestInit = {},
+  retry = true,
+  /** Set only by the attempt a renewal has already paid for. */
+  renewed = false,
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
-  if (init.body) headers.set("content-type", "application/json");
+  // Only where the caller has not said otherwise: a playlist file is sent as
+  // the bytes it is, and announcing it as JSON would be a lie the server would
+  // have to ignore.
+  if (init.body && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
   // Whose session this attempt speaks for, read before the round trip and
   // checked after it — the same guard `performRefresh` already keeps, for the
   // same reason. A signing-out and signing-in fit inside one round trip, and
@@ -428,7 +478,7 @@ async function call<T>(
   const generation = sessionGeneration;
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && retry && (await renewFor(generation))) {
-    return call<T>(path, init, false, true);
+    return request(path, init, false, true);
   }
   // Refused again, on the attempt that a renewal had already paid for. A
   // failed renewal has ended the session itself by now; this is the other
@@ -445,7 +495,7 @@ async function call<T>(
   if (!response.ok) {
     throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
   }
-  return parse<T>(response);
+  return response;
 }
 
 export async function login(username: string, password: string): Promise<void> {
@@ -992,6 +1042,37 @@ export const createPlaylist = (name: string, trackIds: string[] = []) =>
     method: "POST",
     body: JSON.stringify({ name, track_ids: trackIds }),
   });
+/**
+ * Sends a playlist file for import, or for a dry run.
+ *
+ * The file goes up as the bytes it is: its encoding is part of the problem —
+ * `.m3u` is frequently not UTF-8 — and decoding it here is the one decision
+ * this client cannot make correctly. Hence the explicit content type, which is
+ * also why `request` only defaults to JSON when a caller says nothing.
+ *
+ * `dryRun` resolves and reports without creating anything, which is what the
+ * import panel shows before it commits: an import that silently lost a third of
+ * a collection would be worse than one that refused.
+ */
+export const importPlaylist = (
+  file: File,
+  options: { name?: string; libraryId?: string; dryRun?: boolean } = {},
+) => {
+  const query = new URLSearchParams();
+  if (options.name) query.set("name", options.name);
+  if (options.libraryId) query.set("library_id", options.libraryId);
+  if (options.dryRun) query.set("dry_run", "true");
+  return call<PlaylistImport>(`/api/v2/playlists/import?${query}`, {
+    method: "POST",
+    headers: { "content-type": "audio/x-mpegurl" },
+    body: file,
+  });
+};
+
+/** One playlist as an extended `.m3u8`, for the caller to save. */
+export const exportPlaylist = async (id: string) =>
+  (await request(`/api/v2/playlists/${id}/export`)).text();
+
 export const deletePlaylist = (id: string) =>
   call<void>(`/api/v2/playlists/${id}`, { method: "DELETE" });
 export const appendToPlaylist = (id: string, trackIds: string[]) =>

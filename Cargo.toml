@@ -35,6 +35,10 @@ hex = "0.4"
 lofty = "0.25"
 libc = "0.2"
 md-5 = "0.11"
+# Already in the tree through `url`; declared because `playlist_file` reads
+# percent escapes out of playlist entries and a transitive dependency is not a
+# promise.
+percent-encoding = "2"
 rand = "0.10"
 # The feature set is `waveflow-core`'s, deliberately, minus `blocking` which
 # nothing here needs. That crate already pulls reqwest over rustls into this
