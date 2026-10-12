@@ -3166,18 +3166,27 @@ async fn the_technical_fields_reach_the_wire_and_match_the_file() {
 #[tokio::test]
 async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
     let (_temp, config, state) = test_app().await;
-    let password = security::generate_token("import-password-");
-    let hash = security::hash_password(&password).unwrap();
-    let owner = state
-        .db
-        .create_account("import-owner", &hash, AccountRole::Admin, now_ms())
+    // Inserted rather than created, and authenticating by API token rather
+    // than by password. Hashing a password here put a string literal into a
+    // cryptographic call, which `rust/hard-coded-cryptographic-value` reads as
+    // a hard-coded password however random the rest of the token is — measured
+    // on this very branch, where CodeQL failed on the generated prefix. These
+    // accounts never log in, so there is nothing to hash.
+    let owner = uuid::Uuid::new_v4();
+    let stranger = uuid::Uuid::new_v4();
+    for (id, username) in [(owner, "import-owner"), (stranger, "import-stranger")] {
+        sqlx::query(
+            "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+             VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(username)
+        .bind(now_ms())
+        .bind(now_ms())
+        .execute(state.db.pool())
         .await
         .unwrap();
-    let stranger = state
-        .db
-        .create_account("import-stranger", &hash, AccountRole::Admin, now_ms())
-        .await
-        .unwrap();
+    }
 
     let shelf = |who: uuid::Uuid, name: &'static str| {
         let state = &state;
@@ -3271,7 +3280,11 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
     state.db.finish_scan_job(foreign_scan, 0).await.unwrap();
 
     let router = waveflow_server::app(&config, state.clone());
-    let token = login_token(&router, "import-owner", &password).await;
+    let (_record, token) = state
+        .services
+        .create_api_token(owner, &[], "import-owner", "importer", &[])
+        .await
+        .unwrap();
     let import = |uri: String, body: Vec<u8>, token: String| {
         let router = router.clone();
         async move {
@@ -3609,9 +3622,34 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
+    // **A named import that places nothing still creates the playlist.** The
+    // caller asked for one and the report says what became of every line, so
+    // an empty playlist with an explanation beats a refusal that leaves the
+    // file unexplained. Asserted because it is a decision rather than a
+    // consequence — raised in review, where it was untested.
+    let (status, empty) = import(
+        "/api/v2/playlists/import?name=Ghost".into(),
+        b"Ghost/Album/99 Nowhere.flac\n".to_vec(),
+        token.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(empty["resolved"], 0);
+    assert!(
+        empty["playlist"].is_object(),
+        "the playlist exists, and holds nothing: {empty}"
+    );
+    assert_eq!(empty["playlist"]["name"], "Ghost");
+    assert_eq!(empty["playlist"]["songs"].as_array().unwrap().len(), 0);
+    assert_eq!(reasons(&empty), [(1, "no-match".to_owned())]);
+
     // Another account reaches neither the export nor the playlist, and the
     // refusal is the same 404 a missing one would answer.
-    let foreign_token = login_token(&router, "import-stranger", &password).await;
+    let (_record, foreign_token) = state
+        .services
+        .create_api_token(stranger, &[], "import-stranger", "intruder", &[])
+        .await
+        .unwrap();
     let refused = router
         .clone()
         .oneshot(

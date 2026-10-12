@@ -71,6 +71,15 @@ export function PlaylistImportPanel({
   const { active } = useLibraryScope();
   const [preview, setPreview] = useState<{
     file: File;
+    /**
+     * The library the dry run resolved against, carried rather than read again.
+     *
+     * The scope picker lives outside this panel, so it can move between the
+     * preview and the press on Import — and the commit would then resolve
+     * against a library the report never described: the same file, a different
+     * answer, and nothing on screen saying so.
+     */
+    libraryId: string | undefined;
     report: PlaylistImport;
   } | null>(null);
   const [name, setName] = useState("");
@@ -88,13 +97,14 @@ export function PlaylistImportPanel({
     setFailed(false);
     try {
       const chosen = nameFromFile(file.name);
+      const libraryId = active?.id;
       const report = await importPlaylist(file, {
         name: chosen,
-        libraryId: active?.id,
+        libraryId,
         dryRun: true,
       });
       setName(chosen);
-      setPreview({ file, report });
+      setPreview({ file, libraryId, report });
     } catch {
       setFailed(true);
       setPreview(null);
@@ -110,7 +120,7 @@ export function PlaylistImportPanel({
     try {
       await importPlaylist(preview.file, {
         name,
-        libraryId: active?.id,
+        libraryId: preview.libraryId,
         dryRun: false,
       });
       setPreview(null);

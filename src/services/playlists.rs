@@ -588,10 +588,19 @@ impl DomainServices {
     /// whole.
     ///
     /// The name is extracted in SQL — SQLite has no `basename`, hence the
-    /// `rtrim` of everything after the last separator — so this is a scan of
-    /// the visible tracks. It is one scan per import, which is a rare
-    /// user-initiated act, and the alternative is a stored or generated column
-    /// for a path shape that only this feature reads.
+    /// `rtrim` of everything after the last separator — so no index can serve
+    /// the predicate and the query is a scan of the visible tracks. One scan
+    /// per import, which is a rare user-initiated act; the alternative is a
+    /// stored or generated column for a path shape only this feature reads.
+    ///
+    /// **One scan, which is why the whole candidate set goes down at once.**
+    /// Asking in slices made the expression re-evaluated over every visible
+    /// track once per slice — ten scans for the largest file the route
+    /// accepts — to protect against a statement size that was never at risk:
+    /// the names travel as a single bind parameter, so the SQL text is fixed
+    /// whatever the set, and a few hundred kilobytes of JSON is a parameter
+    /// SQLite reads once. The slicing was guarding a non-problem by causing a
+    /// real one. Raised in review.
     ///
     /// The value is a list on purpose: a file name two tracks carry is what
     /// [`UnresolvedReason::Ambiguous`] is about, and a map keyed to one id
@@ -610,34 +619,32 @@ impl DomainServices {
         candidates.sort_unstable();
         candidates.dedup();
         let folders = folder_filter(library_ids);
+        let wanted = serde_json::to_string(&candidates).map_err(|_| ServiceError::Invalid)?;
         let mut found: HashMap<String, Vec<(Uuid, Vec<String>)>> = HashMap::new();
-        for batch in candidates.chunks(RESOLUTION_BATCH) {
-            let wanted = serde_json::to_string(batch).map_err(|_| ServiceError::Invalid)?;
-            for row in sqlx::query(
-                "SELECT t.id, t.relative_path, \
-                        substr(t.relative_path, \
-                               length(rtrim(t.relative_path, \
-                                            replace(t.relative_path, '/', ''))) + 1) AS file_name \
-                 FROM track t \
-                 JOIN library_member m ON m.library_id=t.library_id \
-                 WHERE m.user_id=? AND t.is_available=1 \
-                   AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
-                   AND file_name COLLATE NOCASE IN (SELECT value FROM json_each(?))",
-            )
-            .bind(user_id.to_string())
-            .bind(folders.as_deref())
-            .bind(folders.as_deref())
-            .bind(&wanted)
-            .fetch_all(&mut *connection)
-            .await?
-            {
-                let path: String = row.try_get("relative_path")?;
-                let file_name: String = row.try_get("file_name")?;
-                found
-                    .entry(file_name.to_ascii_lowercase())
-                    .or_default()
-                    .push((parse_uuid(row.try_get("id")?)?, lowercased_segments(&path)));
-            }
+        for row in sqlx::query(
+            "SELECT t.id, t.relative_path, \
+                    substr(t.relative_path, \
+                           length(rtrim(t.relative_path, \
+                                        replace(t.relative_path, '/', ''))) + 1) AS file_name \
+             FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
+               AND file_name COLLATE NOCASE IN (SELECT value FROM json_each(?))",
+        )
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(&wanted)
+        .fetch_all(&mut *connection)
+        .await?
+        {
+            let path: String = row.try_get("relative_path")?;
+            let file_name: String = row.try_get("file_name")?;
+            found
+                .entry(file_name.to_ascii_lowercase())
+                .or_default()
+                .push((parse_uuid(row.try_get("id")?)?, lowercased_segments(&path)));
         }
         Ok(found)
     }
@@ -650,9 +657,11 @@ impl DomainServices {
     /// account sees, correction included, because a corrected title is the
     /// title.
     ///
-    /// Batched like the path rung rather than asked per entry: a file whose
-    /// paths are all foreign would otherwise be one query per line, and the
-    /// ceiling on a file is ten thousand lines.
+    /// Asked in one query rather than per entry: a file whose paths are all
+    /// foreign would otherwise be one query per line, and the ceiling on a
+    /// file is ten thousand lines. The concatenation is computed per row like
+    /// the file name above, so this is a scan too — and for the same reason it
+    /// is one scan and not one per slice.
     ///
     /// The key is the two fields joined by a newline, which is a separator
     /// neither of them can contain — `track.title` and `artist_display` come
@@ -675,33 +684,31 @@ impl DomainServices {
         wanted.sort_unstable();
         wanted.dedup();
         let folders = folder_filter(library_ids);
+        let keys = serde_json::to_string(&wanted).map_err(|_| ServiceError::Invalid)?;
         let mut found: HashMap<String, Vec<Uuid>> = HashMap::new();
-        for batch in wanted.chunks(RESOLUTION_BATCH) {
-            let keys = serde_json::to_string(batch).map_err(|_| ServiceError::Invalid)?;
-            for row in sqlx::query(
-                "SELECT t.id, \
-                        t.artist_display || char(10) || COALESCE(ovr.title, t.title) AS credit \
-                 FROM track t \
-                 JOIN library_member m ON m.library_id=t.library_id \
-                 LEFT JOIN track_override ovr ON ovr.track_id=t.id \
-                 WHERE m.user_id=? AND t.is_available=1 \
-                   AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
-                   AND (t.artist_display || char(10) || COALESCE(ovr.title, t.title)) \
-                       COLLATE NOCASE IN (SELECT value FROM json_each(?))",
-            )
-            .bind(user_id.to_string())
-            .bind(folders.as_deref())
-            .bind(folders.as_deref())
-            .bind(&keys)
-            .fetch_all(&mut *connection)
-            .await?
-            {
-                let credit: String = row.try_get("credit")?;
-                found
-                    .entry(credit.to_ascii_lowercase())
-                    .or_default()
-                    .push(parse_uuid(row.try_get("id")?)?);
-            }
+        for row in sqlx::query(
+            "SELECT t.id, \
+                    t.artist_display || char(10) || COALESCE(ovr.title, t.title) AS credit \
+             FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             LEFT JOIN track_override ovr ON ovr.track_id=t.id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?))) \
+               AND (t.artist_display || char(10) || COALESCE(ovr.title, t.title)) \
+                   COLLATE NOCASE IN (SELECT value FROM json_each(?))",
+        )
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(&keys)
+        .fetch_all(&mut *connection)
+        .await?
+        {
+            let credit: String = row.try_get("credit")?;
+            found
+                .entry(credit.to_ascii_lowercase())
+                .or_default()
+                .push(parse_uuid(row.try_get("id")?)?);
         }
         Ok(found)
     }
@@ -802,15 +809,6 @@ impl DomainServices {
         Ok((name, out))
     }
 }
-
-/// How many candidates one batch asks for.
-///
-/// A file may name ten thousand targets, so the whole set in one bind
-/// parameter would be a statement of some hundreds of kilobytes. Slicing keeps
-/// every statement a normal size and the number of statements small: at most
-/// ten for the file names of the largest file the route accepts, and ten more
-/// for the credits of the entries that reach that rung.
-const RESOLUTION_BATCH: usize = 1_000;
 
 /// What the path rung made of one entry.
 ///

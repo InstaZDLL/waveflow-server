@@ -191,10 +191,14 @@ fn parse_extinf(value: &str) -> (Option<i64>, Option<String>) {
 /// tail it needs. A `file://` URL is percent-decoded first; any other scheme
 /// yields nothing, because a playlist entry pointing at a web radio is not a
 /// track this catalogue holds.
+///
+/// The scheme is matched without regard to case, as RFC 3986 defines it: a
+/// player that writes `File://` names the same thing, and reading it as an
+/// unknown scheme would have reported the entry as naming no path at all.
 fn segments(target: &str) -> Vec<String> {
     let path = match target.split_once("://") {
         None => percent_decode(target),
-        Some(("file", rest)) => {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("file") => {
             // `file:///C:/x` and `file://host/x`: the authority is dropped
             // either way, because neither names anything here.
             let rest = rest.split_once('/').map_or("", |(_, tail)| tail);
@@ -326,6 +330,10 @@ mod tests {
             "C:\\Users\\someone\\Music\\Artist\\Album\\01.flac",
             "file:///home/someone/Music/Artist/Album/01.flac",
             "file://server/Music/Artist/Album/01.flac",
+            // A scheme is case-insensitive, and a player that shouts it names
+            // the same file.
+            "File:///home/someone/Music/Artist/Album/01.flac",
+            "FILE://server/Music/Artist/Album/01.flac",
             "Artist/Album/%30%31.flac",
         ] {
             let file = parse(target.as_bytes());
@@ -340,7 +348,14 @@ mod tests {
     fn a_remote_url_names_no_path_at_all() {
         // Deliberately not a failed path match: a web radio is not a track
         // this catalogue could hold, and the ladder has nothing to climb.
-        for target in ["http://radio.example/stream", "https://radio.example/s.mp3"] {
+        // And the case-insensitive scheme match does not widen to another
+        // scheme that merely looks like one.
+        for target in [
+            "http://radio.example/stream",
+            "https://radio.example/s.mp3",
+            "HTTP://radio.example/stream",
+            "filesystem://radio.example/s.mp3",
+        ] {
             let file = parse(target.as_bytes());
             assert!(file.entries[0].segments.is_empty(), "{target}");
         }
