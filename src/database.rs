@@ -1561,6 +1561,12 @@ mod tests {
     ///
     /// So this one fills the catalogue in first, at the schema version just
     /// before the rebuild, and migrates from there.
+    ///
+    /// It is pinned to that one boundary on purpose — it was written for that
+    /// defect. The general question, whether a database at a *released*
+    /// schema still upgrades with its rows and still answers through the
+    /// services, is the `migrations` integration target (#223); add a seed
+    /// row there rather than here when a new table has to survive an upgrade.
     #[tokio::test]
     async fn a_populated_database_survives_a_table_rebuild() {
         use sqlx::migrate::Migrate;
