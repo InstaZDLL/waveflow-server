@@ -203,10 +203,15 @@ pub(super) async fn get_queue(
     principal: &Principal,
 ) -> Result<Node, ProtocolError> {
     let Some(queue) = state.services.queue(principal.id).await.map_err(internal)? else {
-        // Nothing has been saved. The empty container carries no `username`
-        // either, because `changed` and `changedBy` would have to be invented
-        // beside it, and a queue that does not exist has no such facts.
-        return Ok(Node::new("playQueue"));
+        // Nothing has been saved, so there is no `playQueue` at all: the
+        // schema marks `username`, `changed` and `changedBy` all three
+        // required, which leaves the element no valid form to take when the
+        // queue has never been written. The reference documents the same
+        // answer — "an empty <subsonic-response> if no play queue has been
+        // saved" — and omission is what a client built against it already
+        // handles. Filling the element in would mean inventing a `changed`
+        // and a `changedBy` for something that was never changed (#229).
+        return Ok(Node::nothing());
     };
     Ok(Node::new("playQueue")
         .attr("username", principal.username.clone())

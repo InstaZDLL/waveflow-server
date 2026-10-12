@@ -1645,19 +1645,30 @@ async fn play_queue_and_now_playing_name_their_children_entry() {
     let song = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
     let router = waveflow_server::app(&config, state);
 
-    // Nothing is saved yet, and this pins what that answers today: a bare
-    // `playQueue`, carrying none of `username`, `changed` or `changedBy`.
+    // Nothing is saved yet, and the answer carries **no `playQueue` at all**
+    // (#229). The schema marks `username`, `changed` and `changedBy` all
+    // three required on that element, so there is no valid shape for a queue
+    // that has never been written, and the reference documents the same
+    // answer: "an empty <subsonic-response> if no play queue has been saved".
     //
-    // It is not schema-conforming, and it is deliberately left alone here. The
-    // schema has no way to say "empty queue" — the reference omits the element
-    // entirely — so conforming would mean a *third* observable change, on the
-    // one call every client makes at startup, with no client harm observed and
-    // none of it asked for. Pinned rather than corrected, and carried by #229.
+    // The envelope is asserted beside the absence on purpose. Without it this
+    // test would also pass on a failure — an error response has no
+    // `playQueue` either, and absence alone cannot tell the two apart.
     let unsaved = subsonic_json(&router, "getPlayQueue", "wfsk_queue", "").await;
-    let unsaved = &unsaved["subsonic-response"]["playQueue"];
-    assert!(unsaved.is_object(), "{unsaved}");
-    assert!(unsaved["entry"].is_null());
-    assert!(unsaved["username"].is_null());
+    assert_eq!(unsaved["subsonic-response"]["status"], "ok", "{unsaved}");
+    assert!(
+        omits(&unsaved["subsonic-response"], "playQueue"),
+        "an unsaved queue still sends a container: {unsaved}"
+    );
+
+    // And in XML, where an element present but empty renders as `<playQueue/>`
+    // and would read as absent to any JSON-only assertion.
+    let unsaved_xml = subsonic_xml(&router, "getPlayQueue", "wfsk_queue").await;
+    assert!(unsaved_xml.contains("status=\"ok\""), "{unsaved_xml}");
+    assert!(
+        !unsaved_xml.contains("playQueue"),
+        "an unsaved queue still sends a container: {unsaved_xml}"
+    );
 
     // Something has to be in each container, or an assertion that `song` is
     // absent would hold on an empty answer and prove nothing.
@@ -1695,19 +1706,7 @@ async fn play_queue_and_now_playing_name_their_children_entry() {
         ("getPlayQueue", "playQueue"),
         ("getNowPlaying", "nowPlaying"),
     ] {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get(format!(
-                    "/rest/{method}.view?apiKey=wfsk_queue&v=1.16.1&c=golden"
-                ))
-                .body(Body::empty())
-                .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let xml = body_text(response).await;
+        let xml = subsonic_xml(&router, method, "wfsk_queue").await;
         assert!(xml.contains(&format!("<{container}")), "{method}: {xml}");
         assert!(xml.contains("<entry "), "{method} has no `entry`: {xml}");
         assert!(

@@ -234,7 +234,7 @@ with Subsonic error code `0`, like every other protocol failure.
 | Media | `stream`, `download`, `getCoverArt` | Tenant-authorized streaming and artwork. |
 | Lyrics | `getLyrics`, `getLyricsBySongId` | OpenSubsonic `songLyrics` v1 plus legacy lookup. |
 | Favorites and ratings | `star`, `unstar`, `getStarred2`, `getStarred`, `setRating` | Track, album and artist IDs are tenant scoped. `getStarred` is the same payload in the `starred` container. |
-| Activity and queue | `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue` | Queue order and duplicate tracks are preserved. |
+| Activity and queue | `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue` | Queue order and duplicate tracks are preserved. Before anything is saved, `getPlayQueue` answers the bare envelope with **no `playQueue` element**, as the reference does: the schema requires `username`, `changed` and `changedBy` on it, and a queue that was never written has none of them. |
 | Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Creation returns the public URL; later reads omit the bearer token. |
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
 | Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account owns or manages and reports progress. |

@@ -325,6 +325,30 @@ pub async fn subsonic_json(
     body
 }
 
+/// The same request as `subsonic_json`, answered in XML.
+///
+/// Worth asserting separately wherever a shape is decided: an element that is
+/// present but empty renders as `<playQueue/>` in XML and as `{}` in JSON,
+/// and the JSON array table can rename or reshape a container on one surface
+/// alone.
+pub async fn subsonic_xml(router: &axum::Router, method: &str, api_key: &str) -> String {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/{method}.view?apiKey={api_key}&v=1.16.1&c=golden"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = body_text(response).await;
+    assert!(status.is_success(), "{method} returned {status}: {body}");
+    body
+}
+
 pub async fn login_token(router: &axum::Router, username: &str, password: &str) -> String {
     login_session(router, username, password).await.0
 }
