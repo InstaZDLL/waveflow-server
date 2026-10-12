@@ -712,11 +712,101 @@ Omitting an optional field leaves it unchanged. To erase a playlist comment,
 name `comment` in `clear`. Shares use the same rule for `description` and
 `expires_at`.
 
+### Playlists from another player
+
+`POST /api/v2/playlists/import` takes **the file itself as the body** — not
+JSON. The encoding of a playlist file is part of the problem (`.m3u` is
+frequently not UTF-8), so the bytes have to arrive as bytes; a JSON envelope
+would have forced the caller to decode them first, which is the one decision it
+cannot make correctly. The server reads UTF-8 when the bytes are UTF-8 and
+Windows-1252 otherwise, and **says which it used** in the response.
+
+```bash
+# What it would do, without doing it
+curl -X POST "https://music.example.com/api/v2/playlists/import?dry_run=true" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: audio/x-mpegurl" \
+  --data-binary @"Evening.m3u"
+
+# And the import, under a name of your choosing
+curl -X POST "https://music.example.com/api/v2/playlists/import?name=Evening" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: audio/x-mpegurl" \
+  --data-binary @"Evening.m3u"
+```
+
+The answer is a report, and reading it is the point:
+
+```json
+{
+  "playlist": { "id": "...", "name": "Evening", "songs": [] },
+  "name": "Evening",
+  "encoding": "windows-1252",
+  "entries": 11,
+  "resolved": 8,
+  "unresolved": [
+    { "line": 10, "entry": "common.flac", "title": null, "reason": "ambiguous" }
+  ]
+}
+```
+
+**`unresolved` is not an error list to ignore.** An import that silently
+produced a shorter playlist would leave nobody able to tell that a third of a
+collection stayed behind, so every entry the catalogue could not place comes
+back with its line in the file, its text as written and one of four reasons:
+
+| `reason` | What it means |
+|---|---|
+| `no-match` | No path and no credit in this catalogue matched. A track in a library the account cannot see answers this too — identically to one that does not exist. |
+| `ambiguous` | Several tracks matched and nothing in the entry chooses between them. |
+| `not-a-path` | The target is not a path into a library — a web radio, most often. |
+| `duplicate` | It resolved to a track the playlist already holds; a playlist carries a track once. |
+
+`dry_run=true` answers the same report and creates nothing, which is what lets
+a client show the losses before they happen: it answers `200` with
+`"playlist": null`, where a real import answers `201`.
+
+**How an entry is matched.** A playlist entry is a path relative to wherever
+the file lived, or absolute on a filesystem that is not the server's, or
+Windows-shaped with backslashes, or a percent-encoded `file://` URL. All four
+shapes reduce to segments, and what they share with a stored path is a trailing
+run of them — so the file name selects the candidates and the deepest agreement
+on the parent folders decides between them. Comparison folds ASCII case, like
+every other catalogue match. An entry no path matches gets one last rung: its
+`#EXTINF` credit, matched as `Artist - Title` against the catalogue, exactly
+and only when it names exactly one track.
+
+`name` wins over the file's own `#PLAYLIST` directive; with neither, the
+request is refused (`422`) rather than storing a nameless playlist.
+`library_id` narrows resolution to one library. A file naming more entries than
+a playlist may hold (10 000) is refused before any of the reads.
+
+`GET /api/v2/playlists/{id}/export` is the other direction, and **the one
+`/api/v2` route that does not answer JSON**: the resource is a file, so
+wrapping it in an envelope would make every consumer unwrap it before writing
+it to disk. It answers an extended `.m3u8` — UTF-8, `#EXTM3U`, `#PLAYLIST`,
+one `#EXTINF` and one library-relative path per track — with a
+`Content-Disposition` naming the playlist. Errors still answer JSON.
+
+```bash
+curl "https://music.example.com/api/v2/playlists/PLAYLIST_UUID/export" \
+  -H "Authorization: Bearer ACCESS_TOKEN" -OJ
+```
+
+What this server writes, this server reads: an exported playlist re-imports
+with nothing unresolved, which is asserted rather than assumed — including for
+the two names the format cannot carry naively. A path is written with a `./`
+prefix and its `%` escaped as `%25`, because a line beginning with `#` is a
+directive by the format's own definition — a track called `#1 Hit.flac` at a
+library's root would otherwise be read back as a comment and vanish without
+being reported — and an unescaped `%` would come back percent-decoded.
+
 Other user-data routes:
 
 | Purpose | Routes |
 |---|---|
 | Playlists | `GET/POST /api/v2/playlists`, `GET/PATCH/DELETE /api/v2/playlists/{id}` |
+| Playlist files | `POST /api/v2/playlists/import` (the file as the body), `GET /api/v2/playlists/{id}/export` |
 | Favorites | `GET /api/v2/favorites`, `PUT/DELETE /api/v2/favorites/{track|album|artist}/{id}` |
 | Ratings | `GET /api/v2/ratings`, `PUT /api/v2/ratings/{track|album|artist}/{id}` with `rating` 0–5 |
 | Playback activity | `POST /api/v2/scrobbles`, `GET /api/v2/history`, `GET /api/v2/now-playing` |

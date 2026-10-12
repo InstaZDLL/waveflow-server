@@ -55,6 +55,7 @@ import {
   Waiting,
 } from "./page-shell";
 import { usePlayer } from "./player";
+import { downloadPlaylist, PlaylistImportPanel } from "./playlist-import";
 import {
   administrationQuery,
   albumQuery,
@@ -723,6 +724,15 @@ export function PlaylistsPage() {
     }
   }
 
+  async function save(playlist: Playlist) {
+    setMutationError(null);
+    try {
+      await downloadPlaylist(playlist.id, playlist.name);
+    } catch {
+      setMutationError(t("playlists.exportError"));
+    }
+  }
+
   if (!value) return <Loading error={error} />;
   return (
     <section>
@@ -740,6 +750,7 @@ export function PlaylistsPage() {
         />
         <button type="submit">{t("playlists.create")}</button>
       </form>
+      <PlaylistImportPanel onImported={reload} />
       {mutationError ? <p className="error">{mutationError}</p> : null}
       {value.length ? (
         <div className="stack">
@@ -766,6 +777,13 @@ export function PlaylistsPage() {
                     disabled={!player.queue.length}
                   >
                     {t("playlists.addQueue")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void save(playlist)}
+                    disabled={!playlist.songs.length}
+                  >
+                    {t("playlists.export")}
                   </button>
                   <button
                     type="button"

@@ -81,6 +81,7 @@ pub fn router(state: AppState) -> Router {
     // batch limit, so the two cannot disagree.
     let negotiation_body_limit = state.upload_batch_body_limit;
     let chunk_body_limit = state.upload_chunk_body_limit;
+    let playlist_body_limit = crate::services::playlist_import_body_limit();
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -155,6 +156,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/playlists",
             get(list_playlists).post(create_playlist),
+        )
+        // Its own ceiling, derived from the playlist ceiling rather than
+        // configured: a file holding the most tracks a playlist may hold must
+        // fit, and raising that limit must not quietly start refusing the files
+        // it just permitted.
+        .route(
+            "/api/v2/playlists/import",
+            post(import_playlist).layer(axum::extract::DefaultBodyLimit::max(playlist_body_limit)),
+        )
+        .route(
+            "/api/v2/playlists/{playlist_id}/export",
+            get(export_playlist),
         )
         .route(
             "/api/v2/playlists/{playlist_id}",

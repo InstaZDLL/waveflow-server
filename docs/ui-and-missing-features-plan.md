@@ -368,6 +368,46 @@ reprendre ce paquet, ou poser l'échelle ici.
   toute page. C'est une correction à l'estimation : ce point traverse le fil.
 - **Aucun import `.m3u`.** Rien dans le dépôt. C'est ce qui permet d'arriver
   avec une collection existante : une barrière à l'adoption, pas un confort.
+
+  > **État au 2026-10-12 (#216).** Fait, dans les deux sens, et une prémisse
+  > de l'issue s'est révélée impossible.
+  >
+  > **« Chemin d'abord, puis empreinte du contenu, comme le scanner »** : le
+  > second barreau ne peut pas exister ici. Le scanner tient le fichier et sait
+  > le hacher ; une entrée de playlist ne livre qu'un chemin et, au mieux, un
+  > titre d'affichage. Le dernier recours est donc le **crédit `#EXTINF`**,
+  > apparié exactement sur `Artiste - Titre`, et seulement lorsqu'il ne désigne
+  > qu'une piste. Une entrée dont le chemin a bougé *et* dont le crédit n'a
+  > jamais été écrit est **signalée**, pas perdue en silence.
+  >
+  > **La comparaison des chemins est symétrique, et ma première version ne
+  > l'était pas.** Une entrée peut être plus longue que le chemin stocké
+  > (absolue, sur le disque de quelqu'un d'autre) mais aussi plus **courte** :
+  > un `.m3u` écrit dans le dossier de l'album nomme `01 Hidden Place.flac`
+  > quand le catalogue stocke `Björk/Vespertine/01 Hidden Place.flac` — et
+  > c'est le cas courant. Demander à SQL que le chemin stocké égale un suffixe
+  > de l'entrée répond au premier cas et jamais au second. Le nom de fichier
+  > sélectionne donc les candidats, et le plus profond accord sur les dossiers
+  > parents tranche. **Le test l'a trouvé avant la revue**, parce qu'il portait
+  > un nom de fichier partagé par deux albums.
+  >
+  > **L'export est dans la même PR**, ce que l'issue laissait à décider. La
+  > raison n'est pas qu'il est petit : c'est que l'aller-retour — exporter puis
+  > réimporter, et tout résoudre — est la preuve la plus forte que le lecteur
+  > et l'écrivain s'accordent, et elle coûte une assertion. C'est aussi **la
+  > seule route de `/api/v2` qui ne répond pas du JSON** : la ressource *est*
+  > un fichier.
+  >
+  > **Le panneau demande avant d'écrire.** Un fichier venu d'ailleurs nomme des
+  > chemins d'ailleurs, donc une partie manquera toujours. Une playlist qui
+  > arrive silencieusement plus courte est pire qu'un import refusé, donc le
+  > premier geste est un essai à blanc : le serveur résout tout, ne crée rien,
+  > et dit ce qu'il n'a pas placé et pourquoi.
+  >
+  > **Un défaut trouvé chez le voisin et non corrigé** : `create_playlist` avec
+  > deux fois le même identifiant viole la clé primaire de `playlist_track` et
+  > répond 500. L'import ne peut pas y tomber — il déduplique et signale le
+  > doublon — mais la route de création reste exposée. Sa correction est à elle.
 - Pas de playlists intelligentes, pas de profils de transcodage.
 
 ### Dans la façade Subsonic

@@ -10,6 +10,7 @@ pub mod lyrics;
 pub mod media;
 pub mod oauth;
 pub mod pid;
+pub mod playlist_file;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
@@ -151,6 +152,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::list_songs_by_genre,
         api::list_playlists,
         api::create_playlist,
+        api::import_playlist,
+        api::export_playlist,
         api::get_playlist,
         api::update_playlist,
         api::delete_playlist,
@@ -1013,9 +1016,11 @@ mod tests {
         use utoipa::openapi::RefOr;
         use utoipa::OpenApi;
 
-        // Thirteen today: the favourite, rating, play-queue and now-playing
-        // mutations. A new one lands here deliberately, not silently.
-        let expected = 13;
+        // Fourteen today: the favourite, rating, play-queue and now-playing
+        // mutations, and the playlist import — which claims an operation like
+        // every other playlist creation, because that is the verb it calls.
+        // A new one lands here deliberately, not silently.
+        let expected = 14;
         let openapi = super::ApiDoc::openapi();
         let mut checked = 0;
         for (path, item) in &openapi.paths.paths {

@@ -11,6 +11,7 @@ use crate::{
     authentication::now_ms,
     database::{AccountRecord, AccountRole, ApiTokenRecord, Database, SubsonicCredentialStatus},
     lyrics::{self, LyricsList, StructuredLyrics},
+    playlist_file::{self, PlaylistFileEntry, TextEncoding},
     security::{self, EncryptedSecret, SecretBox},
     sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},
 };
@@ -701,6 +702,18 @@ pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
 /// bounded while sitting far above any playlist a person curates by hand.
 pub const MAX_PLAYLIST_TRACKS: usize = 10_000;
 
+/// The body ceiling the playlist import route carries.
+///
+/// Derived from [`MAX_PLAYLIST_TRACKS`] rather than configured, like the upload
+/// negotiation limit and for the same reason: a file holding the most tracks a
+/// playlist may hold has to fit, and raising that ceiling must not quietly
+/// start refusing the files it has just permitted. Half a kibibyte per entry
+/// covers a path and an `#EXTINF` line with room to spare — a deep tree with
+/// long names is nowhere near it — and the envelope covers the header lines.
+pub fn playlist_import_body_limit() -> usize {
+    MAX_PLAYLIST_TRACKS.saturating_mul(512).saturating_add(4096)
+}
+
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
 /// bind it without re-checking bounds.
 #[derive(Debug, Clone, Copy)]
@@ -932,6 +945,58 @@ pub struct PlaylistItem {
     pub created_at: i64,
     pub updated_at: i64,
     pub songs: Vec<SongItem>,
+}
+
+/// What an import made of a playlist file, and what it could not.
+///
+/// The unresolved list is the point of this type. An import that silently
+/// produced a shorter playlist would be worse than one that refused: the
+/// listener has no way to know a third of a collection stayed behind. So every
+/// entry the catalogue could not answer for comes back with its line, its text
+/// as written and why — and a caller can ask for the whole answer *before*
+/// anything is created, which is what `dry_run` is for.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PlaylistImport {
+    /// The playlist as created, or `None` for a dry run.
+    pub playlist: Option<PlaylistItem>,
+    /// The name used, from the request or from the file's own `#PLAYLIST`.
+    pub name: String,
+    /// How the bytes were read as text. A file that announced itself as UTF-8
+    /// and came back `windows-1252` has been read, not mangled in silence.
+    pub encoding: TextEncoding,
+    /// Targets the file named, resolved or not.
+    pub entries: usize,
+    /// Tracks the playlist holds, or would hold.
+    pub resolved: usize,
+    pub unresolved: Vec<UnresolvedEntry>,
+}
+
+/// One target the import could not turn into a track.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UnresolvedEntry {
+    /// One-based line in the file, so the report can be read against it.
+    pub line: usize,
+    /// The target as written.
+    pub entry: String,
+    /// Its `#EXTINF` text, when the file carried one.
+    pub title: Option<String>,
+    pub reason: UnresolvedReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnresolvedReason {
+    /// No path and no credit in this catalogue matched.
+    NoMatch,
+    /// Several tracks matched and nothing in the entry chooses between them.
+    /// Importing the first would be a guess wearing the look of a result.
+    Ambiguous,
+    /// The target is not a path into a library — a web radio, most often.
+    NotAPath,
+    /// It resolved to a track the playlist already holds. A playlist carries a
+    /// track once: `playlist_track` is keyed on the pair, so the second copy
+    /// has nowhere to go, and dropping it in silence is what this reports.
+    Duplicate,
 }
 
 /// A playback position the user saved in one track.
