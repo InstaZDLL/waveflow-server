@@ -1,211 +1,206 @@
-# WaveFlow Desktop ↔ serveur v2 : inventaire historique de l'écart fermé
+# WaveFlow Desktop ↔ server v2: a historical record of the gap, now closed
 
-> **Statut final (2026-08-18) : écart fermé.** L'intégration Desktop `/api/v2`
-> avec PKCE a été validée de bout en bout, puis la réconciliation conservatrice
-> M5 a été fusionnée. Ce document reste un relevé historique des décisions de
-> migration ; il ne constitue plus une liste de travail. Voir le
-> [handoff final](M4-handoff.md) et la [RFC-004](rfcs/RFC-004-local-server-reconciliation.md).
+> **Final status (2026-08-18): the gap is closed.** The Desktop `/api/v2`
+> integration with PKCE was validated end to end, and then the conservative M5
+> reconciliation was merged. This document remains a historical record of the
+> migration decisions; it is no longer a list of work. See the
+> [final handoff](M4-handoff.md) and [RFC-004](rfcs/RFC-004-local-server-reconciliation.md).
 
-> Relevé du 2026-08-10, établi en lecture seule sur
-> [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) à `802f189b`.
-> Il décrit ce que le Desktop attendait à cette date, ce que le serveur v2
-> offrait, et ce qui n'avait pas d'équivalent. Aucun code n'avait été modifié
-> pendant ce relevé. Le contrat cible est
-> [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md).
+> Survey of 2026-08-10, taken read-only against
+> [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) at `802f189b`.
+> It describes what Desktop expected on that date, what server v2 offered, and
+> what had no equivalent. No code had been modified during the survey. The
+> target contract is [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md).
 
-## Constat au 2026-08-10
+## What was found on 2026-08-10
 
-Le Desktop parlait intégralement au serveur **v1**, qui n'existait déjà plus.
-Les six routes qu'il consommait avaient zéro occurrence dans le code du serveur
-v2, et son flux de connexion s'appuyait sur un front web supprimé par la PR #84.
+Desktop spoke entirely to server **v1**, which no longer existed. The six routes
+it consumed had zero occurrences in the v2 server code, and its sign-in flow
+relied on a web front end that PR #84 had removed.
 
-Ce n'est donc pas une adaptation de la couche de synchronisation : c'est le
-remplacement d'un protocole bidirectionnel à horloges logiques par un journal
-linéaire dont le serveur est l'autorité.
+So this was not an adaptation of the synchronization layer: it was the
+replacement of a bidirectional protocol with logical clocks by a linear journal
+the server is the authority for.
 
-## Surface concernée
+## The surface involved
 
-Environ 6 000 lignes de Rust, réparties ainsi :
+Roughly 6,000 lines of Rust, spread as follows:
 
-| Module | Lignes | Sort attendu |
+| Module | Lines | Expected fate |
 | --- | --- | --- |
-| `sync/digest/{mod,client,entity_client}.rs` | 1 178 | Supprimé — remplacé par `snapshot` |
-| `sync/backfill/{mod,pull,lww}.rs` | 1 349 | Supprimé — la résolution LWW n'a plus d'objet |
-| `sync/ws.rs` | 557 | Réécrit — le socket devient un simple réveil |
-| `sync/queue.rs` | 573 | Conservé, ré-outillé sur `X-WaveFlow-Operation-Id` |
-| `sync/drain.rs` | 543 | Réécrit — plus d'endpoint d'ops générique |
-| `commands/sync.rs` | 624 | Réécrit |
-| `server_client.rs` | 357 | Réécrit — base URL, en-têtes, auth |
-| `commands/server_auth.rs` | 227 | Réécrit — PKCE |
-| `sync_stub.rs` | 368 | À réévaluer |
-| `sync/{cursor,hooks,canonical,track_snapshots}.rs` | ~640 | Conservés, adaptés |
-| `commands/share.rs` | 292 | Réécrit sur `/api/v2/shares` |
+| `sync/digest/{mod,client,entity_client}.rs` | 1,178 | Deleted — replaced by `snapshot` |
+| `sync/backfill/{mod,pull,lww}.rs` | 1,349 | Deleted — LWW resolution has no purpose left |
+| `sync/ws.rs` | 557 | Rewritten — the socket becomes a mere wake-up |
+| `sync/queue.rs` | 573 | Kept, re-tooled on `X-WaveFlow-Operation-Id` |
+| `sync/drain.rs` | 543 | Rewritten — no more generic ops endpoint |
+| `commands/sync.rs` | 624 | Rewritten |
+| `server_client.rs` | 357 | Rewritten — base URL, headers, auth |
+| `commands/server_auth.rs` | 227 | Rewritten — PKCE |
+| `sync_stub.rs` | 368 | To be reassessed |
+| `sync/{cursor,hooks,canonical,track_snapshots}.rs` | ~640 | Kept, adapted |
+| `commands/share.rs` | 292 | Rewritten onto `/api/v2/shares` |
 
-Plus deux fichiers TypeScript : `src/lib/tauri/serverAuth.ts` et
+Plus two TypeScript files: `src/lib/tauri/serverAuth.ts` and
 `src/components/views/settings/ServerAccountCard.tsx`.
 
-## Correspondance des routes
+## Route correspondence
 
-| Desktop au 2026-08-10 | Serveur v2 | Nature |
+| Desktop on 2026-08-10 | Server v2 | Nature |
 | --- | --- | --- |
-| `GET /api/v1/sync/ops?since=N` | `GET /api/v2/sync/changes?after=N&limit=` | Renommage + pagination explicite (`next_cursor`, `has_more`) |
-| `POST /api/v1/sync/ops` | *(aucun)* | **Disparu.** Les mutations passent par les endpoints REST métier, porteurs de `X-WaveFlow-Operation-Id` |
-| `POST /api/v1/sync/ack` `{device_id, last_seen_id}` | `PUT /api/v2/sync/ack` `{device_id, cursor}` | Verbe et champs changés |
-| WS poussant des ops | `GET /api/v2/sync/socket?after=` → `{"cursor": N}` | **Sémantique inversée** : notification, jamais transport d'état |
-| `GET /api/v1/sync/digest` | *(aucun)* | **Disparu** — `GET /api/v2/sync/snapshot` remplace la réconciliation par empreinte |
-| `GET /api/v1/sync/entity` | *(aucun)* | **Disparu** — contenu porté par `snapshot` / `changes` |
-| `GET /api/v1/profiles` | *(aucun)* | **Disparu** — voir « modèle de profils » |
-| `POST /api/v1/share/playlists/by-canonical/{p}/{pl}` | `POST /api/v2/shares` | Modèle de partage entièrement différent |
+| `GET /api/v1/sync/ops?since=N` | `GET /api/v2/sync/changes?after=N&limit=` | Renamed + explicit pagination (`next_cursor`, `has_more`) |
+| `POST /api/v1/sync/ops` | *(none)* | **Gone.** Mutations go through the domain REST endpoints, which carry `X-WaveFlow-Operation-Id` |
+| `POST /api/v1/sync/ack` `{device_id, last_seen_id}` | `PUT /api/v2/sync/ack` `{device_id, cursor}` | Verb and fields changed |
+| A WS pushing ops | `GET /api/v2/sync/socket?after=` → `{"cursor": N}` | **Semantics inverted**: a notification, never a transport for state |
+| `GET /api/v1/sync/digest` | *(none)* | **Gone** — `GET /api/v2/sync/snapshot` replaces fingerprint reconciliation |
+| `GET /api/v1/sync/entity` | *(none)* | **Gone** — the content is carried by `snapshot` / `changes` |
+| `GET /api/v1/profiles` | *(none)* | **Gone** — see "the profile model" |
+| `POST /api/v1/share/playlists/by-canonical/{p}/{pl}` | `POST /api/v2/shares` | An entirely different sharing model |
 
-## Ce qui devient sans objet
+## What becomes purposeless
 
-Ces mécanismes existent parce que la v1 acceptait des écritures concurrentes
-arbitrées côté client. Le serveur v2 est autorité et son journal est
-strictement ordonné : les conserver serait porter une complexité que le
-protocole ne demande plus.
+These mechanisms exist because v1 accepted concurrent writes arbitrated on the
+client. Server v2 is the authority and its journal is strictly ordered: keeping
+them would be carrying a complexity the protocol no longer asks for.
 
-- **Horloges logiques.** `sync/lamport` et `sync/hlc` estampillent chaque op
-  sortante pour un ordre global entre pairs. Le curseur du journal v2 fournit
-  cet ordre à lui seul.
-- **Réconciliation par empreinte.** `sync/digest` compare des digests par entité
-  pour détecter une divergence. `GET /sync/snapshot` renvoie une représentation
-  cohérente côté writer que le client remplace atomiquement.
-- **Backfill LWW.** `sync/backfill/lww.rs` arbitre les conflits au dernier
-  écrivain. En v2, un conflit n'est pas arbitré côté client : réutiliser un
-  `operation_id` avec une empreinte différente est **rejeté en conflit**, et un
-  client qui ne sait pas appliquer un événement connu jette sa projection et
-  reprend un snapshot.
-- **Compaction et `410 Gone`.** `catchup_pull` gère un serveur ayant compacté
-  au-delà du curseur. Le journal v2.0 est append-only ; RFC-003 conditionne
-  toute rétention future à un plancher de snapshot. Ce chemin peut disparaître,
-  mais **le remplacer par une reprise de snapshot** plutôt que le supprimer sans
-  substitut.
+- **Logical clocks.** `sync/lamport` and `sync/hlc` stamp every outgoing op for
+  a global order between peers. The v2 journal's cursor supplies that order on
+  its own.
+- **Fingerprint reconciliation.** `sync/digest` compares per-entity digests to
+  detect a divergence. `GET /sync/snapshot` returns a writer-side consistent
+  representation that the client replaces atomically.
+- **LWW backfill.** `sync/backfill/lww.rs` arbitrates conflicts by last writer.
+  In v2 a conflict is not arbitrated on the client: reusing an `operation_id`
+  with a different fingerprint is **rejected as a conflict**, and a client that
+  cannot apply a known event throws away its projection and takes a snapshot
+  again.
+- **Compaction and `410 Gone`.** `catchup_pull` handles a server that has
+  compacted past the cursor. The v2.0 journal is append-only; RFC-003 makes any
+  future retention conditional on a snapshot floor. That path can go, but
+  **replace it with a snapshot restart** rather than removing it with nothing in
+  its place.
 
-## Ce qui devait rester dans la nouvelle architecture
+## What had to stay in the new architecture
 
-- **`device_id`.** Toujours central : le serveur refuse un appareil appartenant
-  à un autre compte, et l'ACK est par appareil.
-- **File d'attente locale.** L'écriture hors ligne reste nécessaire. Ce qui
-  change est son contenu : non plus des « ops » génériques, mais des appels REST
-  métier rejouables, chacun porteur d'un `operation_id` stable.
-- **Mapping identifiants locaux ↔ serveur.** `sync/canonical.rs` et la table
-  `sync_id_map` gardent leur raison d'être : les identifiants publics v2 sont des
-  UUID, le Desktop travaille sur des rowid locaux.
-- **Curseur, application entrante, reconnexion.** Conservés, adaptés aux
-  nouvelles formes.
+- **`device_id`.** Still central: the server refuses a device belonging to
+  another account, and the ACK is per device.
+- **The local queue.** Writing offline is still necessary. What changes is its
+  content: no longer generic "ops" but replayable domain REST calls, each
+  carrying a stable `operation_id`.
+- **The local ↔ server identifier mapping.** `sync/canonical.rs` and the
+  `sync_id_map` table keep their purpose: v2 public identifiers are UUIDs, and
+  Desktop works on local rowids.
+- **Cursor, inbound application, reconnection.** Kept, adapted to the new
+  shapes.
 
-## Décisions actées (2026-08-10)
+## Decisions recorded (2026-08-10)
 
-Ces points étaient ouverts au moment du relevé. Ils sont tranchés, et chacun a
-été vérifié contre le code du serveur : aucun ne demande d'ajout côté serveur.
+These points were open at the time of the survey. They are settled, and each was
+checked against the server code: none of them asks for a server-side addition.
 
-### 0. Le Desktop est un client universel
+### 0. Desktop is a universal client
 
-**Décision (user).** Le Desktop doit pouvoir se connecter à n'importe quel
-serveur Subsonic — Navidrome, Airsonic, Gonic — et pas seulement à WaveFlow. Ce
-choix commande tous les autres : il impose une abstraction « source distante »
-avec deux implémentations, au lieu d'un client v2 unique.
+**Decision (user).** Desktop must be able to connect to any Subsonic server —
+Navidrome, Airsonic, Gonic — and not only to WaveFlow. That choice governs all
+the others: it requires a "remote source" abstraction with two implementations
+instead of one v2 client.
 
-Deux interfaces distinctes plutôt qu'une seule, pour que la synchronisation
-reste une capacité et non le socle obligatoire du client :
+Two distinct interfaces rather than one, so that synchronization stays a
+capability and not the client's mandatory foundation:
 
 ```text
-   MusicServer (obligatoire)            SyncProvider (optionnel)
-   catalogue, recherche, lecture,       snapshot, changes, ack, socket
-   user-data selon capacités
+   MusicServer (mandatory)              SyncProvider (optional)
+   catalogue, search, playback,         snapshot, changes, ack, socket
+   user data where supported
           │                                      │
    ┌──────┴────────┐                             │
 SubsonicSource   WaveflowSource ─────────────────┘
-  /rest/*          /api/v2/*  (natif de bout en bout)
-(Navidrome,      (jamais /rest/ : la façade Subsonic de
- Airsonic…)       WaveFlow est là pour les clients tiers)
+  /rest/*          /api/v2/*  (native end to end)
+(Navidrome,      (never /rest/: WaveFlow's Subsonic
+ Airsonic…)       facade is there for third-party clients)
 ```
 
-**Règle, décidée par le user.** Entre WaveFlow Desktop et WaveFlow Server, on
-passe **toujours** par la couche native `/api/v2` — y compris pour le catalogue,
-la recherche et la lecture, pas seulement pour la synchronisation. La façade
-Subsonic du serveur existe pour les lecteurs tiers (Symfonium, DSub,
-Substreamer, Feishin) ; le Desktop ne l'emprunte que face à un serveur *autre*
-que WaveFlow.
+**The rule, decided by the user.** Between WaveFlow Desktop and WaveFlow Server
+the traffic goes **always** through the native `/api/v2` layer — including for
+the catalogue, search and playback, not only for synchronization. The server's
+Subsonic facade exists for third-party players (Symfonium, DSub, Substreamer,
+Feishin); Desktop only borrows it when facing a server *other* than WaveFlow.
 
-`WaveflowSource` n'est donc pas un `SubsonicSource` enrichi d'une sync : c'est
-une implémentation indépendante. Le faire hériter de la branche Subsonic
-reviendrait à consommer `/rest/` contre notre propre serveur et à perdre trois
-choses acquises :
+`WaveflowSource` is therefore not a `SubsonicSource` with sync added: it is an
+independent implementation. Deriving it from the Subsonic branch would mean
+consuming `/rest/` against our own server and losing three things already won:
 
-- **l'idempotence** — les routes v2 lisent `X-WaveFlow-Operation-Id`, pas la
-  façade Subsonic ;
-- **la pertinence** — les deux surfaces passent désormais par FTS5
-  (`catalog_search` pour `search3`), mais seule `/api/v2` rend des projections
-  paginées plutôt qu'un `searchResult3` plafonné par des compteurs distincts ;
-- **la pagination native** et les projections typées de `/api/v2`.
+- **idempotence** — the v2 routes read `X-WaveFlow-Operation-Id`, the Subsonic
+  facade does not;
+- **relevance** — both surfaces now go through FTS5 (`catalog_search` for
+  `search3`), but only `/api/v2` returns paged projections rather than a
+  `searchResult3` capped by separate counters;
+- **native pagination** and the typed projections of `/api/v2`.
 
-Le dénominateur commun est large : la façade Subsonic couvre **toutes** les
-mutations dont le Desktop a besoin — `star`/`unstar`, `setRating`, les playlists
-en CRUD complet, `scrobble`, `savePlayQueue`/`getPlayQueue` et les partages.
+The common denominator is wide: the Subsonic facade covers **every** mutation
+Desktop needs — `star`/`unstar`, `setRating`, playlists in full CRUD,
+`scrobble`, `savePlayQueue`/`getPlayQueue` and shares.
 
-**Détection.** Toute réponse Subsonic de WaveFlow porte `type="waveflow"`,
-`serverVersion` et `openSubsonic="true"` (`src/subsonic.rs`). Un `ping` suffit
-donc à décider si `SyncProvider` peut être activé.
+**Detection.** Every Subsonic response from WaveFlow carries `type="waveflow"`,
+`serverVersion` and `openSubsonic="true"` (`src/subsonic.rs`). One `ping` is
+therefore enough to decide whether `SyncProvider` can be switched on.
 
-> **Piège.** `getOpenSubsonicExtensions` annonce désormais `formPost`,
-> `apiKeyAuthentication` et `transcodeOffset` — mais il ne dira **jamais** que
-> l'API native v2 existe : ce n'est pas une extension OpenSubsonic. Et il exige
-> un appel authentifié, alors que la décision d'activer `SyncProvider` se prend
-> avant d'avoir un identifiant. Le discriminant reste `type="waveflow"`.
+> **A trap.** `getOpenSubsonicExtensions` now announces `formPost`,
+> `apiKeyAuthentication` and `transcodeOffset` — but it will **never** say that
+> the native v2 API exists: that is not an OpenSubsonic extension. And it
+> requires an authenticated call, whereas the decision to switch on
+> `SyncProvider` is taken before there is any credential. The discriminator
+> stays `type="waveflow"`.
 
-**Ce que seul WaveFlow offre**, et qui doit donc être traité comme une capacité
-optionnelle et non comme un prérequis : le journal (`/sync/snapshot`,
-`/sync/changes`), l'ACK par appareil, le WebSocket de réveil, et surtout
-l'idempotence des mutations.
+**What only WaveFlow offers**, and which must therefore be treated as an
+optional capability and not as a prerequisite: the journal (`/sync/snapshot`,
+`/sync/changes`), the per-device ACK, the wake-up WebSocket, and above all the
+idempotence of mutations.
 
-**Modèle d'identifiants.** Les identifiants distants sont des **chaînes
-opaques**, jamais des UUID typés. WaveFlow sérialise ses UUID
-(`id.to_string()`), ce qui rend ses deux surfaces interchangeables sans table de
-correspondance — mais Navidrome et consorts émettent des identifiants textuels
-d'une autre forme. Le Desktop doit donc :
+**The identifier model.** Remote identifiers are **opaque strings**, never typed
+UUIDs. WaveFlow serialises its UUIDs (`id.to_string()`), which makes its two
+surfaces interchangeable with no mapping table — but Navidrome and the rest emit
+textual identifiers of another shape. Desktop must therefore:
 
-- traiter tout identifiant distant comme `String`, sans le parser en `Uuid` ;
-- indexer localement sur la clé composée `(profile_id, remote_id)`, puisque deux
-  serveurs peuvent émettre le même identifiant sans rapport ;
-- garder le cache de catalogue distinct de l'état synchronisé, l'un étant
-  reconstructible et l'autre non ;
-- ne jamais supposer qu'une capacité est présente sans l'avoir constatée.
+- treat every remote identifier as a `String`, without parsing it into a `Uuid`;
+- index locally on the composite key `(profile_id, remote_id)`, since two
+  servers can emit the same identifier with nothing in common;
+- keep the catalogue cache distinct from synchronized state, one being
+  rebuildable and the other not;
+- never assume a capability is present without having observed it.
 
-**Conséquence sur l'idempotence.** `src/subsonic.rs` ne lit jamais
-`X-WaveFlow-Operation-Id` : ces en-têtes n'existent que sur les routes v2. Une
-mutation Subsonic n'est donc **pas rejouable sans risque**. Si la réponse se
-perd, le client ignore si le serveur a appliqué : rejouer duplique le scrobble
-ou la playlist. Les deux implémentations n'offrent pas la même garantie hors
-ligne, et la file d'attente doit le savoir :
+**The consequence for idempotence.** `src/subsonic.rs` never reads
+`X-WaveFlow-Operation-Id`: those headers exist only on the v2 routes. A Subsonic
+mutation is therefore **not safely replayable**. If the response is lost, the
+client does not know whether the server applied it: replaying duplicates the
+scrobble or the playlist. The two implementations do not offer the same offline
+guarantee, and the queue has to know it:
 
-- `WaveflowSource` — rejeu sûr par `operation_id` ; la file peut réémettre
-  librement. C'est la raison directe de la règle ci-dessus : passer par `/rest/`
-  contre notre propre serveur reviendrait à renoncer volontairement à cette
-  garantie.
-- `SubsonicSource` — pas de rejeu aveugle. Après une réponse perdue, relire
-  l'état avant de décider, ou accepter le doublon pour les entités idempotentes
-  par nature (`star`, `setRating`) et s'abstenir pour celles qui ne le sont pas
-  (`scrobble`, `createPlaylist`).
+- `WaveflowSource` — safe replay by `operation_id`; the queue may re-emit
+  freely. That is the direct reason for the rule above: going through `/rest/`
+  against our own server would mean deliberately giving up that guarantee.
+- `SubsonicSource` — no blind replay. After a lost response, re-read the state
+  before deciding, or accept the duplicate for entities that are idempotent by
+  nature (`star`, `setRating`) and abstain for those that are not (`scrobble`,
+  `createPlaylist`).
 
-### 1. Un profil Desktop = un compte serveur
+### 1. One Desktop profile = one server account
 
-Le profil reste l'unité **locale** qui sépare comptes, jetons, mappings et
-curseurs. Son identité de synchronisation devient l'`account_id` fourni par le
-serveur ; `profile_canonical_id` cesse d'exister dans le protocole.
+The profile stays the **local** unit that separates accounts, tokens, mappings
+and cursors. Its synchronization identity becomes the `account_id` the server
+supplies; `profile_canonical_id` ceases to exist in the protocol.
 
 ```text
-Desktop                          Serveur
+Desktop                          Server
 └── Profile                      └── Account
     ├── server_url                   ├── Device A
     ├── remote_identity ────────────▶├── Device B
     ├── auth (tokens | u/p)          ├── Library 1
-    ├── sync state (si WaveFlow)     └── Library 2
-    └── active_library_id (option)
+    ├── sync state (if WaveFlow)     └── Library 2
+    └── active_library_id (optional)
 ```
 
-L'identité distante est **polymorphe**, puisque tous les serveurs n'ont pas le
-même modèle de compte :
+The remote identity is **polymorphic**, since not every server has the same
+account model:
 
 ```rust
 enum RemoteIdentity {
@@ -214,55 +209,53 @@ enum RemoteIdentity {
 }
 ```
 
-Un serveur Subsonic tiers n'a ni identifiant de compte en UUID, ni notion
-d'appareil, ni curseur : ces trois champs n'existent que dans la branche
-WaveFlow. Les câbler dans la structure commune obligerait à les rendre
-optionnels partout et à répandre des `unwrap` sur des cas qui ne peuvent pas
-survenir.
+A third-party Subsonic server has no UUID account identifier, no notion of a
+device and no cursor: those three fields exist only in the WaveFlow branch.
+Wiring them into the common structure would force them to be optional everywhere
+and spread `unwrap`s over cases that cannot happen.
 
-Un profil par bibliothèque a été écarté : une bibliothèque est une ressource de
-contenu, un profil une identité et une session. Un compte donnant accès à
-plusieurs bibliothèques produirait sinon des profils artificiels pour un même
-utilisateur.
+One profile per library was set aside: a library is a content resource, a profile
+is an identity and a session. An account giving access to several libraries would
+otherwise produce artificial profiles for one and the same user.
 
-**Rien à ajouter côté serveur.** `POST /api/v2/auth/login` renvoie déjà l'`id`
-du compte et le `device_id` (`WebAuthResponse`), et le serveur déduit
-l'utilisateur du Bearer seul. `active_library_id` correspond au paramètre
-`library_id: Option<Uuid>` que les projections catalogue acceptent déjà
-(`list_albums`, `list_artists`) : c'est un filtre existant, pas une notion à
-introduire.
+**Nothing to add on the server.** `POST /api/v2/auth/login` already returns the
+account's `id` and the `device_id` (`WebAuthResponse`), and the server infers the
+user from the Bearer alone. `active_library_id` corresponds to the
+`library_id: Option<Uuid>` parameter the catalogue projections already accept
+(`list_albums`, `list_artists`): an existing filter, not a notion to introduce.
 
-### 2. Authorization Code + PKCE en loopback
+### 2. Authorization Code + PKCE over loopback
 
-Le flux actuel ouvre `<web-url>/desktop-login?cb=…` et attend un JWT Better Auth
-en query string ; la cible est PKCE (S256) sur `/api/v2/oauth/authorize` et
-`/api/v2/oauth/token`. Le Desktop possède déjà un listener loopback et un
-générateur d'aléa (chemin Spotify) : la mécanique existe, le protocole change.
+The current flow opens `<web-url>/desktop-login?cb=…` and waits for a Better
+Auth JWT in the query string; the target is PKCE (S256) on
+`/api/v2/oauth/authorize` and `/api/v2/oauth/token`. Desktop already has a
+loopback listener and a randomness generator (the Spotify path): the machinery
+exists, the protocol changes.
 
-Attention : un code v2 est **dépensé à la première présentation**, quelle qu'en
-soit l'issue. Un verifier erroné brûle le code et impose de relancer le flux ;
-ce n'est pas un bug à contourner par une nouvelle tentative sur le même code.
+Careful: a v2 code is **spent on its first presentation**, whatever the outcome.
+A wrong verifier burns the code and forces the flow to be restarted; that is not
+a bug to work around by trying again with the same code.
 
-PKCE ne vaut que pour la branche WaveFlow. Un serveur Subsonic tiers
-s'authentifie par `u/p`, `u/t/s` ou `apiKey` selon ce qu'il accepte : c'est une
-seconde forme d'authentification à porter, pas une dégradation de la première.
+PKCE applies only to the WaveFlow branch. A third-party Subsonic server
+authenticates by `u/p`, `u/t/s` or `apiKey` depending on what it accepts: that is
+a second form of authentication to carry, not a degradation of the first.
 
-### 3. Bearer direct pour la lecture, pas de ticket
+### 3. A direct Bearer for playback, no ticket
 
-Le Desktop lit par `GET /api/v2/tracks/{track_id}/stream` avec
-`Authorization: Bearer`. Vérifié dans `src/media.rs` : ce handler exige le
-Bearer et accepte `format`, `bitrate` et `offset_ms`, avec 206/416 sur les
-`Range`. Les tickets scellés restent réservés aux consommateurs qui ne peuvent
-pas porter d'en-tête — `<audio src>` dans le navigateur.
+Desktop reads through `GET /api/v2/tracks/{track_id}/stream` with
+`Authorization: Bearer`. Verified in `src/media.rs`: that handler requires the
+Bearer and accepts `format`, `bitrate` and `offset_ms`, with 206/416 on
+`Range`. Sealed tickets stay reserved for consumers that cannot carry a
+header — `<audio src>` in the browser.
 
-Contre un serveur tiers, la lecture passe par `/rest/stream` avec les
-identifiants Subsonic. `MusicServer` expose donc une URL de flux (et l'en-tête
-éventuel à joindre), pas une route en dur.
+Against a third-party server, playback goes through `/rest/stream` with the
+Subsonic credentials. `MusicServer` therefore exposes a stream URL (and the
+header to attach, if any), not a hard-coded route.
 
-## Contraintes de conception de la file d'attente
+## Design constraints on the queue
 
-La file locale ne contient plus des ops abstraites mais des mutations métier
-rejouables. Une forme typée est préférable à des requêtes HTTP sérialisées :
+The local queue no longer holds abstract ops but replayable domain mutations. A
+typed shape is preferable to serialised HTTP requests:
 
 ```rust
 enum Mutation {
@@ -272,13 +265,13 @@ enum Mutation {
 }
 ```
 
-Trois propriétés du serveur contraignent cette file, et les ignorer produirait
-des échecs dans des cas parfaitement ordinaires :
+Three properties of the server constrain that queue, and ignoring them would
+produce failures in perfectly ordinary cases:
 
-- **Une entrée enfilée est immuable.** Le serveur stocke une empreinte canonique
-  de l'action, de la ressource visée et du payload normalisé. Réutiliser un
-  `operation_id` avec une empreinte différente est **rejeté en conflit**, pas
-  traité comme un rejeu :
+- **A queued entry is immutable.** The server stores a canonical fingerprint of
+  the action, the target resource and the normalised payload. Reusing an
+  `operation_id` with a different fingerprint is **rejected as a conflict**, not
+  treated as a replay:
 
   ```rust
   if record.intent_hash.as_deref() != Some(intent.as_bytes()) {
@@ -286,51 +279,52 @@ des échecs dans des cas parfaitement ordinaires :
   }
   ```
 
-  Donc si l'utilisateur corrige son geste avant que la file ne se vide — renommer
-  une playlist déjà enfilée, par exemple — il faut émettre une seconde mutation
-  avec un **nouvel** `operation_id`, ou fusionner les deux avant enfilement en
-  régénérant l'identifiant. Muter une entrée en attente en gardant son
-  `operation_id` casse.
+  So if the user corrects their action before the queue drains — renaming a
+  playlist that is already queued, say — a second mutation has to be emitted
+  with a **new** `operation_id`, or the two merged before queueing by
+  regenerating the identifier. Mutating a pending entry while keeping its
+  `operation_id` breaks.
 
-- **Un rejeu de partage restitue la même URL.** `derive_share_token(id)` est
-  déterministe (BLAKE3 keyed sur la clé d'instance et l'UUID). La création de
-  partage se rejoue donc comme n'importe quelle mutation, sans traitement
-  particulier et sans forger une seconde URL.
+- **A replayed share returns the same URL.** `derive_share_token(id)` is
+  deterministic (keyed BLAKE3 over the instance key and the UUID). Share
+  creation therefore replays like any other mutation, with no special handling
+  and without forging a second URL.
 
-- **L'ACK n'est pas un prérequis.** RFC-003 en fait un signal d'observabilité et
-  de rétention future, pas une condition pour lire les pages suivantes. Un ACK
-  qui échoue ne doit pas bloquer la synchronisation.
+- **The ACK is not a prerequisite.** RFC-003 makes it a signal for
+  observability and future retention, not a condition for reading the next
+  pages. A failed ACK must not block synchronization.
 
-## Séquence cible
+## The target sequence
 
 ```text
 LOGIN ──▶ account_id + device_id
    │
-BOOTSTRAP ──▶ GET /sync/snapshot ──▶ remplacement atomique ──▶ cursor ──▶ ACK
+BOOTSTRAP ──▶ GET /sync/snapshot ──▶ atomic replacement ──▶ cursor ──▶ ACK
    │
-SYNC ──▶ GET /sync/changes?after=cursor ──▶ appliquer ──▶ cursor ──▶ ACK
+SYNC ──▶ GET /sync/changes?after=cursor ──▶ apply ──▶ cursor ──▶ ACK
    │
-WS {"cursor": N} ──▶ si N > cursor local ──▶ GET /sync/changes?after=cursor
+WS {"cursor": N} ──▶ if N > the local cursor ──▶ GET /sync/changes?after=cursor
 ```
 
-Sens montant : écriture locale optimiste, mise en file, puis appel de l'endpoint
-métier avec `X-WaveFlow-Operation-Id` (et `X-WaveFlow-Device-Id`). Le serveur
-applique ou reconnaît le rejeu ; la modification revient ensuite par `/changes`.
+Upstream: an optimistic local write, queueing, then the call to the domain
+endpoint with `X-WaveFlow-Operation-Id` (and `X-WaveFlow-Device-Id`). The server
+applies it or recognises the replay; the change then comes back through
+`/changes`.
 
-## Avertissement
+## A warning
 
-**Homonymie de RFC.** Le Desktop a son propre
-`docs/rfcs/RFC-003-sync-architecture.md` (horloges logiques hybrides, statut
-*Draft*, 2026-06-12), sans rapport avec le `RFC-003` du serveur (sync v2,
-*accepted*, 2026-08-09). Les commentaires de `sync/mod.rs` renvoient au RFC-003
-**desktop**. Toute consigne mentionnant « RFC-003 » doit préciser le dépôt, sous
-peine de contresens.
+**RFC name collision.** Desktop has its own
+`docs/rfcs/RFC-003-sync-architecture.md` (hybrid logical clocks, status *Draft*,
+2026-06-12), unrelated to the server's `RFC-003` (sync v2, *accepted*,
+2026-08-09). The comments in `sync/mod.rs` refer to the **desktop** RFC-003. Any
+instruction mentioning "RFC-003" must name the repository, or it will be read the
+wrong way.
 
-## Rappel de périmètre
+## A reminder of scope
 
-RFC-003 pose que le catalogue serveur est une **source distante séparée** : le
-protocole ne synchronise que l'état possédé par le compte, n'importe jamais une
-piste serveur dans le catalogue local et ne devine jamais une correspondance
-locale/serveur. La réconciliation est **M5** et exige son propre RFC — liaison
-automatique sur hash complet unique seulement, MBID en suggestion à confirmer,
-aucun rapprochement flou par titre/artiste/durée.
+RFC-003 holds that the server catalogue is a **separate remote source**: the
+protocol synchronizes only the state the account owns, never imports a server
+track into the local catalogue, and never guesses a local/server correspondence.
+Reconciliation is **M5** and requires its own RFC — automatic linking on a
+unique full hash only, MBID as a suggestion to confirm, and no fuzzy matching by
+title, artist or duration.

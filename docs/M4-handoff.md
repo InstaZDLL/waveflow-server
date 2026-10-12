@@ -1,5 +1,15 @@
 # WaveFlow Server v2 — handoff final M0 à M6
 
+> **Kept in French, on purpose — 2026-10-12 (#222).** #222 moved this
+> repository's design documentation to English and left the two archives
+> alone. This one recounts a milestone sequence that closed on 2026-08-18:
+> translating it would rewrite a record rather than make a design easier to
+> read, and a record's value is that it says what was written at its date.
+> The decision is stated here so that the language reads as a choice and not
+> as an oversight; reversing it costs one translation and no risk. See the
+> "In the documentation" section of
+> [`ui-and-missing-features-plan.md`](ui-and-missing-features-plan.md).
+
 > Note de suivi mise à jour le 2026-08-18. **Le plan M0 à M6 est fermé** : le
 > serveur, la façade Subsonic, l'intégration WaveFlow Desktop, la réconciliation
 > conservatrice et le client web final ont tourné de bout en bout.

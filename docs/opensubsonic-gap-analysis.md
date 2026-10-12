@@ -1,212 +1,208 @@
-# Audit OpenSubsonic / API v2 — cinquième passe
+# OpenSubsonic / API v2 audit — fifth pass
 
-Périmètre : `main` à `1eecc10`, soit les PR #121 et #122 (21 commits) par-dessus
-les 32 des passes précédentes. Ce document remplace le rapport de quatrième
-passe.
+Scope: `main` at `1eecc10`, that is PRs #121 and #122 (21 commits) on top of the
+32 of the earlier passes. This document replaces the fourth-pass report.
 
-Vérification statique. `cargo clippy` et `cargo test` ne peuvent pas s'exécuter
-ici — `index.crates.io` est bloqué par la politique de sortie réseau et aucun
-registre n'est en cache. `CI (Rust)` a réussi sur `4110f22`, le merge de #121 ;
-elle était encore en cours sur `1eecc10` au moment de la rédaction.
-
----
-
-## 1. Les deux priorités sont fermées
-
-### 1.1 L'élévation OAuth
-
-`Access::Unrestricted` nomme la catégorie qui manquait : émettre une référence.
-`granted_by` retourne `false` pour toute liste non vide, et seul le retour
-anticipé sur liste vide l'accorde — donc une session, une concession OAuth ou un
-jeton sans portées peuvent émettre, un jeton restreint non.
-
-C'est la bonne forme, et pour la bonne raison : ce n'est pas un rôle mais une
-restriction. Un compte ordinaire appaire toujours ses propres appareils depuis
-sa propre session, ce à quoi le flux sert ; ce qui est refusé, c'est de le faire
-au nom d'une référence délibérément rétrécie.
-
-Une seule route la porte (`src/http.rs:1116`) — j'ai vérifié qu'aucune autre
-route n'émet de référence sous une autorité moindre : `create_api_token` et
-`set_subsonic_credential` sont `Admin`, `auth/login` exige le mot de passe,
-`auth/refresh` exige le jeton de rafraîchissement.
-
-Le correctif durable — porter les portées à travers la concession, sur
-`oauth_authorization` puis `session` — reste dû, et l'enum comme la RFC le
-disent. C'est la bonne façon de laisser une dette : nommée là où on la
-retrouvera.
-
-### 1.2 La matrice de compatibilité a été rejouée
-
-Quatre clients rejoués le 2026-08-19 contre le contrat courant — Symfonium,
-Feishin, DSub, Juliet — chacun sur un appareil ou un poste réel, et chacun **lu
-depuis l'état du serveur plutôt que depuis l'affichage du client**. C'est la
-distinction qui rend la campagne crédible.
-
-Substreamer est explicitement **hors du jeu rejoué** : le build ne se lance plus
-sur l'environnement courant, sa ligne reste comme preuve historique contre
-l'ancien contrat et ne compte pas pour le prochain tag. Juliet prend sa place et
-déplace au passage la vérification iOS d'un émulateur vers un iPhone physique.
-
-Cette honnêteté-là se retrouve partout dans le document : les méthodes non
-appelées par un client sont enregistrées comme non exercées plutôt que déduites
-comme passantes, le FLAC que DSub ne termine jamais est consigné comme non résolu
-avec la preuve que le serveur n'est pas en cause, et deux affirmations du brief
-interne ont été corrigées **par** les runs plutôt que confirmées par eux.
+Static verification. `cargo clippy` and `cargo test` cannot run here —
+`index.crates.io` is blocked by the network egress policy and no registry is
+cached. `CI (Rust)` passed on `4110f22`, the merge of #121; it was still running
+on `1eecc10` as this was written.
 
 ---
 
-## 2. Ce que la campagne a rapporté
+## 1. Both priorities are closed
 
-Quatre défauts serveur, qu'aucun test automatique n'aurait produits. C'est
-l'argument pour la validation client réelle, fait concrètement plutôt qu'affirmé.
+### 1.1 The OAuth escalation
 
-| Défaut | Trouvé par | Ce qu'il fallait pour le voir |
+`Access::Unrestricted` names the category that was missing: issuing a reference.
+`granted_by` returns `false` for any non-empty list, and only the early return
+on an empty one grants it — so a session, an OAuth grant or a token with no
+scopes may issue, and a restricted token may not.
+
+That is the right shape, and for the right reason: this is not a role but a
+restriction. An ordinary account still pairs its own devices from its own
+session, which is what the flow is for; what is refused is doing it in the name
+of a deliberately narrowed reference.
+
+A single route carries it (`src/http.rs:1116`) — I checked that no other route
+issues a reference under a lesser authority: `create_api_token` and
+`set_subsonic_credential` are `Admin`, `auth/login` demands the password,
+`auth/refresh` demands the refresh token.
+
+The durable fix — carrying the scopes through the grant, onto
+`oauth_authorization` and then `session` — is still owed, and both the enum and
+the RFC say so. That is the right way to leave a debt: named where it will be
+found again.
+
+### 1.2 The compatibility matrix has been replayed
+
+Four clients replayed on 2026-08-19 against the current contract — Symfonium,
+Feishin, DSub, Juliet — each on a real device or desktop, and each **read from
+the server's own state rather than from the client's display**. That distinction
+is what makes the campaign credible.
+
+Substreamer is explicitly **out of the replayed set**: the build no longer
+launches on the current environment, its row stays as historical evidence
+against the old contract and does not count toward the next tag. Juliet takes
+its place and moves the iOS verification from an emulator to a physical iPhone
+along the way.
+
+That honesty runs through the whole document: methods a client did not call are
+recorded as unexercised rather than inferred as passing, the FLAC that DSub
+never finishes is recorded as unresolved with the evidence that the server is
+not at fault, and two claims from the internal brief were corrected **by** the
+runs rather than confirmed by them.
+
+---
+
+## 2. What the campaign brought back
+
+Four server defects no automated test would have produced. That is the argument
+for real client validation, made concretely rather than asserted.
+
+| Defect | Found by | What it took to see it |
 |---|---|---|
-| Un transcodage froid refusait `Range: bytes=0-` | Feishin | un navigateur, qui ouvre toute ressource ainsi |
-| La sonde `bytes=0-1` d'AVFoundation restait classée comme un seek après le premier correctif | Juliet | un lecteur iOS, qui sonde avant de lire |
-| `createPlaylist` avec `playlistId` ajoutait au lieu de remplacer | Feishin | un client qui édite en renvoyant ce qui reste |
-| Un album crédité à deux artistes pendait sous une troisième entité nommée d'après la chaîne jointe | DSub | un client qui navigue par index d'artiste |
+| A cold transcode refused `Range: bytes=0-` | Feishin | a browser, which opens every resource that way |
+| AVFoundation's `bytes=0-1` probe was still classified as a seek after the first fix | Juliet | an iOS player, which probes before it reads |
+| `createPlaylist` with `playlistId` appended instead of replacing | Feishin | a client that edits by sending back what remains |
+| An album credited to two artists hung under a third entity named after the joined string | DSub | a client that browses by artist index |
 
-Les deux premiers se manifestaient de la manière la plus trompeuse qui soit :
-la première lecture d'une piste échouait, la seconde réussissait sur le cache
-que la requête échouée venait de construire. Un test qui joue deux fois passe.
+The first two showed themselves in the most misleading way there is: the first
+play of a track failed and the second succeeded, off the cache the failed
+request had just built. A test that plays twice passes.
 
-### Qualité des correctifs — revue
+### The quality of the fixes — reviewed
 
-**Plages d'octets.** `starts_at_the_first_byte` et `parse_range` rognent les
-deux bornes de la même façon, et rejettent tous deux le multipart : une
-graphie acceptée à froid ne peut pas être refusée une fois le cache présent.
-`bytes=0-1,4-5` est bien refusé — le second segment ne s'analyse pas comme un
-entier. Répondre 200 avec le flux entier à une plage d'ouverture est permis par
-HTTP, et c'est le seul choix disponible : avant l'existence du transcodage il
-n'y a pas de longueur totale à mettre dans un `Content-Range`.
+**Byte ranges.** `starts_at_the_first_byte` and `parse_range` trim both bounds
+the same way and both reject multipart: a spelling accepted cold cannot be
+refused once the cache is there. `bytes=0-1,4-5` is indeed refused — the second
+segment does not parse as an integer. Answering 200 with the whole stream to an
+opening range is permitted by HTTP, and it is the only option available: before
+the transcode exists there is no total length to put in a `Content-Range`.
 
-**Identité d'album.** Quatre commits, ce qui traduit une itération honnête
-plutôt qu'un tâtonnement : en corrigeant le rattachement à l'artiste, ils ont
-trouvé que canonicaliser le crédit joint effaçait les frontières entre crédits,
-si bien que `A; B C` et `A; B; C` répondaient la même clé et fusionnaient. La
-forme finale canonicalise crédit par crédit et rejoint sur un séparateur que la
-forme canonique ne peut pas produire.
+**Album identity.** Four commits, which reads as honest iteration rather than
+groping: while fixing the attachment to the artist, they found that
+canonicalising the joined credit erased the boundaries between credits, so that
+`A; B C` and `A; B; C` answered the same key and merged. The final shape
+canonicalises credit by credit and joins on a separator the canonical form
+cannot produce.
 
-La passe de réparation mérite d'être signalée : elle rattrape les bibliothèques
-indexées par une version antérieure **sans reconstruction**, puisque les
-fichiers n'ont pas changé et que rien ne serait jamais réindexé. Et elle traite
-la collision de clé en déplaçant les pistes puis en supprimant la ligne
-obsolète, plutôt que par un `UPDATE` qui violerait l'unicité et ferait échouer
-le scan entier. Son filtre `LIKE '%;%'` correspond exactement au séparateur de
-`split_values` — j'ai vérifié, il n'est pas plus étroit que le découpeur.
+The repair pass is worth pointing out: it catches up libraries indexed by an
+earlier version **without a rebuild**, since the files have not changed and
+nothing would ever be re-indexed. And it handles the key collision by moving the
+tracks and then deleting the obsolete row, rather than with an `UPDATE` that
+would violate the uniqueness and fail the whole scan. Its `LIKE '%;%'` filter
+matches exactly the separator `split_values` uses — I checked; it is no narrower
+than the splitter.
 
-**Le correctif que je retiens** est celui qu'aucun client n'a signalé.
-Ajouter `clear_tracks` à la charge d'intention sans condition aurait changé
-l'empreinte de **toutes** les mises à jour de playlist déjà enregistrées par
-cette version, transformant le rejeu d'un client à travers la mise à niveau en
-conflit. Le champ n'est ajouté que lorsqu'il est posé. C'est le genre de défaut
-qui ne se manifeste qu'en production, chez un utilisateur, une seule fois.
+**The fix I keep** is the one no client reported. Adding `clear_tracks` to the
+intent payload unconditionally would have changed the fingerprint of **every**
+playlist update this version had already recorded, turning a client's replay
+across the upgrade into a conflict. The field is added only when it is set. That
+is the kind of defect that shows itself only in production, at one user's, once.
 
 ---
 
-## 3. Ce qui reste
+## 3. What remains
 
-> **Addendum du 2026-08-20.** Ce rapport décrit `main` à `1eecc10`. La PR #123
-> a depuis fermé les **quatre** lignes de cette section : les portées traversent
-> la concession OAuth (`scopes_json` sur `oauth_authorization` et sur `session`,
-> deux migrations), `sortName` existe sur album et artiste et se redérive en fin
-> de scan, `getMusicDirectory` répond pour les pistes sans album, et le 400 de
-> `/api/v2/search` est annoté. `Access::Unrestricted` a disparu avec elles : le
-> portage des portées remplace la restriction en bloc décrite au §1.1, qui n'y
-> tenait que le temps de la migration. `getLicense` garde sa date en dur,
-> délibérément.
+> **Addendum of 2026-08-20.** This report describes `main` at `1eecc10`. PR #123
+> has since closed **all four** lines of this section: scopes travel through the
+> OAuth grant (`scopes_json` on `oauth_authorization` and on `session`, two
+> migrations), `sortName` exists on album and artist and is re-derived at the end
+> of a scan, `getMusicDirectory` answers for tracks with no album, and
+> `/api/v2/search`'s 400 is annotated. `Access::Unrestricted` went with them: the
+> carrying of scopes replaces the blanket restriction described in §1.1, which
+> only stood in while the migration was missing. `getLicense` keeps its
+> hard-coded date, deliberately.
 >
-> La question de cadrage en fin de section — **quatre clients rejoués contre
-> cinq** — reste ouverte : c'est une décision, pas un correctif.
+> The framing question at the end of the section — **four clients replayed
+> against five** — is still open: it is a decision, not a fix.
 
-> **Addendum du 2026-08-23.** Le point 2 ci-dessous est caduc pour sa moitié
-> la plus lourde. La PR #126 a livré `roles[]`, `contributors[]` et
-> `displayComposer` avec les colonnes qu'ils réclamaient — treize rôles, un
-> sous-rôle d'instrument, et un album qui pend de chacun de ses artistes
-> crédités. `sortName` était déjà arrivé avec la PR #123. Restent de ce point
-> les champs de sortie d'album (`originalReleaseDate`, `releaseDate`,
-> `releaseTypes[]`, `recordLabels[]`, `discTitles[]`), toujours absents et
-> toujours honnêtement déclarés tels.
+> **Addendum of 2026-08-23.** Point 2 below is void for its heaviest half. PR
+> #126 delivered `roles[]`, `contributors[]` and `displayComposer` with the
+> columns they needed — thirteen roles, an instrument sub-role, and an album that
+> hangs off each of its credited artists. `sortName` had already arrived with PR
+> #123. What is left of that point is the album output fields
+> (`originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]`,
+> `discTitles[]`), still absent and still honestly declared so.
 >
-> La question de cadrage du §5.1 est close : les quatre clients ont été
-> rejoués le 23 août 2026 contre le modèle aligné, et
-> [`subsonic-compatibility.md`](subsonic-compatibility.md) porte le résultat.
+> The framing question of §5.1 is closed: the four clients were replayed on 23
+> August 2026 against the aligned model, and
+> [`subsonic-compatibility.md`](subsonic-compatibility.md) carries the result.
 
-> **Addendum du 2026-08-24.** Le point 2 ci-dessous est clos. Les cinq champs
-> de sortie d'album que l'addendum de la veille laissait ouverts sont livrés :
-> `originalReleaseDate`, `releaseDate`, `releaseTypes[]` et `recordLabels[]`
-> pendent de l'album et se remplissent comme `year`, `discTitles[]` se dérive
-> des pistes disponibles comme les genres. Les trois tableaux sont émis vides
-> plutôt qu'absents, sous les deux noms d'élément qu'un album porte — `album`
-> et, dans un dossier, `child`. Les deux dates sont omises quand aucun tag ne
-> les nomme, comme le fait la référence : un `ItemDate` sans année n'est pas
-> une date, et les tableaux portent déjà le signal de présence du groupe.
+> **Addendum of 2026-08-24.** Point 2 below is closed. The five album output
+> fields the previous day's addendum left open are delivered:
+> `originalReleaseDate`, `releaseDate`, `releaseTypes[]` and `recordLabels[]`
+> hang off the album and are filled like `year`, and `discTitles[]` is derived
+> from the available tracks as the genres are. The three arrays are emitted empty
+> rather than absent, under both element names an album carries — `album` and,
+> inside a directory, `child`. Both dates are omitted when no tag names them, as
+> the reference does: an `ItemDate` with no year is not a date, and the arrays
+> already carry the group's presence signal.
 >
-> **Le fil a bougé.** Les quatre clients demandent d'être rejoués avant un tag
-> stable, ce que le §4 du handover du 23 août exige déjà.
+> **The thread has moved.** The four clients ask to be replayed before a stable
+> tag, which §4 of the 23 August handover already requires.
 
-Rien de structurel. La liste tient en quatre lignes, et deux d'entre elles sont
-des dettes nommées plutôt que des défauts.
+Nothing structural. The list fits in four lines, and two of them are named debts
+rather than defects.
 
-1. **Le correctif OAuth durable** — porter les portées à travers la concession.
-   Deux colonnes, deux migrations. Le chemin est fermé aujourd'hui ; ce qui
-   reste, c'est que la propriété soit structurelle et non locale à une route.
-2. ~~**Champs `AlbumID3` et `ArtistID3`** demandant des colonnes.~~ Livrés :
-   `sortName` par la PR #123, `moods[]`, `explicitStatus`, `roles[]`,
-   `contributors[]` et `displayComposer` par la PR #126, puis
-   `originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` et
-   `discTitles[]` le 24 août 2026.
-3. **`song.parent` retombe sur `library_id`** sans album (`src/subsonic.rs:1706`) :
-   un `getMusicDirectory` sur cet identifiant ne renverra pas la piste.
-4. **Deux inexactitudes de surface** : `getLicense` expire en dur au
-   2099-12-31, et `search_catalog` n'annote pas son 400 sur `q` manquant alors
-   que `/api/v2/songs/by-genre` vient de le faire.
+1. **The durable OAuth fix** — carrying the scopes through the grant. Two
+   columns, two migrations. The path is closed today; what remains is for the
+   property to be structural rather than local to one route.
+2. ~~**`AlbumID3` and `ArtistID3` fields** needing columns.~~ Delivered:
+   `sortName` by PR #123, `moods[]`, `explicitStatus`, `roles[]`,
+   `contributors[]` and `displayComposer` by PR #126, then
+   `originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` and
+   `discTitles[]` on 24 August 2026.
+3. **`song.parent` falls back to `library_id`** with no album
+   (`src/subsonic.rs:1706`): a `getMusicDirectory` on that identifier will not
+   return the track.
+4. **Two surface inaccuracies**: `getLicense` expires at a hard-coded
+   2099-12-31, and `search_catalog` does not annotate its 400 for a missing `q`
+   where `/api/v2/songs/by-genre` has just done so.
 
-Un point de cadrage plutôt qu'un défaut : le prochain tag reposera sur **quatre**
-clients rejoués, pas cinq. Le document le dit lui-même et n'essaie pas de faire
-compter Substreamer. Si cinq est le seuil voulu, il manque un cinquième client
-courant ; si quatre suffit, cela vaut d'être écrit comme une décision.
+A framing point rather than a defect: the next tag will rest on **four**
+replayed clients, not five. The document says so itself and does not try to make
+Substreamer count. If five is the intended threshold, a fifth current client is
+missing; if four is enough, that is worth writing down as a decision.
 
 ---
 
 ## 4. Verdict
 
-Il n'y a plus d'écart de capacité entre les deux surfaces, plus de défaut
-d'autorisation connu, et plus de dette de validation.
+There is no capability gap left between the two surfaces, no known authorization
+defect, and no validation debt.
 
-| Axe | Gagnant | Écart |
+| Axis | Winner | Gap |
 |---|---|---|
-| Authentification, sessions, révocation, portées | v2 | large |
-| Synchro incrémentale, idempotence | v2 | large |
-| Contrat typé, exploitation | v2 | large |
-| Découverte, genres, favoris, marque-pages, aléatoire | égalité | fermé |
-| Écosystème client | Subsonic | structurel |
+| Authentication, sessions, revocation, scopes | v2 | wide |
+| Incremental sync, idempotence | v2 | wide |
+| Typed contract, operation | v2 | wide |
+| Discovery, genres, favourites, bookmarks, random | tie | closed |
+| Client ecosystem | Subsonic | structural |
 
-Les quatre premières passes de cet audit décrivaient des écarts. Celle-ci
-décrit une finition. Ce qui reste au §3 n'empêche pas un tag : ce sont des
-champs optionnels correctement déclarés absents, une dette d'architecture
-nommée, et deux détails cosmétiques.
-
----
-
-## 5. Priorités proposées
-
-> **Périmé au 2026-08-23, conservé tel quel.** Les points 1 et 2 sont faits :
-> les quatre clients ont été rejoués, et `sortName` est livré. Voir
-> l'addendum du §3. Cette liste décrit ce qui restait au moment de l'audit,
-> pas ce qui reste aujourd'hui.
-
-1. Trancher explicitement la question des quatre clients contre cinq, puisque
-   c'est la seule chose entre l'état actuel et un tag.
-2. `sortName` sur `album` et `artist`.
-3. Le correctif OAuth durable, avant que d'autres routes n'aient à raisonner
-   sur les portées.
-4. Les trois points cosmétiques du §3.
+The first four passes of this audit described gaps. This one describes a finish.
+What remains in §3 does not hold a tag back: optional fields correctly declared
+absent, one named architectural debt, and two cosmetic details.
 
 ---
 
-Sources OpenSubsonic consultées :
+## 5. Proposed priorities
+
+> **Stale as of 2026-08-23, kept as written.** Points 1 and 2 are done: the four
+> clients have been replayed, and `sortName` is delivered. See the addendum in
+> §3. This list describes what remained at the time of the audit, not what
+> remains today.
+
+1. Settle the four-clients-against-five question explicitly, since it is the
+   only thing between the current state and a tag.
+2. `sortName` on `album` and `artist`.
+3. The durable OAuth fix, before other routes have to reason about scopes.
+4. The three cosmetic points of §3.
+
+---
+
+OpenSubsonic sources consulted:
 [tokenInfo](https://opensubsonic.netlify.app/docs/endpoints/tokeninfo/),
 [apiKeyAuthentication](https://opensubsonic.netlify.app/docs/extensions/apikeyauth/),
 [Child](https://opensubsonic.netlify.app/docs/responses/child/),

@@ -1,638 +1,622 @@
-# Le client web embarqué ↔ Navidrome : inventaire de l'écart et plan
+# The embedded web client ↔ Navidrome: the gap, surveyed, and a plan
 
-> Relevé du 2026-09-06, établi sur `main` à `84d0f8b`, en lecture seule.
-> Les chiffres viennent du code : les chemins déclarés par `#[utoipa::path]`
-> sous `src/api/` et `src/media.rs` d'un côté, les appels de
-> `webapp/src/api.ts` de l'autre. Navidrome est décrit d'après sa propre
+> Survey of 2026-09-06, taken read-only against `main` at `84d0f8b`.
+> The figures come from the code: the paths declared by `#[utoipa::path]` under
+> `src/api/` and `src/media.rs` on one side, the calls in
+> `webapp/src/api.ts` on the other. Navidrome is described from its own
 > documentation ([navidrome.org/docs/overview](https://www.navidrome.org/docs/overview/)),
-> pas de mémoire.
+> not from memory.
 >
-> Aucun code n'a été modifié pendant ce relevé.
+> No code was modified during this survey.
 
-## Constat
+## What was found
 
-**Le serveur déclare 63 chemins sous `/api/v2`. Le client web en appelle 26.**
+**The server declares 63 paths under `/api/v2`. The web client calls 26.**
 
-C'est le fait qui gouverne tout ce document. Ce qui manque à l'interface n'est,
-pour l'essentiel, pas à construire : c'est à brancher. Sur les quinze familles
-de fonctions absentes de l'écran, **onze sont déjà servies** et attendent un
-appel `fetch`. Quatre seulement demandent du travail côté serveur, et trois de
-ces quatre sont des fonctions que Navidrome a et que WaveFlow n'a jamais eu
-l'intention d'avoir.
+That is the fact which governs this whole document. What the interface is
+missing is mostly not to be built: it is to be wired up. Of the fifteen families
+of features absent from the screen, **eleven are already served** and are
+waiting for a `fetch`. Only four ask for server work, and three of those four
+are features Navidrome has and WaveFlow never intended to have.
 
-La deuxième observation est de forme et se déduit de la première. L'interface
-paraît générique moins par ses couleurs que par sa **vacuité** : une grille, une
-barre latérale, un lecteur, et peu d'autre à l'écran. Navidrome ne paraît pas
-plus riche parce qu'il est mieux dessiné — il paraît plus riche parce qu'il met
-du tri, du filtre, du survol-lecture et de la gestion de file dans les mêmes
-centimètres carrés.
+The second observation is about form and follows from the first. The interface
+looks generic less because of its colours than because of its **emptiness**: a
+grid, a sidebar, a player, and little else on screen. Navidrome does not look
+richer because it is better drawn — it looks richer because it puts sorting,
+filtering, hover-to-play and queue management into the same square inches.
 
-> **Rectifié le 2026-09-06, en écrivant le lot A.** Ce relevé a d'abord écrit
-> « aucun en-tête de page, aucun tri, aucun filtre, aucun survol ». Deux des
-> quatre étaient faux, et ils l'étaient déjà quand la phrase a été écrite :
-> `PageHeader` existe depuis `e7c8b64` et sert sur huit pages, et
-> `.grid a:hover .cover` soulevait déjà la pochette. Ce qui manquait était plus
-> précis que « l'en-tête » et « le survol » : les **contrôles** dans l'en-tête,
-> et les **actions** dans le survol. Un inventaire fait en lecture seule voit ce
-> qui est absent de la capture, pas ce qui est absent du code.
+> **Corrected on 2026-09-06, while writing batch A.** This survey first wrote
+> "no page header, no sorting, no filtering, no hover". Two of the four were
+> false, and they were already false when the sentence was written:
+> `PageHeader` has existed since `e7c8b64` and is used on eight pages, and
+> `.grid a:hover .cover` already lifted the cover. What was missing was more
+> precise than "the header" and "the hover": the **controls** in the header, and
+> the **actions** in the hover. An inventory taken read-only sees what is absent
+> from the screenshot, not what is absent from the code.
 
-Une troisième chose mérite d'être dite d'emblée, parce qu'elle change le coût de
-tout le reste : **il n'y a aucune bibliothèque d'interface.** Ni Tailwind, ni
-Radix, ni shadcn, ni Lucide. Trois dépendances runtime — React, React DOM,
-TanStack Router — et 1 327 lignes de CSS écrites à la main, 666 lignes de
-tokens de thème, des icônes SVG maison. Le rendu « template » vient du
-vocabulaire employé, pas d'un cadre imposé. Il n'y a donc rien à arracher, et
-chaque règle est modifiable sans combattre personne.
+A third thing deserves saying up front, because it changes the cost of
+everything else: **there is no UI library at all.** No Tailwind, no Radix, no
+shadcn, no Lucide. Three runtime dependencies — React, React DOM, TanStack
+Router — and 1,327 lines of hand-written CSS, 666 lines of theme tokens,
+home-made SVG icons. The "template" look comes from the vocabulary used, not
+from an imposed framework. So there is nothing to tear out, and every rule can
+be changed without fighting anybody.
 
-## 1. L'écart fonctionnel avec Navidrome
+## 1. The functional gap with Navidrome
 
-### Ce que les deux savent faire
+### What both can do
 
-Multi-comptes avec état par utilisateur, multi-bibliothèques avec droits par
-compte, transcodage à la volée, partages par lien public, surveillance
-automatique de la bibliothèque (`WAVEFLOW_SCAN_INTERVAL_SECS`), interface web
-thématisable et responsive, compatibilité Subsonic/OpenSubsonic validée sur
-cinq clients réels.
+Multiple accounts with per-user state, multiple libraries with per-account
+rights, on-the-fly transcoding, public-link shares, automatic library watching
+(`WAVEFLOW_SCAN_INTERVAL_SECS`), a themeable and responsive web interface,
+Subsonic/OpenSubsonic compatibility validated against five real clients.
 
-Sur ce socle, l'écart n'est pas fonctionnel. Il est d'interface.
+On that foundation the gap is not functional. It is in the interface.
 
-### Ce que Navidrome fait et que WaveFlow ne fait pas du tout
+### What Navidrome does and WaveFlow does not do at all
 
-Ces cinq points demandent du serveur, pas de l'écran. **Quatre ne sont toujours
-pas commencés ; le scrobbling externe est clos**, serveur et écran, depuis le
-2026-09-14 — voir le point 15.
+These five points ask for the server, not the screen. **Three are still not
+begun.** Two are closed, server and screen both: external scrobbling on
+2026-09-14 — see point 15 — and the `.m3u` import on 2026-10-12.
 
-| | État dans WaveFlow |
+| | State in WaveFlow |
 | --- | --- |
-| **Playlists intelligentes** (dynamiques, à la iTunes) | rien |
-| **Import automatique des `.m3u`** | **fait le 2026-10-12** (#216), import et export, serveur et écran — voir `docs/ui-and-missing-features-plan.md` |
-| **Scrobbling externe** — Last.fm, ListenBrainz, Maloja | fait, RFC-010 ; serveur et écran, voir le point 15 |
-| **Radio internet** | `getInternetRadioStations` répond un conteneur vide (`src/subsonic/mod.rs:404`) |
-| **Mode jukebox** | `jukeboxRole` est déclaré `false` (`src/subsonic/nodes.rs:319`) |
+| **Smart playlists** (dynamic, iTunes style) | nothing |
+| **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/ui-and-missing-features-plan.md` |
+| **External scrobbling** — Last.fm, ListenBrainz, Maloja | done, RFC-010; server and screen, see point 15 |
+| **Internet radio** | `getInternetRadioStations` answers an empty container (`src/subsonic/mod.rs:404`) |
+| **Jukebox mode** | `jukeboxRole` is declared `false` (`src/subsonic/nodes.rs:319`) |
 
-Deux écarts de degré s'y ajoutent. Le **transcodage** de Navidrome se règle par
-utilisateur et par lecteur ; WaveFlow n'a que des plafonds de concurrence,
-`WAVEFLOW_TRANSCODE_GLOBAL_LIMIT` et `..._PER_USER_LIMIT`, sans profil de format
-ou de débit par compte. Et la **traduction** : 34 langues contre deux.
+Two gaps of degree come on top. Navidrome's **transcoding** is configured per
+user and per player; WaveFlow has only concurrency ceilings,
+`WAVEFLOW_TRANSCODE_GLOBAL_LIMIT` and `..._PER_USER_LIMIT`, with no per-account
+format or bitrate profile. And **translation**: 34 languages against two.
 
-### Ce que Navidrome fait, que le serveur sait déjà faire, et que l'écran ignore
+### What Navidrome does, the server already knows how to do, and the screen ignores
 
-C'est le gros de l'écart, et il ne coûte que du client.
+This is the bulk of the gap, and it costs client work only.
 
-| Fonction | Route déjà servie |
+| Feature | Route already served |
 | --- | --- |
-| Notes 5 étoiles | `GET /ratings`, `PUT /ratings/{type}/{id}` |
-| Reprise de lecture | `GET /bookmarks`, `PUT`/`DELETE /bookmarks/{track}` |
-| Paroles | `GET /tracks/{id}/lyrics` |
-| Navigation par genre | `GET /genres`, `GET /songs?genre=` |
-| Historique d'écoute | `GET /history` |
-| Lecture aléatoire | `GET /songs/random` (filtrable par genre et par années) |
-| En écoute maintenant | `GET /now-playing` |
-| Progression de scan en direct | `GET /scans/{id}`, `GET /scans/{id}/events` (SSE) |
-| Pistes d'une bibliothèque | `GET /libraries/{id}/tracks` |
-| Gestion des membres | `PUT`/`DELETE /libraries/{id}/members/{user}` |
-| Jetons d'API | `GET`/`POST /admin/users/{u}/tokens`, `DELETE .../{id}` |
-| État du transcodage | `GET /transcode/status` |
+| Five-star ratings | `GET /ratings`, `PUT /ratings/{type}/{id}` |
+| Resume playback | `GET /bookmarks`, `PUT`/`DELETE /bookmarks/{track}` |
+| Lyrics | `GET /tracks/{id}/lyrics` |
+| Browsing by genre | `GET /genres`, `GET /songs?genre=` |
+| Listening history | `GET /history` |
+| Random playback | `GET /songs/random` (filterable by genre and years) |
+| Now playing | `GET /now-playing` |
+| Live scan progress | `GET /scans/{id}`, `GET /scans/{id}/events` (SSE) |
+| A library's tracks | `GET /libraries/{id}/tracks` |
+| Member management | `PUT`/`DELETE /libraries/{id}/members/{user}` |
+| API tokens | `GET`/`POST /admin/users/{u}/tokens`, `DELETE .../{id}` |
+| Transcoding state | `GET /transcode/status` |
 
-### Ce que WaveFlow fait et que Navidrome ne fait pas
+### What WaveFlow does and Navidrome does not
 
-L'écart n'est pas à sens unique, et ces quatre-là n'ont pas d'écran non plus.
+The gap is not one-way, and these four have no screen either.
 
-- **Recevoir un fichier** — [RFC-008](rfcs/RFC-008-receiving-a-file.md), négociation
-  fragmentée, quota, validation. `POST /libraries/{id}/uploads` et les routes de
-  session.
-- **Le canvas par piste** — [RFC-009](rfcs/RFC-009-track-canvas.md), six routes.
-- **Le flux d'événements de bibliothèque** — [RFC-007](rfcs/RFC-007-library-event-stream.md),
-  avec appareil d'origine, rétention et acquittement.
-- **La correction de tags qui survit à un rescan** — `PATCH /tracks/{id}`,
-  adossée à `track_override`.
+- **Receiving a file** — [RFC-008](rfcs/RFC-008-receiving-a-file.md), fragmented
+  negotiation, quota, commit. `POST /libraries/{id}/uploads` and the session
+  routes.
+- **The per-track canvas** — [RFC-009](rfcs/RFC-009-track-canvas.md), six
+  routes.
+- **The library event stream** —
+  [RFC-007](rfcs/RFC-007-library-event-stream.md), with the originating device,
+  retention and acknowledgement.
+- **A tag correction that survives a rescan** — `PATCH /tracks/{id}`, backed by
+  `track_override`.
 
-Un cinquième, invisible mais structurant : les identifiants d'album et
-d'artiste sont **dérivés** des tags (`src/pid.rs`, UUID v8), donc stables d'une
-installation à l'autre.
+A fifth, invisible but structural: album and artist identifiers are **derived**
+from the tags (`src/pid.rs`, UUID v8), hence stable from one installation to the
+next.
 
-### Ce qui n'est pas un objectif
+### What is not a goal
 
-À écrire une fois pour ne pas y revenir. La **façade Subsonic est gelée** pour
-`v2.0-beta` ; rien de ce plan ne doit en changer le comportement observable.
-Le **client desktop** reste le consommateur privilégié des surfaces récentes :
-le client web n'a pas à rattraper le desktop route pour route.
+To be written once so as not to come back to it. The **Subsonic facade is
+frozen** for `v2.0-beta`; nothing in this plan may change its observable
+behaviour. The **desktop client** stays the privileged consumer of the recent
+surfaces: the web client does not have to catch up with the desktop route for
+route.
 
-## 2. Le câblage : ce qui manque vraiment
+## 2. The wiring: what is really missing
 
-### Onze branchements, zéro ligne de serveur
+### Eleven connections, zero lines of server
 
-Chacun est un écran ou un contrôle, contre une route qui répond déjà. Rien à
-concevoir, rien à migrer, rien à faire relire côté domaine.
+Each is a screen or a control against a route that already answers. Nothing to
+design, nothing to migrate, nothing for the domain to review.
 
-1. **Étoiles** sur la piste, l'album et l'artiste. La route accepte les trois
-   types ; l'écran n'en montre aucun.
-2. **Paroles** dans une vue « en écoute ». La route rend `LyricsList`, donc les
-   formes synchronisée et plate.
-3. **Reprise** : reposer la tête de lecture où elle était. Le signet existe par
-   piste.
-4. **Genres** comme entrée de navigation, avec `GET /songs?genre=` pour la
-   suite.
-5. **Historique** et **écoutes récentes**, tous deux dans `GET /history`.
-6. **Aléatoire** comme action de premier plan — c'est ce que fait un serveur de
-   musique quand on ne sait pas quoi écouter, et la route filtre déjà par genre
-   et par années.
-7. **En écoute maintenant**, dans l'administration : qui écoute quoi, sur quel
-   appareil.
-8. **Progression de scan en direct.** L'écran d'administration lance un scan et
-   ne dit plus rien ensuite. Le flux SSE existe — mais **pas pour
-   `EventSource`** : la route passe par `authenticated()`, qui lit l'en-tête
-   `Authorization`, et `EventSource` n'en envoie aucun. C'est le mur que les
-   tickets de flux contournent pour `<audio src>` ; ici le passage est `fetch`,
-   dont le corps de réponse se lit au fil de l'eau, ce qui met le découpage des
-   trames à la charge du client.
-9. **Sélecteur de bibliothèque.** Le client liste les bibliothèques dans
-   l'administration mais ne cadre jamais la navigation dessus, alors que
-   `GET /libraries/{id}/tracks` et les paramètres `library_id` de `/genres`,
-   `/songs` et `/songs/random` sont faits pour ça. C'est le seul écart où
-   Navidrome est franchement devant sur une fonction que WaveFlow possède.
-10. **Membres d'une bibliothèque** : ajouter, changer de rôle, retirer.
-    **Rectifié le 2026-09-07 : ce point n'est pas qu'un branchement.** Il existe
-    `PUT` et `DELETE` sur `/libraries/{id}/members/{user}`, mais **aucune route
-    ne liste les membres d'une bibliothèque**. Un écran ne pourrait donc pas
-    montrer qui a accès, seulement accorder et retirer à l'aveugle. Il faut un
-    `GET /api/v2/libraries/{id}/members` avant de le dessiner.
-11. **Jetons d'API**, pour qu'un compte puisse en créer sans passer par la CLI.
+1. **Stars** on the track, the album and the artist. The route accepts all
+   three types; the screen shows none.
+2. **Lyrics** in a "now playing" view. The route returns a `LyricsList`, hence
+   both the synchronised and the flat form.
+3. **Resume**: put the playhead back where it was. The bookmark exists per
+   track.
+4. **Genres** as a navigation entry, with `GET /songs?genre=` for what follows.
+5. **History** and **recent plays**, both in `GET /history`.
+6. **Random** as a front-line action — it is what a music server does when you
+   do not know what to listen to, and the route already filters by genre and by
+   years.
+7. **Now playing**, in the administration: who is listening to what, on which
+   device.
+8. **Live scan progress.** The administration screen starts a scan and then says
+   nothing more. The SSE stream exists — but **not for `EventSource`**: the
+   route goes through `authenticated()`, which reads the `Authorization` header,
+   and `EventSource` sends none. That is the wall stream tickets work around for
+   `<audio src>`; here the way through is `fetch`, whose response body is read
+   as it arrives, which puts the framing on the client.
+9. **A library selector.** The client lists the libraries in the administration
+   but never frames the navigation on one, while
+   `GET /libraries/{id}/tracks` and the `library_id` parameters of `/genres`,
+   `/songs` and `/songs/random` are made for it. It is the one gap where
+   Navidrome is frankly ahead on a feature WaveFlow has.
+10. **A library's members**: add, change role, remove.
+    **Corrected on 2026-09-07: this point is not only a connection.** There are
+    `PUT` and `DELETE` on `/libraries/{id}/members/{user}`, but **no route lists
+    a library's members**. A screen could therefore not show who has access,
+    only grant and revoke blind. A `GET /api/v2/libraries/{id}/members` is
+    needed before drawing it.
+11. **API tokens**, so that an account can create one without the CLI.
 
-### Trois branchements pour les surfaces récentes
+### Three connections for the recent surfaces
 
-Plus lourds, parce qu'il faut dessiner l'interaction autant que l'appeler.
+Heavier, because the interaction has to be designed as much as called.
 
-12. **Correction de tags** — `PATCH /tracks/{id}`. Un formulaire par piste, et
-    la question de ce qu'on montre quand une correction diverge du fichier.
-13. **Téléversement** — négociation, fragments, validation. C'est le plus gros :
-    il faut une file, une reprise, une progression, et le drapeau
-    `accepts_uploads` à respecter dans l'écran (une bibliothèque fermée ne doit
-    pas offrir le bouton).
-14. **Canvas** — poser, remplacer, retirer, et le lire dans le lecteur via
-    `canvas-ticket` puis `canvas-stream/{ticket}`. Le discriminant de ticket
-    existe déjà, donc `<video src>` fonctionnera sans en-tête.
+12. **Tag correction** — `PATCH /tracks/{id}`. A form per track, and the
+    question of what is shown when a correction diverges from the file.
+13. **Upload** — negotiation, fragments, commit. This is the biggest: it needs a
+    queue, a resume, progress, and the `accepts_uploads` flag respected in the
+    screen (a closed library must not offer the button).
+14. **Canvas** — place, replace, remove, and read it in the player through
+    `canvas-ticket` then `canvas-stream/{ticket}`. The ticket discriminator
+    already exists, so `<video src>` will work with no header.
 
-### Ce qui demande vraiment du serveur
+### What really asks for the server
 
-15. **Scrobbling externe.** C'est le seul des cinq manques Navidrome dont
-    l'absence se remarque à l'usage quotidien. Il demande un client HTTP
-    sortant, des identifiants par compte et une file de reprise — donc une
-    décision de conception, donc une RFC avant du code.
+15. **External scrobbling.** It is the one of Navidrome's five gaps whose
+    absence is noticed in daily use. It needs an outgoing HTTP client,
+    per-account credentials and a retry queue — hence a design decision, hence
+    an RFC before any code.
 
-    > **La RFC existe depuis le 2026-09-13** :
-    > [RFC-010](rfcs/RFC-010-external-scrobbling.md). Elle tranche le point
-    > d'accroche, la file durable qui fige ce qui a été écouté, ce qu'on ne met
-    > pas en file, les identifiants à deux étages, la frontière d'atomicité —
-    > une file transactionnelle est atomique avec la nôtre, jamais avec un
-    > tiers — et la surface sortante, la première de ce serveur. Révisée le
-    > jour même après revue externe.
+    > **The RFC has existed since 2026-09-13**:
+    > [RFC-010](rfcs/RFC-010-external-scrobbling.md). It settles the attachment
+    > point, the durable queue that freezes what was listened to, what is not
+    > queued, the two tiers of credentials, the atomicity boundary — a
+    > transactional queue is atomic with ours, never with a third party — and
+    > the outgoing surface, this server's first. Revised the same day after an
+    > external review.
     >
-    > **Et elle est implémentée depuis le 2026-09-14.** Les trois destinataires
-    > répondent, la file se purge, et une destination existe en plusieurs
-    > instances nommées par l'opérateur. Ce qu'un client web avait alors à
-    > faire tenait en quatre gestes :
+    > **And it has been implemented since 2026-09-14.** The three recipients
+    > answer, the queue purges, and a destination exists in several instances
+    > named by the operator. What a web client then had to do held in four
+    > gestures:
     >
-    > - lire `GET /api/v2/scrobble-destinations` et proposer les noms, avec la
-    >   raison quand l'un d'eux est indisponible ;
-    > - poser et retirer une autorisation par
-    >   `PUT`/`DELETE /api/v2/scrobble-links/{provider}/{destination}` ;
-    > - ouvrir le parcours Last.fm par
-    >   `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` et envoyer
-    >   le navigateur à l'adresse rendue — le retour se conclut tout seul et
-    >   redirige ;
-    > - montrer l'état de la file, et surtout **demander à la personne** ce
-    >   qu'il faut faire des écoutes incertaines : la décision 13 refuse de
-    >   trancher à sa place, donc une interface qui ne les montre pas laisse ce
-    >   choix inatteignable.
+    > - read `GET /api/v2/scrobble-destinations` and offer the names, with the
+    >   reason when one of them is unavailable;
+    > - place and withdraw an authorization through
+    >   `PUT`/`DELETE /api/v2/scrobble-links/{provider}/{destination}`;
+    > - open the Last.fm journey through
+    >   `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` and send
+    >   the browser to the address returned — the return concludes on its own
+    >   and redirects;
+    > - show the state of the queue, and above all **ask the person** what to do
+    >   with the uncertain listens: decision 13 refuses to settle it in their
+    >   place, so an interface that does not show them leaves that choice
+    >   unreachable.
     >
-    > La section « External scrobbling » du
-    > [guide API](api-v2-guide.md#external-scrobbling) décrit les quatre.
+    > The "External scrobbling" section of the
+    > [API guide](api-v2-guide.md#external-scrobbling) describes all four.
     >
-    > **Les quatre sont faits, le 2026-09-14** par la
-    > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), dans
+    > **The four are done, on 2026-09-14** by
+    > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), in
     > `webapp/src/scrobbling.ts`
-    > et `scrobbling-page.tsx`. L'écran est à `/settings/scrobbling`, et ce
-    > chemin n'est pas un choix : `lastfm_callback` y redirige une fois le lien
-    > conclu, donc aucune autre orthographe ne marche — et tant qu'il n'existait
-    > pas, un parcours Last.fm mené à son terme atterrissait sur la page
-    > « introuvable ».
+    > and `scrobbling-page.tsx`. The screen is at `/settings/scrobbling`, and
+    > that path is not a choice: `lastfm_callback` redirects there once the link
+    > is concluded, so no other spelling works — and as long as it did not
+    > exist, a Last.fm journey carried to its end landed on the "not found"
+    > page.
     >
-    > Deux choses que la liste ci-dessus ne disait pas, et qui se sont révélées
-    > en écrivant l'écran. Un lien vers une instance que l'opérateur a retirée
-    > de sa configuration doit rester affiché : le serveur le rompt sans
-    > l'effacer, parce que la file derrière lui est celle de quelqu'un, et une
-    > liste construite sur les seules instances proposées le ferait disparaître
-    > avec l'explication et le moyen de le retirer. Et une écoute incertaine ne
-    > porte pas de titre — la décision 12 tient l'enveloppe hors de l'API — donc
-    > l'écran la nomme en recoupant `played_at` avec `GET /api/v2/history`, ce
-    > pour quoi ce champ est documenté. Deux écoutes au même instant ne nomment
-    > rien : deviner poserait la question sur la mauvaise.
+    > Two things the list above did not say, and which came out while writing
+    > the screen. A link to an instance the operator has removed from their
+    > configuration must stay displayed: the server breaks it without erasing
+    > it, because the queue behind it is somebody's, and a list built on the
+    > offered instances alone would make it disappear along with the explanation
+    > and the means of removing it. And an uncertain listen carries no title —
+    > decision 12 keeps the envelope out of the API — so the screen names it by
+    > cross-referencing `played_at` with `GET /api/v2/history`, which is what
+    > that field is documented for. Two listens at the same instant name
+    > nothing: guessing would ask the question about the wrong one.
 
-Les quatre autres — playlists intelligentes, import `.m3u`, radio, jukebox — se
-décident avant de se chiffrer. Aucun n'est un prérequis de `v2.0-beta`.
+The other four — smart playlists, `.m3u` import, radio, jukebox — are decided
+before being estimated. None is a prerequisite of `v2.0-beta`.
 
-> **L'import `.m3u` a été décidé et fait le 2026-10-12** (#216) : les deux
-> dialectes, l'encodage deviné sur les octets et non sur l'extension, la
-> résolution par nom de fichier puis par accord des dossiers parents, le crédit
-> `#EXTINF` en dernier recours, et un rapport de ce qui n'a pas été placé. Plus
-> l'export, pour l'aller-retour. **Trois restent** : playlists intelligentes,
-> radio (#217), jukebox.
+> **The `.m3u` import was decided and done on 2026-10-12** (#216): both
+> dialects, the encoding guessed from the bytes and not from the extension,
+> resolution by file name then by agreement on the parent folders, the
+> `#EXTINF` credit as a last resort, and a report of what could not be placed.
+> Plus the export, for the round trip. **Three remain**: smart playlists, radio
+> (#217), jukebox.
 
-### Un seizième, que poser le quinzième a révélé
+### A sixteenth, which posing the fifteenth revealed
 
-16. **Sur téléphone, huit écrans n'ont aucun lien.** Mesuré le 2026-09-14 en
-    posant le quinzième : `.sidebar` passe à `display: none` sous 820 px
-    (`styles.css`), et `Navigation({ mobile: true })` ne garde que les entrées
-    marquées `primary`. Les huit autres — artistes, genres, aléatoire,
-    historique, partages, téléversement, administration, et le scrobbling qui
-    vient de s'ajouter — restent atteignables **en tapant leur adresse**, et par
-    rien d'autre. La suite de tests ne le voit pas : les cas mobiles naviguent
-    par `page.goto`, jamais en cliquant la barre.
+16. **On a phone, eight screens have no link.** Measured on 2026-09-14 while
+    posing the fifteenth: `.sidebar` goes to `display: none` below 820 px
+    (`styles.css`), and `Navigation({ mobile: true })` keeps only the entries
+    marked `primary`. The other eight — artists, genres, random, history,
+    shares, upload, administration, and the scrobbling that has just been
+    added — stay reachable **by typing their address**, and by nothing else. The
+    test suite does not see it: the mobile cases navigate by `page.goto`, never
+    by clicking the bar.
 
-    Ce n'est pas un défaut de la #201, qui n'a fait qu'en révéler un huitième
-    cas : les sept autres sont là depuis le lot A. Et ce n'est pas non plus un
-    argument pour marquer `primary` l'écran du scrobbling — une barre de six
-    emplacements où l'on joue, cherche et met en file n'est pas l'endroit d'un
-    écran de réglages, et l'y pousser rendrait les sept autres encore plus
-    invisibles par contraste. Ce qui manque est un **débordement** : un geste
-    qui ouvre le reste. Sa forme se décide — menu, écran « plus », tiroir — et
-    c'est une décision d'interface, donc elle attend la sienne plutôt que de se
-    glisser dans une PR qui parle d'autre chose.
+    This is not a defect of #201, which only revealed an eighth case: the other
+    seven have been there since batch A. And it is not an argument for marking
+    the scrobbling screen `primary` either — a bar of six slots where one plays,
+    searches and queues is not the place for a settings screen, and pushing it
+    in would make the other seven even more invisible by contrast. What is
+    missing is an **overflow**: a gesture that opens the rest. Its shape is to be
+    decided — a menu, a "more" screen, a drawer — and that is an interface
+    decision, so it waits for its own rather than slipping into a pull request
+    about something else.
 
-    > **Tranché et fait le 2026-09-15**, par la
-    > [#202](https://github.com/InstaZDLL/waveflow-server/pull/202) : un
-    > septième emplacement « Plus » ouvre une feuille listant les huit autres.
-    > Une `<dialog>` native, parce que le piège de focus, la touche Échap et
-    > l'inertie de la page derrière viennent de l'élément et non d'un code à
-    > réécrire à chaque déplacement du balisage.
+    > **Settled and done on 2026-09-15**, by
+    > [#202](https://github.com/InstaZDLL/waveflow-server/pull/202): a seventh
+    > slot, "More", opens a sheet listing the other eight. A native `<dialog>`,
+    > because the focus trap, the Escape key and the inertness of the page
+    > behind come from the element and not from code to be rewritten every time
+    > the markup moves.
     >
-    > **Et la barre débordait déjà.** Son grid disait `repeat(5, 1fr)` depuis le
-    > premier dessin, qui avait cinq entrées `primary` ; une sixième est arrivée
-    > plus tard sans y toucher, donc la barre passait à deux lignes depuis. La
-    > suite ne le voyait pas : elle mesure le débordement horizontal, et une
-    > seconde ligne déborde vers le bas. Le nombre de colonnes est désormais
-    > celui du navigateur, donc il ne peut plus se périmer.
+    > **And the bar was already overflowing.** Its grid said `repeat(5, 1fr)`
+    > from the first drawing, which had five `primary` entries; a sixth arrived
+    > later without touching it, so the bar had been going to two rows since.
+    > The suite did not see it: it measures horizontal overflow, and a second
+    > row overflows downwards. The number of columns is now the browser's, so it
+    > can no longer go stale.
 
-## 3. Le plan de redesign
+## 3. The redesign plan
 
-### Le diagnostic, et pourquoi il n'est pas une affaire de goût
+### The diagnosis, and why it is not a matter of taste
 
-Le grief « ça fait shadcn » est juste sur le rendu et faux sur la cause : il n'y
-a pas de shadcn. Le vocabulaire employé — fond neutre très sombre, un accent
-saturé unique, cartes arrondies, bouton pleine largeur — est celui que tout le
-monde produit, et il se change en CSS.
+The complaint "it looks like shadcn" is right about the look and wrong about the
+cause: there is no shadcn. The vocabulary used — a very dark neutral background,
+a single saturated accent, rounded cards, a full-width button — is the one
+everybody produces, and it can be changed in CSS.
 
-Mais la raison principale pour laquelle l'interface paraît générique est
-**qu'elle est vide**. Une page qui ne porte qu'une grille ressemble à toutes les
-pages qui ne portent qu'une grille. Le redesign est donc d'abord un travail de
-**densité**, ce qui a l'avantage d'être vérifiable au lieu d'être discutable :
-soit une page a un en-tête et des contrôles, soit elle n'en a pas.
+But the main reason the interface looks generic is **that it is empty**. A page
+carrying only a grid looks like every page carrying only a grid. The redesign is
+therefore first a matter of **density**, which has the advantage of being
+checkable instead of debatable: either a page has a header and controls, or it
+does not.
 
-### Les gestes, du plus rentable au moins
+### The moves, from the most profitable to the least
 
-**Des contrôles dans l'en-tête de page.** L'en-tête existe et porte déjà le
-titre et le compte d'éléments ; ce qui lui manque est le tri et le filtre. Il
-n'existait qu'un seul ordre, sans moyen d'en changer, alors que
-`GET /api/v2/albums` accepte `sort` depuis toujours — le vocabulaire d'
-`AlbumOrder`, partagé avec le `type` de Subsonic. C'est le geste qui ferme le
-plus d'écart avec Navidrome, et il ne dépend d'aucune route nouvelle.
+**Controls in the page header.** The header exists and already carries the title
+and the item count; what it lacks is sorting and filtering. There was only one
+order, with no way to change it, while `GET /api/v2/albums` has accepted `sort`
+all along — `AlbumOrder`'s vocabulary, shared with Subsonic's `type`. It is the
+move that closes the most of the gap with Navidrome, and it depends on no new
+route.
 
-Une réserve sur ce vocabulaire, trouvée en le branchant : `random` est
-`ORDER BY RANDOM()` sous un `LIMIT`, donc chaque page est un tirage indépendant
-et une liste paginée répéterait et omettrait des albums. Il n'a pas sa place
-dans un menu de tri ; l'aléatoire du lot B est `GET /songs/random`, qui est autre
-chose. Et quatre des ordres **filtrent** autant qu'ils ordonnent : `frequent`,
-`recent` et `starred` ne répondent que pour les albums qui ont un compte de
-lecture, une dernière écoute ou une étoile, `byYear` que pour ceux qui portent
-une année. Le compte affiché doit donc se lire sur la réponse.
+One reservation about that vocabulary, found while wiring it: `random` is
+`ORDER BY RANDOM()` under a `LIMIT`, so every page is an independent draw and a
+paged list would repeat and omit albums. It has no place in a sort menu; batch
+B's random is `GET /songs/random`, which is something else. And four of the
+orders **filter** as much as they order: `frequent`, `recent` and `starred`
+answer only for albums that have a play count, a last listen or a star, and
+`byYear` only for those carrying a year. The count displayed must therefore be
+read off the response.
 
-**Des affordances sur les pochettes.** Le survol existe — il soulève la pochette
-— mais il n'offre rien : il faut entrer dans un album pour lancer quoi que ce
-soit. Il lui manque « lire » et « mettre en file ». Deux contraintes s'y
-attachent : les boutons ne peuvent pas vivre dans l'ancre, où ils ne seraient ni
-valides ni utilisables au clavier, et le lecteur n'avait pas de `enqueue`.
+**Affordances on the covers.** The hover exists — it lifts the cover — but it
+offers nothing: one has to enter an album to start anything. It lacks "play" and
+"queue". Two constraints attach to that: the buttons cannot live inside the
+anchor, where they would be neither valid nor keyboard-usable, and the player
+had no `enqueue`.
 
-**Un lecteur qui mérite sa barre.** Il porte précédent, pause, suivant, un
-scrubber et deux durées. Il lui manque le volume, l'aléatoire, la répétition,
-l'accès à la file, et le retour vers l'album en cours depuis la pochette.
+**A player that deserves its bar.** It carries previous, pause, next, a scrubber
+and two durations. It lacks volume, shuffle, repeat, access to the queue, and the
+way back to the current album from the cover.
 
-**Les titres sur deux lignes.** `line-clamp: 2`. Aujourd'hui la troncature
-frappe en permanence — « 50thSg発売記念〜モー… », « Armageddon - The 1st Al… »,
-« Ballad of the Mer (Orches… ». Une ligne de CSS pour la moitié du problème.
+**Titles on two lines.** `line-clamp: 2`. Today truncation strikes permanently —
+"50thSg発売記念〜モー…", "Armageddon - The 1st Al…",
+"Ballad of the Mer (Orches…". One line of CSS for half the problem.
 
-**Les deux `<select>` natifs** du thème et de la langue, dans une application
-entièrement stylée à la main. C'est le bord non fini le plus visible de
-l'interface.
+**The two native `<select>`s** for theme and language, in an application styled
+entirely by hand. It is the most visible unfinished edge of the interface.
 
-**La typographie, décidée une fois.** Le serif d'affichage est le seul geste qui
-ne soit pas générique.
+**Typography, decided once.** The display serif is the one move that is not
+generic.
 
-> **Rectifié le 2026-09-06.** « Il est orphelin : il sert sur l'écran de
-> connexion et nulle part ensuite » est faux, et c'est la cinquième affirmation
-> de ce document à ne pas résister à la lecture du code. Le serif porte
-> `h1, h2, h3` — donc **tous les titres de page** —, la marque de la barre
-> latérale, la lettre qui remplace une pochette absente et le code de la page
-> 404. Il était déjà un système ; ce qui le faisait passer pour un accident,
-> c'est qu'il était déclaré **quatre fois, en deux orthographes** — trois des
-> quatre omettaient « Palatino Linotype », donc le repli n'était pas le même
-> selon l'écran regardé.
+> **Corrected on 2026-09-06.** "It is an orphan: it is used on the sign-in
+> screen and nowhere else" is false, and it is this document's fifth claim not
+> to survive a reading of the code. The serif carries `h1, h2, h3` — hence
+> **every page title** —, the sidebar's mark, the letter that stands in for a
+> missing cover and the code on the 404 page. It was already a system; what made
+> it look like an accident is that it was declared **four times, in two
+> spellings** — three of the four omitted "Palatino Linotype", so the fallback
+> was not the same depending on which screen was being looked at.
 >
-> Décision de l'opérateur : en faire un système. Concrètement il ne restait
-> qu'à le nommer, `--font-display` et `--font-body` en tête de `styles.css`,
-> une seule pile chacun. **Cette question est close.**
+> The operator's decision: make it a system. In practice all that was left was
+> to name it, `--font-display` and `--font-body` at the top of `styles.css`, one
+> stack each. **This question is closed.**
 
-**La carte dans la carte**, sur la connexion : deux rectangles arrondis
-emboîtés dont les fonds diffèrent de trois pour cent. C'est le signal
-« template » le plus fort de l'écran.
+**The card inside the card**, on sign-in: two nested rounded rectangles whose
+backgrounds differ by three per cent. It is the strongest "template" signal on
+the screen.
 
-**La composition en largeur.** L'écran de connexion a été dessiné autour de
-1280 px puis centré ; au-delà il flotte dans un vide qui ne travaille pas.
+**Composition across the width.** The sign-in screen was drawn around 1280 px
+and then centred; beyond that it floats in a void that does no work.
 
-~~**La langue de l'écran de connexion.**~~ **Retiré le 2026-09-06 : le défaut
-n'existe pas.** `I18nProvider` lit déjà `navigator.language` quand rien n'est
-stocké (`i18n.tsx:376`), et il enveloppe `RouterProvider`, donc l'écran de
-connexion en bénéficie comme le reste. L'anglais observé pendant le relevé
-venait du navigateur de la session ou d'un `waveflow.locale` déjà écrit — pas
-d'un sélecteur qui vivrait « après la session ». Rien à corriger ici ; la vraie
-question sur les langues est plus bas, et elle porte sur leur nombre.
+~~**The language of the sign-in screen.**~~ **Removed on 2026-09-06: the defect
+does not exist.** `I18nProvider` already reads `navigator.language` when nothing
+is stored (`i18n.tsx:376`), and it wraps `RouterProvider`, so the sign-in screen
+benefits like the rest. The English observed during the survey came from the
+session's browser or from a `waveflow.locale` already written — not from a
+selector living "after the session". Nothing to correct here; the real question
+about languages is further down, and it is about how many.
 
-**Le vide de la barre latérale**, entre la navigation ancrée en haut et les
-réglages ancrés en bas.
+**The emptiness of the sidebar**, between the navigation anchored at the top and
+the settings anchored at the bottom.
 
-### Ce qu'il ne faut pas faire
+### What must not be done
 
-Ne pas introduire de bibliothèque d'interface pour régler un problème de
-vocabulaire. Trois dépendances runtime et 1 327 lignes de CSS sont un actif :
-la porte automatisée du client — Biome, TypeScript, Vitest, Playwright et les
-règles WCAG A/AA via `@axe-core` — tient parce que la surface est petite.
+Do not introduce a UI library to solve a vocabulary problem. Three runtime
+dependencies and 1,327 lines of CSS are an asset: the client's automated gate —
+Biome, TypeScript, Vitest, Playwright and the WCAG A/AA rules through
+`@axe-core` — holds because the surface is small.
 
-## Séquence proposée
+## The proposed sequence
 
-Quatre lots, ordonnés pour que chacun soit publiable seul.
+Four batches, ordered so that each can ship alone.
 
-**Lot A — la densité.** Contrôles de tri et de filtre dans l'en-tête,
-`line-clamp`, actions de survol, selects stylés, le vide de la barre latérale.
-Zéro route nouvelle. C'est le lot qui change le plus la perception pour le moins
-de risque.
+**Batch A — density.** Sort and filter controls in the header, `line-clamp`,
+hover actions, styled selects, the emptiness of the sidebar. Zero new routes. It
+is the batch that changes perception most for the least risk.
 
-> **État au 2026-09-06.** Tout le lot est écrit sauf le dernier point. Le tri
-> passe par le serveur, le filtre reste dans le navigateur — `collect` tient
-> déjà toute la liste, et un aller-retour par frappe n'achèterait rien. Le
-> `enqueue` que le survol réclamait a été ajouté au lecteur au passage.
-> **Le vide de la barre latérale n'a pas été traité** : tout ce qui le
-> remplirait est soit du contenu à inventer, soit du lot B (genres, écoutes
-> récentes). Il rejoint les questions ouvertes plus bas plutôt que d'être
-> tranché en passant. La langue au premier chargement a disparu de la liste :
-> voir le geste rayé, elle était déjà faite.
+> **State on 2026-09-06.** The whole batch is written except the last point.
+> Sorting goes through the server, filtering stays in the browser — `collect`
+> already holds the whole list, and a round trip per keystroke would buy
+> nothing. The `enqueue` the hover demanded was added to the player along the
+> way. **The emptiness of the sidebar was not addressed**: everything that would
+> fill it is either content to invent or batch B (genres, recent plays). It
+> joins the open questions below rather than being settled in passing. The
+> language on first load has left the list: see the struck-out move, it was
+> already done.
 
-**Lot B — le branchement du confort.** Étoiles, paroles, reprise, genres,
-historique, aléatoire, sélecteur de bibliothèque. Onze routes qui existent, un
-écran chacune ou presque. C'est ce qui ferme l'écart Navidrome.
+**Batch B — wiring up the comforts.** Stars, lyrics, resume, genres, history,
+random, library selector. Eleven routes that exist, a screen each or nearly. It
+is what closes the Navidrome gap.
 
-> **État au 2026-09-06.** Six des sept sont branchés : notes cinq étoiles sur le
-> tableau de pistes, genres (liste et page par genre), écoutes récentes,
-> aléatoire, paroles et positions enregistrées dans une vue « en écoute ».
-> **Le sélecteur de bibliothèque était laissé de côté volontairement** — c'était
-> la première des questions ouvertes ci-dessous. **Tranchée le 2026-09-07 : une
-> bibliothèque active à la fois.** Il reste donc à écrire, et il rejoint le
-> lot C plutôt que de rouvrir le lot B.
+> **State on 2026-09-06.** Six of the seven are wired: five-star ratings on the
+> track table, genres (the list and a page per genre), recent plays, random,
+> lyrics and saved positions in a "now playing" view. **The library selector
+> was deliberately left aside** — it was the first of the open questions below.
+> **Settled on 2026-09-07: one active library at a time.** It therefore remains
+> to be written, and it joins batch C rather than reopening batch B.
 >
-> Trois choses apprises en branchant. `GET /songs?genre=` prend le genre en
-> forme d'affichage et le canonicalise avant de comparer, donc « Hip-Hop » et
-> « hip hop » sont un seul genre côté serveur. `GET /history` répond des
-> **écoutes** et non des pistes — `track_id`, `submission`, `played_at` — donc
-> un écran qui veut des titres les résout lui-même. Et le favori, jusque-là
-> rendu par une étoile, est devenu un cœur : cinq étoiles de note à côté d'une
-> étoile de favori auraient fait un seul contrôle de deux questions.
+> Three things learned while wiring. `GET /songs?genre=` takes the genre in its
+> display form and canonicalises it before comparing, so "Hip-Hop" and "hip hop"
+> are one genre on the server. `GET /history` answers **listens** and not
+> tracks — `track_id`, `submission`, `played_at` — so a screen that wants titles
+> resolves them itself. And the favourite, until then rendered with a star,
+> became a heart: five rating stars beside a favourite star would have made one
+> control asking two questions.
 
-**Lot C — le lecteur et l'exploitation.** Volume, aléatoire, répétition, file
-accessible, retour vers l'album. Puis côté administration : progression de scan
-en direct, en écoute maintenant, membres, jetons. **Plus le sélecteur de
-bibliothèque**, reliquat du lot B, désormais décidé et donc écrivable : une
-bibliothèque active, masquée s'il n'y en a qu'une, mémorisée d'une visite à
-l'autre.
+**Batch C — the player and operation.** Volume, shuffle, repeat, an accessible
+queue, the way back to the album. Then on the administration side: live scan
+progress, now playing, members, tokens. **Plus the library selector**, left over
+from batch B, now decided and therefore writable: one active library, hidden if
+there is only one, remembered from one visit to the next.
 
-**Lot D — les surfaces récentes.** Correction de tags, puis téléversement, puis
-canvas. Dans cet ordre : le téléversement est une machine, et le canvas suppose
-que le lecteur du lot C existe.
+**Batch D — the recent surfaces.** Tag correction, then upload, then canvas. In
+that order: the upload is a machine, and the canvas assumes batch C's player
+exists.
 
-> **Correction de tags livrée le 2026-09-11.** L'éditeur vit à
-> `/tracks/{id}/edit`, atteint depuis chaque ligne de piste par un propriétaire
-> ou un gestionnaire de la bibliothèque. Il montre la provenance des sept champs
-> scalaires, propose le rétablissement des deux listes sans aperçu, et
-> n'envoie que ce que le formulaire a changé : le calcul du corps est une
-> fonction pure et testée, parce que c'est là que se loge la perte de données.
-> Retaper la valeur du fichier retire la correction au lieu de l'épingler contre
-> un futur retag.
+> **Tag correction delivered on 2026-09-11.** The editor lives at
+> `/tracks/{id}/edit`, reached from every track row by an owner or a manager of
+> the library. It shows the provenance of the seven scalar fields, offers to
+> restore the two lists with no preview, and sends only what the form changed:
+> computing the body is a pure, tested function, because that is where data loss
+> hides. Retyping the file's value removes the correction instead of pinning it
+> against a future retag.
 
-> **Téléversement livré le 2026-09-11.** La page `/upload` n'apparaît que dans
-> une bibliothèque qui accepte les fichiers, pour un propriétaire ou un
-> gestionnaire — ce qui a demandé d'exposer `accepts_uploads` sur
-> `GET /api/v2/libraries`, jusque-là lu par le seul service de téléversement.
-> Chaque fichier est identifié dans le navigateur par un BLAKE3 calculé dans un
-> Web Worker avec `@noble/hashes` : le serveur recalcule cette empreinte à la
-> validation et refuse toute autre. Un fragment dont l'accusé se perd est repris
-> depuis l'état que le serveur relit, jamais depuis une supposition du client.
-> Reste le canvas.
+> **Upload delivered on 2026-09-11.** The `/upload` page appears only in a
+> library that accepts files, for an owner or a manager — which required
+> exposing `accepts_uploads` on `GET /api/v2/libraries`, until then read by the
+> upload service alone. Every file is identified in the browser by a BLAKE3
+> computed in a Web Worker with `@noble/hashes`: the server recomputes that hash
+> at the commit and refuses any other. A fragment whose acknowledgement is lost
+> is resumed from the state the server reads back, never from a guess by the
+> client. The canvas remains.
 
-> **Canvas livré le 2026-09-11, et le lot D est clos.** Un propriétaire ou un
-> gestionnaire pose, remplace et retire la boucle d'une piste depuis son
-> éditeur, là où l'opérateur a ouvert la bibliothèque aux canvas — ce qui a
-> demandé d'exposer `accepts_canvas` sur `GET /api/v2/libraries`, porte
-> distincte de celle des fichiers. La page En écoute la joue par-dessus la
-> pochette comme le fait le desktop : muette, en boucle, masquée aux
-> technologies d'assistance, absente quand l'utilisateur a demandé moins de
-> mouvement, et la pochette reste visible si le navigateur ne sait pas lire la
-> vidéo. Le client apprend qu'une piste porte un canvas en demandant son
-> ticket : aucun champ de la piste ne le dit, et le 404 du ticket y répond déjà.
+> **Canvas delivered on 2026-09-11, and batch D is closed.** An owner or a
+> manager places, replaces and removes a track's loop from its editor, where the
+> operator has opened the library to canvases — which required exposing
+> `accepts_canvas` on `GET /api/v2/libraries`, a door distinct from the files'.
+> The Now Playing page plays it over the cover as the desktop does: muted,
+> looping, hidden from assistive technology, absent when the user has asked for
+> less motion, and the cover stays visible if the browser cannot read the video.
+> The client learns that a track carries a canvas by asking for its ticket: no
+> field on the track says so, and the ticket's 404 already answers it.
 
-> **Rectifié le 2026-09-07.** Cette ligne disait « la correction est un
-> formulaire ». Elle ne l'est pas : `GET /tracks/{id}` n'expose aucune
-> provenance et `PATCH /tracks/{id}` efface les corrections qu'on ne lui renvoie
-> pas, ce qu'un client ne peut pas faire puisqu'il ne peut pas les lire. Le
-> premier item du lot D demande donc **du serveur avant de l'écran** : la route
-> de lecture `/tracks/{id}/overrides` et la correction du `PATCH` existant en
-> patch partiel, décrites plus haut. C'est la sixième affirmation de ce document
-> corrigée en la mettant en œuvre, et la seule dont l'enjeu était une perte de
-> données silencieuse.
+> **Corrected on 2026-09-07.** This line said "the correction is a form". It is
+> not: `GET /tracks/{id}` exposes no provenance and `PATCH /tracks/{id}` erases
+> the corrections it is not sent back, which a client cannot do since it cannot
+> read them. Batch D's first item therefore asks for **the server before the
+> screen**: the read route `/tracks/{id}/overrides` and the fixing of the
+> existing `PATCH` into a partial patch, both described above. It is this
+> document's sixth claim corrected by implementing it, and the only one whose
+> stake was a silent data loss.
 
-Le scrobbling externe ne rentre dans aucun lot. Il demande une RFC.
+External scrobbling fits in no batch. It needs an RFC.
 
-> **Il l'a eue, et il est clos — 2026-09-14.** [RFC-010](rfcs/RFC-010-external-scrobbling.md),
-> écrite le 2026-09-13 et implémentée le lendemain côté serveur, puis côté
-> écran le même jour. Il n'a donc jamais rejoint un lot : il a suivi son propre
-> chemin, de la décision au bouton.
+> **It got one, and it is closed — 2026-09-14.**
+> [RFC-010](rfcs/RFC-010-external-scrobbling.md), written on 2026-09-13 and
+> implemented the next day on the server, then on the screen the same day. So it
+> never joined a batch: it followed its own path, from the decision to the
+> button.
 
-## Le contrat des corrections de tags
+## The contract for tag corrections
 
-> Décidé le 2026-09-07, avant le lot D. Ceci n'est pas une règle d'écran : les
-> trois notions ci-dessous vont se retrouver dans l'API, la recherche, le tri,
-> les albums, les artistes et peut-être la synchronisation.
+> Decided on 2026-09-07, before batch D. This is not a screen rule: the three
+> notions below will turn up in the API, in search, in sorting, in albums, in
+> artists and perhaps in synchronization.
 
-### Trois valeurs, et une seule sort du catalogue
+### Three values, and only one leaves the catalogue
 
 ```
-source     = ce que contient le fichier          (colonnes de `track`)
-override   = la correction WaveFlow, ou absente  (ligne de `track_override`)
+source     = what the file contains              (`track` columns)
+override   = the WaveFlow correction, or absent  (a `track_override` row)
 effective  = override ?? source
 ```
 
-> **Rectifié le 2026-09-10, en écrivant la route de lecture.** Ce schéma vaut
-> pour **sept** des neuf champs, pas pour les neuf. Les artistes et les genres
-> ne sont pas des colonnes : une correction sur l'un ou l'autre est
-> **matérialisée** dans `track_participant`, `track_genre` et les chaînes
-> `*_display` — `apply_track_override_lists` fait `DELETE FROM
-> track_participant` puis réinsère —, parce que ces lignes alimentent toutes
-> les projections et l'index de recherche. **Une fois la correction posée, la
-> valeur du fichier n'est donc plus en base**, seulement dans le fichier. Les
-> sept champs scalaires survivent parce que la projection les fusionne par
-> `COALESCE` au lieu de les écraser.
+> **Corrected on 2026-09-10, while writing the read route.** That diagram holds
+> for **seven** of the nine fields, not for nine. Artists and genres are not
+> columns: a correction on either is **materialised** into `track_participant`,
+> `track_genre` and the `*_display` strings — `apply_track_override_lists` does
+> `DELETE FROM track_participant` and then reinserts — because those rows feed
+> every projection and the search index. **Once the correction is placed, the
+> file's value is therefore no longer in the database**, only in the file. The
+> seven scalar fields survive because the projection merges them with
+> `COALESCE` instead of overwriting them.
 >
-> Conséquence pour l'éditeur : il montre la provenance des sept, et propose sur
-> les deux autres un rétablissement **sans aperçu**. Rétablir relit le fichier,
-> ce que `set_track_metadata` fait déjà ; ce qui n'est pas faisable à bon
-> marché, c'est de l'afficher d'avance.
+> The consequence for the editor: it shows the provenance of the seven, and for
+> the other two offers a restore **with no preview**. Restoring re-reads the
+> file, which `set_track_metadata` already does; what is not cheap is displaying
+> it in advance.
 
-Le serveur travaille déjà ainsi et le dit : la migration
-`20260826010000_track_override.sql` écrit « *every column is nullable and NULL
-means "no correction here, use what the file said"* », et `song_select!` fait
-`COALESCE(ovr.title, t.title)`. **Tout le catalogue consomme `effective`.**
-L'écran ordinaire affiche donc `Around the World` et rien d'autre — pas de
-double ligne, pas de mention de provenance dans une grille.
+The server already works this way and says so: the migration
+`20260826010000_track_override.sql` writes "*every column is nullable and NULL
+means "no correction here, use what the file said"*", and `song_select!` does
+`COALESCE(ovr.title, t.title)`. **The whole catalogue consumes `effective`.**
+The ordinary screen therefore shows `Around the World` and nothing else — no
+double line, no mention of provenance in a grid.
 
-Le vocabulaire compte : ce n'est pas un *tag modifié*, puisque le fichier n'est
-pas touché. C'est un **override**, une **valeur WaveFlow**, une **correction**.
+The vocabulary matters: this is not a *modified tag*, since the file is not
+touched. It is an **override**, a **WaveFlow value**, a **correction**.
 
-### Ce qui manque pour construire l'éditeur
+### What is missing to build the editor
 
-Deux défauts, trouvés en préparant le lot D, et le second est le grave.
+Two defects, found while preparing batch D, and the second is the serious one.
 
-**La provenance n'est exposée nulle part.** `GET /api/v2/tracks/{id}` rend un
-`SongItem`, donc la valeur effective, et rien ne dit si un titre vient du
-fichier ou d'une correction. Un éditeur ne peut pas montrer ce qu'il propose de
-rétablir.
+**Provenance is exposed nowhere.** `GET /api/v2/tracks/{id}` returns a
+`SongItem`, hence the effective value, and nothing says whether a title comes
+from the file or from a correction. An editor cannot show what it offers to
+restore.
 
-**`PATCH /api/v2/tracks/{id}` remplace le jeu entier.** Un champ omis n'est pas
-« laissé tel quel » : il est *effacé*, et un corps vide supprime la ligne. Comme
-le client ne peut pas lire les corrections existantes, corriger le seul titre
-efface silencieusement les autres. Ce n'est pas une gêne d'ergonomie, c'est une
-perte de données sans message.
+**`PATCH /api/v2/tracks/{id}` replaces the whole set.** An omitted field is not
+"left as it was": it is *erased*, and an empty body deletes the row. Since the
+client cannot read the existing corrections, correcting the title alone silently
+erases the others. That is not an ergonomic annoyance, it is a data loss with no
+message.
 
-### La forme retenue
+### The shape chosen
 
-Une route de lecture nouvelle, et la route d'écriture existante corrigée.
+A new read route, and the existing write route corrected.
 
 ```
-GET   /api/v2/tracks/{id}            → SongItem, valeur effective, inchangé
-GET   /api/v2/tracks/{id}/overrides  → { source: {…}, overrides: {…} }   ✅ écrite
-PATCH /api/v2/tracks/{id}            → patch partiel à trois états        ⏳ bloquée
+GET   /api/v2/tracks/{id}            → SongItem, the effective value, unchanged
+GET   /api/v2/tracks/{id}/overrides  → { source: {…}, overrides: {…} }   ✅ written
+PATCH /api/v2/tracks/{id}            → a three-state partial patch        ⏳ blocked
 ```
 
-La route de lecture est écrite : elle n'a aucun consommateur à ménager et le
-prérequis d'audit ne portait que sur le **changement de sémantique**. Le
-`PATCH` attend toujours l'audit du client desktop.
+The read route is written: it has no consumer to spare and the audit
+prerequisite applied only to the **change of semantics**. The `PATCH` is still
+waiting on the desktop client's audit.
 
-`overrides` doit être la **ligne réelle**, pas une seconde projection
-`COALESCE` : c'est précisément la différence que l'éditeur affiche. `effective`
-n'a pas à y figurer, le client tient déjà le `SongItem`.
+`overrides` must be the **real row**, not a second `COALESCE` projection: that
+is precisely the difference the editor displays. `effective` does not have to
+appear there, the client already holds the `SongItem`.
 
-Le patch a trois états, et c'est là tout l'intérêt :
+The patch has three states, and that is the whole point:
 
-| Le corps porte | Effet |
+| The body carries | Effect |
 | --- | --- |
-| rien pour ce champ | la correction ne bouge pas |
-| une valeur | crée ou remplace la correction |
-| `null` | supprime la correction ; `effective` redevient la valeur du fichier |
+| nothing for that field | the correction does not move |
+| a value | creates or replaces the correction |
+| `null` | removes the correction; `effective` becomes the file's value again |
 
-« Rétablir la valeur du fichier » est donc `{"title": null}`, et non un verbe
-séparé.
+"Restore the file's value" is therefore `{"title": null}`, and not a separate
+verb.
 
-**Pourquoi corriger la route plutôt que d'en ajouter une seconde.** Un
-`PATCH /tracks/{id}/overrides` à côté d'un `PATCH /tracks/{id}` laisserait ce
-dépôt avec **deux API d'écriture pour la même chose, pour toujours**, au seul
-motif que la première avait une mauvaise sémantique — décidée avant même que la
-bêta sorte, et corrigeable tant qu'elle n'est pas gelée. La lecture est un
-besoin nouveau et mérite sa route ; l'écriture n'en est pas un.
+**Why fix the route rather than add a second one.** A
+`PATCH /tracks/{id}/overrides` beside a `PATCH /tracks/{id}` would leave this
+repository with **two write APIs for the same thing, for ever**, for the sole
+reason that the first had bad semantics — decided before the beta was even out,
+and fixable as long as it is not frozen. Reading is a new need and deserves its
+route; writing is not.
 
-**Pourquoi pas les autres formes de provenance.** `?with_source=true` donnerait
-deux formes de réponse à une même route pour un besoin qui n'existe que dans
-l'éditeur. Des champs `source_*` sur `SongItem` alourdiraient le type central du
-catalogue pour une information rarement lue — et `SongItem` alimente
-`song_node()` de la façade Subsonic, gelée pour `v2.0-beta`.
+**Why not the other forms of provenance.** `?with_source=true` would give two
+response shapes to one route for a need that exists only in the editor.
+`source_*` fields on `SongItem` would weigh down the catalogue's central type
+for information that is rarely read — and `SongItem` feeds the Subsonic facade's
+`song_node()`, frozen for `v2.0-beta`.
 
-### Deux prérequis avant d'écrire une ligne
+### Two prerequisites before writing a line
 
-**Auditer le client desktop.** Il vit dans
-[`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow), hors de ce dépôt,
-et c'est le seul consommateur possible de la sémantique actuelle : le client web
-n'a que deux `PATCH`, sur les playlists et sur les comptes, et rien dans `docs/`
-ne déclare `/api/v2` gelé — le gel couvre la façade Subsonic et les contrats de
-synchronisation de RFC-003, dont cette route ne fait pas partie. S'il dépend du
-remplacement intégral, il se migre en même temps ou le contrat se versionne.
-Changer la sémantique sans avoir regardé serait échanger une perte de données
-silencieuse contre une autre.
+**Audit the desktop client.** It lives in
+[`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow), outside this
+repository, and it is the only possible consumer of the current semantics: the
+web client has only two `PATCH`es, on playlists and on accounts, and nothing in
+`docs/` declares `/api/v2` frozen — the freeze covers the Subsonic facade and
+RFC-003's synchronization contracts, which this route is not part of. If it
+depends on whole-set replacement, it is migrated at the same time or the contract
+is versioned. Changing the semantics without having looked would be trading one
+silent data loss for another.
 
-**`Option<T>` ne sait pas dire les trois états.** `TrackMetadataPatch` déclare
-`pub title: Option<String>` en serde nu, et un champ **absent** et un champ
-**`null`** s'y désérialisent tous deux en `None` : le tri-état n'est pas
-exprimable dans cette forme. Il faut `Option<Option<T>>` avec un
-`deserialize_with` qui distingue les deux. À défaut, on écrit le contrat, on
-teste « absent ne touche à rien », et `null` se comporte à l'identique sans
-qu'un test le remarque.
+**`Option<T>` cannot say the three states.** `TrackMetadataPatch` declares
+`pub title: Option<String>` in bare serde, and an **absent** field and a
+**`null`** field both deserialise to `None` there: the tri-state is not
+expressible in that shape. `Option<Option<T>>` with a `deserialize_with` that
+tells the two apart is needed. Failing that, one writes the contract, tests that
+"absent touches nothing", and `null` behaves identically with no test noticing.
 
-## Rappel de périmètre
+## A reminder of scope
 
-Rien de ce plan ne touche la façade Subsonic, gelée pour `v2.0-beta`, ni ne
-précède le seul verrou restant de cette version : rejouer Symfonium, Feishin et
-DSub contre le modèle courant, comme Juliet l'a été le 2026-08-31. Le client web
-n'est pas sur ce chemin critique.
+Nothing in this plan touches the Subsonic facade, frozen for `v2.0-beta`, nor
+does it come before this version's one remaining lock: replaying Symfonium,
+Feishin and DSub against the current model, as Juliet was on 2026-08-31. The web
+client is not on that critical path.
 
-## Ce qui reste ouvert
+## What is still open
 
-- ~~**Le sélecteur de bibliothèque.**~~ **Tranché le 2026-09-07 : une
-  bibliothèque active à la fois.** Le contrat, en une phrase : *l'interface web
-  travaille toujours dans une bibliothèque ; en changer change le périmètre du
-  catalogue, cela ne fusionne pas les catalogues.* Pas d'option « toutes les
-  bibliothèques » en v2.
+- ~~**The library selector.**~~ **Settled on 2026-09-07: one active library at a
+  time.** The contract, in one sentence: *the web interface always works inside
+  one library; changing it changes the catalogue's scope, it does not merge
+  catalogues.* No "all libraries" option in v2.
 
-  Ce n'est pas l'écran du filtre qui coûtait, c'est la sémantique derrière :
-  deux bibliothèques portant le même disque posent aussitôt quatre questions —
-  un album affiché deux fois, ou un album à deux provenances, ou deux éditions,
-  et laquelle fournit la pochette, l'année, les tags. C'est le problème
-  d'identité que `src/pid.rs` résout pour les fichiers, reposé à l'étage de la
-  présentation. Le client desktop peut unifier ses sources ; l'interface du
-  serveur est la vue d'**un** catalogue serveur, et n'a pas à reproduire le
-  modèle de présentation du client.
+  It was not the filter's screen that was costly, it was the semantics behind
+  it: two libraries carrying the same record immediately pose four questions —
+  an album shown twice, or one album with two provenances, or two editions, and
+  which supplies the cover, the year, the tags. It is the identity problem
+  `src/pid.rs` solves for files, posed again at the presentation layer. The
+  desktop client may unify its sources; the server's interface is the view of
+  **one** server catalogue, and does not have to reproduce the client's
+  presentation model.
 
-  Deux détails à respecter : masquer le sélecteur quand une seule bibliothèque
-  est accessible, et mémoriser la dernière choisie.
+  Two details to respect: hide the selector when only one library is reachable,
+  and remember the last one chosen.
 
-- ~~**Ce qu'on montre d'une correction de tags.**~~ **Tranché le 2026-09-07 :
-  valeur effective partout, provenance dans le seul éditeur.** Voir le contrat
-  ci-dessous — la question s'est révélée être une évolution d'API et non une
-  règle d'interface.
-- ~~**Le sort du serif.**~~ **Tranché le 2026-09-06 : système.** Et la question
-  reposait sur une prémisse fausse — voir le geste rectifié plus haut. Il ne
-  restait qu'à nommer les deux piles au lieu de les répéter.
-- ~~**Le vide de la barre latérale.**~~ **Refermé par le lot B**, sans avoir été
-  traité pour lui-même : les quatre entrées de navigation ajoutées — genres, en
-  écoute, aléatoire, écoutes récentes — occupent l'espace que le lot A avait
-  laissé vide. C'était le bon ordre : le vide voulait du contenu, et le contenu
-  a fini par exister.
-- **CodeQL sur `tests/**`.** **Tranché le 2026-09-07 : on garde l'analyse.**
-  Le workflow porte déjà un `config:` en ligne, mais la configuration CodeQL ne
-  croise pas chemin et règle : on peut ignorer `tests/**` pour *toutes* les
-  règles, ou filtrer une règle sur *tous* les chemins — l'intersection « cette
-  règle, dans les tests seulement » n'est pas exprimable. Couper `tests/**`
-  ferait perdre le signal sur les aides de test, les fixtures et le code de
-  montage réutilisable, ce qui est bien plus large que le faux positif visé. On
-  écarte donc les occurrences connues à la main. Si cela devenait trente
-  alertes par semaine, la question se rouvrirait.
-- ~~**Les langues.**~~ **Tranché le 2026-09-07 : rien maintenant.** Deux langues
-  × 171 clés ne justifient pas une refonte. La règle est posée d'avance :
-  **l'ajout d'une troisième langue déclenche la conversion des dictionnaires en
-  modules chargés à la demande**, la langue active plus l'anglais en repli.
-  Optimiser aujourd'hui pour trente-quatre langues qui n'existent pas serait
-  prématuré ; continuer avec un `Record` statique le jour où elles existent
-  serait une faute.
+- ~~**What is shown of a tag correction.**~~ **Settled on 2026-09-07: the
+  effective value everywhere, provenance in the editor alone.** See the contract
+  below — the question turned out to be an API evolution and not an interface
+  rule.
+- ~~**The fate of the serif.**~~ **Settled on 2026-09-06: a system.** And the
+  question rested on a false premise — see the corrected move above. All that
+  was left was to name the two stacks instead of repeating them.
+- ~~**The emptiness of the sidebar.**~~ **Closed by batch B**, without having
+  been addressed for itself: the four navigation entries added — genres, now
+  playing, random, recent plays — occupy the space batch A had left empty. That
+  was the right order: the emptiness wanted content, and the content ended up
+  existing.
+- **CodeQL on `tests/**`.** **Settled on 2026-09-07: the analysis stays.** The
+  workflow already carries an inline `config:`, but CodeQL's configuration does
+  not cross path and rule: one can ignore `tests/**` for *all* rules, or filter
+  a rule over *all* paths — the intersection "this rule, in the tests only" is
+  not expressible. Cutting `tests/**` would lose the signal on test helpers,
+  fixtures and reusable setup code, which is far wider than the false positive
+  aimed at. The known occurrences are therefore dismissed by hand. If this ever
+  became thirty alerts a week, the question would reopen.
+- ~~**Languages.**~~ **Settled on 2026-09-07: nothing for now.** Two languages ×
+  171 keys do not justify a rework. The rule is laid down in advance: **adding a
+  third language triggers converting the dictionaries into modules loaded on
+  demand**, the active language plus English as a fallback. Optimising today for
+  thirty-four languages that do not exist would be premature; carrying on with a
+  static `Record` the day they exist would be a mistake.

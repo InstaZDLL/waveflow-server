@@ -1,332 +1,323 @@
-# RFC-007 — Flux d'événements de bibliothèque
+# RFC-007 — The library event stream
 
-- **Statut** : Proposed
-- **Implémentée par** : [#145](https://github.com/InstaZDLL/waveflow-server/pull/145)
-  (le flux et son filigrane), [#152](https://github.com/InstaZDLL/waveflow-server/pull/152)
-  (l'appareil d'origine), [#159](https://github.com/InstaZDLL/waveflow-server/pull/159)
-  (les événements d'album, décision 6),
-  [#166](https://github.com/InstaZDLL/waveflow-server/pull/166) (la rétention,
-  décision 7),
-  [#167](https://github.com/InstaZDLL/waveflow-server/pull/167) (l'acquittement,
-  décision 8). Le champ *Statut* ci-dessus ne bascule jamais dans ce
-  projet : c'est cette ligne qui dit ce qui tourne, et elle se vérifie — une PR
-  se lit, un mot de statut ne s'audite pas.
-- **Date** : 2026-08-25
-- **Auteurs** : projet WaveFlow
-- **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
+- **Status**: Proposed
+- **Implemented by**: [#145](https://github.com/InstaZDLL/waveflow-server/pull/145)
+  (the stream and its watermark), [#152](https://github.com/InstaZDLL/waveflow-server/pull/152)
+  (the originating device), [#159](https://github.com/InstaZDLL/waveflow-server/pull/159)
+  (album events, decision 6),
+  [#166](https://github.com/InstaZDLL/waveflow-server/pull/166) (retention,
+  decision 7),
+  [#167](https://github.com/InstaZDLL/waveflow-server/pull/167) (the
+  acknowledgement, decision 8). The *Status* field above never flips in this
+  project: this line is the one that says what is running, and it can be
+  checked — a pull request can be read, a status word cannot be audited.
+- **Date**: 2026-08-25
+- **Authors**: the WaveFlow project
+- **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)
-- **Préalable de** : l'écriture des métadonnées d'une piste, la réception d'un
-  fichier (RFC-008), et l'asset vidéo par piste
+- **Prerequisite of**: writing a track's metadata, receiving a file (RFC-008),
+  and the per-track video asset
 
-## Problème
+## Problem
 
-WaveFlow Server tient deux états, et un seul sait se raconter.
+WaveFlow Server holds two kinds of state, and only one of them can tell its own
+story.
 
-L'**état utilisateur** — favoris, notes, écoutes, file, playlists, partages,
-signets — converge par le journal de synchronisation décrit au RFC-003. Sept
-types d'entité, contraints par `CHECK` sur `sync_event` parce que le
-vocabulaire est un contrat et non du texte libre. Un client suit son curseur et
-sait ce qu'il a manqué.
+**User state** — favourites, ratings, plays, queue, playlists, shares,
+bookmarks — converges through the synchronization journal described in RFC-003.
+Seven entity types, `CHECK`-constrained on `sync_event` because the vocabulary
+is a contract and not free text. A client follows its cursor and knows what it
+missed.
 
-L'**état bibliothèque** — pistes, albums, artistes, pochettes — n'a aucun flux.
-Le constat est vérifiable plutôt qu'argumenté : `scanner.rs` et `catalog.rs` ne
-contiennent **aucun appel au journal**. Le seul flux voisin,
-`/api/v2/scans/{id}/events`, transporte la *progression* d'un job de scan — un
-instantané, des ticks, puis il meurt avec le job. Il dit qu'un scan avance ; il
-ne dit jamais qu'une piste a changé.
+**Library state** — tracks, albums, artists, artwork — has no stream at all.
+The observation is checkable rather than argued: `scanner.rs` and `catalog.rs`
+contain **no call to the journal**. The one neighbouring stream,
+`/api/v2/scans/{id}/events`, carries the *progress* of a scan job — a snapshot,
+some ticks, then it dies with the job. It says a scan is advancing; it never
+says a track has changed.
 
-Conséquence pour un client : la seule manière d'apprendre qu'un catalogue a
-bougé est de le resonder. Un client qui compare des compteurs attrape une piste
-ajoutée ou retirée et rate tout le reste — un titre retagué, une année corrigée,
-une pochette remplacée. C'est un contournement, et il est aveugle par
-construction.
+The consequence for a client: the only way to learn that a catalogue has moved
+is to re-probe it. A client comparing counters catches a track added or removed
+and misses everything else — a retagged title, a corrected year, a replaced
+cover. That is a workaround, and it is blind by construction.
 
-Trois demandes en attente butent toutes sur ce manque : écrire les métadonnées
-d'une piste, recevoir un fichier, et attacher un asset vidéo. Aucune n'a
-d'endroit où annoncer ce qu'elle a fait.
+Three pending requests all run into this gap: writing a track's metadata,
+receiving a file, and attaching a video asset. None of them has anywhere to
+announce what it did.
 
-## Décision 1 — deux flux, jamais un
+## Decision 1 — two streams, never one
 
-L'état bibliothèque reçoit sa propre table et sa propre séquence. Il ne rejoint
-pas `sync_event`.
+Library state gets its own table and its own sequence. It does not join
+`sync_event`.
 
-La raison est mécanique et non esthétique : `sync_event.cursor` est un
-`INTEGER PRIMARY KEY AUTOINCREMENT`, c'est-à-dire **une séquence unique et
-globale**, filtrée par utilisateur à la lecture. Un flux de bibliothèque qui la
-partagerait ferait avancer, à chaque rescan, la séquence même contre laquelle
-tous les curseurs de favoris se mesurent. Un scan de cinquante mille pistes
-déplacerait le curseur de synchronisation de chaque compte du serveur.
+The reason is mechanical rather than aesthetic: `sync_event.cursor` is an
+`INTEGER PRIMARY KEY AUTOINCREMENT`, that is **one unique, global sequence**,
+filtered per user on read. A library stream sharing it would, on every rescan,
+advance the very sequence every favourites cursor measures itself against. A
+scan of fifty thousand tracks would move the synchronization cursor of every
+account on the server.
 
-La conséquence côté client est assumée : **deux curseurs**, un par compte pour
-l'état utilisateur, un par bibliothèque pour l'état bibliothèque. C'est le but.
-Ils n'avancent ni au même rythme ni pour les mêmes raisons, et les fusionner
-empêcherait d'avancer l'un sans l'autre.
+The consequence on the client is accepted: **two cursors**, one per account for
+user state, one per library for library state. That is the point. They do not
+advance at the same rate or for the same reasons, and merging them would make it
+impossible to advance one without the other.
 
-### L'asymétrie est la conception
+### The asymmetry is the design
 
-Les deux flux ne sont pas deux moitiés symétriques :
+The two streams are not two symmetric halves:
 
-| | État utilisateur | État bibliothèque |
+| | User state | Library state |
 | --- | --- | --- |
-| Volume | petit | volumineux |
-| Portée | un compte | une bibliothèque, partagée |
-| Origine | le client écrit | le serveur écrit, presque toujours |
-| Machinerie | identifiants d'opération, rejeu, conflit | rien de tout ça |
+| Volume | small | large |
+| Scope | one account | one library, shared |
+| Origin | the client writes | the server writes, almost always |
+| Machinery | operation ids, replay, conflict | none of it |
 
-Presque toujours : un `PATCH` de métadonnées et un téléversement sont des
-changements de bibliothèque **venus du client**, et leur file hors-ligne les
-rejouera. Le flux a donc besoin d'idempotence pour une minorité de son trafic et
-d'aucune pour la majorité. C'est exactement ce que `MutationContext::server_generated()`
-modélise déjà côté utilisateur, aujourd'hui : un contexte de mutation sans
-origine cliente. Le mécanisme se transpose sans être réinventé.
+Almost always: a metadata `PATCH` and an upload are library changes **coming
+from the client**, and their offline queue will replay them. So the stream needs
+idempotence for a minority of its traffic and none for the majority. That is
+exactly what `MutationContext::server_generated()` already models on the user
+side today: a mutation context with no client origin. The mechanism transposes
+without being reinvented.
 
-## Décision 2 — l'appartenance est évaluée à la lecture
+## Decision 2 — membership is evaluated on read
 
-La lecture du flux joint `library_member` **au moment de la requête**, comme
-chaque projection du serveur.
+Reading the stream joins `library_member` **at request time**, like every
+projection in this server.
 
-Cela règle la révocation sans rien construire. Un membre qui perd l'accès cesse
-de recevoir les événements de cette bibliothèque à la requête suivante, et
-rétroactivement : il n'y a pas de liste de révocation à tenir, parce qu'il n'y a
-jamais eu de liste d'abonnés. L'appartenance courante *est* le filtre.
+That settles revocation without building anything. A member who loses access
+stops receiving that library's events on the next request, and retroactively:
+there is no revocation list to keep, because there was never a subscriber list.
+Current membership *is* the filter.
 
-Ce qu'un client a déjà téléchargé reste sur son disque, et rien ne peut le
-reprendre. Mais il ne peut plus rien en résoudre : le 404 confond une ressource
-absente et une ressource étrangère, ce que le RFC-002 pose comme règle. La fuite
-est bornée à ce que le client avait déjà, ce qui est la propriété de n'importe
-quel catalogue mis en cache.
+What a client has already downloaded stays on its disk, and nothing can take it
+back. But it can no longer resolve anything from it: a 404 blurs a missing
+resource and a foreign one, which RFC-002 lays down as a rule. The leak is
+bounded by what the client already had, which is a property of any cached
+catalogue.
 
-## Décision 3 — un flux par bibliothèque, des événements typés
+## Decision 3 — one stream per library, with typed events
 
-Un seul flux par bibliothèque, dont les événements portent un genre. Pas deux
-flux thématiques.
+One stream per library, whose events carry a kind. Not two thematic streams.
 
-La tentation est de séparer ce qui vient du scan de ce qui viendrait d'un
-enrichissement, au motif qu'on veut l'un tout de suite et l'autre à loisir. Mais
-deux flux, c'est deux curseurs *par bibliothèque* — soit exactement le couplage
-que la décision 1 cherche à éviter, réintroduit un cran plus bas. Un genre typé
-suffit : un curseur est une position, pas une file d'attente, donc ignorer un
-genre ne coûte rien et ne retient rien.
+The temptation is to separate what comes from the scan from what would come from
+enrichment, on the grounds that one is wanted immediately and the other at
+leisure. But two streams means two cursors *per library* — exactly the coupling
+decision 1 set out to avoid, reintroduced one level down. A typed kind is
+enough: a cursor is a position, not a queue, so ignoring a kind costs nothing
+and holds nothing back.
 
-Le vocabulaire est contraint par `CHECK`, comme celui du journal utilisateur, et
-pour la même raison : il fait partie du contrat.
+The vocabulary is `CHECK`-constrained, like the user journal's, and for the same
+reason: it is part of the contract.
 
-- `entity_type` : `track`, `album`, `artist`
-- `action` : `upsert`, `delete`
+- `entity_type`: `track`, `album`, `artist`
+- `action`: `upsert`, `delete`
 
-### L'appareil d'origine, tranché
+### The originating device, settled
 
-Un événement porte l'appareil qui l'a demandé, quand un client l'a demandé.
+An event carries the device that asked for it, when a client asked.
 
-La table a d'abord été créée sans, au motif écrit dans sa migration qu'aucune
-ligne ne venait d'un client. L'écriture de métadonnées a rendu ce motif faux et
-la réception d'un fichier ([RFC-008](RFC-008-receiving-a-file.md)) l'a éloigné
-davantage : sans cette colonne, un client relit son propre téléversement sur le
-flux comme une piste qu'il vient de découvrir, et la traite comme telle. Le
-journal utilisateur porte `origin_device_id` depuis son premier jour, exactement
-pour cela.
+The table was first created without it, on the grounds written into its
+migration that no row came from a client. Metadata writing made that reason
+false and receiving a file ([RFC-008](RFC-008-receiving-a-file.md)) moved it
+further away: without that column, a client reads its own upload back off the
+stream as a track it has just discovered, and treats it as one. The user journal
+has carried `origin_device_id` since its first day, for exactly this.
 
-`NULL` garde son sens simple : personne ne l'a demandé. Un scan écrit `NULL`, et
-un client qui ne nomme pas d'appareil aussi — l'en-tête est facultatif, et celui
-qui préfère recevoir ses propres changements se contente de l'omettre.
+`NULL` keeps its plain meaning: nobody asked for it. A scan writes `NULL`, and
+so does a client that names no device — the header is optional, and whoever
+prefers to receive their own changes simply leaves it out.
 
-L'appartenance de l'appareil est vérifiée avant d'être écrite. Sans ce contrôle,
-un compte pourrait attribuer ses écritures à l'appareil d'un autre — et tout
-client qui filtre ses propres changements hors du flux écarterait alors ceux de
-quelqu'un d'autre.
+The device's membership is verified before it is written. Without that check an
+account could attribute its writes to somebody else's device — and any client
+filtering its own changes out of the stream would then discard someone else's.
 
-**La charge utile d'un `upsert` de piste porte son `full_hash`.** C'est le point
-que rien d'autre ne fournit, et il mérite d'être expliqué.
+**A track `upsert`'s payload carries its `full_hash`.** That is the one thing
+nothing else supplies, and it deserves explaining.
 
-### Une édition externe déplace l'empreinte, en silence
+### An external edit moves the fingerprint, silently
 
-L'écriture de métadonnées décrite par ailleurs ne réécrit aucun fichier : la
-correction vit à côté de la piste, donc le `full_hash` ne bouge pas et un lien de
-réconciliation établi par un client reste valide. Ce n'est pas là que le
-problème se pose.
+The metadata writing described elsewhere rewrites no file: the correction lives
+beside the track, so `full_hash` does not move and a reconciliation link a client
+established stays valid. That is not where the problem is.
 
-Il se pose quand l'opérateur retague lui-même, avec un outil externe. La
-condition de saut du scanner exige `existing.full_hash == input.full_hash` ; des
-octets différents la font échouer, l'application tourne, et **la piste garde son
-identifiant pendant que son empreinte change**. Aucun client n'en est informé
-aujourd'hui.
+It is where the operator retags with an external tool. The scanner's skip
+condition requires `existing.full_hash == input.full_hash`; different bytes make
+it fail, the apply runs, and **the track keeps its identifier while its
+fingerprint changes**. No client is told today.
 
-Porter le `full_hash` dans la charge utile suffit : le client détient l'ancien,
-compare, et sait que son lien est à revérifier. Un genre d'événement dédié
-serait plus de vocabulaire pour la même information.
+Carrying the `full_hash` in the payload is enough: the client holds the old one,
+compares, and knows its link needs rechecking. A dedicated event kind would be
+more vocabulary for the same information.
 
-## Décision 4 — la rétention est une question du premier jour
+## Decision 4 — retention is a first-day question
 
-Le journal utilisateur n'a aucune compaction aujourd'hui, et l'assume : le
-commentaire de `src/sync.rs` note qu'elle « rognera la tête du journal pour tout
-le monde » lorsqu'elle arrivera. Ce report est tenable parce que les mutations
-utilisateur sont rares.
+The user journal has no compaction today, and admits it: the comment in
+`src/sync.rs` notes that it "will trim the head of the journal for everyone"
+when it arrives. That deferral is tenable because user mutations are rare.
 
-Le flux de bibliothèque n'a pas ce luxe. Un premier scan de cinquante mille
-pistes produit cinquante mille événements avant qu'aucun client n'ait lu quoi
-que ce soit. La rétention n'y est donc pas une question pour plus tard.
+The library stream does not have that luxury. A first scan of fifty thousand
+tracks produces fifty thousand events before any client has read anything.
+Retention is therefore not a question for later here.
 
-Le précédent à reprendre existe déjà côté utilisateur : lorsqu'un curseur
-précède le plus vieil événement conservé, le serveur ne bricole pas, il répond
-que le curseur a expiré et que le client doit repartir d'un instantané. Pour
-l'état bibliothèque, cet instantané n'est pas une route à écrire : c'est le
-catalogue lui-même, que `/api/v2/libraries/{id}/tracks` et les routes de
-parcours servent déjà.
+The precedent to follow already exists on the user side: when a cursor precedes
+the oldest event kept, the server does not improvise — it answers that the
+cursor has expired and that the client must start from a snapshot. For library
+state that snapshot is not a route to write: it is the catalogue itself, which
+`/api/v2/libraries/{id}/tracks` and the browse routes already serve.
 
-Les valeurs exactes sont fixées par la décision 7.
+The exact values are set by decision 7.
 
-## Décision 5 — ce que le flux ne transporte pas
+## Decision 5 — what the stream does not carry
 
-**Pas d'enrichissement.** Le serveur ne va chercher aucune métadonnée
-extérieure, par décision : il stocke et sert ce qu'on lui donne. Le mot apparaît
-dans les schémas d'architecture qui circulent ; il ne correspond à rien dans le
-code, et le laisser dans le vocabulaire promettrait une capacité que personne n'a
-décidée. Si elle est décidée un jour, elle entrera comme un genre supplémentaire,
-ce que la décision 3 rend possible sans rien casser.
+**No enrichment.** The server fetches no outside metadata, by decision: it
+stores and serves what it is given. The word appears in the architecture
+diagrams going around; it corresponds to nothing in the code, and leaving it in
+the vocabulary would promise a capability nobody has decided on. If it is ever
+decided, it will arrive as one more kind, which decision 3 makes possible
+without breaking anything.
 
-**Pas d'événement pour une ressource adressée par contenu.** Une pochette et un
-canvas sont immuables par hachage : les octets derrière une empreinte ne changent
-jamais, donc il n'y a rien à notifier. Seul le *lien* d'une piste vers une
-ressource est un changement, et il voyage dans l'`upsert` de la piste.
+**No event for a content-addressed resource.** A cover and a canvas are
+immutable by hash: the bytes behind a fingerprint never change, so there is
+nothing to notify. Only a track's *link* to a resource is a change, and that
+travels in the track's `upsert`.
 
-**Jamais d'état utilisateur.** Un favori, une note, une écoute restent dans le
-journal du RFC-003. Le flux de bibliothèque ne les double pas, et un client qui
-les recevrait deux fois les compterait deux fois.
+**Never user state.** A favourite, a rating, a play stay in RFC-003's journal.
+The library stream does not duplicate them, and a client receiving them twice
+would count them twice.
 
-## Ce que cette RFC change ailleurs
+## What this RFC changes elsewhere
 
-Elle **retire** de l'écriture de métadonnées sa ligne la plus risquée. Sans
-flux propre, annoncer une piste modifiée aurait demandé d'admettre un type
-`track` dans `sync_event` — donc de reconstruire cette table autour de sa
-contrainte `CHECK`, SQLite ne sachant pas la modifier. C'est le mouvement avec
-le `DELETE FROM` implicite qui a déjà coûté un correctif au projet. Une table
-séparée n'y touche pas.
+It **removes** the riskiest line from metadata writing. Without a stream of its
+own, announcing a changed track would have required admitting a `track` type
+into `sync_event` — hence rebuilding that table around its `CHECK` constraint,
+SQLite being unable to alter one. That is the move with the implicit
+`DELETE FROM` that has already cost this project a fix. A separate table does
+not touch it.
 
-Elle **écarte** une décision prise trop vite : diffuser un événement par membre
-de la bibliothèque dans le journal utilisateur. L'arithmétique la condamne — une
-bibliothèque à quarante membres retaguée sur deux mille pistes écrirait quatre-
-vingt mille lignes pour deux mille faits, dans une table sans compaction — et la
-sémantique aussi : l'événement ne parle pas de l'utilisateur.
+It **sets aside** a decision taken too quickly: broadcasting one event per
+library member into the user journal. The arithmetic condemns it — a library
+with forty members, retagged over two thousand tracks, would write eighty
+thousand rows for two thousand facts, in a table with no compaction — and so
+does the semantics: the event is not about the user.
 
-## Décision 6 — l'album a son événement, l'artiste n'en a pas besoin
+## Decision 6 — an album has its event, an artist does not need one
 
-Ouvert par la première version de cette RFC, tranché le 2026-08-30 sur un cas que
-le desktop a nommé.
+Opened by the first version of this RFC, settled on 2026-08-30 on a case the
+desktop named.
 
-**L'album en émet un.** Le miroir incrémental du desktop saute un album dont le
-`song_count` n'a pas bougé — c'est toute l'économie de son parcours. Un album
-*simplement retagué* lui est donc invisible : une date de sortie apprise, une
-pochette trouvée, un artiste d'album corrigé ne changent aucun compte. Sans
-événement, la seule façon de l'apprendre est de redemander tous les albums, ce
-qui annule exactement ce que le parcours économise.
+**An album emits one.** The desktop's incremental mirror skips an album whose
+`song_count` has not moved — that is the whole economy of its walk. An album
+that is *merely retagged* is therefore invisible to it: a release date learned, a
+cover found, an album artist corrected change no count. Without an event, the
+only way to learn it is to ask for every album again, which cancels exactly what
+the walk saves.
 
-Il n'est émis **que si la ligne a réellement été écrite**. L'`upsert` d'album
-tourne une fois par piste appliquée, donc douze fois pour un album de douze
-titres ; une clause `WHERE` sur le `DO UPDATE` compare les colonnes qui portent
-du sens — `updated_at` exclu, que rien ne lit — et `RETURNING` ne rend une ligne
-que si quelque chose a bougé. Un événement par album, jamais un par piste, et
-rien du tout pour un rescan qui ne trouve aucun changement.
+It is emitted **only if the row was actually written**. The album `upsert` runs
+once per applied track, so twelve times for a twelve-track album; a `WHERE`
+clause on the `DO UPDATE` compares the columns that carry meaning —
+`updated_at` excluded, which nothing reads — and `RETURNING` yields a row only
+if something moved. One event per album, never one per track, and nothing at all
+for a rescan that finds no change.
 
-La charge est vide. Celle de la piste porte `full_hash` parce qu'aucune autre
-surface ne l'expose ; tout ce qui décrit un album est sur l'album, que le client
-relit en recevant l'événement.
+The payload is empty. The track's payload carries `full_hash` because no other
+surface exposes it; everything that describes an album is on the album, which
+the client re-reads on receiving the event.
 
-**L'artiste n'en émet pas.** Les compteurs se dérivent, et une vérité stockée en
-double périme. Le desktop réservait un cas — la photo d'artiste, qui ne se dérive
-d'aucun `GROUP BY` — et ce cas n'existe pas : `artist.artwork_hash` est lu
-partout dans ce serveur et **écrit nulle part**. Une photo d'artiste ne peut pas
-changer parce qu'il n'y en a jamais. La question se rouvrira le jour où quelque
-chose l'écrira, et ce jour-là ce sera cette ligne qu'il faudra relire.
+**An artist emits none.** The counters are derived, and a truth stored twice
+goes stale. The desktop reserved one case — the artist photo, which derives from
+no `GROUP BY` — and that case does not exist: `artist.artwork_hash` is read all
+over this server and **written nowhere**. An artist photo cannot change because
+there never is one. The question reopens the day something writes it, and on
+that day this is the line to re-read.
 
-## Décision 7 — deux bornes, parce qu'une seule se trompe toujours
+## Decision 7 — two bounds, because one alone is always wrong
 
-> **Construite.** Voir la ligne *Implémentée par* de l'en-tête.
+> **Built.** See the *Implemented by* line in the header.
 
-**Un âge et un plancher, tenus ensemble.** Ni l'un ni l'autre ne suffit, et les
-deux échouent dans des directions opposées.
+**An age and a floor, held together.** Neither is enough on its own, and the two
+fail in opposite directions.
 
-L'âge seul laisse une bibliothèque bavarde faire enfler la table sans limite —
-un rescan de cinquante mille pistes écrit cinquante mille lignes, et trente
-jours de rescans quotidiens en font un million et demi. Le compte seul coupe la
-tête d'une bibliothèque tranquille : dix mille événements peuvent couvrir deux
-ans chez un opérateur qui n'ajoute rien, et les rogner à date fixe ne gêne
-personne, mais les rogner à quantité fixe efface un historique que rien
-n'obligeait à effacer.
+Age alone lets a chatty library swell the table without limit — a rescan of
+fifty thousand tracks writes fifty thousand rows, and thirty days of daily
+rescans make that a million and a half. A count alone cuts the head off a quiet
+library: ten thousand events can cover two years at an operator who adds
+nothing, and trimming them by date bothers nobody, while trimming them by a
+fixed quantity erases a history nothing required erasing.
 
-Donc : **on ne coupe que ce qui a plus de trente jours, et jamais en deçà de dix
-mille événements par bibliothèque**, la seconde règle l'emportant sur la
-première. Plus de trente jours, strictement — la borne est exclusive, et le
-paragraphe qui la fixe plus bas dit pourquoi.
+So: **nothing is cut that is less than thirty days old, and never below ten
+thousand events per library**, the second rule winning over the first. More than
+thirty days, strictly — the bound is exclusive, and the paragraph that fixes it
+below says why.
 
-Trente jours parce que la borne à battre est la plus longue absence
-plausible d'un client — des vacances, un portable rangé pour un mois — au-delà
-de laquelle relire le catalogue n'est plus une punition. Dix mille parce qu'un
-rescan complet d'une grande bibliothèque le dépasse à lui seul : après un
-rescan, un client absent *doit* repartir de l'instantané, et c'est correct
-puisque le rescan a pu tout déplacer.
+Thirty days because the bound to beat is the longest plausible absence of a
+client — a holiday, a laptop put away for a month — beyond which re-reading the
+catalogue is no longer a punishment. Ten thousand because a full rescan of a
+large library exceeds it on its own: after a rescan an absent client *must*
+start from the snapshot, and that is correct since the rescan may have moved
+everything.
 
-Le contrat des deux réglages, écrit ici parce que la moitié s'en décide sinon
-par accident dans le code :
+The contract of the two settings, written here because half of it otherwise gets
+decided by accident in the code:
 
-| Variable | Unité | Défaut | Absente | Invalide |
+| Variable | Unit | Default | Absent | Invalid |
 | --- | --- | --- | --- | --- |
-| `WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS` | jours entiers | `30` | le défaut | le démarrage échoue |
-| `WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN` | événements | `10000` | le défaut | le démarrage échoue |
+| `WAVEFLOW_LIBRARY_EVENT_RETENTION_DAYS` | whole days | `30` | the default | start-up fails |
+| `WAVEFLOW_LIBRARY_EVENT_RETENTION_MIN` | events | `10000` | the default | start-up fails |
 
-Les deux passent par `parse_positive_env`, donc **zéro et les valeurs négatives
-sont refusées au démarrage**, pas ramenées à un défaut. C'est la règle que
-`validate_uploads` et `validate_canvas` suivent déjà, et pour la raison qui y
-est écrite : tout repli sur une borne est faux — trop petit trahit la valeur
-configurée, trop grand n'est plus une borne — donc l'opérateur est refusé là où
-il peut voir pourquoi. Il n'y a pas de plafond : une valeur énorme signifie « ne
-purge rien », ce qui est sûr et lisible.
+Both go through `parse_positive_env`, so **zero and negative values are refused
+at start-up**, not folded back to a default. That is the rule `validate_uploads`
+and `validate_canvas` already follow, and for the reason written there: any
+fallback on a bound is wrong — too small betrays the configured value, too large
+is no longer a bound — so the operator is refused where they can see why. There
+is no ceiling: a huge value means "purge nothing", which is safe and legible.
 
-Et la borne est **exclusive**. Un événement qui a exactement trente jours
-survit ; seul ce qui est strictement plus vieux est coupé. C'est la convention
-que `stream_ticket::verify` suit déjà — son test dit `expiry is exclusive` — et
-c'est aussi la direction prudente : garder un événement de trop ne casse aucun
-client, en couper un de trop renvoie quelqu'un à l'instantané.
+And the bound is **exclusive**. An event exactly thirty days old survives; only
+what is strictly older is cut. That is the convention `stream_ticket::verify`
+already follows — its test says `expiry is exclusive` — and it is also the
+prudent direction: keeping one event too many breaks no client, cutting one too
+many sends somebody back to the snapshot.
 
-**Et le filigrane avance dans la transaction qui coupe.** `library_event` et
-`library.events_purged_through` disent la même chose de deux endroits ; les
-écrire séparément laisse une fenêtre où le filigrane annonce moins que ce qui a
-disparu, et un client qui lit dedans reçoit un rattrapage qui a l'air complet en
-sautant le trou. C'est exactement la panne que la décision 4 refuse.
+**And the watermark advances in the transaction that cuts.** `library_event` and
+`library.events_purged_through` say the same thing from two places; writing them
+separately leaves a window where the watermark announces less than what has
+disappeared, and a client reading inside it receives a catch-up that looks
+complete while skipping the hole. That is exactly the failure decision 4
+refuses.
 
-## Décision 8 — l'acquittement, et ce qu'il ne décide pas
+## Decision 8 — the acknowledgement, and what it does not decide
 
-> **Construite.** Voir la ligne *Implémentée par* de l'en-tête.
+> **Built.** See the *Implemented by* line in the header.
 
-Une table `library_event_ack`, clé primaire `(library_id, device_id)`, portant
-le curseur et sa date. C'est `sync_ack` moins sa colonne de compte : là-bas la
-clé est `(user_id, device_id)` parce que le journal est *par compte* ; ici le
-flux est *par bibliothèque*, et le compte se relit de l'appareil —
-`device.user_id` — puis se vérifie contre `library_member` comme toute autre
-lecture de ce serveur.
+A `library_event_ack` table, primary key `(library_id, device_id)`, carrying the
+cursor and its date. It is `sync_ack` minus its account column: there the key is
+`(user_id, device_id)` because the journal is *per account*; here the stream is
+*per library*, and the account is read back off the device —
+`device.user_id` — then checked against `library_member` like every other read
+in this server.
 
-Pas `(compte, appareil, bibliothèque)` : le compte y serait une troisième
-colonne dérivable des deux autres, donc une seconde vérité à tenir d'accord avec
-`device.user_id`. Les deux clés étrangères cascadent, si bien qu'un appareil
-révoqué ou une bibliothèque supprimée n'y laissent pas de ligne.
+Not `(account, device, library)`: the account would be a third column derivable
+from the other two, hence a second truth to keep in agreement with
+`device.user_id`. Both foreign keys cascade, so a revoked device or a deleted
+library leaves no row behind.
 
-**Ce que l'acquittement ne décide pas, et c'est le point** : il ne retient pas
-la purge. Un appareil qui ne revient jamais épinglerait le flux pour toujours,
-et une bibliothèque partagée n'aurait plus de rétention du tout dès qu'un seul
-téléphone a été jeté. L'acquittement *informe* — il dit à l'opérateur ce qu'une
-purge va coûter à qui — et la décision 7 *décide*. Les mélanger ferait d'une
-donnée que le serveur ne contrôle pas la borne d'une table qu'il doit contrôler.
+**What the acknowledgement does not decide, and this is the point**: it does not
+hold the purge back. A device that never comes back would pin the stream for
+ever, and a shared library would have no retention at all the moment one phone
+was thrown away. The acknowledgement *informs* — it tells the operator what a
+purge will cost whom — and decision 7 *decides*. Mixing them would make a
+datum the server does not control the bound of a table it must control.
 
-## Ce qui reste ouvert
+## What is still open
 
-Plus rien de cette RFC n'est ouvert. Les trois questions qu'elle portait ont
-été tranchées le 2026-08-30 :
+Nothing in this RFC is open any more. The three questions it carried were
+settled on 2026-08-30:
 
-- ~~Les valeurs de rétention.~~ Décision 7.
-- ~~Si des événements `album` et `artist` sont nécessaires ou seulement
-  dérivables des événements `track` par le client.~~ Décision 6, et différemment
-  pour les deux.
-- ~~La forme exacte de l'acquittement.~~ Décision 8.
+- ~~The retention values.~~ Decision 7.
+- ~~Whether `album` and `artist` events are needed or merely derivable from
+  `track` events by the client.~~ Decision 6, and differently for the two.
+- ~~The exact shape of the acknowledgement.~~ Decision 8.
 
-Les décisions 7 et 8 sont construites, et cette RFC n'a plus rien en attente.
-La ligne *Implémentée par* de l'en-tête ne nomme que ce qui tourne, et c'est
-elle qu'il faut lire — pas cette section.
+Decisions 7 and 8 are built, and this RFC has nothing pending. The *Implemented
+by* line in the header names only what is running, and that is the line to
+read — not this section.

@@ -1,1044 +1,1016 @@
-# RFC-010 — Le scrobbling externe
+# RFC-010 — External scrobbling
 
-- **Statut** : Proposed
-- **Implémentée par** :
-  [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), la moitié
-  durable — les deux tables, la mise en file dans la transaction qui écrit
-  `play_event`, les cinq verdicts, et la tâche de drainage ; puis
-  [#192](https://github.com/InstaZDLL/waveflow-server/pull/192), l'appel
-  sortant — la surface bornée de la décision 10, l'adaptateur ListenBrainz, et
-  le délai que la décision 6 promettait d'honorer sans que le verdict puisse le
-  porter.
-  Puis [#193](https://github.com/InstaZDLL/waveflow-server/pull/193), **les
-  routes natives et la CLI** : un compte pose et retire son autorisation
-  lui-même, lit l'état de sa file, et répond des écoutes dont personne ne sait
-  si elles sont arrivées — la décision 13 demandait ce choix à une personne sans
-  qu'aucune surface ne lui montre sur quoi. En ligne de commande, un opérateur
-  pose et retire une autorisation et lit l'état d'une file — trois gestes, pour
-  un serveur que nul n'a encore ouvert dans un navigateur ; répondre d'une
-  écoute incertaine reste une décision que son auteur prend, et n'existe que
-  sur la surface HTTP.
-  Puis [#199](https://github.com/InstaZDLL/waveflow-server/pull/199), **le
-  correctif de la décision 13** : le joker se compte sur `retried_at`, une
-  colonne que l'entrée porte, et non sur la survie de la reprise qui l'a
-  consommé — que la rétention emporte. Les quatre lecteurs qui lisaient la
-  jointure lisent la colonne, et les bases déjà en service la reçoivent
-  remplie.
-  Puis [#200](https://github.com/InstaZDLL/waveflow-server/pull/200), **le
-  reste** : la rétention de la file et sa huitième tâche de fond ; les
-  destinations nommées, avec l'empreinte d'URL qui en fait l'identité, le
-  rattrapage et la réconciliation au démarrage ; l'adaptateur Maloja, où
-  l'enveloppe se verse sans perdre un crédit ; et le parcours d'autorisation
-  Last.fm, deux routes et une table qui vit un quart d'heure.
-  Enfin [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), **la
-  surface qui rend tout cela atteignable** : l'écran `/settings/scrobbling` du
-  client web, où se posent et se retirent les autorisations par paire, s'ouvre
-  le parcours Last.fm, et se répondent les écoutes que la décision 13 refuse de
-  trancher. Ce chemin n'est pas un choix : `lastfm_callback` y redirige, et
-  tant qu'il n'existait pas, un parcours mené à son terme atterrissait sur une
-  page « introuvable » — le lien fait, et rien pour le dire. Deux corrections
-  de serveur l'ont accompagné, toutes deux exigées par l'écran : une entrée
-  `uncertain` nomme désormais son **instance** et non son seul destinataire —
-  sans quoi la décision 13 pose sa question sans dire lequel des deux profils
-  détient peut-être l'écoute — et un lien hérité que la réconciliation rompt
-  reçoit un nom avant d'être rompu, au lieu de sortir de l'API avec une
-  instance vide qu'aucun geste ne pouvait retirer.
-  Le champ *Statut* ci-dessus ne bascule pas — il ne bascule jamais dans ce
-  projet.
-- **Date** : 2026-09-13
-- **Révisée** : 2026-09-13, après revue externe. Les décisions 2 à 6 ont changé,
-  et chacune dit ce que la version antérieure affirmait de faux plutôt que de
-  l'effacer. Une seconde passe le même jour a tranché les trois questions qui
-  restaient : décisions 11 à 13.
-  Puis le 2026-09-14, après une seconde revue externe et une mesure : le joker
-  d'une reprise se compte désormais sur l'entrée (décision 13), une destination
-  peut exister en plusieurs instances nommées (décision 10), Last.fm obtient un
-  protocole d'autorisation au lieu d'un secret collé (décision 11), et la
-  rétention de la file est tranchée. Ces quatre-là sont implémentées le même
-  jour, par #199 et #200 ci-dessus.
-- **Auteurs** : projet WaveFlow
-- **Dépend de** : [RFC-002](RFC-002-waveflow-server-v2.md),
+- **Status**: Proposed
+- **Implemented by**:
+  [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), the durable
+  half — the two tables, the queueing inside the transaction that writes
+  `play_event`, the five verdicts, and the drain task; then
+  [#192](https://github.com/InstaZDLL/waveflow-server/pull/192), the outgoing
+  call — decision 10's bounded surface, the ListenBrainz adapter, and the
+  timeout decision 6 promised to honour without the verdict being able to carry
+  it.
+  Then [#193](https://github.com/InstaZDLL/waveflow-server/pull/193), **the
+  native routes and the CLI**: an account places and withdraws its own
+  authorization, reads the state of its queue, and answers for the listens
+  nobody knows arrived — decision 13 asked a person for that choice without any
+  surface showing them what it was about. On the command line an operator places
+  and withdraws an authorization and reads a queue's state — three gestures, for
+  a server nobody has yet opened in a browser; answering for an uncertain listen
+  remains a decision its author takes, and exists only on the HTTP surface.
+  Then [#199](https://github.com/InstaZDLL/waveflow-server/pull/199), **decision
+  13's fix**: the single retry is counted on `retried_at`, a column the entry
+  carries, and not on the survival of the retry that consumed it — which
+  retention takes away. The four readers that read the join now read the column,
+  and databases already in service receive it filled.
+  Then [#200](https://github.com/InstaZDLL/waveflow-server/pull/200), **the
+  rest**: queue retention and its eighth background task; named destinations,
+  with the URL fingerprint that makes their identity, the back-fill and the
+  reconciliation at start-up; the Maloja adapter, where the envelope pours
+  without losing a credit; and the Last.fm authorization journey, two routes and
+  a table that lives a quarter of an hour.
+  Finally [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), **the
+  surface that makes all of it reachable**: the web client's
+  `/settings/scrobbling` screen, where authorizations are placed and withdrawn
+  in pairs, the Last.fm journey opens, and the listens decision 13 refuses to
+  settle are answered for. That path is not a choice: `lastfm_callback`
+  redirects there, and as long as it did not exist a journey carried to its end
+  landed on a "not found" page — the link made, and nothing to say so. Two
+  server fixes came with it, both required by the screen: an `uncertain` entry
+  now names its **instance** and not merely its recipient — without which
+  decision 13 asks its question without saying which of the two profiles may
+  hold the listen — and an inherited link the reconciliation breaks is given a
+  name before being broken, instead of leaving the API with an empty instance no
+  gesture could withdraw.
+  The *Status* field above does not flip — it never flips in this project.
+- **Date**: 2026-09-13
+- **Revised**: 2026-09-13, after an external review. Decisions 2 to 6 changed,
+  and each says what the earlier version asserted falsely rather than erasing
+  it. A second pass the same day settled the three remaining questions:
+  decisions 11 to 13.
+  Then on 2026-09-14, after a second external review and a measurement: a
+  retry's single chance is now counted on the entry (decision 13), a destination
+  may exist in several named instances (decision 10), Last.fm gets an
+  authorization protocol instead of a pasted secret (decision 11), and queue
+  retention is settled. Those four are implemented the same day, by #199 and
+  #200 above.
+- **Authors**: the WaveFlow project
+- **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-003](RFC-003-waveflow-sync-v2.md)
-- **Clôt** : le dernier des cinq manques face à Navidrome qui se remarque à
-  l'usage quotidien, et le seul point du plan web qu'aucun lot ne portait
+- **Closes**: the last of the five gaps against Navidrome that is noticed in
+  daily use, and the one item of the web plan no batch carried
 
-## Problème
+## Problem
 
-Une écoute ne quitte pas le serveur. `scrobble_with_context`
-(`src/services/playback.rs`) écrit une ligne dans `play_event` et entretient
-`now_playing` ; `GET /api/v2/history` les relit. C'est tout. Last.fm,
-ListenBrainz et Maloja ne reçoivent rien.
+A listen never leaves the server. `scrobble_with_context`
+(`src/services/playback.rs`) writes a row into `play_event` and maintains
+`now_playing`; `GET /api/v2/history` reads them back. That is all. Last.fm,
+ListenBrainz and Maloja receive nothing.
 
-C'est le seul des cinq écarts face à Navidrome dont l'absence se voit tous les
-jours : un auditeur qui tient un profil d'écoute depuis dix ans ne l'abandonne
-pas parce qu'il a changé de serveur.
+It is the one of the five gaps against Navidrome whose absence is seen every
+day: a listener who has kept a listening profile for ten years does not abandon
+it because they changed server.
 
-Ce n'est pourtant pas une fonction qu'on branche. **Le serveur ne passe
-aujourd'hui aucun appel sortant**, et lui en faire passer change sa posture :
-une installation personnelle derrière un proxy devient un logiciel qui parle à
-des tiers, avec des identifiants, une file qui survit aux redémarrages et des
-échecs qui ne sont pas les siens. Chacune de ces phrases est une décision, et
-c'est pour cela que cette RFC précède le code.
+It is not, however, a feature one plugs in. **The server makes no outgoing call
+today**, and making it do so changes its posture: a personal installation behind
+a proxy becomes software that talks to third parties, with credentials, a queue
+that survives restarts, and failures that are not its own. Every one of those
+sentences is a decision, and that is why this RFC comes before the code.
 
-> **Corrigé le 2026-09-13, en écrivant
-> [#192](https://github.com/InstaZDLL/waveflow-server/pull/192).** Cette RFC
-> ajoutait ici « — `Cargo.toml` ne porte aucun client HTTP — » et appelait plus
-> bas l'arrivée d'une dépendance sortante « le point le plus lourd de
-> conséquences ». `cargo tree -i reqwest` répond en trois lignes : **reqwest
-> 0.12 arrive par `waveflow-core`, avec rustls, et est lié dans ce binaire
-> depuis toujours.** `Cargo.toml` n'en *déclarait* aucun ; le binaire en *liait*
-> un. Déclarer la dépendance n'a donc ajouté ni code ni seconde pile TLS —
-> `Cargo.lock` n'a bougé que d'une ligne — et la marche était bien plus basse
-> que ce paragraphe ne la dramatisait.
+> **Corrected on 2026-09-13, while writing
+> [#192](https://github.com/InstaZDLL/waveflow-server/pull/192).** This RFC added
+> "— `Cargo.toml` carries no HTTP client —" here and called the arrival of an
+> outgoing dependency, further down, "the heaviest in consequences".
+> `cargo tree -i reqwest` answers in three lines: **reqwest 0.12 arrives through
+> `waveflow-core`, with rustls, and has been linked into this binary all
+> along.** `Cargo.toml` *declared* none; the binary *linked* one. Declaring the
+> dependency therefore added neither code nor a second TLS stack —
+> `Cargo.lock` moved by one line — and the step was far lower than this
+> paragraph dramatised.
 >
-> Ce qui reste entièrement vrai, et qui était le vrai contenu de l'inquiétude :
-> **le serveur ne parlait à personne**, et maintenant il le peut. La posture
-> change ; c'est le graphe de dépendances qui ne changeait pas.
+> What stays entirely true, and was the real content of the worry: **the server
+> talked to nobody**, and now it can. The posture changes; it was the dependency
+> graph that did not.
 >
-> Et le piège était réel, ailleurs que là où la RFC le cherchait : Cargo unifie
-> les features, donc déclarer `reqwest` avec ses défauts aurait activé
-> `default-tls` et fait entrer une seconde pile TLS **à côté** de rustls plutôt
-> qu'à sa place. C'est la déclaration recopiée de `waveflow-core` qui l'évite.
+> And the trap was real, somewhere other than where the RFC looked for it: Cargo
+> unifies features, so declaring `reqwest` with its defaults would have switched
+> on `default-tls` and brought a second TLS stack in **beside** rustls rather
+> than in its place. It is the declaration copied from `waveflow-core` that
+> avoids it.
 
-## Décision 1 — un seul point d'accroche, celui où les deux surfaces convergent
+## Decision 1 — one attachment point, the one where both surfaces converge
 
-`scrobble_with_context` et rien d'autre. L'API native et la façade Subsonic y
-arrivent déjà toutes les deux : c'est ce que M4 a construit, et brancher le
-transfert ailleurs le dupliquerait aussitôt.
+`scrobble_with_context` and nothing else. The native API and the Subsonic facade
+both already arrive there: that is what M4 built, and wiring the transfer
+anywhere else would duplicate it immediately.
 
-**La mise en file est écrite dans la transaction qui écrit `play_event`**, sous
-le même verrou d'écriture. Une écoute ne peut donc pas être transmise sans avoir
-été enregistrée, ni enregistrée sans être mise en file. Envoyer depuis le
-gestionnaire HTTP, après la transaction, laisserait exactement la fenêtre que
-tout le reste de ce serveur s'applique à fermer.
+**The queueing is written inside the transaction that writes `play_event`**,
+under the same writer gate. A listen therefore cannot be transmitted without
+having been recorded, nor recorded without being queued. Sending from the HTTP
+handler, after the transaction, would leave exactly the window everything else
+in this server works to close.
 
-L'idempotence vient avec : `claim_operation` rejoue déjà une opération répétée
-en annulant la transaction. Une écoute rejouée n'écrit pas de seconde ligne,
-donc elle ne produit pas non plus de seconde mise en file.
+Idempotence comes with it: `claim_operation` already replays a repeated
+operation by rolling the transaction back. A replayed listen writes no second
+row, so it produces no second queueing either.
 
-## Décision 2 — une file durable, qui fige ce qui a été écouté
+## Decision 2 — a durable queue, which freezes what was listened to
 
-Une table `scrobble_outbox`, drainée par une tâche de fond de la forme des six
-autres — `spawn_upload_sweeper`, `spawn_canvas_sweeper`, `spawn_artwork_sweeper`
-et leurs voisines, toutes démarrées dans `src/main.rs`.
+A `scrobble_outbox` table, drained by a background task shaped like the six
+others — `spawn_upload_sweeper`, `spawn_canvas_sweeper`,
+`spawn_artwork_sweeper` and their neighbours, all started in `src/main.rs`.
 
-L'alternative — appeler le service distant pendant la requête — est écartée pour
-trois raisons qui tiennent chacune seule : la requête d'un client attendrait un
-tiers dont le serveur ne contrôle ni la latence ni la disponibilité ; un
-redémarrage perdrait ce qui n'était pas parti ; et un service muet pendant une
-journée ferait échouer des écoutes que le serveur a pourtant enregistrées
-correctement.
+The alternative — calling the remote service during the request — is set aside
+for three reasons, each sufficient on its own: a client's request would wait on
+a third party whose latency and availability the server does not control; a
+restart would lose whatever had not left; and a service silent for a day would
+fail listens the server nevertheless recorded correctly.
 
-**Chaque ligne porte une enveloppe immuable** : `played_at`, le titre, les
-artistes crédités, l'album et son artiste quand ils existent, la durée, et
-l'identifiant MusicBrainz d'enregistrement s'il est connu. Le `play_event_id`
-reste, comme provenance. Le lien vers la piste ne sert plus à lire les
-métadonnées au moment du drainage.
+**Every row carries an immutable envelope**: `played_at`, the title, the
+credited artists, the album and its artist when they exist, the duration, and
+the MusicBrainz recording identifier if it is known. The `play_event_id` stays,
+as provenance. The link to the track is no longer used to read the metadata at
+drain time.
 
-**Une version antérieure de cette décision disait le contraire** : « pas de
-copie de la piste, la piste se relit, et deux modèles d'une même chose finissent
-par se contredire ». Cet argument vaut contre une *projection* d'une ligne
-vivante ; il est faux ici, parce que l'instantané ne doit justement pas suivre la
-piste. Depuis [#186](https://github.com/InstaZDLL/waveflow-server/pull/186) un
-membre corrige titre et artistes, et une correction de liste réécrit
-`track_participant` : relire au drainage enverrait ce que la piste est devenue,
-pas ce qui a été entendu. Une enveloppe figée dit la vérité d'un moment, ce qui
-est exactement ce qu'un historique d'écoute enregistre.
+**An earlier version of this decision said the opposite**: "no copy of the
+track, the track can be re-read, and two models of one thing end up
+contradicting each other". That argument holds against a *projection* of a live
+row; it is false here, because the snapshot must precisely not follow the track.
+Since [#186](https://github.com/InstaZDLL/waveflow-server/pull/186) a member
+corrects title and artists, and a list correction rewrites `track_participant`:
+re-reading at drain time would send what the track has become, not what was
+heard. A frozen envelope tells the truth of a moment, which is exactly what a
+listening history records.
 
-Cela répond aussi à une question que la version antérieure laissait ouverte : une
-piste supprimée entre l'écoute et l'envoi ne vide plus la ligne de file.
+That also answers a question the earlier version left open: a track deleted
+between the listen and the send no longer empties the queue row.
 
-## Décision 3 — on met en file les écoutes, et « en écoute » ne touche jamais la requête
+## Decision 3 — listens are queued, and "now playing" never touches the request
 
-`play_event.submission` distingue déjà les deux, et la distinction est la même
-chez les destinataires : `updateNowPlaying` chez Last.fm, `playing_now` chez
-ListenBrainz, où il est explicitement temporaire et n'enregistre rien.
+`play_event.submission` already distinguishes the two, and the distinction is
+the same at the recipients: `updateNowPlaying` at Last.fm, `playing_now` at
+ListenBrainz, where it is explicitly temporary and records nothing.
 
-**Une soumission est mise en file. Un « en écoute » n'est pas mis en file.** Il
-n'a de valeur que pendant qu'il est vrai : le retransmettre dix minutes plus tard
-annoncerait une piste que l'auditeur a quittée depuis longtemps. Garantir la
-livraison d'une information périmée est pire que de la perdre.
+**A submission is queued. A "now playing" is not.** It has value only while it
+is true: retransmitting it ten minutes later would announce a track the listener
+left long ago. Guaranteeing the delivery of stale information is worse than
+losing it.
 
-**Mais « sans file » ne veut pas dire « dans la requête ».** Aucun appel HTTP
-vers un tiers ne part du chemin d'une requête client, jamais, quelle qu'en soit
-la raison. Après le commit, l'« en écoute » est déposé dans un canal mémoire
-borné que le drainage consomme. Canal plein, ou redémarrage : l'événement est
-perdu, et c'est le comportement voulu.
+**But "unqueued" does not mean "in the request".** No HTTP call to a third party
+leaves a client request's path, ever, for any reason. After the commit, the "now
+playing" is dropped into a bounded in-memory channel the drain consumes. Channel
+full, or a restart: the event is lost, and that is the intended behaviour.
 
-## Décision 4 — deux étages d'identifiants, et le binaire n'en porte aucun
+## Decision 4 — two tiers of credentials, and the binary carries none
 
-Le précédent existe et il est bon : le mot de passe Subsonic dédié est chiffré
-par `SecretBox` en ChaCha20-Poly1305 sous la clé d'instance.
+The precedent exists and it is good: the dedicated Subsonic password is
+encrypted by `SecretBox` in ChaCha20-Poly1305 under the instance key.
 
-Mais un seul étage ne suffit pas, et la version antérieure de cette décision le
-supposait. ListenBrainz et Maloja se contentent d'un jeton par personne. Last.fm
-demande trois choses : une clé d'API et un secret partagé qui identifient
-*l'application*, puis une clé de session qui identifie *le compte*. Donc :
+But one tier is not enough, and the earlier version of this decision assumed it
+was. ListenBrainz and Maloja are content with one token per person. Last.fm asks
+for three things: an API key and a shared secret that identify *the
+application*, then a session key that identifies *the account*. So:
 
-- **Au niveau du déploiement** : la clé d'API et le secret du fournisseur, posés
-  par l'opérateur. **Jamais embarqués dans le binaire** — ce dépôt est publié
-  sous AGPL, et un secret dans un binaire public n'est pas un secret. Un
-  opérateur qui veut Last.fm déclare ses propres identifiants d'application.
-- **Au niveau du compte** : la clé de session, ou le jeton personnel selon le
-  destinataire, scellé sous la clé d'instance.
+- **At the deployment level**: the provider's API key and secret, placed by the
+  operator. **Never embedded in the binary** — this repository is published
+  under AGPL, and a secret in a public binary is not a secret. An operator who
+  wants Last.fm declares their own application credentials.
+- **At the account level**: the session key, or the personal token depending on
+  the recipient, sealed under the instance key.
 
-**Par compte, pas par bibliothèque.** Une écoute appartient à une personne ; un
-réglage par bibliothèque poserait une question à laquelle personne ne tient —
-sous quel profil compte une écoute dans une bibliothèque partagée.
+**Per account, not per library.** A listen belongs to a person; a per-library
+setting would pose a question nobody wants — under which profile a listen counts
+in a shared library.
 
-**Jamais relus en clair par l'API.** Comme pour les jetons d'API, on les
-remplace, on ne les relit pas. La sauvegarde reste ce que `CLAUDE.md` dit déjà :
-`data/waveflow.db` et `data/instance.key` vont ensemble, sans quoi ces secrets ne
-sont plus déchiffrables — et c'est le comportement voulu.
+**Never read back in the clear by the API.** As with API tokens, they are
+replaced, not re-read. The backup rule stays what `CLAUDE.md` already says:
+`data/waveflow.db` and `data/instance.key` go together, or those secrets are no
+longer decryptable — and that is the intended behaviour.
 
-### Délier et relier : une génération, pas une paire
+### Unlinking and relinking: a generation, not a pair
 
-`scrobble_link` porte un identifiant propre, et **`scrobble_outbox` référence ce
-lien-là**, pas le couple `(compte, destination)`.
+`scrobble_link` carries an identifier of its own, and **`scrobble_outbox`
+references that link**, not the `(account, destination)` pair.
 
-Sans cela : vingt écoutes en attente, je délie mon compte Last.fm, j'en relie un
-autre — et les vingt partent sur le profil du second. Le compte et la destination
-sont les mêmes ; l'autorisation, non.
+Without it: twenty listens pending, I unlink my Last.fm account, I link
+another — and the twenty leave for the second profile. The account and the
+destination are the same; the authorization is not.
 
-Délier désactive le lien et fait finir ses lignes en attente dans un état
-terminal. Relier crée une génération nouvelle, qui ne voit rien de l'ancienne.
-Une requête déjà émise, elle, ne se rappelle pas : c'est la limite du procédé et
-elle est nommée ici plutôt que découverte.
+Unlinking disables the link and makes its pending rows end in a terminal state.
+Relinking creates a new generation, which sees nothing of the old one. A request
+already emitted, on the other hand, cannot be recalled: that is the limit of the
+method, and it is named here rather than discovered.
 
-## Décision 5 — la frontière : exactement une fois chez nous, au plus une tentative ambiguë chez eux
+## Decision 5 — the boundary: exactly once on our side, at most one ambiguous attempt on theirs
 
-**C'est la décision que la version antérieure ratait, et elle se contredisait.**
-Elle disait à la fois « un doublon est pire qu'une perte » et « réseau ou 5xx :
-on retente ». Les deux sont incompatibles pour un POST sans clé d'idempotence, et
-ni `track.scrobble` chez Last.fm ni `submit-listens` chez ListenBrainz n'en
-offrent une.
+**This is the decision the earlier version got wrong, and it contradicted
+itself.** It said both "a duplicate is worse than a loss" and "network error or
+5xx: we retry". The two are incompatible for a POST with no idempotence key, and
+neither `track.scrobble` at Last.fm nor `submit-listens` at ListenBrainz offers
+one.
 
-Le cas qui tranche : le serveur émet la requête, le destinataire l'enregistre,
-la connexion tombe avant que la réponse revienne. Une panne réseau et une
-réussite dont l'accusé s'est perdu sont **indiscernables**. Retenter produit un
-second scrobble.
+The case that settles it: the server emits the request, the recipient records
+it, the connection drops before the response comes back. A network failure and a
+success whose acknowledgement was lost are **indistinguishable**. Retrying
+produces a second scrobble.
 
-**La file transactionnelle donne l'atomicité entre WaveFlow et sa propre file.
-Elle ne peut pas donner l'atomicité entre WaveFlow et un tiers.** Cette frontière
-est réelle, aucun réglage ne la déplace, et la RFC la reconnaît au lieu de
-promettre au-delà.
+**The transactional queue gives atomicity between WaveFlow and its own queue. It
+cannot give atomicity between WaveFlow and a third party.** That boundary is
+real, no setting moves it, and this RFC recognises it instead of promising
+beyond.
 
-Ce qui est donc garanti, et rien de plus :
+What is therefore guaranteed, and nothing more:
 
-- **Exactement une mise en file**, côté WaveFlow. Une ligne est unique par
-  `(play_event, lien)`, contrainte tenue par le schéma et pas seulement par le
+- **Exactly one queueing**, on the WaveFlow side. A row is unique per
+  `(play_event, link)`, a constraint held by the schema and not only by the
   code.
-- **Au plus une tentative pour un résultat ambigu**, côté destinataire. On ne
-  retente que lorsqu'on **sait** que la requête n'est pas passée.
+- **At most one attempt for an ambiguous result**, on the recipient's side. We
+  retry only when we **know** the request did not get through.
 
-La philosophie ne change pas — **préférer une perte à un doublon** — parce qu'une
-écoute perdue manque à un compteur, tandis qu'une écoute envoyée deux fois abîme
-un historique public que la personne tient parfois depuis des années et ne peut
-pas corriger facilement.
+The philosophy does not change — **prefer a loss to a duplicate** — because a
+lost listen is missing from a counter, while a listen sent twice damages a
+public history a person has sometimes kept for years and cannot easily correct.
 
-**L'ordre n'est pas garanti et n'a pas à l'être** : chaque soumission porte son
-propre `played_at`, que les trois destinataires acceptent. Sérialiser la file par
-compte coûterait un blocage de tête de file pour une propriété que personne
-n'observe.
+**Order is not guaranteed and does not have to be**: every submission carries
+its own `played_at`, which all three recipients accept. Serialising the queue
+per account would cost head-of-line blocking for a property nobody observes.
 
-## Décision 6 — le verdict vient de l'adaptateur, jamais du code HTTP
+## Decision 6 — the verdict comes from the adapter, never from the HTTP code
 
-La version antérieure classait par statut HTTP. C'est faux pour au moins deux des
-trois destinataires : **Last.fm répond `200` en portant un code applicatif** dans
-le corps — session invalide, indisponibilité temporaire, limite de débit — et
-Maloja signale ses refus dans son JSON. Lire le statut seul prendrait un échec
-pour une réussite.
+The earlier version classified by HTTP status. That is wrong for at least two of
+the three recipients: **Last.fm answers `200` carrying an application code** in
+the body — invalid session, temporary unavailability, rate limit — and Maloja
+reports its refusals in its JSON. Reading the status alone would take a failure
+for a success.
 
-Chaque adaptateur de fournisseur rend donc **un verdict**, et le drainage ne
-connaît que ces cinq mots :
+Every provider adapter therefore returns **a verdict**, and the drain knows only
+these five words:
 
-| Verdict | Conduite |
+| Verdict | Conduct |
 | --- | --- |
-| `Accepted` | la ligne part, c'est fini |
-| `Retryable` | recul croissant avec gigue, nombre de tentatives borné, `Retry-After` honoré quand il est là |
-| `AuthBroken` | le lien est marqué rompu, l'API le dit au compte, et **ses lignes en attente finissent en état terminal** |
-| `PermanentReject` | la ligne part, avec un journal : aucune reprise ne corrigera une charge que le destinataire refuse |
-| `Ambiguous` | **aucune reprise automatique** — état terminal `uncertain`, compté et lisible, par la décision 5 |
-
-Le drainage ne sait donc rien de Last.fm, de ListenBrainz ni de Maloja. C'est ce
-qui permet d'en ajouter un quatrième sans toucher à la file.
-
-**Une file qui ne se vide pas est un défaut**, pas un état. Après les tentatives
-bornées, la ligne est abandonnée et comptée, et ce compte est lisible.
-
-## Décision 7 — ce que le serveur n'envoie pas
-
-- **Rien de rétroactif à l'activation.** Brancher un compte n'envoie pas son
-  historique : personne ne veut voir dix ans d'écoutes remonter d'un coup sur son
-  profil, et un destinataire lit cela comme un abus.
-- **Aucune piste qu'il ne sait pas nommer.** Sans titre ni artiste, la soumission
-  est inutilisable et fausse les statistiques du destinataire.
-- **Rien depuis un partage.** `/share/{token}` sert un visiteur sans compte ; il
-  n'y a pas de profil à créditer.
-
-## Décision 8 — la façade Subsonic ne bouge pas
-
-Le contrat est gelé pour `v2.0-beta`. Aucun champ nouveau, aucune méthode
-nouvelle : un client Subsonic continue d'appeler `scrobble`, et ce qui se passe
-ensuite ne le regarde pas. C'est déjà le cas pour tout ce que cette façade
-ignore.
-
-## Décision 9 — la configuration est une route, pas une variable d'environnement
-
-`src/config.rs` porte ce qui appartient au déploiement. Un lien de scrobbling
-appartient à un compte, donc il se pose par l'API native — et par la CLI pour un
-opérateur qui prépare un serveur sans navigateur, comme pour le mot de passe
-Subsonic.
-
-Ce qui reste au déploiement : les identifiants d'application de la décision 4, le
-délai d'attente sortant, le plafond de tentatives, l'intervalle de drainage, la
-fenêtre de rétention, et les destinations elles-mêmes — leur nom autant que leur
-URL, plusieurs par destinataire si l'opérateur le veut.
-
-## Décision 10 — la surface sortante est bornée, et c'est la décision qui compte
-
-C'est le vrai risque de cette RFC : un serveur qui appelle une URL est un serveur
-qu'on peut faire appeler une URL. Maloja et ListenBrainz s'auto-hébergent, donc
-il existera un champ d'URL, et il ne peut pas être libre.
-
-- **HTTPS seulement**, sauf pour une cible explicitement déclarée par l'opérateur
-  en clair sur son propre réseau.
-- **L'URL de base est le réglage de l'opérateur**, jamais celui d'un compte. Un
-  membre choisit sa destination parmi celles que le serveur connaît, et ne la
-  décrit pas.
-- **Aucune redirection suivie**, pas même vers l'hôte demandé. La première
-  rédaction disait « vers un autre hôte », ce que le code ne fait pas : il pose
-  `Policy::none()` et s'arrête à la première. C'est le texte qui promettait
-  moins, et il avait tort de le promettre — un `302` vers le même hôte reste un
-  chemin que personne n'a choisi, et l'échange qui convertit un jeton Last.fm en
-  clé de session y enverrait une clé d'application et une signature.
-- **Délais et taille de réponse bornés**, comme toute autre entrée-sortie ici.
-- **Rien du corps de la réponse n'est renvoyé au client** : il va au journal, et
-  ce que l'API montre est un état, pas un écho.
-
-**Une exception, et c'est Last.fm qui l'impose.** La règle ci-dessus envoie au
-journal ce que le fournisseur a répondu, parce qu'un corps d'erreur est ce qui
-explique une panne. La réponse d'`auth.getSession` n'est pas un corps d'erreur :
-elle contient la clé de session, qui vaut jusqu'à révocation. Elle ne va donc
-pas au journal — ni entière, ni tronquée. Ce qui s'y écrit est un verdict et une
-cause normalisée, comme pour toute autre soumission. La règle valait tant
-qu'aucune réponse ne portait de credential ; ce parcours en introduit une, et la
-règle se rétrécit d'autant plutôt que de la laisser passer.
-
-### Plusieurs instances, nommées par l'opérateur
-
-**Révisé le 2026-09-14.** « Un membre choisit sa destination parmi celles que le
-serveur connaît » supposait un pluriel que le réglage ne donnait pas : un champ
-d'URL par destinataire, donc une instance Maloja par serveur. ListenBrainz s'en
-accommode — presque tout le monde vise l'instance publique — mais Maloja
-s'auto-héberge par nature, et sur un serveur de famille chacun a la sienne. Un
-champ unique force à partager une instance ou à renoncer.
-
-L'opérateur déclare donc des destinations **nommées**, plusieurs par
-destinataire s'il le veut, et un lien porte `(provider, destination)` au lieu du
-seul `provider`. Le compte choisit un nom dans la liste que le serveur publie ;
-il ne décrit toujours aucune URL, et la barrière de la décision 10 ne bouge pas
-d'un pouce.
-
-**La destination entre dans le chemin, elle aussi.** `PUT` et `DELETE`
-s'adressaient à `/api/v2/scrobble-links/{provider}`, ce qui ne désigne plus rien
-de précis dès qu'un destinataire a deux instances — et `DELETE` n'a pas de corps
-où la nommer. Les deux deviennent
-`/api/v2/scrobble-links/{provider}/{destination}`, et la liste publie le couple.
-Aucun défaut implicite : un chemin sans destination est refusé plutôt que
-rattaché à la première venue — le glissement que les deux paragraphes suivants
-interdisent. La surface date d'hier et personne ne s'y est encore adossé, donc
-ce contrat se corrige maintenant ou se traîne.
-
-**Ce que ce couple déplace dans le code, dit ici pour qu'on ne le trouve pas
-après.** Trois endroits tiennent aujourd'hui un lien pour identifié par son seul
-destinataire, et aucun ne se contente d'une colonne de plus :
-
-- `register_scrobble_target` range un adaptateur par `ScrobbleProvider`, donc
-  deux instances Maloja n'en auraient qu'un, pointant sur une seule URL. Le
-  registre se range par le couple, et le drain choisit par le couple.
-- `unlink_scrobble_on` délie « le lien vivant de ce compte chez ce
-  destinataire » — appelé par `link_scrobble` avant chaque nouvelle
-  autorisation. Tel quel, lier `maloja/bob` délierait `maloja/alice` et
-  annulerait sa file. La clause prend la destination, faute de quoi la
-  fonctionnalité se détruirait elle-même au deuxième usage.
-- L'index unique `scrobble_link(user_id, provider) WHERE status <> 'unlinked'`
-  interdit tout simplement le cas : il devient `(user_id, provider,
-  destination)`.
-
-Ce n'est pas de l'implémentation laissée ouverte. C'est la forme que le couple
-impose, et les trois se tiennent : en corriger deux sur trois donne un serveur
-qui accepte deux destinations et en efface une.
-
-**Un nom de destination s'écrit dans un chemin sans y être encodé.** Puisqu'il
-devient un segment d'URL, il se borne à ce qui traverse un chemin sans
-discussion — lettres ASCII, chiffres, `-`, `_` et `.`, au plus soixante-quatre
-caractères — et `.` comme `..` sont refusés, ces deux-là étant des instructions
-de navigation partout où un chemin se résout. Refuser au démarrage un nom qui
-sort de là coûte un message clair à l'opérateur ; l'accepter coûterait un
-segment qui se décode autrement selon qui le lit. L'aléa du parcours Last.fm
-suit la même règle, pour la même raison, et se tire d'un générateur
-cryptographique sur au moins cent vingt-huit bits : il est la seule chose qui
-sépare un retour légitime d'un retour fabriqué.
-
-**Pas de table, pas d'administration à chaud.** Une destination reste un
-réglage de déploiement, pas une ligne que l'on ajoute en marche. Une table
-demanderait de réconcilier la configuration et la base à chaque démarrage, et
-d'inventer une réponse pour un lien dont la destination a disparu de l'une mais
-pas de l'autre. Ajouter une instance coûte un redémarrage, ce qu'un serveur
-auto-hébergé supporte. Le jour où WaveFlow aura une console d'administration,
-cette colonne deviendra une table pour une raison qui se voit.
-
-**Une destination retirée casse le lien, elle n'en glisse pas un autre.** Si la
-configuration ne nomme plus `maloja/alice` au démarrage, les liens qui la
-visaient passent `broken`, plus rien ne part, et rien n'est remappé vers une
-autre instance du même destinataire. Faire glisser `alice` vers `default`
-enverrait les écoutes d'une personne sur le profil d'une autre — la substitution
-que la décision 4 construit tout un étage d'identifiants pour empêcher.
-L'opérateur remet la destination, ou la personne délie et relie.
-
-**Et ses lignes en attente finissent, elles ne patientent pas.** Un lien
-`broken` dont la file reste `pending` est une file que rien ne videra jamais :
-`pending` échappe à la rétention, donc la table garde ces lignes sans fin, et
-`oldest_pending_at` tient le lien `degraded` pour toujours — un troisième
-exemplaire du défaut que cette révision corrige déjà deux fois. Elles passent
-donc dans un état terminal, comme le fait déjà le déliement à la décision 4 :
-même situation, même règle, et la rétention peut alors faire son travail.
-
-**Et cela se fait avant que le drainage ne démarre.** L'ordre est la moitié de
-la règle : réconcilier les liens pendant que la tâche de fond tourne déjà laisse
-une fenêtre, courte et suffisante, où des écoutes partent vers la destination
-d'hier. `initialize` compare donc les identités et termine ce qui doit l'être
-sous le verrou d'écriture, et `spawn_scrobble_drain` ne commence qu'ensuite.
-Rien d'autre n'a besoin d'être gardé : une fois le lien `broken`, la mise en
-file n'écrit plus rien pour lui.
-
-**Un nom n'est pas une identité : l'URL en fait partie.** Retirer `maloja/alice`
-casse ses liens, mais lui donner une autre URL les enverrait ailleurs sans que
-rien ne change de nom — la même substitution, par la porte d'à côté, et la plus
-facile à commettre puisqu'elle ressemble à une correction de configuration. Un
-lien retient donc de quoi reconnaître la destination qu'il visait, empreinte de
-l'URL comprise ; si elle ne correspond plus au démarrage, il passe `broken`
-comme si le nom avait disparu.
-
-**Ce qu'est cette empreinte, dit avant d'être écrite.** Elle porte sur l'URL
-*normalisée*, pas sur la chaîne que l'opérateur a tapée : sans cela,
-`https://maloja.example` et `https://maloja.example/` casseraient tous les
-liens d'un serveur au premier redémarrage après qu'un éditeur eut ajouté une
-barre.
-
-**Et cette normalisation n'est pas celle de l'URL publique.**
-`normalize_public_url` rend une origine — schéma, hôte, port — et jette le
-chemin, parce qu'une origine est ce dont les partages ont besoin. Une
-destination, non : `validate_destination` accepte un chemin, donc
-`https://host/tenant-a` et `https://host/tenant-b` sont deux destinations, et
-les réduire à leur origine leur donnerait la même empreinte. La garde
-d'identité laisserait alors passer exactement le déplacement qu'elle existe
-pour voir — d'un locataire à un autre sur la même machine, ce qui est la forme
-la plus vraisemblable qu'un tel changement puisse prendre.
-
-Il faut donc une canonicalisation propre aux destinations : schéma, hôte, port
-et **chemin** sérialisés sans ambiguïté, la chaîne de requête et le fragment
-refusés comme ils le sont déjà, et la barre finale tranchée plutôt que laissée
-au lecteur — `https://host/maloja` et `https://host/maloja/` sont **la même**
-destination, parce qu'un opérateur qui colle l'une ou l'autre veut la même
-machine, et qu'un lien cassé par une barre ajoutée en éditant un fichier serait
-une punition pour rien. La forme canonique est celle sans barre finale, la
-racine mise à part, où il n'y a pas de choix à faire. La même normalisation sert
-au rattrapage, à la réconciliation et à la garde de reprise : trois lectures
-d'un même fait, qui ne valent que si elles le calculent pareil — et les deux
-écritures d'une même URL sont ce qu'un test tient ensemble. Comparer des
-empreintes plutôt que des URL n'est pas une précaution contre un attaquant —
-personne d'hostile n'écrit cette configuration — mais la façon de n'avoir qu'une
-seule chose à comparer.
-
-C'est la décision 4 appliquée un étage plus haut. Là-bas, délier puis relier
-crée une génération qui n'hérite de rien, parce que le compte et la destination
-peuvent être les mêmes sans que l'autorisation le soit. Ici, le nom peut être le
-même sans que la machine au bout le soit, et une file en attente ne doit pas
-découvrir la différence en la franchissant. Corriger une coquille dans une URL
-coûte alors de relier — le prix d'une distinction qu'aucune heuristique ne peut
-faire à la place de l'opérateur.
-
-## Ce que cette RFC change ailleurs
-
-- **Une dépendance sortante entre dans `Cargo.toml`** pour la première fois.
-  C'est le point le plus lourd de conséquences, et il mérite d'être dit plutôt
-  que découvert dans un `cargo tree`.
-- **Deux tables** : `scrobble_link` et `scrobble_outbox`, en migrations datées,
-  comme toujours.
-- **Une septième tâche de fond**, démarrée dans `src/main.rs` avec les six
-  autres — puis une huitième, pour la purge, quand la rétention s'écrira.
-- **Des colonnes de plus, en migrations datées comme les tables.** Sur
-  `scrobble_outbox`, `retried_at` — l'invariant de la décision 13 ne peut pas se
-  déduire d'une jointure que la purge dénoue — et l'instant de passage en état
-  terminal sur lequel la rétention compte. Sur `scrobble_link`, le nom de la
-  destination et l'empreinte de son URL.
-
-  **Et `retried_at` se remplit lui aussi, sur les bases déjà en service.** Des
-  entrées retentées existent depuis [#191](https://github.com/InstaZDLL/waveflow-server/pull/191),
-  reconnaissables à la jointure que cette révision abandonne. Ajouter la colonne
-  vide les rendrait toutes répondables une seconde fois : la migration
-  réintroduirait, chez les seuls serveurs déjà en route, exactement le défaut
-  qu'elle vient corriger. Elle lit donc `retry_of` une dernière fois pour écrire
-  la colonne, et prend pour instant celui où la ligne de reprise fut créée, qui
-  est le moment où le joker a été consommé. Celle-là tient en SQL — aucune
-  configuration n'entre dans ce calcul — et un test sur une base peuplée avant
-  la colonne est ce qui le prouve, pas une relecture.
-- **Et un rattrapage, qui est la partie qu'on oublie.** Les liens déjà écrits ne
-  portent ni nom ni empreinte, et il n'existe qu'une destination par destinataire
-  au moment où cette révision s'écrit : ils reçoivent celle-là, avec l'empreinte
-  de l'URL alors configurée. Une valeur nulle laissée en place reviendrait à
-  traiter tout lien ancien comme une destination disparue, et à casser au
-  démarrage suivant des liens que rien n'a déplacés.
-
-  **L'instant terminal se rattrape lui aussi**, et sur la même base déjà en
-  service : les lignes `sent`, `rejected`, `abandoned`, `cancelled` et
-  `discarded` écrites avant la colonne n'en portent aucun, et la purge ne
-  saurait pas à partir de quand les compter. Elles reçoivent leur `updated_at`,
-  qui est l'écriture qui les a rendues terminales — rien ne les a touchées
-  depuis. Les `uncertain` n'en reçoivent pas : elles ne se purgent pas, et leur
-  en donner un inviterait quelqu'un à s'en servir un jour pour les compter. Cela
-  s'éprouve comme le reste, sur une base peuplée avant la colonne : chaque état
-  terminal rattrapé, les `uncertain` laissées vides, et un instant terminal
-  qu'une écriture ultérieure ne rebouge pas.
-
-  **Pourquoi `updated_at` fait l'affaire ici**, alors qu'il ne la ferait pas pour
-  la suite. Les huit `UPDATE` que connaît `scrobble_outbox` exigent tous un état
-  de départ non terminal — `pending`, `sending` ou `uncertain` — dans leur
-  `WHERE`. Rien n'écrit sur une ligne déjà `sent`, `rejected`, `abandoned`,
-  `cancelled` ou `discarded` : sa dernière écriture *est* sa transition, et il
-  n'existe donc pas de ligne historique dont l'instant serait indéterminable.
-  C'est une propriété du code d'aujourd'hui, pas une garantie du schéma, et
-  c'est exactement pourquoi la colonne existe pour la suite plutôt que de
-  continuer à lire `updated_at` : le premier `UPDATE` écrit sans garde d'état la
-  ferait tomber sans bruit.
-
-
-  **Ce rattrapage affirme, il ne vérifie pas.** Il ne peut pas : rien en base ne
-  dit quelle URL était configurée hier, donc écrire l'empreinte courante revient
-  à déclarer que la destination d'aujourd'hui est bien celle que ces liens
-  visaient. C'est vrai tant qu'il n'y a qu'une réponse possible, et c'est le cas
-  au moment où ceci s'écrit. Si des liens hérités existent chez un destinataire
-  et que la configuration en déclare déjà plusieurs pour lui, il n'y a pas de
-  réponse : le serveur refuse de partir plutôt que d'en choisir une, parce que
-  se tromper ici enverrait des écoutes en attente sur le mauvais profil sans que
-  rien ne le signale. La sortie ne demande aucun mécanisme neuf : démarrer une
-  fois avec une seule destination par destinataire — celle que ces liens
-  visaient — remplit les colonnes, et les autres s'ajoutent au démarrage
-  suivant. Le rattrapage n'a lieu qu'une fois ; ce qui vient après passe par la
-  réconciliation ordinaire.
-
-  **Rien de tout cela ne concerne une installation neuve.** Le refus porte sur
-  l'ambiguïté d'un rattrapage, et sans lien hérité il n'y a rien à rattraper :
-  une base vide démarre avec autant de destinations que l'opérateur en déclare,
-  dès la première fois. Ne pas le dire aurait rendu la fonctionnalité
-  inatteignable à ceux qui n'ont rien à migrer — un garde-fou qui ferme la porte
-  qu'il protège.
-
-  **Et si un destinataire a des liens sans qu'aucune destination ne soit déclarée
-  pour lui** — une URL vidée de la configuration, ce qui est déjà une façon de le
-  désactiver — il n'y a rien à inscrire : ces liens sont traités comme ceux d'une
-  destination disparue, cassés et leur file terminée, plutôt que laissés avec
-  deux colonnes vides que la réconciliation suivante ne saurait pas lire.
-
-  **Conséquence de déploiement, dite plutôt que tue.** Qui change l'URL d'une
-  destination *puis* met à jour verra le rattrapage entériner ce changement :
-  l'empreinte inscrite sera la nouvelle, et les écoutes en attente partiront
-  vers la nouvelle machine sans que la garde d'identité, qui n'a pas connu
-  l'ancienne, ait rien à signaler. C'est le seul instant du cycle où cette garde
-  ne peut pas jouer, et c'est dans sa nature : elle compare à ce qui a été
-  inscrit, et ici rien ne l'a été. L'ordre à tenir est donc l'inverse — mettre à
-  jour d'abord, changer l'URL ensuite, et la garde fera son travail. Un opérateur
-  qui a déjà fait l'autre délie avant de mettre à jour.
-
-  **Le SQL ne peut pas le faire.** `Database::migrate` n'a que la base ;
-  l'empreinte se calcule sur une URL qui vient de `Config::from_env`, que la
-  migration ne voit pas. Celle-ci ajoute donc les colonnes, nullables, et
-  `initialize` les remplit — au même endroit et sous le même verrou que la
-  réconciliation décrite plus haut, dont ce rattrapage est le premier tour :
-  remplir puis comparer, une fois, avant que `spawn_scrobble_drain` ne parte.
-- **La documentation** : une section du guide d'API, et une ligne dans
-  `docs/web-client-gap-analysis.md`, dont le point 15 attend celle-ci.
-
-## Décision 11 — l'ordre des destinataires, et une écoute par requête
-
-**ListenBrainz, puis Maloja, puis Last.fm.**
-
-ListenBrainz épouse l'architecture ci-dessus sans rien lui demander : un jeton
-par personne, du JSON, une soumission permanente et un `playing_now` que sa
-documentation donne explicitement pour temporaire — la décision 3 exactement.
-Il s'auto-héberge, donc il éprouve aussi la décision 10 dès le premier jour.
-
-Maloja vient ensuite : son API native accepte directement une liste d'artistes,
-un artiste d'album, une durée et un horodatage, donc l'enveloppe de la
-décision 2 s'y verse sans perte.
-
-Last.fm en dernier, **parce que c'est lui qui éprouve le plus l'abstraction** :
-signature, identifiants d'application en plus de la session du compte, et des
-erreurs applicatives sous un `200`. Un adaptateur écrit pour lui d'abord aurait
-fait fuir ses particularités dans le drainage ; écrit en troisième, il se
-heurte à une frontière déjà tenue par deux autres.
-
-### Une écoute, une requête
-
-Last.fm accepte jusqu'à cinquante scrobbles par appel. **On n'en profite pas,**
-**pas au début.** Une requête de cinquante qui revient `Ambiguous` rend
-cinquante écoutes incertaines d'un coup, et la décision 5 interdit alors de
-retenter : le lot transforme une perte possible en cinquante pertes probables.
-
-Une ligne de file, une requête. Grouper redeviendra une décision le jour où le
-débit sera un problème mesuré, et ce jour-là il faudra dire ce qu'un lot
-ambigu devient — ce que cette RFC n'a pas à trancher pour un serveur personnel.
-
-### Last.fm ne se colle pas, il s'autorise
-
-**Ajouté le 2026-09-14.** Toute la surface de la décision 9 tient dans un geste :
-présenter un secret déjà en main à `PUT /api/v2/scrobble-links/{provider}/{destination}`.
-Last.fm n'en délivre pas. Il faut un aller-retour par le navigateur de la
-personne — un jeton de requête, une autorisation chez eux, puis la conversion du
-jeton en clé de session, laquelle dure jusqu'à révocation.
-
-**Le serveur porte ce parcours.** L'autre voie — « obtenez une clé de session
-avec un outil tiers, puis collez-la » — était tentante parce qu'elle ne coûte
-rien : c'est aussi ce qui la disqualifie. Elle sort une seule destination du
-modèle où vivent les deux autres, et fait payer à la personne la particularité
-d'un fournisseur. Elle reste bonne pour un diagnostic, pas comme chemin normal.
-
-Deux routes, et un état temporaire qui n'entre pas dans `scrobble_outbox` :
-
-- `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` ouvre un état lié
-  au compte et rend l'URL où envoyer la personne : `/api/auth` chez Last.fm,
-  portant la clé d'application et un `cb` qui désigne la route ci-dessous.
-- `GET /api/v2/scrobble-links/lastfm/callback/{state}` reçoit le `token` que
-  Last.fm y ajoute, vérifie l'état que porte son chemin, appelle
-  `auth.getSession` pour échanger le jeton contre la clé de session, la scelle
-  et crée le lien.
-
-**La destination se nomme à l'aller et se retrouve au retour.** Last.fm n'ayant
-qu'une instance, il serait tentant de la sous-entendre — mais cette section
-vient de refuser tout défaut implicite, et une exception pour un destinataire
-serait la première marche vers le glissement qu'elle interdit. Le nom est donc
-demandé, vérifié contre les destinations déclarées, et rangé dans l'état : c'est
-lui que le retour relira, plutôt que d'en deviner un. Le jour où quelqu'un
-déclare deux Last.fm — un compte de famille et le sien — rien n'aura à changer.
-
-**Et le retour revérifie la destination.** Un quart d'heure sépare l'aller du
-retour, et un serveur peut redémarrer entre les deux — c'est justement pour
-survivre à cela que l'état vit en base. Il porte donc aussi l'empreinte de la
-destination au moment de l'aller, et le retour la compare à celle d'après
-redémarrage avant d'appeler `auth.getSession` : destination disparue ou
-déplacée, le retour est refusé et rien n'est créé. Sans quoi le parcours
-fabriquerait un lien vers une machine que la personne n'a pas choisie — ce que
-la garde d'identité empêche partout ailleurs, et qui serait ici plus fâcheux
-puisque le lien naîtrait déjà faux.
-
-**Le littéral vient avant le paramètre, et ce n'est pas une préférence de
-style.** Si la route s'écrivait `…/lastfm/{destination}/authorize` — et c'est
-précisément pourquoi elle ne s'écrit pas ainsi — une destination nommée
-`callback` produirait `…/lastfm/callback/authorize`, que le retour
-`…/lastfm/callback/{state}` réclame tout autant — deux motifs de même forme, et
-un routeur qui doit trancher. Réserver le mot marcherait ; le déplacer supprime
-la question. Une liste de noms interdits est une chose qu'il faut se rappeler de
-tenir à jour, et elle s'oublie au premier segment qu'on ajoute.
-
-**C'est le parcours web, et il n'appelle pas `auth.getToken`.** Cette méthode
-appartient au parcours des applications de bureau, où le jeton se demande avant
-d'ouvrir la page ; ici c'est Last.fm qui le remet, sur le retour. Les deux se
-ressemblent assez pour se mélanger — la première rédaction de ce paragraphe les
-avait mélangés — et une implémentation qui demanderait un jeton puis en
-recevrait un autre travaillerait avec le mauvais.
-
-L'état est à usage unique et **expire en dix à quinze minutes**, donc bien avant
-les soixante que Last.fm accorde à son jeton : c'est nous qui refusons en
-premier, et jamais un jeton périmé qui nous surprend. Il porte de quoi se
-reconnaître sans rien deviner : un compte, un aléa, une échéance.
-
-**L'aléa voyage dans le chemin, et non dans une chaîne de requête.** Last.fm
-annonce qu'il remet le jeton en accolant `/?token=…` à la callback, ce qui ne
-dit rien de ce qu'il ferait d'une callback portant déjà un `?`. Le `cb` désigne
-donc `…/callback/{state}`, qui ne dépend d'aucune supposition sur cette
-concaténation.
-
-**Ce que le retour refuse avant d'appeler quoi que ce soit.** Un `token` absent,
-vide, ou présent deux fois ; et le cas où Last.fm revient en disant qu'il a
-échoué. Dans chacun, rien n'est échangé et aucun lien n'est créé — l'appel à
-`auth.getSession` vient après ces refus, pas avant. Le cas répété mérite d'être
-nommé : `?token=a&token=b` laisse un extracteur choisir, et un parcours dont
-l'issue dépend de quel doublon un lecteur retient n'est pas un parcours. Le
-refus ne journalise pas davantage que le succès.
-
-**La barre finale n'est pas un détail de rédaction.** Last.fm annonce qu'il
-accole `/?token=…`, donc ce que le navigateur demandera est
-`…/callback/{state}/` et non `…/callback/{state}`. `axum` ne normalise pas les
-barres finales : une route déclarée sans elle ne répondrait pas, et le parcours
-échouerait à son dernier pas, chez tout le monde, pour un caractère. La route
-accepte donc les deux formes, et un test le tient — pas une relecture attentive.
-
-**Et l'état tient à deux choses, pas à une.** Le lier au seul compte suffirait
-si l'URL de retour ne sortait jamais du navigateur qui l'a demandée — or elle
-passe par Last.fm, et une URL qui voyage se retrouve dans un référent ou un
-historique. Qui l'obtiendrait pourrait terminer le parcours avec *son* jeton, et
-le compte de quelqu'un d'autre se mettrait à scrobbler sur son profil à lui.
-L'état s'apparie donc au cookie décrit plus bas, le retour exige les deux, et il
-se consomme avant l'échange du jeton plutôt qu'après la création du lien : ce
-qui a servi une fois ne peut pas resservir, même si le premier essai échoue plus
-loin.
-
-**Ce jeton arrive dans une URL, et une URL se garde.** Il vaut soixante minutes
-et vaut un profil : il n'a rien à faire dans un journal, un historique de
-navigateur ni un référent. Trois conséquences pour cette route, aucune
-facultative. Son chemin rejoint les préfixes que `trace_path` rédige, aux côtés
-des billets de flux et des jetons de partage, ce qui couvre le `{state}` ; le
-`token`, lui, est dans la chaîne de requête, qu'aucune trace de ce serveur ne
-retient déjà. La règle de `CLAUDE.md` ne souffre pas d'exception pour un secret
-d'une heure. La réponse porte `Cache-Control: no-store` et
-`Referrer-Policy: no-referrer`, sans quoi le jeton voyagerait vers la page
-suivante dans un en-tête que personne ne relit. Et elle redirige aussitôt vers
-une adresse sans jeton, pour que ce soit celle-là que l'historique retienne — la
-page où la personne atterrit n'a pas besoin d'en
-savoir plus que « c'est lié ».
-
-**Et le journal d'accès du proxy n'est pas le nôtre.** Ce serveur ne retient
-aucune chaîne de requête, mais un reverse-proxy en écrit une par défaut, et le
-jeton s'y retrouverait entier. L'opérateur qui en pose un devant retire ou
-masque la chaîne de requête sur ce chemin — sans la retirer de la requête
-transmise, que le gestionnaire lit. Cela ne se vérifie pas d'ici, comme
-l'enregistrement de la callback ; cela se dit.
-
-**Les états vivent en base et se purgent.** Les garder en mémoire les perdrait
-au redémarrage, au milieu du seul parcours qui ne supporte pas d'être repris.
-Une table minuscule, donc, avec une échéance — et la tâche de purge de la
-rétention y passe aussi, puisqu'elle existera de toute façon. Elle y applique
-l'échéance de chaque état et rien d'autre : la fenêtre de trente jours gouverne
-la file, pas un parcours qui dure un quart d'heure, et emprunter la mauvaise
-des deux garderait un état bien après qu'il aurait dû mourir. Une révision qui
-tranche la croissance sans fin d'une table ferait mauvaise figure en en
-introduisant une autre.
-
-**La destination de retour se dérive de `WAVEFLOW_PUBLIC_URL`**, qui dit déjà
-l'origine extérieure du serveur pour les partages. Un réglage de plus pour la
-même chose serait une seconde vérité à tenir d'accord avec la première.
-
-**Le retour n'arrive pas avec un jeton de porteur, et pas non plus avec la
-session ordinaire.** C'est un navigateur qui revient de chez Last.fm, pas un
-client qui appelle l'API : aucun en-tête `Authorization` ne l'accompagne. Et la
-session web ne suffit pas davantage, ce que la première rédaction de ce
-paragraphe affirmait à tort — les cookies de ce serveur sont tous
-`SameSite=Strict` (`src/api/web_session.rs`), donc un retour venu d'un autre
-site n'en porte aucun. Le parcours aurait échoué chez tout le monde, à son
-dernier pas, pour une raison invisible à la lecture.
-
-Ce qui autorise le retour est donc un **cookie propre à ce parcours**, posé par
-`authorize` et attendu par lui seul : `HttpOnly`, `Secure`, `Path` réduit au
-chemin du retour, et `SameSite=Lax`, qui est exactement ce qu'il faut — une
-navigation `GET` de premier plan le porte, une requête de fond d'un autre site
-ne le porte pas. Il vaut ce que vaut l'état, dure aussi peu, et se jette avec
-lui. Les cookies de session ne bougent pas : `Strict` est le bon réglage pour
-eux, et cette exception ne les concerne pas.
-**Un parcours à la fois.** Le cookie porte un nom fixe, donc en ouvrir un second
-remplace le premier : l'onglet resté en arrière ne pourra plus conclure, et son
-état expirera seul. C'est la limite retenue plutôt que corrigée — lier son
-compte à un service est un geste qu'on fait une fois, et un cookie par état
-échangerait cette petite surprise contre un mécanisme dont personne n'a besoin.
-Ce qu'il ne faut pas, c'est qu'un retour trouve un cookie qui ne lui correspond
-pas et l'accepte quand même : les deux se vérifient ensemble, ou le retour est
-refusé.
-
-**Ce que RFC-002 demande, le retour y répond autrement.** La règle est qu'une
-route ne peut pas exister sans dire quel `Access` elle exige. `authorize` y
-répond comme les autres : le compte courant, et `Access::Write`, puisque poser
-une autorisation est une mutation. Le retour, lui, n'en exige aucun, et ce
-n'est pas un oubli : il n'est pas appelé par un client mais par le navigateur
-d'une personne au retour d'un parcours qu'elle vient
-d'ouvrir. Ce qui tient lieu de preuve est plus étroit qu'un `Access::Write` —
-un aléa à usage unique, une échéance de quelques minutes, un cookie qui ne vaut
-que pour ce chemin, et les trois doivent concorder. L'exception est nommée ici
-plutôt que découverte dans un `authenticated` manquant.
-
-**Et cette route veut `https`.** La décision 10 tolère le clair vers une cible
-que l'opérateur déclare sur son propre réseau ; l'échappatoire ne vaut pas ici,
-puisque le trajet qui rapporte le jeton part d'Internet et traverse le
-navigateur d'une personne. Un `WAVEFLOW_PUBLIC_URL` en `http` devra donc laisser
-Last.fm indisponible, au même titre qu'une valeur absente, et pour une raison
-que la liste des destinations dira aussi clairement.
-
-C'est une exigence à écrire, pas un état constaté : `normalize_public_url`
-accepte aujourd'hui `http` comme `https`, et doit continuer — l'URL publique sert
-aussi les partages, où le clair sur un réseau privé reste un choix d'opérateur
-légitime. La condition appartient à l'activation de Last.fm, pas au réglage.
-
-**Et cette URL s'enregistre chez eux.** Un compte d'application Last.fm porte
-une callback, que le paramètre `cb` sert à remplacer pour une autorisation
-donnée ; leur documentation ne dit pas si cette valeur est vérifiée contre le
-domaine enregistré. L'opérateur y inscrit donc l'URL que son
-`WAVEFLOW_PUBLIC_URL` produit, plutôt que de parier sur une tolérance que
-personne ne lui a promise. C'est un prérequis de déploiement au même titre que
-la clé d'application, et il vit au même endroit — rien ici ne peut le vérifier
-depuis ce côté-ci.
-
-Il en découle que **Last.fm est indisponible tant que `WAVEFLOW_PUBLIC_URL`
-n'est pas configuré** — le serveur avertit déjà à ce sujet au démarrage. Ce
-n'est pas un défaut à contourner mais une condition à dire : la liste des
-destinations l'annonce, avec sa raison, plutôt que de laisser un lien échouer
-plus tard sans explication.
-
-**Pas de parcours sans navigateur dans ce lot.** Last.fm en documente un pour
-les applications de bureau, et il pourra venir. Deux parcours écrits ensemble,
-c'est deux fois l'occasion de se tromper sur l'état temporaire, et la CLI n'est
-ici que pour l'opérateur qui prépare un serveur.
-
-### Il est venu, le 2026-09-15, et il n'a pas d'état temporaire
-
-Le report ci-dessus tenait sur une crainte nommée : *deux fois l'occasion de se
-tromper sur l'état temporaire*. Celui-ci n'en a aucun. Le jeton de requête
-appartient à Last.fm, il expire sur leur horloge, et **c'est la personne qui le
-porte** d'une commande à l'autre. Pas de table, pas de cookie, pas d'échéance à
-nous. Il n'y avait donc pas deux états à tenir, mais un seul — et c'est ce qui
-a permis de l'écrire en second sans rejouer la crainte.
-
-Deux commandes, là où le web a deux routes :
+| `Accepted` | the row leaves, it is finished |
+| `Retryable` | growing backoff with jitter, a bounded number of attempts, `Retry-After` honoured when it is there |
+| `AuthBroken` | the link is marked broken, the API says so to the account, and **its pending rows end in a terminal state** |
+| `PermanentReject` | the row leaves, with a log line: no retry will correct a payload the recipient refuses |
+| `Ambiguous` | **no automatic retry** — the terminal state `uncertain`, counted and readable, by decision 5 |
+
+The drain therefore knows nothing of Last.fm, ListenBrainz or Maloja. That is
+what allows a fourth to be added without touching the queue.
+
+**A queue that does not empty is a defect**, not a state. After the bounded
+attempts, the row is abandoned and counted, and that count is readable.
+
+## Decision 7 — what the server does not send
+
+- **Nothing retroactive on activation.** Connecting an account does not send its
+  history: nobody wants to see ten years of listens surface on their profile at
+  once, and a recipient reads that as abuse.
+- **No track it cannot name.** With no title and no artist, the submission is
+  unusable and skews the recipient's statistics.
+- **Nothing from a share.** `/share/{token}` serves a visitor with no account;
+  there is no profile to credit.
+
+## Decision 8 — the Subsonic facade does not move
+
+The contract is frozen for `v2.0-beta`. No new field, no new method: a Subsonic
+client goes on calling `scrobble`, and what happens next is none of its
+business. That is already the case for everything this facade ignores.
+
+## Decision 9 — the configuration is a route, not an environment variable
+
+`src/config.rs` carries what belongs to the deployment. A scrobbling link
+belongs to an account, so it is placed through the native API — and through the
+CLI for an operator preparing a server with no browser, as with the Subsonic
+password.
+
+What stays with the deployment: decision 4's application credentials, the
+outgoing timeout, the attempt ceiling, the drain interval, the retention window,
+and the destinations themselves — their name as much as their URL, several per
+recipient if the operator wants.
+
+## Decision 10 — the outgoing surface is bounded, and that is the decision that counts
+
+This is the real risk of this RFC: a server that calls a URL is a server one can
+make call a URL. Maloja and ListenBrainz are self-hosted, so there will be a URL
+field, and it cannot be free.
+
+- **HTTPS only**, except for a target the operator explicitly declares in the
+  clear on their own network.
+- **The base URL is the operator's setting**, never an account's. A member picks
+  their destination from the ones the server knows, and does not describe it.
+- **No redirect followed**, not even to the host requested. The first draft said
+  "to another host", which is not what the code does: it sets `Policy::none()`
+  and stops at the first. It was the text that promised less, and it was wrong
+  to promise it — a `302` to the same host is still a path nobody chose, and the
+  exchange that converts a Last.fm token into a session key would send an
+  application key and a signature there.
+- **Timeouts and response size bounded**, like every other I/O here.
+- **Nothing from the response body is returned to the client**: it goes to the
+  log, and what the API shows is a state, not an echo.
+
+**One exception, and Last.fm imposes it.** The rule above sends what the
+provider answered to the log, because an error body is what explains a failure.
+`auth.getSession`'s response is not an error body: it contains the session key,
+which is good until revoked. It therefore does not go to the log — neither whole
+nor truncated. What is written there is a verdict and a normalised cause, as for
+any other submission. The rule held as long as no response carried a credential;
+this journey introduces one, and the rule narrows accordingly rather than letting
+it through.
+
+### Several instances, named by the operator
+
+**Revised on 2026-09-14.** "A member picks their destination from the ones the
+server knows" assumed a plural the setting did not provide: one URL field per
+recipient, hence one Maloja instance per server. ListenBrainz copes — almost
+everybody aims at the public instance — but Maloja is self-hosted by nature, and
+on a family server everybody has their own. A single field forces sharing an
+instance or giving up.
+
+The operator therefore declares **named** destinations, several per recipient if
+they want, and a link carries `(provider, destination)` instead of `provider`
+alone. The account picks a name from the list the server publishes; it still
+describes no URL, and decision 10's barrier does not move an inch.
+
+**The destination enters the path too.** `PUT` and `DELETE` addressed
+`/api/v2/scrobble-links/{provider}`, which names nothing precise the moment a
+recipient has two instances — and `DELETE` has no body to name it in. Both
+become `/api/v2/scrobble-links/{provider}/{destination}`, and the listing
+publishes the pair. No implicit default: a path with no destination is refused
+rather than attached to the first one around — the slide the next two paragraphs
+forbid. The surface dates from yesterday and nobody has built on it yet, so this
+contract is corrected now or carried for ever.
+
+**What that pair moves in the code, said here so it is not found afterwards.**
+Three places hold a link as identified by its recipient alone today, and none of
+them is satisfied with one more column:
+
+- `register_scrobble_target` files an adapter by `ScrobbleProvider`, so two
+  Maloja instances would have only one, pointing at a single URL. The registry
+  is filed by the pair, and the drain chooses by the pair.
+- `unlink_scrobble_on` unlinks "this account's live link at this recipient" —
+  called by `link_scrobble` before every new authorization. As it stands,
+  linking `maloja/bob` would unlink `maloja/alice` and cancel her queue. The
+  clause takes the destination, failing which the feature would destroy itself on
+  its second use.
+- The unique index `scrobble_link(user_id, provider) WHERE status <> 'unlinked'`
+  simply forbids the case: it becomes `(user_id, provider, destination)`.
+
+This is not implementation left open. It is the shape the pair imposes, and the
+three hold together: correcting two out of three gives a server that accepts two
+destinations and erases one.
+
+**A destination name is written into a path without being encoded there.** Since
+it becomes a URL segment, it is bounded to what travels through a path without
+argument — ASCII letters, digits, `-`, `_` and `.`, at most sixty-four
+characters — and `.` as well as `..` are refused, those two being navigation
+instructions everywhere a path resolves. Refusing a name outside that at
+start-up costs the operator a clear message; accepting it would cost a segment
+that decodes differently depending on who reads it. The Last.fm journey's
+randomness follows the same rule, for the same reason, and is drawn from a
+cryptographic generator over at least a hundred and twenty-eight bits: it is the
+only thing separating a legitimate return from a fabricated one.
+
+**No table, no hot administration.** A destination stays a deployment setting,
+not a row one adds while running. A table would require reconciling the
+configuration and the database at every start-up, and inventing an answer for a
+link whose destination has disappeared from one but not the other. Adding an
+instance costs a restart, which a self-hosted server tolerates. The day WaveFlow
+has an administration console, that column becomes a table for a reason one can
+see.
+
+**A destination withdrawn breaks the link, it does not slide another one in.**
+If the configuration no longer names `maloja/alice` at start-up, the links that
+aimed at it go `broken`, nothing leaves any more, and nothing is remapped to
+another instance of the same recipient. Sliding `alice` onto `default` would
+send one person's listens to another's profile — the substitution decision 4
+builds a whole tier of credentials to prevent. The operator puts the destination
+back, or the person unlinks and relinks.
+
+**And its pending rows end, they do not wait.** A `broken` link whose queue
+stays `pending` is a queue nothing will ever empty: `pending` escapes retention,
+so the table keeps those rows for ever, and `oldest_pending_at` holds the link
+`degraded` for ever — a third instance of the defect this revision already
+corrects twice. They therefore move to a terminal state, as unlinking already
+does in decision 4: same situation, same rule, and retention can then do its
+work.
+
+**And this happens before the drain starts.** The order is half the rule:
+reconciling the links while the background task is already running leaves a
+window, short and sufficient, in which listens leave for yesterday's
+destination. `initialize` therefore compares the identities and ends what has to
+end under the writer gate, and `spawn_scrobble_drain` only begins afterwards.
+Nothing else needs guarding: once the link is `broken`, queueing writes nothing
+more for it.
+
+**A name is not an identity: the URL is part of it.** Withdrawing
+`maloja/alice` breaks its links, but giving it another URL would send them
+elsewhere with nothing changing name — the same substitution, through the next
+door, and the easiest one to commit since it looks like a configuration fix. A
+link therefore keeps enough to recognise the destination it aimed at, the URL's
+fingerprint included; if that no longer matches at start-up, it goes `broken` as
+if the name had disappeared.
+
+**What that fingerprint is, said before it is written.** It covers the
+*normalised* URL, not the string the operator typed: without that,
+`https://maloja.example` and `https://maloja.example/` would break every link on
+a server at the first restart after an editor added a slash.
+
+**And that normalisation is not the public URL's.** `normalize_public_url`
+returns an origin — scheme, host, port — and throws the path away, because an
+origin is what shares need. A destination is not: `validate_destination` accepts
+a path, so `https://host/tenant-a` and `https://host/tenant-b` are two
+destinations, and reducing them to their origin would give them the same
+fingerprint. The identity guard would then let through exactly the move it
+exists to see — from one tenant to another on the same machine, which is the
+likeliest form such a change can take.
+
+A canonicalisation of its own is therefore needed for destinations: scheme,
+host, port and **path** serialised unambiguously, the query string and fragment
+refused as they already are, and the trailing slash settled rather than left to
+the reader — `https://host/maloja` and `https://host/maloja/` are **the same**
+destination, because an operator who pastes either wants the same machine, and a
+link broken by a slash added while editing a file would be a punishment for
+nothing. The canonical form is the one without a trailing slash, the root aside,
+where there is no choice to make. The same normalisation serves the back-fill,
+the reconciliation and the retry guard: three readings of one fact, which are
+only worth anything if they compute it the same way — and the two writings of
+one URL are what a test holds together. Comparing fingerprints rather than URLs
+is not a precaution against an attacker — nobody hostile writes this
+configuration — but the way to have only one thing to compare.
+
+This is decision 4 applied one tier up. There, unlinking then relinking creates
+a generation that inherits nothing, because the account and the destination can
+be the same while the authorization is not. Here, the name can be the same while
+the machine at the end is not, and a pending queue must not discover the
+difference by crossing it. Correcting a typo in a URL then costs a relink — the
+price of a distinction no heuristic can make for the operator.
+
+## What this RFC changes elsewhere
+
+- **An outgoing dependency enters `Cargo.toml`** for the first time. It is the
+  heaviest point in consequences, and it deserves saying rather than being
+  discovered in a `cargo tree`.
+- **Two tables**: `scrobble_link` and `scrobble_outbox`, as dated migrations, as
+  always.
+- **A seventh background task**, started in `src/main.rs` with the six others —
+  then an eighth, for the purge, when retention is written.
+- **More columns, in dated migrations like the tables.** On `scrobble_outbox`,
+  `retried_at` — decision 13's invariant cannot be inferred from a join the
+  purge unties — and the instant of the move to a terminal state that retention
+  counts from. On `scrobble_link`, the destination's name and its URL's
+  fingerprint.
+
+  **And `retried_at` is filled too, on databases already in service.** Retried
+  entries have existed since [#191](https://github.com/InstaZDLL/waveflow-server/pull/191),
+  recognisable by the join this revision abandons. Adding the column empty would
+  make all of them answerable a second time: the migration would reintroduce, on
+  the only servers already running, exactly the defect it has just corrected. It
+  therefore reads `retry_of` one last time to write the column, and takes as the
+  instant the one when the retry row was created, which is the moment the single
+  chance was consumed. That one holds in SQL — no configuration enters the
+  computation — and a test on a database populated before the column is what
+  proves it, not a re-reading.
+- **And a back-fill, which is the part one forgets.** The links already written
+  carry neither name nor fingerprint, and there is only one destination per
+  recipient at the time this revision is written: they receive that one, with the
+  fingerprint of the URL configured then. Leaving a null value in place would
+  amount to treating every old link as a destination that had disappeared, and
+  breaking at the next start-up links nothing had moved.
+
+  **The terminal instant is back-filled too**, and on the same databases already
+  in service: the `sent`, `rejected`, `abandoned`, `cancelled` and `discarded`
+  rows written before the column carry none, and the purge would not know from
+  when to count them. They receive their `updated_at`, which is the write that
+  made them terminal — nothing has touched them since. The `uncertain` ones
+  receive none: they are not purged, and giving them one would invite somebody to
+  use it one day to count them. This is tested like the rest, on a database
+  populated before the column: every terminal state back-filled, the `uncertain`
+  ones left empty, and a terminal instant a later write does not move again.
+
+  **Why `updated_at` does the job here**, when it would not for what comes next.
+  All eight `UPDATE`s `scrobble_outbox` knows require a non-terminal starting
+  state — `pending`, `sending` or `uncertain` — in their `WHERE`. Nothing writes
+  to a row that is already `sent`, `rejected`, `abandoned`, `cancelled` or
+  `discarded`: its last write *is* its transition, and there is therefore no
+  historical row whose instant would be undeterminable. That is a property of
+  today's code, not a guarantee of the schema, and it is exactly why the column
+  exists for what comes next rather than going on reading `updated_at`: the first
+  `UPDATE` written without a state guard would make it fall without a sound.
+
+  **This back-fill asserts, it does not verify.** It cannot: nothing in the
+  database says which URL was configured yesterday, so writing the current
+  fingerprint amounts to declaring that today's destination is indeed the one
+  those links aimed at. That is true as long as there is only one possible
+  answer, and it is the case as this is written. If inherited links exist at a
+  recipient and the configuration already declares several for it, there is no
+  answer: the server refuses to start rather than choose one, because being
+  wrong here would send pending listens to the wrong profile with nothing
+  reporting it. The way out needs no new mechanism: starting once with a single
+  destination per recipient — the one those links aimed at — fills the columns,
+  and the others are added at the next start-up. The back-fill happens only
+  once; what comes after goes through the ordinary reconciliation.
+
+  **None of this concerns a fresh installation.** The refusal is about the
+  ambiguity of a back-fill, and with no inherited link there is nothing to
+  back-fill: an empty database starts with as many destinations as the operator
+  declares, from the first time. Not saying so would have made the feature
+  unreachable for those who have nothing to migrate — a guard rail that closes
+  the door it protects.
+
+  **And if a recipient has links while no destination is declared for it** — a
+  URL emptied out of the configuration, which is already a way of disabling
+  it — there is nothing to write: those links are treated like those of a
+  destination that has disappeared, broken and their queue ended, rather than
+  left with two empty columns the next reconciliation would not know how to
+  read.
+
+  **A deployment consequence, said rather than kept quiet.** Whoever changes a
+  destination's URL *then* updates will see the back-fill endorse that change:
+  the fingerprint written will be the new one, and the pending listens will leave
+  for the new machine without the identity guard, which never knew the old one,
+  having anything to report. That is the one moment of the cycle where that guard
+  cannot play, and it is in its nature: it compares against what has been
+  written, and here nothing has been. The order to keep is therefore the
+  reverse — update first, change the URL after, and the guard will do its work.
+  An operator who has already done the other unlinks before updating.
+
+  **SQL cannot do it.** `Database::migrate` has only the database; the
+  fingerprint is computed over a URL that comes from `Config::from_env`, which
+  the migration does not see. So the migration adds the columns, nullable, and
+  `initialize` fills them — in the same place and under the same gate as the
+  reconciliation described above, of which this back-fill is the first turn: fill
+  then compare, once, before `spawn_scrobble_drain` leaves.
+- **Documentation**: a section of the API guide, and a line in
+  `docs/web-client-gap-analysis.md`, whose point 15 is waiting for this one.
+
+## Decision 11 — the order of the recipients, and one listen per request
+
+**ListenBrainz, then Maloja, then Last.fm.**
+
+ListenBrainz marries the architecture above without asking anything of it: one
+token per person, JSON, a permanent submission and a `playing_now` its
+documentation explicitly gives as temporary — decision 3 exactly. It is
+self-hosted, so it also tests decision 10 from the first day.
+
+Maloja comes next: its native API directly accepts a list of artists, an album
+artist, a duration and a timestamp, so decision 2's envelope pours in without
+loss.
+
+Last.fm last, **because it is the one that tests the abstraction most**: a
+signature, application credentials on top of the account's session, and
+application errors under a `200`. An adapter written for it first would have
+leaked its particularities into the drain; written third, it meets a boundary
+already held by two others.
+
+### One listen, one request
+
+Last.fm accepts up to fifty scrobbles per call. **We do not take advantage of
+it, not at the start.** A request of fifty that comes back `Ambiguous` makes
+fifty listens uncertain at once, and decision 5 then forbids retrying: the batch
+turns one possible loss into fifty probable ones.
+
+One queue row, one request. Grouping becomes a decision again the day
+throughput is a measured problem, and on that day it will be necessary to say
+what an ambiguous batch becomes — which this RFC does not have to settle for a
+personal server.
+
+### Last.fm is not pasted in, it authorizes
+
+**Added on 2026-09-14.** All of decision 9's surface holds in one gesture:
+presenting a secret already in hand to
+`PUT /api/v2/scrobble-links/{provider}/{destination}`. Last.fm does not issue
+one. A round trip through the person's browser is needed — a request token, an
+authorization at their site, then the conversion of the token into a session
+key, which lasts until revoked.
+
+**The server carries that journey.** The other way — "get a session key with a
+third-party tool, then paste it" — was tempting because it costs nothing: that
+is also what disqualifies it. It takes a single destination out of the model the
+other two live in, and makes the person pay for a provider's peculiarity. It
+remains good for diagnosis, not as the normal path.
+
+Two routes, and a temporary state that does not enter `scrobble_outbox`:
+
+- `POST /api/v2/scrobble-links/lastfm/authorize/{destination}` opens a state
+  bound to the account and returns the URL to send the person to: `/api/auth` at
+  Last.fm, carrying the application key and a `cb` naming the route below.
+- `GET /api/v2/scrobble-links/lastfm/callback/{state}` receives the `token`
+  Last.fm adds there, verifies the state its path carries, calls
+  `auth.getSession` to exchange the token for the session key, seals it and
+  creates the link.
+
+**The destination is named on the way out and found again on the way back.**
+Last.fm having only one instance, it would be tempting to leave it implied — but
+this section has just refused every implicit default, and an exception for one
+recipient would be the first step towards the slide it forbids. The name is
+therefore asked for, checked against the declared destinations, and filed in the
+state: that is what the return re-reads, rather than guessing one. The day
+somebody declares two Last.fms — a family account and their own — nothing will
+have to change.
+
+**And the return re-checks the destination.** A quarter of an hour separates the
+outward journey from the return, and a server can restart in between — that is
+precisely what the state lives in the database to survive. It therefore also
+carries the destination's fingerprint as of the outward journey, and the return
+compares it with the one after a restart before calling `auth.getSession`:
+destination gone or moved, the return is refused and nothing is created. Without
+that, the journey would manufacture a link to a machine the person did not
+choose — which the identity guard prevents everywhere else, and which would be
+worse here since the link would be born already wrong.
+
+**The literal comes before the parameter, and that is not a style
+preference.** If the route were written `…/lastfm/{destination}/authorize` — and
+that is precisely why it is not — a destination named `callback` would produce
+`…/lastfm/callback/authorize`, which the return `…/lastfm/callback/{state}`
+claims just as much — two patterns of the same shape, and a router that has to
+choose. Reserving the word would work; moving it removes the question. A list of
+forbidden names is a thing one has to remember to keep up to date, and it is
+forgotten at the first segment one adds.
+
+**This is the web journey, and it does not call `auth.getToken`.** That method
+belongs to the desktop-application journey, where the token is requested before
+the page is opened; here it is Last.fm that hands it over, on the return. The two
+resemble each other enough to be mixed up — the first draft of this paragraph
+mixed them up — and an implementation that requested a token and then received
+another would be working with the wrong one.
+
+The state is single-use and **expires in ten to fifteen minutes**, so well before
+the sixty Last.fm grants its token: we are the ones who refuse first, and never a
+stale token that surprises us. It carries enough to recognise itself without
+guessing anything: an account, a random value, a deadline.
+
+**The random value travels in the path, and not in a query string.** Last.fm
+announces that it hands the token over by appending `/?token=…` to the callback,
+which says nothing about what it would do with a callback already carrying a
+`?`. The `cb` therefore names `…/callback/{state}`, which depends on no
+assumption about that concatenation.
+
+**What the return refuses before calling anything at all.** A `token` that is
+absent, empty, or present twice; and the case where Last.fm comes back saying it
+failed. In each, nothing is exchanged and no link is created — the call to
+`auth.getSession` comes after those refusals, not before. The repeated case
+deserves naming: `?token=a&token=b` leaves an extractor to choose, and a journey
+whose outcome depends on which duplicate a reader keeps is not a journey. The
+refusal logs no more than the success.
+
+**The trailing slash is not a drafting detail.** Last.fm announces that it
+appends `/?token=…`, so what the browser will request is `…/callback/{state}/`
+and not `…/callback/{state}`. `axum` does not normalise trailing slashes: a route
+declared without it would not answer, and the journey would fail at its last
+step, for everybody, over one character. The route therefore accepts both forms,
+and a test holds it — not an attentive re-reading.
+
+**And the state hangs on two things, not one.** Binding it to the account alone
+would be enough if the return URL never left the browser that requested it — but
+it goes through Last.fm, and a URL that travels ends up in a referrer or a
+history. Whoever obtained it could finish the journey with *their* token, and
+somebody else's account would start scrobbling onto their profile. The state is
+therefore paired with the cookie described below, the return demands both, and it
+is consumed before the token exchange rather than after the link is created:
+what has served once cannot serve again, even if the first attempt fails further
+on.
+
+**That token arrives in a URL, and a URL is kept.** It is worth sixty minutes
+and worth a profile: it has no business in a log, a browser history or a
+referrer. Three consequences for this route, none optional. Its path joins the
+prefixes `trace_path` redacts, alongside stream tickets and share tokens, which
+covers the `{state}`; the `token` itself is in the query string, which no trace
+in this server keeps anyway. `CLAUDE.md`'s rule suffers no exception for an
+hour-long secret. The response carries `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`, without which the token would travel to the next
+page in a header nobody re-reads. And it redirects immediately to an address
+with no token, so that it is that one the history keeps — the page the person
+lands on has no need to know more than "it is linked".
+
+**And the proxy's access log is not ours.** This server keeps no query string,
+but a reverse proxy writes one by default, and the token would end up there
+whole. An operator who puts one in front removes or masks the query string on
+that path — without removing it from the forwarded request, which the handler
+reads. That cannot be verified from here, like the registration of the callback;
+it is said.
+
+**The states live in the database and are purged.** Keeping them in memory would
+lose them on a restart, in the middle of the one journey that cannot bear being
+resumed. A tiny table, then, with a deadline — and retention's purge task passes
+through it too, since it will exist anyway. It applies each state's own deadline
+there and nothing else: the thirty-day window governs the queue, not a journey
+that lasts a quarter of an hour, and borrowing the wrong one of the two would
+keep a state long after it should have died. A revision that settles a table's
+endless growth would look poor introducing another.
+
+**The return destination is derived from `WAVEFLOW_PUBLIC_URL`**, which already
+states the server's external origin for shares. One more setting for the same
+thing would be a second truth to keep in agreement with the first.
+
+**The return does not arrive with a bearer token, and not with the ordinary
+session either.** It is a browser coming back from Last.fm, not a client calling
+the API: no `Authorization` header accompanies it. And the web session is no
+more sufficient, which the first draft of this paragraph wrongly asserted — this
+server's cookies are all `SameSite=Strict` (`src/api/web_session.rs`), so a
+return coming from another site carries none. The journey would have failed for
+everybody, at its last step, for a reason invisible on reading.
+
+What authorizes the return is therefore a **cookie of this journey's own**, set
+by `authorize` and expected by it alone: `HttpOnly`, `Secure`, `Path` reduced to
+the return's path, and `SameSite=Lax`, which is exactly what is needed — a
+top-level `GET` navigation carries it, a background request from another site
+does not. It is worth what the state is worth, lasts as little, and is thrown
+away with it. The session cookies do not move: `Strict` is the right setting for
+them, and this exception does not concern them.
+
+**One journey at a time.** The cookie carries a fixed name, so opening a second
+replaces the first: the tab left behind will no longer be able to conclude, and
+its state will expire on its own. That is the limit kept rather than
+corrected — linking one's account to a service is a gesture one makes once, and
+a cookie per state would trade that small surprise for a mechanism nobody needs.
+What must not happen is a return finding a cookie that does not correspond to it
+and accepting it anyway: the two are verified together, or the return is refused.
+
+**What RFC-002 requires, the return answers differently.** The rule is that a
+route cannot exist without saying which `Access` it requires. `authorize`
+answers like the others: the current account, and `Access::Write`, since placing
+an authorization is a mutation. The return requires none, and that is not an
+oversight: it is not called by a client but by the browser of a person returning
+from a journey they have just opened. What stands in for proof is narrower than
+an `Access::Write` — a single-use random value, a deadline of a few minutes, a
+cookie that is only good for that path, and all three must agree. The exception
+is named here rather than discovered in a missing `authenticated`.
+
+**And this route wants `https`.** Decision 10 tolerates the clear towards a
+target the operator declares on their own network; that way out does not apply
+here, since the trip that brings the token back starts from the internet and goes
+through a person's browser. A `WAVEFLOW_PUBLIC_URL` on `http` must therefore
+leave Last.fm unavailable, exactly as an absent value does, and for a reason the
+destination listing will state just as clearly.
+
+That is a requirement to write, not an observed state:
+`normalize_public_url` accepts `http` as well as `https` today, and must go on
+doing so — the public URL also serves shares, where the clear on a private
+network remains a legitimate operator choice. The condition belongs to
+activating Last.fm, not to the setting.
+
+**And that URL is registered with them.** A Last.fm application account carries a
+callback, which the `cb` parameter serves to replace for a given authorization;
+their documentation does not say whether that value is checked against the
+registered domain. The operator therefore registers the URL their
+`WAVEFLOW_PUBLIC_URL` produces, rather than betting on a tolerance nobody has
+promised them. It is a deployment prerequisite on the same footing as the
+application key, and it lives in the same place — nothing here can verify it
+from this side.
+
+It follows that **Last.fm is unavailable until `WAVEFLOW_PUBLIC_URL` is
+configured** — the server already warns about that at start-up. That is not a
+defect to work around but a condition to state: the destination listing
+announces it, with its reason, rather than letting a link fail later with no
+explanation.
+
+**No browserless journey in this batch.** Last.fm documents one for desktop
+applications, and it may come. Two journeys written together is two chances to
+get the temporary state wrong, and the CLI is here only for the operator
+preparing a server.
+
+### It came, on 2026-09-15, and it has no temporary state
+
+The deferral above rested on a named fear: *two chances to get the temporary
+state wrong*. This one has none. The request token belongs to Last.fm, it
+expires on their clock, and **it is the person who carries it** from one command
+to the other. No table, no cookie, no deadline of ours. There were therefore not
+two states to hold but one — and that is what allowed it to be written second
+without replaying the fear.
+
+Two commands, where the web has two routes:
 
 - `waveflow-server scrobble authorize --actor … --username … --destination …`
-  appelle `auth.getToken`, imprime l'adresse à ouvrir et le jeton à rapporter.
-  **Elle n'écrit rien** : une autorisation que personne ne termine ne coûte rien
-  au compte, et aucune ligne ne traîne qu'une purge devrait ramasser.
+  calls `auth.getToken`, prints the address to open and the token to bring back.
+  **It writes nothing**: an authorization nobody finishes costs the account
+  nothing, and no row lies around for a purge to pick up.
 - `waveflow-server scrobble exchange --actor … --username … --destination …`
-  échange le jeton approuvé contre la clé de session et crée le lien.
+  exchanges the approved token for the session key and creates the link.
 
-`--actor` est l'administrateur qui exécute, `--username` le compte qui sera
-lié : les deux, comme partout dans cette CLI, parce qu'un opérateur prépare un
-serveur pour d'autres que lui.
+`--actor` is the administrator running it, `--username` the account that will be
+linked: both, as everywhere in this CLI, because an operator prepares a server
+for people other than themselves.
 
-**Il ne demande pas `WAVEFLOW_PUBLIC_URL`**, et c'est sa raison d'être. Le
-parcours web l'exige parce que Last.fm doit ramener un navigateur à une adresse
-que ce serveur répond ; ici rien ne revient. La seule condition est donc une
-application — ce qui fait de ce parcours celui d'un serveur sans façade
-publique, exactement la machine où la CLI est déjà le seul geste possible.
+**It does not require `WAVEFLOW_PUBLIC_URL`**, and that is its reason for being.
+The web journey requires it because Last.fm has to bring a browser back to an
+address this server answers; here nothing comes back. The only condition is
+therefore an application — which makes this the journey of a server with no
+public front, exactly the machine where the CLI is already the only gesture
+available.
 
-**Le jeton passe par `WAVEFLOW_LASTFM_TOKEN`, pas par `argv`** — nom que
-`--token-env` permet de changer, comme le secret de `link` et pour la même
-raison : un historique de shell et une liste de processus se lisent. Le sien
-mérite ce soin autant qu'une clé de session — qui l'échange le premier est
-celui à qui la session finit par appartenir.
+**The token goes through `WAVEFLOW_LASTFM_TOKEN`, not through `argv`** — a name
+`--token-env` allows changing, like `link`'s secret and for the same reason: a
+shell history and a process list can be read. This one deserves that care as
+much as a session key — whoever exchanges it first is the one the session ends
+up belonging to.
 
-**Et `authorize` n'imprime pas de ligne prête à coller.** La première rédaction
-affichait `WAVEFLOW_LASTFM_TOKEN=… waveflow-server scrobble exchange …`, prête à
-copier — donc prête à atterrir dans l'historique que la variable existe pour
-éviter. Le jeton s'imprime seul, la commande nomme la variable, et **comment on
-la remplit appartient à l'opérateur et à son interpréteur** : une lecture
-silencieuse, un gestionnaire de secrets, un fichier sourcé puis effacé. Ce
-serveur tourne sur trois plateformes dont les réponses diffèrent, et n'a pas à
-choisir pour elles. Le [guide API](../api-v2-guide.md#external-scrobbling) en
-montre une par interpréteur, à titre d'exemple et non de prescription.
+**And `authorize` does not print a line ready to paste.** The first draft
+displayed `WAVEFLOW_LASTFM_TOKEN=… waveflow-server scrobble exchange …`, ready
+to copy — hence ready to land in the history the variable exists to avoid. The
+token is printed on its own, the command names the variable, and **how it is
+filled belongs to the operator and their shell**: a silent read, a secret
+manager, a file sourced then deleted. This server runs on three platforms whose
+answers differ, and it does not have to choose for them. The
+[API guide](../api-v2-guide.md#external-scrobbling) shows one per shell, as an
+example and not as a prescription.
 
-**Et `auth.getToken` n'entre pas dans le parcours web pour autant.** Le
-paragraphe ci-dessus disait que les deux se ressemblent assez pour se mélanger ;
-maintenant que les deux existent, cette phrase cesse d'être un avertissement et
-devient vérifiable. Le double de test compte les demandes de jeton, et le
-parcours web en fait **zéro** — un serveur qui minterait le sien puis en
-recevrait un autre travaillerait avec le mauvais, et c'est désormais une
-assertion et non une intention.
+**And `auth.getToken` does not enter the web journey for all that.** The
+paragraph above said the two resemble each other enough to be mixed up; now that
+both exist, that sentence stops being a warning and becomes checkable. The test
+double counts token requests, and the web journey makes **zero** — a server that
+minted its own and then received another would be working with the wrong one, and
+that is now an assertion rather than an intention.
 
-## Décision 12 — ce que l'API montre : des compteurs, jamais un écho
+## Decision 12 — what the API shows: counters, never an echo
 
-Un lien expose son état et la forme de sa file, agrégés :
+A link exposes its state and the shape of its queue, aggregated:
 
-- `healthy`, `degraded`, `broken` ;
-- combien de lignes attendent, combien retentent, combien sont `uncertain` ;
-- depuis quand attend la plus ancienne, et quand remonte le dernier succès ;
-- éventuellement une dernière cause normalisée — `rate_limited`, `auth_broken`.
+- `healthy`, `degraded`, `broken`;
+- how many rows are waiting, how many are retrying, how many are `uncertain`;
+- how long the oldest has been waiting, and when the last success was;
+- possibly a last normalised cause — `rate_limited`, `auth_broken`.
 
-**`healthy` ne peut pas vouloir dire « j'ai encore un jeton ».** Un lien valide
-avec trois mille écoutes en attente depuis six heures est en panne, et c'est
-précisément la panne silencieuse qu'une file durable existe pour rendre
-visible. D'où `degraded` : le lien répond, mais la file ne se vide pas — une
-incertaine qui attend qu'une personne réponde d'elle, ou une entrée en attente
-depuis plus longtemps que le seuil. `broken` reste réservé à `AuthBroken` et à
-une configuration inutilisable.
+**`healthy` cannot be allowed to mean "I still have a token".** A valid link
+with three thousand listens pending for six hours is broken, and that is
+precisely the silent failure a durable queue exists to make visible. Hence
+`degraded`: the link answers, but the queue does not empty — an uncertain entry
+waiting for a person to answer for it, or an entry pending for longer than the
+threshold. `broken` stays reserved for `AuthBroken` and for an unusable
+configuration.
 
-**Corrigé le 2026-09-14 :** cette phrase disait « des reprises, des incertaines,
-ou une attente trop vieille », et `link_health` ne regarde pas les reprises. Il
-avait raison de ne pas le faire — une ligne qui retente est une file qui
-fonctionne, et la compter dégraderait tout lien ayant croisé une panne
-passagère. C'est le texte qui promettait de travers, depuis l'origine. L'ordre
-des trois questions vit dans `link_health` et n'est pas recopié ici : deux
-écritures du même seuil divergeraient, et c'est le code que l'API rend.
+**Corrected on 2026-09-14:** this sentence said "retries, uncertain entries, or
+a wait that is too old", and `link_health` does not look at retries. It was
+right not to — a row that retries is a queue that works, and counting it would
+degrade every link that had met a passing failure. It was the text that promised
+crookedly, from the start. The order of the three questions lives in
+`link_health` and is not copied here: two writings of the same threshold would
+diverge, and it is the code the API returns.
 
-**Retiré le 2026-09-14 :** une révision de ce document a prétendu ici que « quand
-remonte le dernier succès » n'était tenu par rien, et qu'il faudrait un jour une
-colonne sur `scrobble_link` écrite au moment du succès. Cette colonne existe
-depuis [#191](https://github.com/InstaZDLL/waveflow-server/pull/191) :
-`scrobble_link.last_success_at`, écrite dans la transaction même qui règle une
-ligne, publiée par `scrobble_links`. La forme prescrite était déjà la forme en
+**Removed on 2026-09-14:** a revision of this document claimed here that "when
+the last success was" was held by nothing, and that a column on `scrobble_link`
+written at the moment of success would be needed one day. That column has existed
+since [#191](https://github.com/InstaZDLL/waveflow-server/pull/191):
+`scrobble_link.last_success_at`, written in the very transaction that settles a
+row, published by `scrobble_links`. The shape prescribed was already the shape in
 place.
 
-L'erreur vaut d'être gardée parce qu'elle a une cause nette : `link_health` ne
-prend pas ce champ, et j'en ai conclu qu'il n'existait pas. Il ne le prend pas
-parce que la santé n'en dépend pas — un lien qui n'a jamais rien envoyé n'est
-pas malade — et le champ voyage à côté, dans `ScrobbleLinkState`. **Lire la
-signature d'une fonction ne dit pas ce qu'une structure porte.**
+The mistake is worth keeping because it has a clear cause: `link_health` does
+not take that field, and I concluded from that that it did not exist. It does not
+take it because health does not depend on it — a link that has never sent
+anything is not sick — and the field travels beside it, in `ScrobbleLinkState`.
+**Reading a function's signature does not say what a structure carries.**
 
-**Jamais le contenu de l'enveloppe, jamais la réponse brute du fournisseur.**
-La décision 10 interdit déjà l'écho ; ceci en est le corollaire du côté
-lecture. Ce qui sort est un compte, pas un titre ni un corps d'erreur.
+**Never the envelope's content, never the provider's raw response.** Decision 10
+already forbids the echo; this is its corollary on the reading side. What comes
+out is a count, not a title nor an error body.
 
-**Et cela ne passe pas par la synchronisation.** C'est de l'état opérationnel
-du serveur, pas une donnée d'utilisateur à répliquer vers le desktop : la
-[RFC-003](RFC-003-waveflow-sync-v2.md) n'a pas à le porter, et une lecture
-native du lien suffit. L'y ajouter ferait voyager, à chaque appareil et à
-chaque réveil, un compteur qui ne décrit qu'une machine.
+**And this does not travel through synchronization.** It is the server's
+operational state, not user data to replicate to the desktop:
+[RFC-003](RFC-003-waveflow-sync-v2.md) does not have to carry it, and a native
+read of the link is enough. Adding it would make a counter that describes one
+machine travel to every device on every wake-up.
 
-## Décision 13 — `uncertain` se jette ou se retente, et le doublon est choisi
+## Decision 13 — `uncertain` is discarded or retried, and the duplicate is chosen
 
-Une entrée `uncertain` est terminale pour le serveur. La personne, elle, a deux
-gestes : **`discard`** et **`retry`**.
+An `uncertain` entry is terminal for the server. The person has two gestures:
+**`discard`** and **`retry`**.
 
-C'est la seule forme de doublon que cette RFC accepte, parce qu'il est choisi.
-Le geste porte donc son avertissement : *le destinataire a peut-être déjà
-enregistré cette écoute ; retenter peut la compter deux fois.* Une personne qui
-tient à son historique préférera parfois le trou, et c'est son arbitrage, pas
-celui du serveur.
+It is the only form of duplicate this RFC accepts, because it is chosen. The
+gesture therefore carries its warning: *the recipient may already have recorded
+this listen; retrying may count it twice.* A person who cares about their history
+will sometimes prefer the hole, and that is their judgement, not the server's.
 
-**Retenter n'est pas réactiver.** La tentative ambiguë reste dans l'histoire
-telle qu'elle fut ; la nouvelle s'y ajoute, marquée comme demandée par la
-personne. Effacer la première ferait mentir la seule trace qui explique
-pourquoi un doublon existe chez le destinataire.
+**Retrying is not reactivating.** The ambiguous attempt stays in the history as
+it was; the new one is added to it, marked as asked for by the person. Erasing
+the first would make the only trace that explains why a duplicate exists at the
+recipient lie.
 
-**Une entrée à la fois, et pas de « tout retenter ».** Un bouton qui relance
-trois cents incertaines transforme une décision consciente en accident. Il
-pourra s'ajouter plus tard, si quelqu'un le demande en sachant ce qu'il
-demande.
+**One entry at a time, and no "retry everything".** A button that relaunches
+three hundred uncertain entries turns a conscious decision into an accident. It
+can be added later, if somebody asks for it knowing what they are asking for.
 
-### Le joker se compte sur l'entrée, pas sur sa descendance
+### The single chance is counted on the entry, not on its descendants
 
-**Révisé le 2026-09-14.** La première écriture déduisait « déjà retentée » d'une
-jointure : une entrée était encore répondable tant qu'aucune autre ligne ne la
-désignait par `retry_of`. C'est faux dès qu'une ligne peut disparaître, et la
-rétention ci-dessous fait exactement disparaître des lignes — la reprise finit
-`sent`, donc purgeable, et l'original redevient alors répondable. Mesuré plutôt
-que craint : la reprise supprimée, l'entrée reparaît dans
-`uncertain_scrobbles`, `retry_uncertain_scrobble` l'accepte une seconde fois, et
-le compteur `uncertain` du lien le repasse `degraded` pour une écoute déjà
-répondue.
+**Revised on 2026-09-14.** The first writing inferred "already retried" from a
+join: an entry was still answerable as long as no other row named it through
+`retry_of`. That is false as soon as a row can disappear, and the retention
+below makes rows disappear exactly — the retry ends `sent`, hence purgeable, and
+the original then becomes answerable again. Measured rather than feared: with
+the retry deleted, the entry reappears in `uncertain_scrobbles`,
+`retry_uncertain_scrobble` accepts it a second time, and the link's `uncertain`
+counter puts it back to `degraded` for a listen already answered for.
 
-Le joker devient donc un fait porté par l'entrée elle-même : **`retried_at`**,
-nul jusqu'à ce qu'il ne le soit plus. La reprise s'écrit en une transaction,
-l'UPDATE d'abord :
+The single chance therefore becomes a fact the entry carries itself:
+**`retried_at`**, null until it is not. The retry is written in one transaction,
+the UPDATE first:
 
 ```sql
 UPDATE scrobble_outbox SET retried_at = ?
  WHERE id = ? AND state = 'uncertain' AND retried_at IS NULL;
--- exactement une ligne modifiée, sinon le geste est refusé
+-- exactly one row modified, or the gesture is refused
 INSERT INTO scrobble_outbox (..., retry_of, ...) VALUES (..., ?, ...);
 ```
 
-L'ordre compte : c'est l'UPDATE conditionnel qui arbitre, et deux demandes
-simultanées ne peuvent pas consommer deux fois le même joker. `retry_of` et son
-index unique restent — ils disent la provenance, et refusent l'insertion en
-second rempart — mais plus rien d'observable ne dépend de la survie de la ligne
-qu'ils désignent.
+The order matters: it is the conditional UPDATE that arbitrates, and two
+simultaneous requests cannot consume the same chance twice. `retry_of` and its
+unique index stay — they state the provenance, and refuse the insertion as a
+second rampart — but nothing observable depends any more on the survival of the
+row they name.
 
+**A retry also checks where it would go.** `retry_uncertain_scrobble` already
+requires an `active` link — a listen queued under a withdrawn authorization
+would otherwise leave for the next one's profile, which decision 4 prevents. The
+identity rule above adds the second half: the URL's fingerprint must still
+match. Without it, the most dangerous entry there is — a listen the person
+accepts risking twice — would be the one leaving for a machine nobody chose. The
+check precedes the UPDATE, in the same transaction as it.
 
-**Une reprise vérifie aussi où elle irait.** `retry_uncertain_scrobble` exige
-déjà un lien `active` — une écoute mise en file sous une autorisation retirée
-partirait sinon sur le profil de la suivante, ce que la décision 4 empêche. La
-règle d'identité ci-dessus ajoute la seconde moitié : l'empreinte de l'URL doit
-encore correspondre. Sans elle, l'entrée la plus dangereuse qui soit — une
-écoute que la personne accepte de risquer en double — serait celle qui part sur
-une machine que personne n'a choisie. La vérification précède l'UPDATE, dans la
-même transaction que lui.
+**No `resolution` state beside `state`.** Discarding already writes
+`state = 'discarded'` on the entry: an enumeration that said `discarded` again
+would put two sources of truth on the same fact. Only the retry leaves the entry
+`uncertain`, and only it needs noting.
 
-**Pas d'état `resolution` à côté de `state`.** Jeter écrit déjà
-`state = 'discarded'` sur l'entrée : une énumération qui redirait `discarded`
-placerait deux sources de vérité sur le même fait. Seule la reprise laisse
-l'entrée en `uncertain`, et seule elle a besoin d'être notée.
+**And everything that read the join now reads the column.** This paragraph first
+said *three* places — the list of uncertain entries, the link's counter and the
+refusal of a second retry. There are **four**: the refusal of a *discard* too,
+`discard_uncertain_scrobble`, which has carried the same exclusion since
+[#193](https://github.com/InstaZDLL/waveflow-server/pull/193). The count came
+from a re-reading of the decision rather than from the file; it is the file that
+is right. All four move to `retried_at IS NULL`. The counter above all:
+`link_health` returns `degraded` as soon as an uncertain entry is counted, so
+forgetting a single one of those four places gives a link permanently in trouble
+over a listen its person has already answered for — the failure decision 12
+wants to make visible, turned into a permanent false alarm. Each of the four is
+tested separately, by an inversion that puts only that one back on the join and
+makes its single assertion fall.
 
-**Et tout ce qui lisait la jointure lit désormais la colonne.** Ce paragraphe a
-d'abord dit *trois* endroits — la liste des incertaines, le compteur du lien et
-le refus d'une seconde reprise. Ils sont **quatre** : le refus d'un *rejet*
-aussi, `discard_uncertain_scrobble`, qui porte la même exclusion depuis
-[#193](https://github.com/InstaZDLL/waveflow-server/pull/193). Le compte venait
-d'une relecture de la décision plutôt que du fichier ; c'est le fichier qui a
-raison. Les quatre passent à `retried_at IS NULL`. Le compteur surtout :
-`link_health` rend `degraded` dès qu'une incertaine est comptée, donc en
-oubliant un seul de ces quatre endroits on obtient un lien définitivement en
-peine à cause d'une écoute à laquelle sa personne a déjà répondu — la panne que
-la décision 12 veut rendre visible, retournée en fausse alerte permanente.
-Chacun des quatre est éprouvé à part, par une inversion qui ne remet que
-celui-là sur la jointure et fait tomber sa seule assertion.
+## Queue retention
 
-## La rétention de la file
+**Settled on 2026-09-14.** The question was not posed by the first version of
+this RFC: the queue is never purged, so the table grows by one row per listen
+per destination, endlessly, at an active listener's. That did not hold
+[#191](https://github.com/InstaZDLL/waveflow-server/pull/191) back, and for
+itself calls only for a deployment setting and a purge task, on the pattern of
+[RFC-007](RFC-007-library-event-stream.md) and the eighth background task. The
+columns this revision adds come from elsewhere, and are listed further up.
 
-**Tranchée le 2026-09-14.** La question n'était pas posée par la première
-version de cette RFC : la file ne se purge jamais, donc la table grandit d'une
-ligne par écoute et par destination, sans fin, chez un auditeur actif. Cela n'a
-pas retenu [#191](https://github.com/InstaZDLL/waveflow-server/pull/191), et
-n'appelle pour elle-même qu'un réglage de déploiement et une tâche de purge, sur
-le patron de [RFC-007](RFC-007-library-event-stream.md) et la huitième tâche de
-fond. Les colonnes que cette révision ajoute viennent d'ailleurs, et sont
-énumérées plus bas.
+**Which instant we purge on.** Neither `created_at`, which dates the queueing
+and would make a row leave thirty days after being written whatever the date it
+finished, nor an `updated_at` nothing guarantees will not move again. A row keeps
+the instant it became terminal, once, and the purge counts from there. That is
+the kind of property that gets lost between an RFC and one more `UPDATE`, so it
+is written down: that instant is not rewritten.
 
-**Sur quel instant on purge.** Ni `created_at`, qui date la mise en file et ferait
-partir une ligne trente jours après avoir été écrite quelle que soit la date où
-elle a fini, ni un `updated_at` dont rien ne garantit qu'il ne rebougera plus.
-Une ligne retient l'instant où elle est devenue terminale, une fois, et la purge
-compte à partir de là. C'est le genre de propriété qui se perd entre une RFC et
-un `UPDATE` de plus, donc elle est écrite : cet instant ne se réécrit pas.
+- **Thirty days for the ordinary terminal states** — `sent`, `rejected`,
+  `abandoned`, `cancelled`, `discarded`. Enough to understand a past failure,
+  too short for the queue to become a second listening history. It is a
+  setting's default, not a carved duration: whoever diagnoses a three-month
+  failure lengthens it, as they set RFC-007's window.
+- **`uncertain` is kept indefinitely**, whether it carries `retried_at` or not.
+  An entry with no answer is waiting for a person, and taking it away after a
+  month would be deciding in their place. An answered entry could leave later;
+  this is not the moment to decide that, because `retry_of` is declared
+  `ON DELETE SET NULL` and the uniqueness index `(play_event_id, link_id)` only
+  holds `WHERE retry_of IS NULL` — deleting the original un-nulls the retry and
+  makes it fall back under that index. That is testable, and the gain counts in
+  kilobytes.
+- **No floor**, unlike RFC-007. There the stream serves a synchronization
+  restart and cutting the head off a quiet library would send somebody back to
+  the snapshot. Here nobody resumes a cursor: the outbox is a means of delivery,
+  not a source of truth. What the link publishes — counters and health — is read
+  off the live rows, `pending` and `uncertain`, which no purge touches.
+- **What the link publishes depends on no purgeable row**, and that is already
+  true: the counters and the oldest wait are read off `pending` and `uncertain`,
+  which no purge touches, and `last_success_at` is a column of `scrobble_link`
+  written at the moment of success. A revision of this document asserted the
+  opposite here — that this last field did not exist and would be computed as
+  `MAX(updated_at)` over `sent` rows — which would have been a real defect if it
+  had been true. It was not: the column has been there since #191. What remains
+  of the warning, and is worth keeping: nothing a link publishes must come to
+  depend on the rows the purge takes away.
 
-- **Trente jours pour les états terminaux ordinaires** — `sent`, `rejected`,
-  `abandoned`, `cancelled`, `discarded`. Assez pour comprendre une panne
-  passée, trop court pour que la file devienne un second historique d'écoute.
-  C'est le défaut d'un réglage, pas une durée gravée : qui diagnostique une panne
-  de trois mois l'allonge, comme il règle la fenêtre de RFC-007.
-- **`uncertain` se garde indéfiniment**, qu'il porte `retried_at` ou non. Une
-  entrée sans réponse attend une personne, et la lui retirer au bout d'un mois
-  serait décider à sa place. Une entrée répondue pourrait s'en aller plus tard ;
-  ce n'est pas le moment de le décider, parce que `retry_of` est déclaré
-  `ON DELETE SET NULL` et que l'index d'unicité `(play_event_id, link_id)` ne
-  vaut que `WHERE retry_of IS NULL` — supprimer l'original dénullifie la reprise
-  et la fait retomber sous cet index. Cela s'éprouve, et le gain se compte en
-  kilo-octets.
-- **Aucun plancher**, contrairement à RFC-007. Là-bas le flux sert une reprise
-  de synchronisation et couper la tête d'une bibliothèque tranquille renverrait
-  quelqu'un à l'instantané. Ici, personne ne reprend un curseur : l'outbox est
-  un moyen de livraison, pas une source de vérité. Ce que le lien publie —
-  compteurs et santé — se lit sur les lignes vivantes, `pending` et `uncertain`,
-  qu'aucune purge ne touche.
-- **Ce que le lien publie ne dépend d'aucune ligne purgeable**, et c'est déjà
-  vrai : les compteurs et l'attente la plus ancienne se lisent sur `pending` et
-  `uncertain`, qu'aucune purge ne touche, et `last_success_at` est une colonne
-  de `scrobble_link` écrite au moment du succès. Une révision de ce document a
-  affirmé ici le contraire — que ce dernier champ n'existait pas et se
-  calculerait en `MAX(updated_at)` sur des lignes `sent` — ce qui aurait été un
-  vrai défaut si c'avait été vrai. Ce ne l'était pas : la colonne est là depuis
-  #191. Ce qu'il reste de la mise en garde, et qui vaut : rien de ce qu'un lien
-  publie ne doit se mettre à dépendre des lignes que la purge emporte.
+**What that bound does not bound, and why it is accepted.** A destination that
+answers ambiguously on every send produces one `uncertain` per listen, and none
+of them leaves: the table then grows as fast as the listener listens, exactly
+what retention corrects elsewhere. The limit is real and it is kept as it is,
+because the alternative requires settling what an entry becomes when nobody
+answers — and decision 13 precisely refuses to answer in somebody's place. What
+makes the case bearable is elsewhere: a link in that state is `degraded` from the
+first ambiguity, so the failure is visible before the volume counts. If it turns
+out to be visible without being looked at, the question will come back, and it
+will come back with a measurement rather than a fear.
 
-**Ce que cette borne ne borne pas, et pourquoi on l'accepte.** Une destination
-qui répond ambigu à chaque envoi produit une `uncertain` par écoute, et aucune
-ne s'en va : la table croît alors aussi vite que l'auditeur écoute, exactement
-ce que la rétention corrige ailleurs. La limite est réelle et elle est retenue
-telle quelle, parce que l'alternative demande de trancher ce qu'une entrée
-devient quand personne ne répond — et la décision 13 refuse justement de
-répondre à la place de quelqu'un. Ce qui rend le cas supportable est ailleurs :
-un lien dans cet état est `degraded` dès la première ambiguïté, donc la panne
-se voit avant que le volume ne compte. Si elle se voit sans être regardée, la
-question reviendra, et elle reviendra avec une mesure plutôt qu'avec une
-crainte.
+## What is still open
 
-## Ce qui reste ouvert
+No architectural decision any more, and no retention question. What remains
+belongs to the implementation: the exact shape of the JSON, and the threshold
+beyond which a queue that does not advance becomes `degraded` — that one already
+lives in `link_health`.
 
-Plus aucune décision d'architecture, et plus aucune question de rétention. Ce
-qui reste appartient à l'implémentation : la forme précise du JSON, et le seuil
-au-delà duquel une file qui n'avance pas devient `degraded` — celui-là vit déjà
-dans `link_health`.
+**The paths written above, on the other hand, commit.** The first version filed
+"the exact name of the routes" among the details, which was true as long as no
+route was decided. Decisions 10 and 11 now name some, and they do so because the
+shape *is* the decision: a destination in the path rather than implied, a random
+value in a segment rather than in a query string. Renaming them is possible,
+reshaping them is not.
 
-**Les chemins écrits ci-dessus, eux, engagent.** La première version rangeait
-« le nom exact des routes » parmi les détails, ce qui était vrai tant qu'aucune
-route n'était décidée. Les décisions 10 et 11 en nomment désormais, et elles le
-font parce que la forme *est* la décision : une destination dans le chemin
-plutôt que sous-entendue, un aléa dans un segment plutôt que dans une chaîne de
-requête. Les renommer se peut, les reformer non.
-
-C'est la ligne *Implémentée par* de l'en-tête qu'il faut lire pour le reste.
+For the rest it is the *Implemented by* line in the header that must be read.
