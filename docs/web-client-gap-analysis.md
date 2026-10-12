@@ -55,9 +55,9 @@ On that foundation the gap is not functional. It is in the interface.
 
 ### What Navidrome does and WaveFlow does not do at all
 
-These five points ask for the server, not the screen. **Four are still not
-begun; external scrobbling is closed**, server and screen, since 2026-09-14 —
-see point 15.
+These five points ask for the server, not the screen. **Three are still not
+begun.** Two are closed, server and screen both: external scrobbling on
+2026-09-14 — see point 15 — and the `.m3u` import on 2026-10-12.
 
 | | State in WaveFlow |
 | --- | --- |

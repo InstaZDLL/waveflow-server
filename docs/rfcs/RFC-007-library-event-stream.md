@@ -220,9 +220,9 @@ clause on the `DO UPDATE` compares the columns that carry meaning —
 if something moved. One event per album, never one per track, and nothing at all
 for a rescan that finds no change.
 
-The payload is empty. The track's carries `full_hash` because no other surface
-exposes it; everything that describes an album is on the album, which the client
-re-reads on receiving the event.
+The payload is empty. The track's payload carries `full_hash` because no other
+surface exposes it; everything that describes an album is on the album, which
+the client re-reads on receiving the event.
 
 **An artist emits none.** The counters are derived, and a truth stored twice
 goes stale. The desktop reserved one case — the artist photo, which derives from
