@@ -479,10 +479,18 @@ impl DomainServices {
             .entries
             .iter()
             .map(|entry| {
+                // ASCII, like the comparison that selected the candidates
+                // and like every other catalogue match. `to_lowercase` folds
+                // more than SQLite's `NOCASE` does, and a key wider than the
+                // filter that produced it is a disagreement: an entry reading
+                // `ÉTÉ.flac` against a stored `été.flac` would be folded here
+                // and never returned there. The residual limit is that such an
+                // entry is reported rather than placed, which the report says
+                // out loud.
                 let segments = entry
                     .segments
                     .iter()
-                    .map(|segment| segment.to_lowercase())
+                    .map(|segment| segment.to_ascii_lowercase())
                     .collect::<Vec<_>>();
                 (entry, climb(&segments, &by_file_name))
             })
@@ -498,6 +506,11 @@ impl DomainServices {
         drop(connection);
 
         let mut track_ids: Vec<Uuid> = Vec::new();
+        // Beside the list rather than in place of it: the order is the file's
+        // and has to be kept, while the question asked of it — "already in
+        // here?" — is asked once per entry. Scanning the list instead was
+        // quadratic in a length the caller chooses, up to ten thousand.
+        let mut placed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let mut unresolved: Vec<UnresolvedEntry> = Vec::new();
         for (entry, rung) in climbed {
             let report = |reason| UnresolvedEntry {
@@ -512,7 +525,7 @@ impl DomainServices {
                 Rung::NotAPath => Err(UnresolvedReason::NotAPath),
                 Rung::Unmatched => match entry
                     .artist_and_title()
-                    .map(|(artist, title)| format!("{artist}\n{title}").to_lowercase())
+                    .map(|(artist, title)| format!("{artist}\n{title}").to_ascii_lowercase())
                     .and_then(|key| by_credit.get(&key))
                     .map(Vec::as_slice)
                 {
@@ -526,10 +539,13 @@ impl DomainServices {
                 // has a second copy with nowhere to go. Reported rather than
                 // dropped, because a shorter playlist with no explanation is
                 // the failure this whole report exists to prevent.
-                Ok(id) if track_ids.contains(&id) => {
+                Ok(id) if placed.contains(&id) => {
                     unresolved.push(report(UnresolvedReason::Duplicate));
                 }
-                Ok(id) => track_ids.push(id),
+                Ok(id) => {
+                    placed.insert(id);
+                    track_ids.push(id);
+                }
                 Err(reason) => unresolved.push(report(reason)),
             }
         }
@@ -618,7 +634,7 @@ impl DomainServices {
                 let path: String = row.try_get("relative_path")?;
                 let file_name: String = row.try_get("file_name")?;
                 found
-                    .entry(file_name.to_lowercase())
+                    .entry(file_name.to_ascii_lowercase())
                     .or_default()
                     .push((parse_uuid(row.try_get("id")?)?, lowercased_segments(&path)));
             }
@@ -640,10 +656,10 @@ impl DomainServices {
     ///
     /// The key is the two fields joined by a newline, which is a separator
     /// neither of them can contain — `track.title` and `artist_display` come
-    /// from tags read line by line. The folding happens on both sides: SQLite
-    /// matches it `NOCASE`, which folds ASCII, and the map is keyed through
-    /// `to_lowercase`, which folds more. A superset of the match cannot lose a
-    /// row the match found.
+    /// from tags read line by line. The folding is ASCII on both sides: SQLite
+    /// matches `NOCASE`, and the map is keyed through `to_ascii_lowercase`
+    /// rather than `to_lowercase` so the key cannot be wider than the filter
+    /// that produced it.
     async fn tracks_by_credit_on(
         &self,
         connection: &mut SqliteConnection,
@@ -682,7 +698,7 @@ impl DomainServices {
             {
                 let credit: String = row.try_get("credit")?;
                 found
-                    .entry(credit.to_lowercase())
+                    .entry(credit.to_ascii_lowercase())
                     .or_default()
                     .push(parse_uuid(row.try_get("id")?)?);
             }
@@ -756,10 +772,11 @@ impl DomainServices {
 
 /// How many candidates one batch asks for.
 ///
-/// A file may name ten thousand targets and each one contributes up to four
-/// suffixes, so the whole set would be a bind parameter of megabytes. Slicing
-/// keeps every statement a normal size and the number of statements small —
-/// forty for the largest file the route accepts.
+/// A file may name ten thousand targets, so the whole set in one bind
+/// parameter would be a statement of some hundreds of kilobytes. Slicing keeps
+/// every statement a normal size and the number of statements small: at most
+/// ten for the file names of the largest file the route accepts, and ten more
+/// for the credits of the entries that reach that rung.
 const RESOLUTION_BATCH: usize = 1_000;
 
 /// What the path rung made of one entry.
@@ -823,7 +840,7 @@ fn climb(segments: &[String], by_file_name: &HashMap<String, Vec<(Uuid, Vec<Stri
 fn lowercased_segments(path: &str) -> Vec<String> {
     path.split('/')
         .filter(|segment| !segment.is_empty())
-        .map(str::to_lowercase)
+        .map(str::to_ascii_lowercase)
         .collect()
 }
 

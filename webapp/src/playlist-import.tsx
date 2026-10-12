@@ -214,5 +214,10 @@ export async function downloadPlaylist(id: string, name: string) {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoked on a later task, not this one. Browsers differ on when they read
+  // the blob behind a download, and revoking in the same task as the click has
+  // been reported to cancel it outright. The end-to-end test cannot tell the
+  // two apart — it runs Chromium, which starts the download synchronously — so
+  // this is a portability fix rather than a bug it caught.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

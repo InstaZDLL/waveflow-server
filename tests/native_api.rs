@@ -3314,6 +3314,8 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
     file.extend_from_slice(b"Ghost/Album/99 Nowhere.flac\r\n");
     // And the first entry again.
     file.extend_from_slice(b"Bj\xF6rk/Vespertine/01 Hidden Place.flac\r\n");
+    // The ambiguous name once more, shouted, and with its folders this time.
+    file.extend_from_slice(b"COMPILATIONS/SHARED/COMMON.FLAC\r\n");
 
     // The dry run answers the whole report and creates nothing, which is what
     // lets a client show the losses before they happen.
@@ -3334,8 +3336,8 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
         report["encoding"], "windows-1252",
         "the bytes decide the encoding, not the extension"
     );
-    assert_eq!(report["entries"], 10);
-    assert_eq!(report["resolved"], 5);
+    assert_eq!(report["entries"], 11);
+    assert_eq!(report["resolved"], 6);
     let reasons = |report: &serde_json::Value| {
         report["unresolved"]
             .as_array()
@@ -3404,7 +3406,12 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
             "Cocoon",
             "Army of Me",
             "Pagan Poetry",
-            "Unravel"
+            "Unravel",
+            // Matched through two folders in the wrong case: the comparison
+            // folds ASCII, which is what a playlist written on Windows needs,
+            // and the folders are what separate this track from the one on
+            // line 10 carrying the same file name.
+            "A Shared Name",
         ],
         "file order, and the fourth was placed by its path while the fifth \
          was placed by its credit alone"
@@ -3461,8 +3468,8 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(again["encoding"], "utf-8", "what it writes is UTF-8");
-    assert_eq!(again["entries"], 5, "the playlist holds five tracks");
-    assert_eq!(again["resolved"], 5);
+    assert_eq!(again["entries"], 6, "the playlist holds six tracks");
+    assert_eq!(again["resolved"], 6);
     assert_eq!(
         again["unresolved"].as_array().unwrap().len(),
         0,
