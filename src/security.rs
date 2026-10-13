@@ -26,6 +26,8 @@ pub enum SecurityError {
     PasswordVerify,
     #[error("instance key must contain exactly 32 bytes")]
     InvalidInstanceKey,
+    #[error("an instance key already occupies that path")]
+    InstanceKeyExists,
     #[error("system randomness is unavailable")]
     Random,
     #[error("secret encryption failed")]
@@ -63,6 +65,23 @@ impl SecretBox {
         };
 
         Self::from_key_bytes(&key)
+    }
+
+    /// A fresh instance key, written where nothing stands yet.
+    ///
+    /// [`Self::load_or_create`] mints one as a side effect of finding none,
+    /// which is right for a boot and wrong for a key replacement: there the new
+    /// key is staged beside the old one and renamed over it only once the
+    /// database has committed. That caller needs the minting asked for
+    /// deliberately, and needs to be told when the file it staged was not
+    /// actually written by this call.
+    pub fn create_instance_key(path: &Path) -> Result<[u8; INSTANCE_KEY_BYTES], SecurityError> {
+        let mut bytes = [0u8; INSTANCE_KEY_BYTES];
+        fill_random(&mut bytes)?;
+        if !write_new_secret_file(path, &bytes)? {
+            return Err(SecurityError::InstanceKeyExists);
+        }
+        Ok(bytes)
     }
 
     pub fn from_key_bytes(key: &[u8]) -> Result<Self, SecurityError> {
@@ -166,7 +185,14 @@ pub fn token_matches(token: &str, expected_hash: &[u8]) -> bool {
     actual.as_slice().ct_eq(expected_hash).into()
 }
 
-fn write_new_secret_file(path: &Path, bytes: &[u8]) -> Result<(), SecurityError> {
+/// Writes a secret file nobody else owns, answering whether this call created
+/// it.
+///
+/// `false` means the path was already taken. [`SecretBox::load_or_create`]
+/// treats that as a race it lost and re-reads the winner's key;
+/// [`SecretBox::create_instance_key`] treats it as a refusal, because it is
+/// staging a file that must not exist.
+fn write_new_secret_file(path: &Path, bytes: &[u8]) -> Result<bool, SecurityError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -183,9 +209,9 @@ fn write_new_secret_file(path: &Path, bytes: &[u8]) -> Result<(), SecurityError>
         Ok(mut file) => {
             file.write_all(bytes)?;
             file.sync_all()?;
-            Ok(())
+            Ok(true)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error.into()),
     }
 }

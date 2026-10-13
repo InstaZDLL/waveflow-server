@@ -1,14 +1,18 @@
 //! Administrative CLI used before the M4 web administration surface exists.
 
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
+use sqlx::Connection;
 
 use crate::{
     authentication::now_ms,
     catalog::LibraryRecord,
-    database::{AccountRole, Database, LibraryRole, LibraryVisibility},
+    database::{AccountRole, Database, KeyMaterial, LibraryRole, LibraryVisibility, Rekey},
     security, AppState,
 };
 
@@ -56,6 +60,14 @@ pub enum Command {
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
+    },
+    /// Replace the instance key, with or without the old one in hand.
+    ///
+    /// Both run before the server opens SQLite, because the boot they exist to
+    /// unblock is the one that aborts on a mismatched pair.
+    Key {
+        #[command(subcommand)]
+        command: KeyCommand,
     },
 }
 
@@ -306,6 +318,29 @@ pub struct RestoreArgs {
     pub input: PathBuf,
 }
 
+/// Two commands rather than one command and a flag.
+///
+/// They are not two ways of doing the same thing: `rotate` carries every
+/// encrypted value onto the new key, `adopt` deletes the ones that can no
+/// longer be read. Naming them apart is what keeps the second from being one
+/// mistyped flag away from the first — and `adopt` refuses outright on a
+/// database whose key is sitting next to it, since that is a rotation.
+#[derive(Debug, Subcommand)]
+pub enum KeyCommand {
+    /// Mint a new instance key and move every encrypted value onto it.
+    Rotate(KeyArgs),
+    /// Take a database over under a new key, discarding what the old one protected.
+    Adopt(KeyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct KeyArgs {
+    /// Do the work. Without it the command reads the database, prints what the
+    /// change costs, and stops.
+    #[arg(long)]
+    pub confirm: bool,
+}
+
 pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
     let db = &state.db;
     match command {
@@ -349,7 +384,222 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
                 anyhow::bail!("restore must run before server initialization")
             }
         },
+        Command::Key { .. } => {
+            anyhow::bail!("a key change must run before server initialization")
+        }
     }
+}
+
+pub async fn key(config: &crate::Config, command: KeyCommand) -> anyhow::Result<()> {
+    match command {
+        KeyCommand::Rotate(args) => rotate_key(config, args).await,
+        KeyCommand::Adopt(args) => adopt_key(config, args).await,
+    }
+}
+
+/// The key file as it stands, or nothing where there is no file.
+///
+/// Unvalidated on purpose. `rotate` has to open the thing and answers for it
+/// itself; `adopt` only ever compares a fingerprint, and a file of the wrong
+/// length cannot match one. Refusing it here would turn away exactly the
+/// operator `adopt` exists for — the one holding something that is no longer
+/// a key.
+fn read_instance_key(config: &crate::Config) -> anyhow::Result<Option<Vec<u8>>> {
+    match std::fs::read(&config.instance_key_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The database, held alone and brought up to date.
+///
+/// The migration is not a side errand. This command writes rows, and writing
+/// rows into a schema older than the binary is how a repair becomes damage —
+/// `scrobble_link` does not exist before 2.0.0-beta.1, and an operator who
+/// lost a key is often the same one who just replaced a container image. It is
+/// also exactly what the next boot would do.
+///
+/// `migrate_on` leaves foreign keys off on the connection it is handed, and
+/// nothing here puts them back: `Database::rekey` asks for them itself,
+/// because it is the one caller whose correctness depends on them. A second
+/// `PRAGMA` here would be one no inversion could tell from its absence.
+async fn open_for_key_change(config: &crate::Config) -> anyhow::Result<sqlx::SqliteConnection> {
+    let mut connection =
+        Database::open_alone(&config.database_path, config.sqlite_busy_timeout).await?;
+    Database::migrate_on(&mut connection).await?;
+    Ok(connection)
+}
+
+async fn rotate_key(config: &crate::Config, args: KeyArgs) -> anyhow::Result<()> {
+    let Some(old_bytes) = read_instance_key(config)? else {
+        anyhow::bail!(
+            "there is no {} to rotate from; if it is gone for good, `key adopt` takes the database over under a new one",
+            config.instance_key_path.display()
+        );
+    };
+    let old_key = security::SecretBox::from_key_bytes(&old_bytes).with_context(|| {
+        format!(
+            "{} is not a usable key; if the real one is gone, `key adopt` takes the database over under a new one",
+            config.instance_key_path.display()
+        )
+    })?;
+    let mut connection = open_for_key_change(config).await?;
+    if let Some(stored) = Database::stored_key_fingerprint(&mut connection).await? {
+        if !security::constant_time_bytes_eq(&stored, &security::bytes_hash(&old_bytes)) {
+            anyhow::bail!(
+                "the key beside this database is not the one it was bound to; restore the matching pair, or `key adopt` if the real one is gone"
+            );
+        }
+    }
+    let material = Database::key_material(&mut connection).await?;
+    println!(
+        "Rotating the instance key of {}.",
+        config.database_path.display()
+    );
+    println!();
+    println!(
+        "  {} Subsonic password(s) — moved to the new key, unchanged for their owners",
+        material.subsonic_credentials
+    );
+    println!(
+        "  {} scrobbling link(s) — moved to the new key, unchanged",
+        material.scrobble_links
+    );
+    println!(
+        "  {} share(s) — kept, but every public URL changes",
+        material.shares
+    );
+    println!();
+    if !args.confirm {
+        println!("Nothing has been changed. Re-run with --confirm.");
+        return Ok(());
+    }
+    let (moved, recovery) = replace_key(config, connection, Rekey::Reencrypt(&old_key)).await?;
+    println!(
+        "Done. {} Subsonic password(s) and {} scrobbling link(s) moved to the new key; {} share(s) re-addressed.",
+        moved.subsonic_credentials, moved.scrobble_links, moved.shares
+    );
+    report_done(&recovery);
+    Ok(())
+}
+
+async fn adopt_key(config: &crate::Config, args: KeyArgs) -> anyhow::Result<()> {
+    let present = read_instance_key(config)?;
+    let mut connection = open_for_key_change(config).await?;
+    let stored = Database::stored_key_fingerprint(&mut connection).await?;
+    if let (Some(bytes), Some(stored)) = (&present, &stored) {
+        if security::constant_time_bytes_eq(stored, &security::bytes_hash(bytes)) {
+            anyhow::bail!(
+                "this database already opens with the key beside it; `key rotate` replaces it without losing anything"
+            );
+        }
+    }
+    let material = Database::key_material(&mut connection).await?;
+    println!(
+        "Adopting {} under a new instance key.",
+        config.database_path.display()
+    );
+    println!();
+    println!("The old key is gone, so nothing sealed under it can be carried over:");
+    println!();
+    println!(
+        "  {} Subsonic password(s) — deleted; re-set each with `credential set`",
+        material.subsonic_credentials
+    );
+    println!(
+        "  {} scrobbling link(s) — deleted, and the {} queued listen(s) behind them",
+        material.scrobble_links, material.queued_listens
+    );
+    println!(
+        "  {} share(s) — kept, but every public URL changes",
+        material.shares
+    );
+    println!();
+    println!("Everything else is untouched: every account and its web password, the whole");
+    println!("catalogue, favourites, ratings, playlists, queues, history and bookmarks.");
+    println!();
+    if !args.confirm {
+        println!("Nothing has been changed. Re-run with --confirm.");
+        return Ok(());
+    }
+    let (moved, recovery) = replace_key(config, connection, Rekey::Discard).await?;
+    println!(
+        "Done. {} Subsonic password(s) and {} scrobbling link(s) deleted, with {} queued listen(s); {} share(s) re-addressed.",
+        moved.subsonic_credentials, moved.scrobble_links, moved.queued_listens, moved.shares
+    );
+    report_done(&recovery);
+    Ok(())
+}
+
+/// What the two commands do identically once the decision is made.
+///
+/// Answers with what was actually moved, not with what was predicted a moment
+/// earlier: the counts above come from reading the tables, these come from the
+/// statements that touched them, and a line printed from the second is the
+/// only one that reports the operation rather than the plan.
+async fn replace_key(
+    config: &crate::Config,
+    mut connection: sqlx::SqliteConnection,
+    plan: Rekey<'_>,
+) -> anyhow::Result<(KeyMaterial, PathBuf)> {
+    // Before anything is touched, and a coherent pair rather than a file copy:
+    // `database restore` leaves the same kind of directory behind, for the
+    // same reason. The schema in it is the one this command had to reach in
+    // order to read the database at all; everything else is as it was found.
+    let recovery = config
+        .data_dir
+        .join(format!("pre-key-{}", chrono::Utc::now().timestamp_millis()));
+    tokio::fs::create_dir_all(&recovery).await?;
+    let saved = recovery.join("waveflow.db");
+    let saved = saved
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("the recovery path is not valid UTF-8"))?;
+    sqlx::query("VACUUM INTO ?")
+        .bind(saved)
+        .execute(&mut connection)
+        .await
+        .map_err(|error| anyhow::anyhow!("could not write the recovery copy: {error}"))?;
+    if config.instance_key_path.exists() {
+        tokio::fs::copy(&config.instance_key_path, recovery.join("instance.key")).await?;
+    }
+
+    // Staged rather than written in place. The key file is the last thing to
+    // move: one that arrived before the commit would name a database that
+    // never changed.
+    let staged = config
+        .data_dir
+        .join(format!(".key-{}.tmp", uuid::Uuid::new_v4()));
+    let new_bytes = security::SecretBox::create_instance_key(&staged)?;
+    let new_key = security::SecretBox::from_key_bytes(&new_bytes)?;
+    let moved = match Database::rekey(
+        &mut connection,
+        plan,
+        &new_key,
+        &security::bytes_hash(&new_bytes),
+        now_ms(),
+    )
+    .await
+    {
+        Ok(moved) => moved,
+        Err(error) => {
+            tokio::fs::remove_file(&staged).await.ok();
+            return Err(error);
+        }
+    };
+    // Releases the exclusive lock and checkpoints the write-ahead log, so the
+    // database is settled on disk before the other half of the pair moves.
+    connection.close().await?;
+    tokio::fs::rename(&staged, &config.instance_key_path).await?;
+    Ok((moved, recovery))
+}
+
+fn report_done(recovery: &Path) {
+    println!(
+        "Done. The previous pair is recoverable from {}",
+        recovery.display()
+    );
+    println!("Start the server; it opens on the new key.");
 }
 
 async fn backup(state: &AppState, args: BackupArgs) -> anyhow::Result<()> {

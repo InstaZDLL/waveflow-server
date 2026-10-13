@@ -37,47 +37,65 @@ Almost everything is unaffected, because almost nothing is encrypted:
 | Lost, and re-entered by hand | Survives untouched |
 | --- | --- |
 | The dedicated Subsonic password of every account | Every account, and its web password — Argon2id, never encrypted |
-| Every external scrobbling link (Last.fm, ListenBrainz, Maloja) | The whole catalogue: tracks, albums, artists, libraries and their members |
+| Every external scrobbling link (Last.fm, ListenBrainz, Maloja), and the listens queued behind it | The whole catalogue: tracks, albums, artists, libraries and their members |
 | | Favourites, ratings, playlists, play queues, listening history, bookmarks |
 
 Shares are kept but **their public URLs change**: a share token is derived from
 the instance key rather than stored, so every link handed out under the old key
-stops resolving.
+stops resolving. The commands below recompute the stored hash under the new
+key, which is what keeps the share reachable at its new address instead of
+stranding it at an old one nobody can produce again.
 
 Stream tickets are sealed under the key too. They last an hour and are minted on
 demand, so nothing has to be done about them — but it is also why a leaked key
 matters even when almost nothing is encrypted under it: whoever holds one can
 mint a ticket for any track they can address.
 
-### The procedure
+### Two commands, because there are two situations
 
-There is no command for this yet
-([#221](https://github.com/InstaZDLL/waveflow-server/issues/221)). Until there
-is, it is two writes and a deleted file, with the server **stopped**:
+They are named apart rather than separated by a flag, because one preserves
+exactly what the other destroys.
 
-```sql
--- Values only the old key could read. They are unreadable now, not damaged.
-DELETE FROM subsonic_credential;
-DELETE FROM scrobble_link;
--- Release the fingerprint. The next start binds whatever key it finds.
-DELETE FROM instance_metadata;
-```
+Both run with the server **stopped** — they take the database exclusively and
+refuse a database another process is holding — and both are a reading until you say
+otherwise: without `--confirm` they count what the change costs, print it, and
+change nothing.
+
+**The old key is in hand**, and you want a different one — it leaked, or it is
+simply time:
 
 ```bash
-rm data/instance.key
+waveflow-server key rotate             # what it would cost
+waveflow-server key rotate --confirm
 ```
 
-Start the server. It generates a fresh 32-byte key, binds its SHA-256 fingerprint
-to the database, and comes up on the catalogue you already had. Then re-set the
-Subsonic password of each account with `credential set`, and re-link any
+Every encrypted value is read with the old key and written back under the new
+one. Nothing is lost at all; the share URLs change and that is the whole of it.
+
+**The old key is gone**, and nothing can be carried over:
+
+```bash
+waveflow-server key adopt
+waveflow-server key adopt --confirm
+```
+
+The Subsonic passwords and the scrobbling links go, the queued listens with
+them, and a fresh key is bound to the catalogue you already had. `adopt`
+refuses outright when the key beside the database still opens it: that is a
+rotation, and a rotation costs nothing.
+
+Both move the previous pair into a timestamped `data/pre-key-…` directory
+before touching anything, the way `database restore` does. Afterwards, re-set
+the Subsonic password of each account with `credential set`, and re-link any
 scrobbling destination.
 
-**Take a copy of `data/` before you begin.** The three deletions are not
-reversible, and a mistyped table name is a restore away from being someone's
-evening.
-
-Verified end to end on a real instance: 164 tracks, 130 albums, 160 artists, one
-account and one library came back untouched under a new key.
+**Not by hand.** Deleting `subsonic_credential`, `scrobble_link` and
+`instance_metadata` in SQL — which is what this page documented before the
+commands existed, and what was verified end to end on a real instance of 164
+tracks, 130 albums and 160 artists — does bring the catalogue back under a new
+key. What it also does is strand every share: the stored token hash was
+computed from the old key, no later key can produce it again, and the owner is
+shown a URL that answers 404. That is the difference the commands carry.
 
 ## One path whose query string must not reach your proxy's log
 

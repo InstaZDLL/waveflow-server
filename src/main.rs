@@ -14,6 +14,9 @@ async fn main() -> anyhow::Result<()> {
         Some(cli::Command::Database {
             command: cli::DatabaseCommand::Restore(args),
         }) => cli::restore(&config, args).await,
+        // Both of these run on a database the boot would refuse, so they run
+        // instead of the boot rather than after it.
+        Some(cli::Command::Key { command }) => cli::key(&config, command).await,
         command => {
             let state = waveflow_server::initialize(&config).await?;
             match command {

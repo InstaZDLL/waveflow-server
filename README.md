@@ -111,7 +111,7 @@ Point any Subsonic client at `http://your-host:4533` with that username and pass
 | **Scrobbling** | ListenBrainz, Last.fm and Maloja, each a named instance, behind a durable queue that survives a restart, retries once and honours `Retry-After` | [RFC-010](docs/rfcs/RFC-010-external-scrobbling.md) |
 | **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive | — |
 | **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers | [operations](docs/operations.md) |
-| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
+| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
 
 ## Documentation
 
