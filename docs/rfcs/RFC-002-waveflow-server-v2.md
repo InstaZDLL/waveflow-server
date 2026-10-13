@@ -28,7 +28,7 @@ Libraries are private or shared through explicit owner, manager and listener mem
 
 WaveFlow accounts are local. Web passwords use Argon2id. Access, refresh and API tokens are random opaque values stored only as SHA-256 hashes. Refresh tokens rotate on use and sessions belong to revocable devices.
 
-Every user may have a separate Subsonic app password. It is never the web password. Compatibility with token-and-salt authentication requires reversible verification, so the app password is encrypted with ChaCha20-Poly1305 under a random local instance key. The database and key must be backed up together. SQLite stores only a SHA-256 fingerprint of that key; boot, backup verification and restore reject mismatched pairs before exposing or replacing data.
+Every user may have a separate Subsonic app password. It is never the web password. Compatibility with token-and-salt authentication requires reversible verification, so the app password is encrypted with ChaCha20-Poly1305 under a random local instance key. The database and key must be backed up together. SQLite stores only a SHA-256 fingerprint of that key; boot, backup verification and restore reject mismatched pairs before exposing or replacing data. A restored bundle is the cheap way out of a mismatch and not the only one: `key rotate` carries every sealed value onto a new key, `key adopt` discards what a key that is gone sealed and binds a fresh one, and both re-derive the share tokens the key names rather than leaving them stranded.
 
 ### Playback
 

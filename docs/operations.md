@@ -32,52 +32,86 @@ unrecoverable, or when it must be replaced because it leaked.
 
 ### What you lose, and what you keep
 
-Almost everything is unaffected, because almost nothing is encrypted:
+This is the **adoption** case below, where the key is genuinely gone. A
+rotation, where you still hold it, loses nothing from the left-hand column.
+
+Almost everything is unaffected either way, because almost nothing is
+encrypted:
 
 | Lost, and re-entered by hand | Survives untouched |
 | --- | --- |
-| The dedicated Subsonic password of every account | Every account, and its web password — Argon2id, never encrypted |
-| Every external scrobbling link (Last.fm, ListenBrainz, Maloja) | The whole catalogue: tracks, albums, artists, libraries and their members |
+| The Subsonic credential of every account — the dedicated password **and** the `wfsk_` API key beside it | Every account, and its web password — Argon2id, never encrypted |
+| Every external scrobbling link (Last.fm, ListenBrainz, Maloja), and the listens queued behind it | The whole catalogue: tracks, albums, artists, libraries and their members |
 | | Favourites, ratings, playlists, play queues, listening history, bookmarks |
+
+The API key is not encrypted — it is stored as a SHA-256 hash, which no key
+change can touch — but it shares its row with the password that is, and the
+columns are `NOT NULL`. So the row goes whole. `credential set` mints a new
+password **and** a new API key, and both have to reach the client.
 
 Shares are kept but **their public URLs change**: a share token is derived from
 the instance key rather than stored, so every link handed out under the old key
-stops resolving.
+stops resolving. The commands below recompute the stored hash under the new
+key, which is what keeps the share reachable at its new address instead of
+stranding it at an old one nobody can produce again.
 
 Stream tickets are sealed under the key too. They last an hour and are minted on
 demand, so nothing has to be done about them — but it is also why a leaked key
 matters even when almost nothing is encrypted under it: whoever holds one can
 mint a ticket for any track they can address.
 
-### The procedure
+### Two commands, because there are two situations
 
-There is no command for this yet
-([#221](https://github.com/InstaZDLL/waveflow-server/issues/221)). Until there
-is, it is two writes and a deleted file, with the server **stopped**:
+They are named apart rather than separated by a flag, because one preserves
+exactly what the other destroys.
 
-```sql
--- Values only the old key could read. They are unreadable now, not damaged.
-DELETE FROM subsonic_credential;
-DELETE FROM scrobble_link;
--- Release the fingerprint. The next start binds whatever key it finds.
-DELETE FROM instance_metadata;
-```
+Both run with the server **stopped**: they take the database exclusively, and
+refuse to run at all while another process is holding it. And both are a reading until you say
+otherwise — without `--confirm` they count what the change costs, print it,
+and change nothing at all. Not even a pending migration: if the binary carries
+migrations this database has not run, the reading says so and stops, because
+applying one is a change and this half makes none.
+
+**The old key is in hand**, and you want a different one — it leaked, or it is
+simply time:
 
 ```bash
-rm data/instance.key
+waveflow-server key rotate             # what it would cost
+waveflow-server key rotate --confirm
 ```
 
-Start the server. It generates a fresh 32-byte key, binds its SHA-256 fingerprint
-to the database, and comes up on the catalogue you already had. Then re-set the
-Subsonic password of each account with `credential set`, and re-link any
-scrobbling destination.
+Every encrypted value is read with the old key and written back under the new
+one. Nothing is lost at all; the share URLs change and that is the whole of it.
 
-**Take a copy of `data/` before you begin.** The three deletions are not
-reversible, and a mistyped table name is a restore away from being someone's
-evening.
+**The old key is gone**, and nothing can be carried over:
 
-Verified end to end on a real instance: 164 tracks, 130 albums, 160 artists, one
-account and one library came back untouched under a new key.
+```bash
+waveflow-server key adopt
+waveflow-server key adopt --confirm
+```
+
+The Subsonic credentials and the scrobbling links go, the queued listens with
+them, and a fresh key is bound to the catalogue you already had. `adopt`
+refuses outright when the key beside the database still opens it: that is a
+rotation, and a rotation costs nothing.
+
+Both move the previous pair into a timestamped `data/pre-key-…` directory
+before touching anything — before any pending migration as well as before the
+key, so what is in there is the database as the command found it. The way
+`database restore` does.
+
+Afterwards, re-set the Subsonic credential of each account with
+`credential set` and hand each client its new password and API key, re-link
+any scrobbling destination, and **take a fresh backup**: the new key is exactly
+as unrecoverable as the one you just replaced.
+
+**Not by hand.** Deleting `subsonic_credential`, `scrobble_link` and
+`instance_metadata` in SQL — which is what this page documented before the
+commands existed, and what was verified end to end on a real instance of 164
+tracks, 130 albums and 160 artists — does bring the catalogue back under a new
+key. What it also does is strand every share: the stored token hash was
+computed from the old key, no later key can produce it again, and the owner is
+shown a URL that answers 404. That is the difference the commands carry.
 
 ## One path whose query string must not reach your proxy's log
 
