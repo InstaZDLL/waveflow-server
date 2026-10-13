@@ -120,6 +120,11 @@ async fn seed_an_installation(connection: &mut SqliteConnection) {
         ),
         (
             "INSERT INTO album_participant (album_id, artist_id, library_id, role, position) \
+               VALUES (?, ?, ?, 'albumartist', 0)",
+            vec![ALBUM, ARTIST_LEAD, LIBRARY],
+        ),
+        (
+            "INSERT INTO album_participant (album_id, artist_id, library_id, role, position) \
                VALUES (?, ?, ?, 'artist', 0)",
             vec![ALBUM, ARTIST_LEAD, LIBRARY],
         ),
@@ -153,6 +158,18 @@ async fn seed_an_installation(connection: &mut SqliteConnection) {
                                             position) \
                VALUES (?, ?, ?, 'artist', '', 1)",
             vec![TRACK, ARTIST_GUEST, LIBRARY],
+        ),
+        (
+            // `albumartist`, not only `artist`: the scanner copies every
+            // track role onto the album, and the services that answer an
+            // album's credits select this one alone. Seeding `artist` by
+            // itself left `albums[0].artists` empty, so an upgrade losing
+            // every album credit would have passed (constat de revue,
+            // pris).
+            "INSERT INTO track_participant (track_id, artist_id, library_id, role, sub_role, \
+                                            position) \
+               VALUES (?, ?, ?, 'albumartist', '', 0)",
+            vec![TRACK, ARTIST_LEAD, LIBRARY],
         ),
         (
             "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?)",
@@ -304,6 +321,15 @@ async fn every_released_schema_upgrades_with_the_rows_it_was_holding() {
             .expect("list albums");
         assert_eq!(albums.len(), 1, "{tag}: the album did not survive");
         assert_eq!(albums[0].title, "Convergence", "{tag}");
+        assert_eq!(
+            albums[0]
+                .artists
+                .iter()
+                .map(|artist| artist.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Nova Kern"],
+            "{tag}: the album credit did not survive the upgrade"
+        );
 
         let found = state
             .services
