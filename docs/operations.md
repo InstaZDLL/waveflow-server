@@ -66,7 +66,7 @@ They are named apart rather than separated by a flag, because one preserves
 exactly what the other destroys.
 
 Both run with the server **stopped**: they take the database exclusively, and
-refuse one another process is holding. And both are a reading until you say
+refuse to run at all while another process is holding it. And both are a reading until you say
 otherwise — without `--confirm` they count what the change costs, print it,
 and change nothing at all. Not even a pending migration: if the binary carries
 migrations this database has not run, the reading says so and stops, because

@@ -652,8 +652,23 @@ async fn install_new_key(
     };
     // Releases the exclusive lock and checkpoints the write-ahead log, so the
     // database is settled on disk before the other half of the pair moves.
-    connection.close().await?;
-    tokio::fs::rename(&staged, &config.instance_key_path).await?;
+    //
+    // Past the commit above, a failure here is not a failed operation but an
+    // unfinished one: the database already answers to the new key, and the
+    // only thing missing is the file. So the error says where that file is,
+    // rather than leaving an operator with a server that will not start and
+    // nothing naming the thing that would start it.
+    let unfinished = || {
+        format!(
+            "the database is already bound to the new key; move {} onto {} to finish",
+            staged.display(),
+            config.instance_key_path.display()
+        )
+    };
+    connection.close().await.with_context(unfinished)?;
+    tokio::fs::rename(&staged, &config.instance_key_path)
+        .await
+        .with_context(unfinished)?;
     Ok(moved)
 }
 
