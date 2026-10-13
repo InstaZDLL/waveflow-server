@@ -83,6 +83,10 @@ tempfile = "3"
 tokio-tungstenite = "0.30"
 
 [[test]]
+name = "migrations"
+path = "tests/migrations.rs"
+
+[[test]]
 name = "auth"
 path = "tests/auth.rs"
 
