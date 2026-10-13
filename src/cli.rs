@@ -587,6 +587,46 @@ fn print_inventory(intent: Intent, database: &Path, material: &KeyMaterial) {
     println!();
 }
 
+/// Puts a file on disk, rather than in the page cache.
+///
+/// Opened for writing rather than read-only, which is the spelling that first
+/// suggests itself: Windows refuses `FlushFileBuffers` on a handle with no
+/// write access, and answers "Access is denied" to a call that is only asking
+/// for durability.
+async fn sync_file(path: &Path) -> std::io::Result<()> {
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .await?
+        .sync_all()
+        .await
+}
+
+/// Puts a *directory entry* on disk — a file created, or renamed into place.
+///
+/// Writing a file and synchronising it says nothing about the directory that
+/// now claims to hold it, and the event these two commands guard against is
+/// exactly the one that does not ask politely: a machine that stops between
+/// the database committing to a new key and the file holding that key
+/// becoming real.
+///
+/// Unix only, and not an oversight: a Windows directory cannot be opened as a
+/// file to be synchronised, and `fs::rename` there goes through `MoveFileEx`,
+/// which is atomic but carries no equivalent promise. Nothing in this
+/// repository can test any of it — a power cut is not an inversion — so it is
+/// written for the property rather than for a test, and said so here.
+async fn sync_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        tokio::fs::File::open(path).await?.sync_all().await?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 /// The pair as this command found it, before a single statement touches it.
 ///
 /// Before the migration as well as before the key, which is the whole reason
@@ -610,9 +650,17 @@ async fn copy_the_pair_aside(
         .execute(&mut *connection)
         .await
         .map_err(|error| anyhow::anyhow!("could not write the recovery copy: {error}"))?;
+    sync_file(Path::new(saved)).await?;
     if config.instance_key_path.exists() {
-        tokio::fs::copy(&config.instance_key_path, recovery.join("instance.key")).await?;
+        let saved_key = recovery.join("instance.key");
+        tokio::fs::copy(&config.instance_key_path, &saved_key).await?;
+        sync_file(&saved_key).await?;
     }
+    // The two files, and then the directory that is supposed to contain them.
+    // This happens before anything is changed, so a failure here is a refusal
+    // rather than a half-finished operation — which is the right way round for
+    // the one copy the operator would reach for.
+    sync_directory(&recovery).await?;
     Ok(recovery)
 }
 
@@ -669,6 +717,19 @@ async fn install_new_key(
     tokio::fs::rename(&staged, &config.instance_key_path)
         .await
         .with_context(unfinished)?;
+    // The rename is atomic; the directory entry it made is not durable until
+    // the directory itself is synchronised. Reported rather than returned as
+    // an error: the change is complete by now, and failing here would hide the
+    // recovery path the caller is about to print — which is the one thing an
+    // operator would need next.
+    if let Some(parent) = config.instance_key_path.parent() {
+        if let Err(error) = sync_directory(parent).await {
+            eprintln!(
+                "warning: {} is in place but its directory could not be synchronised ({error}); take a backup before anything else",
+                config.instance_key_path.display()
+            );
+        }
+    }
     Ok(moved)
 }
 
