@@ -32,13 +32,22 @@ unrecoverable, or when it must be replaced because it leaked.
 
 ### What you lose, and what you keep
 
-Almost everything is unaffected, because almost nothing is encrypted:
+This is the **adoption** case below, where the key is genuinely gone. A
+rotation, where you still hold it, loses nothing from the left-hand column.
+
+Almost everything is unaffected either way, because almost nothing is
+encrypted:
 
 | Lost, and re-entered by hand | Survives untouched |
 | --- | --- |
-| The dedicated Subsonic password of every account | Every account, and its web password — Argon2id, never encrypted |
+| The Subsonic credential of every account — the dedicated password **and** the `wfsk_` API key beside it | Every account, and its web password — Argon2id, never encrypted |
 | Every external scrobbling link (Last.fm, ListenBrainz, Maloja), and the listens queued behind it | The whole catalogue: tracks, albums, artists, libraries and their members |
 | | Favourites, ratings, playlists, play queues, listening history, bookmarks |
+
+The API key is not encrypted — it is stored as a SHA-256 hash, which no key
+change can touch — but it shares its row with the password that is, and the
+columns are `NOT NULL`. So the row goes whole. `credential set` mints a new
+password **and** a new API key, and both have to reach the client.
 
 Shares are kept but **their public URLs change**: a share token is derived from
 the instance key rather than stored, so every link handed out under the old key
@@ -56,10 +65,12 @@ mint a ticket for any track they can address.
 They are named apart rather than separated by a flag, because one preserves
 exactly what the other destroys.
 
-Both run with the server **stopped** — they take the database exclusively and
-refuse a database another process is holding — and both are a reading until you say
-otherwise: without `--confirm` they count what the change costs, print it, and
-change nothing.
+Both run with the server **stopped**: they take the database exclusively, and
+refuse one another process is holding. And both are a reading until you say
+otherwise — without `--confirm` they count what the change costs, print it,
+and change nothing at all. Not even a pending migration: if the binary carries
+migrations this database has not run, the reading says so and stops, because
+applying one is a change and this half makes none.
 
 **The old key is in hand**, and you want a different one — it leaked, or it is
 simply time:
@@ -79,15 +90,20 @@ waveflow-server key adopt
 waveflow-server key adopt --confirm
 ```
 
-The Subsonic passwords and the scrobbling links go, the queued listens with
+The Subsonic credentials and the scrobbling links go, the queued listens with
 them, and a fresh key is bound to the catalogue you already had. `adopt`
 refuses outright when the key beside the database still opens it: that is a
 rotation, and a rotation costs nothing.
 
 Both move the previous pair into a timestamped `data/pre-key-…` directory
-before touching anything, the way `database restore` does. Afterwards, re-set
-the Subsonic password of each account with `credential set`, and re-link any
-scrobbling destination.
+before touching anything — before any pending migration as well as before the
+key, so what is in there is the database as the command found it. The way
+`database restore` does.
+
+Afterwards, re-set the Subsonic credential of each account with
+`credential set` and hand each client its new password and API key, re-link
+any scrobbling destination, and **take a fresh backup**: the new key is exactly
+as unrecoverable as the one you just replaced.
 
 **Not by hand.** Deleting `subsonic_credential`, `scrobble_link` and
 `instance_metadata` in SQL — which is what this page documented before the

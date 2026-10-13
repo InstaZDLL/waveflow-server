@@ -24,6 +24,7 @@
 //! recognise.
 
 use sqlx::migrate::Migrate;
+use sqlx::Connection;
 use sqlx::SqliteConnection;
 use waveflow_server::database::Database;
 use waveflow_server::database::MIGRATOR;
@@ -413,4 +414,138 @@ async fn every_released_schema_upgrades_with_the_rows_it_was_holding() {
         );
         assert_eq!(top[0].title, "Zenith", "{tag}");
     }
+}
+
+/// A key change reads without migrating, and copies before it does.
+///
+/// Here rather than beside the other key tests in `cli.rs` for the reason this
+/// whole target exists: `test_app()` builds a current schema, and on a current
+/// schema a reading that migrates and one that does not are the same reading.
+/// Only a database *behind* the binary can tell them apart, and building one
+/// is what this file already knows how to do.
+///
+/// Two promises, both of which only a lagging schema can hold to account:
+///
+/// - **a reading changes nothing**, so `key rotate` without `--confirm` must
+///   leave `_sqlx_migrations` exactly as it found it — applying a migration is
+///   a change, whatever else it is;
+/// - **the recovery copy is the database as found**, so it must still be at
+///   the old schema after the confirmed run brought the live one forward. A
+///   copy taken afterwards would restore the operator to a schema they never
+///   chose to run.
+#[tokio::test]
+async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
+    let total = MIGRATOR.iter().count();
+    let (tag, baseline) = RELEASED_SCHEMAS[RELEASED_SCHEMAS.len() - 1];
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let config = Config::for_data_dir(temp.path().join("data"));
+
+    let database = Database::open(&config).await.expect("open the database");
+    let mut connection = database.pool().acquire().await.expect("connection");
+    connection
+        .ensure_migrations_table(&MIGRATOR.table_name)
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR
+        .iter()
+        .filter(|migration| migration.version <= baseline)
+    {
+        connection
+            .apply(&MIGRATOR.table_name, migration)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("{tag}: migration {} failed: {error}", migration.version)
+            });
+    }
+    // The pair that schema was running under. Written by hand because the only
+    // thing this test needs from it is that the two halves agree: `rotate`
+    // refuses a key the database was not bound to, and that refusal is not
+    // what is being measured here.
+    let key = [5u8; 32];
+    std::fs::write(&config.instance_key_path, key).expect("the key file");
+    sqlx::query(
+        "INSERT INTO instance_metadata (singleton, key_fingerprint, created_at) VALUES (1, ?, 0)",
+    )
+    .bind(waveflow_server::security::bytes_hash(&key).as_slice())
+    .execute(&mut *connection)
+    .await
+    .expect("bind the key");
+    let behind = count(&mut connection, "SELECT COUNT(*) FROM _sqlx_migrations").await;
+    assert!(
+        (behind as usize) < total,
+        "{tag}: the baseline applied all {total} migrations, so nothing is behind"
+    );
+    drop(connection);
+    database.pool().close().await;
+    drop(database);
+
+    // One: the reading. It is told there is an upgrade waiting, and leaves it
+    // waiting.
+    waveflow_server::cli::key(
+        &config,
+        waveflow_server::cli::KeyCommand::Rotate(waveflow_server::cli::KeyArgs { confirm: false }),
+    )
+    .await
+    .expect("a reading of a lagging database");
+    assert_eq!(
+        applied_in(&config.database_path).await,
+        behind,
+        "a reading applied a migration"
+    );
+    assert_eq!(
+        std::fs::read(&config.instance_key_path).unwrap(),
+        key,
+        "a reading replaced the key"
+    );
+
+    // Two: the change. The copy is the database as it was found.
+    waveflow_server::cli::key(
+        &config,
+        waveflow_server::cli::KeyCommand::Rotate(waveflow_server::cli::KeyArgs { confirm: true }),
+    )
+    .await
+    .expect("a confirmed rotation of a lagging database");
+    assert_ne!(
+        std::fs::read(&config.instance_key_path).unwrap(),
+        key,
+        "the rotation kept the old key"
+    );
+    let recovery = std::fs::read_dir(&config.data_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pre-key-"))
+        })
+        .expect("a recovery directory");
+    assert_eq!(
+        applied_in(&recovery.join("waveflow.db")).await,
+        behind,
+        "the recovery copy was taken after the schema had already moved"
+    );
+    assert_eq!(
+        applied_in(&config.database_path).await as usize,
+        total,
+        "the rotation left migrations unapplied"
+    );
+
+    // And the pair it leaves behind is one the server opens.
+    waveflow_server::initialize(&config)
+        .await
+        .expect("the rotated pair must boot");
+}
+
+/// How many migrations a database on disk has run.
+///
+/// Opened alone and closed again between readings: the key commands take the
+/// file exclusively, and a connection this test forgot to close would make the
+/// next one fail for a reason that has nothing to do with what it asserts.
+async fn applied_in(path: &std::path::Path) -> i64 {
+    let mut connection = Database::open_alone(path, std::time::Duration::from_secs(5))
+        .await
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let applied = count(&mut connection, "SELECT COUNT(*) FROM _sqlx_migrations").await;
+    connection.close().await.expect("close");
+    applied
 }

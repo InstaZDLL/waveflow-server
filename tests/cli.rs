@@ -1131,7 +1131,7 @@ async fn a_key_change_prints_what_it_costs_and_then_what_it_did() {
     let stderr = String::from_utf8(reading.stderr).unwrap();
     assert!(reading.status.success(), "the reading failed: {stderr}");
     for expected in [
-        "2 Subsonic password(s) — deleted",
+        "2 Subsonic credential(s) — deleted, password and `wfsk_` API key together",
         "1 scrobbling link(s) — deleted, and the 3 queued listen(s) behind them",
         "4 share(s) — kept, but every public URL changes",
         "Nothing has been changed. Re-run with --confirm.",
@@ -1154,7 +1154,7 @@ async fn a_key_change_prints_what_it_costs_and_then_what_it_did() {
     assert!(done.status.success(), "the adoption failed: {stderr}");
     assert!(
         stdout.contains(
-            "Done. 2 Subsonic password(s) and 1 scrobbling link(s) deleted, \
+            "Done. 2 Subsonic credential(s) and 1 scrobbling link(s) deleted, \
              with 3 queued listen(s); 4 share(s) re-addressed."
         ),
         "the closing line did not report the operation: {stdout}"

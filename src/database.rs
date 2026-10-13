@@ -17,6 +17,22 @@ use crate::{config::Config, security::EncryptedSecret};
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations-v2");
 
+/// What this binary's migrations find in a database.
+///
+/// Asked before anything is applied, because the key commands promise a
+/// reading that changes nothing and applying a migration is a change. It is
+/// also what lets [`Database::key_material`] count without guarding each
+/// table: `Current` means every migration this binary carries has run, so
+/// every table it creates is there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaState {
+    /// No migration has run. The file is not a WaveFlow database yet.
+    Empty,
+    /// Every migration this binary carries has run.
+    Current,
+    /// This binary carries migrations the database has not run.
+    Behind(usize),
+}
 /// What an instance key protects, counted from the database.
 ///
 /// Four numbers rather than a sentence, because the sentence is what the
@@ -646,6 +662,36 @@ impl Database {
             .await
             .map_err(|error| anyhow::anyhow!("could not take the database: {error}"))?;
         Ok(connection)
+    }
+
+    /// Where this database stands against the migrations this binary carries.
+    pub async fn schema_state(connection: &mut SqliteConnection) -> anyhow::Result<SchemaState> {
+        let has_table = sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'table' AND name = '_sqlx_migrations')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if has_table == 0 {
+            return Ok(SchemaState::Empty);
+        }
+        let applied = sqlx::query_scalar::<_, i64>(
+            "SELECT version FROM _sqlx_migrations WHERE success = TRUE",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        if applied.is_empty() {
+            return Ok(SchemaState::Empty);
+        }
+        let pending = MIGRATOR
+            .iter()
+            .filter(|migration| !applied.contains(&migration.version))
+            .count();
+        Ok(if pending == 0 {
+            SchemaState::Current
+        } else {
+            SchemaState::Behind(pending)
+        })
     }
 
     /// The fingerprint this database was bound to, if it has been bound.
