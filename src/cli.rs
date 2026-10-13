@@ -589,17 +589,28 @@ fn print_inventory(intent: Intent, database: &Path, material: &KeyMaterial) {
 
 /// Puts a file on disk, rather than in the page cache.
 ///
-/// Opened for writing rather than read-only, which is the spelling that first
-/// suggests itself: Windows refuses `FlushFileBuffers` on a handle with no
-/// write access, and answers "Access is denied" to a call that is only asking
-/// for durability.
+/// Opened differently on the two platforms, and neither spelling works on
+/// both. Windows refuses `FlushFileBuffers` on a handle with no write access
+/// and answers "Access is denied" to a call only asking for durability —
+/// measured, after three tests failed on it. Unix allows `fsync` on a
+/// read-only descriptor, and has to be asked that way: `fs::copy` carries the
+/// source's permissions over, so a hardened `instance.key` at mode 0400 makes
+/// its own copy unopenable for writing, and demanding write access here would
+/// turn a sensible precaution into a server that cannot rotate its key.
 async fn sync_file(path: &Path) -> std::io::Result<()> {
-    tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .await?
-        .sync_all()
-        .await
+    #[cfg(unix)]
+    {
+        tokio::fs::File::open(path).await?.sync_all().await
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .await?
+            .sync_all()
+            .await
+    }
 }
 
 /// Puts a *directory entry* on disk — a file created, or renamed into place.
@@ -683,6 +694,16 @@ async fn install_new_key(
         .join(format!(".key-{}.tmp", uuid::Uuid::new_v4()));
     let new_bytes = security::SecretBox::create_instance_key(&staged)?;
     let new_key = security::SecretBox::from_key_bytes(&new_bytes)?;
+    // Two files now exist in the data directory that nothing has yet promised
+    // will still be there: the `pre-key-…` directory and this staged key. The
+    // copy made each of *its* entries durable, and neither made durable the
+    // entry naming it. So the data directory is synchronised here — after the
+    // staged key exists and before the commit below, because after the commit
+    // is too late: a machine stopping in that window would come back with a
+    // database bound to a new key, no file holding it, and no copy to go back
+    // to. Which is the whole of what this command exists to prevent, arrived
+    // at by the command itself.
+    sync_directory(&config.data_dir).await?;
     let moved = match Database::rekey(
         &mut connection,
         plan,
