@@ -131,6 +131,10 @@ Settings, under `WAVEFLOW_METADATA_*`, in `src/config.rs` with the rest:
 - `WAVEFLOW_METADATA_PROVIDERS` — an ordered, comma-separated list, empty by
   default. Empty is the off switch; there is no second boolean to disagree
   with it.
+- `WAVEFLOW_METADATA_IMAGES` — on once providers are configured, `off` to keep
+  the lookups and refuse decision 8's image fetch. It is a narrowing, never a
+  widening: an empty provider list means no outbound request of any kind, and
+  this setting cannot contradict it.
 - `WAVEFLOW_METADATA_LASTFM_KEY` — the operator's own application key.
 - `WAVEFLOW_METADATA_TTL_DAYS`, `WAVEFLOW_METADATA_MISS_TTL_DAYS`,
   `WAVEFLOW_METADATA_RATE_PER_SEC`, `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS`.
