@@ -169,6 +169,47 @@ Every tunable is a field on `Config` in
 [`src/config.rs`](../src/config.rs), with its environment variable documented on
 it. That file is the authority; this page is not a copy of it.
 
+## Switching metadata enrichment on
+
+**Off by default, and an upgrade leaves it off.** A server that has not been
+told otherwise makes no request to any metadata provider.
+[RFC-011](rfcs/RFC-011-metadata-enrichment.md) carries the reasoning.
+
+```bash
+WAVEFLOW_METADATA_PROVIDERS=lastfm
+WAVEFLOW_METADATA_LASTFM_KEY=…   # your own Last.fm API application's key
+```
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WAVEFLOW_METADATA_PROVIDERS` | empty | The switch: an ordered, comma-separated list. Empty is off. Today the only provider is `lastfm` |
+| `WAVEFLOW_METADATA_LASTFM_KEY` | — | Required when `lastfm` is listed; the server refuses to start without it. No key ships in the binary |
+| `WAVEFLOW_METADATA_IMAGES` | on | `off` keeps the lookups and refuses artist image downloads |
+| `WAVEFLOW_METADATA_TTL_DAYS` | 30 | How long an answer with content is kept before it is asked again |
+| `WAVEFLOW_METADATA_MISS_TTL_DAYS` | 7 | How long "the provider knows nothing about this artist" is kept |
+| `WAVEFLOW_METADATA_RATE_PER_SEC` | 4 | Requests per second, per provider |
+| `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS` | 10 | How long one request may take before it counts as unanswered |
+
+**Scrobbling's Last.fm key does not switch this on.** An application you
+registered for submitting listens is a different consent from lookups about your
+whole catalogue. You may place the same key in both variables; each one switches
+on only its own feature.
+
+**What the server starts contacting.** `ws.audioscrobbler.com`, over https, and
+only when somebody opens an artist. Nothing is fetched at scan time. Each
+request carries the artist's name and your key, and no redirect is followed.
+Requests are spaced to the rate above, and simultaneous visits to one artist
+share one request.
+
+**What it stores.** In `waveflow.db`, for each provider and each artist name
+asked about: the biography, the ranked list of similar artists by name, whether
+the provider knew the artist, and when to ask again. Nothing in it belongs to an
+account, and nothing records who asked. A failed request stores nothing, so the
+next visit asks again.
+
+**What it logs.** The provider and a verdict, such as `answered HTTP 503` —
+never the request URL, which carries your key.
+
 ## Probes
 
 | Path | Answers |

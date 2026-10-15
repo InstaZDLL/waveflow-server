@@ -189,6 +189,75 @@ pub struct ScrobbleDestination {
     pub fingerprint: String,
 }
 
+/// Metadata enrichment, as RFC-011 decision 3 lists its settings.
+///
+/// **Off unless `providers` names one**, and that is the only switch: an empty
+/// list makes no outbound request of any kind, and nothing else here can
+/// contradict it. Separate from scrobbling on purpose — an operator who placed
+/// a Last.fm application for submissions has not thereby agreed to lookups
+/// about the whole catalogue, so `lastfm_key` is its own setting even when it
+/// holds the same value.
+#[derive(Clone)]
+pub struct MetadataSettings {
+    /// `WAVEFLOW_METADATA_PROVIDERS`: an ordered, comma-separated list, empty
+    /// by default. The order is the order fields are merged in when read.
+    pub providers: Vec<crate::enrichment::Provider>,
+    /// `WAVEFLOW_METADATA_IMAGES`, on by default, `off` to keep the lookups and
+    /// refuse decision 8's image fetch. A narrowing only: it switches nothing
+    /// on while `providers` is empty.
+    pub images: bool,
+    /// `WAVEFLOW_METADATA_LASTFM_KEY`, the operator's own application key.
+    /// Required when `providers` names `lastfm`: no key ships in this binary.
+    pub lastfm_key: Option<String>,
+    /// `WAVEFLOW_METADATA_TTL_DAYS`: how long an answer with content stands.
+    pub ttl: Duration,
+    /// `WAVEFLOW_METADATA_MISS_TTL_DAYS`: how long "the provider knows nothing"
+    /// stands. Shorter than `ttl`, and a setting of its own, because it is the
+    /// answer most likely to change.
+    pub miss_ttl: Duration,
+    /// `WAVEFLOW_METADATA_RATE_PER_SEC`: requests per second, per provider.
+    pub rate_per_sec: u32,
+    /// `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS`: how long one request to a
+    /// provider may take before it counts as unreached.
+    pub request_timeout: Duration,
+}
+
+impl MetadataSettings {
+    /// Enrichment switched off — what a server that is merely upgraded runs.
+    pub fn off() -> Self {
+        Self {
+            providers: Vec::new(),
+            images: true,
+            lastfm_key: None,
+            ttl: Duration::from_secs(30 * 24 * 60 * 60),
+            miss_ttl: Duration::from_secs(7 * 24 * 60 * 60),
+            rate_per_sec: 4,
+            request_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
+/// Written by hand so the key never reaches a log: a `Config` is printed at
+/// startup under `RUST_LOG=debug`, and a Last.fm key travels in a query string
+/// where anyone holding it can spend the operator's quota.
+impl std::fmt::Debug for MetadataSettings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MetadataSettings")
+            .field("providers", &self.providers)
+            .field("images", &self.images)
+            .field(
+                "lastfm_key",
+                &self.lastfm_key.as_ref().map(|_| "[redacted]"),
+            )
+            .field("ttl", &self.ttl)
+            .field("miss_ttl", &self.miss_ttl)
+            .field("rate_per_sec", &self.rate_per_sec)
+            .field("request_timeout", &self.request_timeout)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -352,6 +421,8 @@ pub struct Config {
     /// flag says "this address is mine", not "send my members' tokens in clear
     /// wherever I point you".
     pub outbound_allow_plaintext: bool,
+    /// Metadata enrichment — RFC-011. See [`MetadataSettings`].
+    pub metadata: MetadataSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
@@ -398,6 +469,7 @@ impl std::fmt::Debug for Config {
             .field("destinations", &self.destinations)
             .field("lastfm", &self.lastfm)
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
+            .field("metadata", &self.metadata)
             .field("allowed_origins", &self.allowed_origins)
             .field("pid", &self.pid)
             .finish()
@@ -590,6 +662,8 @@ impl Config {
             ),
         };
 
+        let metadata = parse_metadata_settings()?;
+
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -664,6 +738,7 @@ impl Config {
             destinations,
             lastfm,
             outbound_allow_plaintext,
+            metadata,
             allowed_origins,
             pid,
         })
@@ -766,6 +841,10 @@ impl Config {
             // two tests here stand on.
             lastfm: None,
             outbound_allow_plaintext: true,
+            // Off, as production defaults: the suite never reaches a real
+            // provider, and the targets that exercise enrichment build their
+            // own engine against a listener of their own.
+            metadata: MetadataSettings::off(),
             allowed_origins: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.
@@ -972,6 +1051,66 @@ fn normalize_public_url(value: &str) -> anyhow::Result<String> {
     Ok(parsed.origin().ascii_serialization())
 }
 
+/// Reads RFC-011 decision 3's settings.
+fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
+    let defaults = MetadataSettings::off();
+    let lastfm_key = read_trimmed_env("WAVEFLOW_METADATA_LASTFM_KEY");
+    let providers = parse_metadata_providers(
+        &std::env::var("WAVEFLOW_METADATA_PROVIDERS").unwrap_or_default(),
+        lastfm_key.is_some(),
+    )?;
+    let days = |name: &str, default: Duration| -> anyhow::Result<Duration> {
+        let days: u64 = parse_positive_env(name, default.as_secs() / (24 * 60 * 60))?;
+        days.checked_mul(24 * 60 * 60)
+            .map(Duration::from_secs)
+            .ok_or_else(|| anyhow::anyhow!("invalid {name}: too large"))
+    };
+    Ok(MetadataSettings {
+        providers,
+        images: parse_bool_env("WAVEFLOW_METADATA_IMAGES", defaults.images)?,
+        lastfm_key,
+        ttl: days("WAVEFLOW_METADATA_TTL_DAYS", defaults.ttl)?,
+        miss_ttl: days("WAVEFLOW_METADATA_MISS_TTL_DAYS", defaults.miss_ttl)?,
+        rate_per_sec: parse_positive_env("WAVEFLOW_METADATA_RATE_PER_SEC", defaults.rate_per_sec)?,
+        request_timeout: Duration::from_secs(parse_positive_env(
+            "WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS",
+            defaults.request_timeout.as_secs(),
+        )?),
+    })
+}
+
+/// `WAVEFLOW_METADATA_PROVIDERS`, in the operator's order.
+///
+/// A provider named without its key, an unknown name and a name given twice
+/// all refuse to boot. Each is a typo, and a server that started with
+/// enrichment quietly narrower than its operator wrote is the silent failure
+/// these settings must not have — the operator learns it here, not from an
+/// artist page that never fills.
+fn parse_metadata_providers(
+    list: &str,
+    has_lastfm_key: bool,
+) -> anyhow::Result<Vec<crate::enrichment::Provider>> {
+    let mut providers = Vec::new();
+    for name in list
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let provider = crate::enrichment::Provider::parse(name)
+            .ok_or_else(|| anyhow::anyhow!("invalid WAVEFLOW_METADATA_PROVIDERS entry {name:?}"))?;
+        if providers.contains(&provider) {
+            anyhow::bail!("WAVEFLOW_METADATA_PROVIDERS names {name:?} twice");
+        }
+        if provider == crate::enrichment::Provider::LastFm && !has_lastfm_key {
+            anyhow::bail!(
+                "WAVEFLOW_METADATA_PROVIDERS names lastfm without WAVEFLOW_METADATA_LASTFM_KEY"
+            );
+        }
+        providers.push(provider);
+    }
+    Ok(providers)
+}
+
 fn parse_env<T>(name: &str, default: &str) -> anyhow::Result<T>
 where
     T: std::str::FromStr,
@@ -1072,6 +1211,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 #[cfg(test)]
 mod tests {
     use super::normalize_public_url;
+    use super::parse_metadata_providers;
     use super::DEFAULT_DB_ACQUIRE_TIMEOUT_MS;
     use super::{parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
     use super::{validate_canvas, CanvasLimits};
@@ -1087,6 +1227,25 @@ mod tests {
             sessions_per_user: 2,
             session_ttl: Duration::from_secs(3600),
         }
+    }
+
+    /// RFC-011 decision 3: empty is off, and every typo refuses to boot rather
+    /// than starting enrichment narrower than the operator wrote.
+    #[test]
+    fn metadata_providers_are_read_strictly() {
+        use crate::enrichment::Provider;
+
+        assert_eq!(parse_metadata_providers("", false).unwrap(), []);
+        assert_eq!(parse_metadata_providers(" , ", false).unwrap(), []);
+        assert_eq!(
+            parse_metadata_providers(" lastfm ", true).unwrap(),
+            [Provider::LastFm]
+        );
+        // No key ships in the binary: naming the provider without one is a
+        // misconfiguration, not a quiet off.
+        assert!(parse_metadata_providers("lastfm", false).is_err());
+        assert!(parse_metadata_providers("lastfm,lastfm", true).is_err());
+        assert!(parse_metadata_providers("last.fm", true).is_err());
     }
 
     #[test]
