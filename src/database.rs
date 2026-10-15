@@ -1900,6 +1900,136 @@ async fn insert_audit(
     Ok(())
 }
 
+/// RFC-011's cache, which [`crate::enrichment`] fills and reads.
+///
+/// No user id and no tenancy anywhere in it: what a provider says about a name
+/// is the same whoever asks, and nothing here is account data (decision 4).
+/// Tenancy applies where a cached name meets the catalogue, which is the
+/// reader's query, not these.
+impl Database {
+    /// Every provider's row for one canonical name, in no particular order.
+    ///
+    /// A row from a provider this build does not know — written by a later
+    /// version the instance was downgraded from — is passed over rather than
+    /// refused: it is a fact about a provider nobody configured here.
+    pub async fn metadata_artist_rows(
+        &self,
+        name_canonical: &str,
+    ) -> Result<Vec<crate::enrichment::CachedArtist>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT provider, outcome, bio_summary, bio_full, fetched_at, expires_at \
+             FROM metadata_artist WHERE name_canonical = ?",
+        )
+        .bind(name_canonical)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut cached = Vec::with_capacity(rows.len());
+        for row in rows {
+            let provider: String = row.try_get("provider")?;
+            let Some(provider) = crate::enrichment::Provider::parse(&provider) else {
+                continue;
+            };
+            let outcome: String = row.try_get("outcome")?;
+            let outcome = crate::enrichment::Outcome::parse(&outcome).ok_or_else(|| {
+                sqlx::Error::Decode(format!("unknown enrichment outcome {outcome:?}").into())
+            })?;
+            cached.push(crate::enrichment::CachedArtist {
+                provider,
+                outcome,
+                bio_summary: row.try_get("bio_summary")?,
+                bio_full: row.try_get("bio_full")?,
+                fetched_at: row.try_get("fetched_at")?,
+                expires_at: row.try_get("expires_at")?,
+            });
+        }
+        Ok(cached)
+    }
+
+    /// One provider's ranked neighbours for one canonical name, best first.
+    pub async fn metadata_artist_similar(
+        &self,
+        provider: crate::enrichment::Provider,
+        name_canonical: &str,
+    ) -> Result<Vec<crate::enrichment::CachedSimilar>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT similar_name, similar_canonical, score FROM metadata_artist_similar \
+             WHERE provider = ? AND name_canonical = ? ORDER BY rank",
+        )
+        .bind(provider.as_str())
+        .bind(name_canonical)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(crate::enrichment::CachedSimilar {
+                    name: row.try_get("similar_name")?,
+                    name_canonical: row.try_get("similar_canonical")?,
+                    score: row.try_get("score")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Records what a provider answered: its row and its whole neighbour list,
+    /// in one transaction.
+    ///
+    /// The writer gate is taken here and nowhere earlier — the request that
+    /// produced `answer` is over before this is called, so no network I/O ever
+    /// runs under it.
+    pub(crate) async fn write_metadata_artist(
+        &self,
+        provider: crate::enrichment::Provider,
+        name_canonical: &str,
+        answer: &crate::enrichment::ArtistAnswer,
+        fetched_at: i64,
+        expires_at: i64,
+    ) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO metadata_artist \
+                (provider, name_canonical, outcome, bio_summary, bio_full, fetched_at, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT (provider, name_canonical) DO UPDATE SET \
+                outcome = excluded.outcome, bio_summary = excluded.bio_summary, \
+                bio_full = excluded.bio_full, fetched_at = excluded.fetched_at, \
+                expires_at = excluded.expires_at",
+        )
+        .bind(provider.as_str())
+        .bind(name_canonical)
+        .bind(answer.outcome().as_str())
+        .bind(answer.bio_summary.as_deref())
+        .bind(answer.bio_full.as_deref())
+        .bind(fetched_at)
+        .bind(expires_at)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM metadata_artist_similar WHERE provider = ? AND name_canonical = ?",
+        )
+        .bind(provider.as_str())
+        .bind(name_canonical)
+        .execute(&mut *tx)
+        .await?;
+        for (rank, similar) in answer.similar.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO metadata_artist_similar \
+                    (provider, name_canonical, rank, similar_name, similar_canonical, score) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(provider.as_str())
+            .bind(name_canonical)
+            .bind(rank as i64)
+            .bind(&similar.name)
+            .bind(&similar.name_canonical)
+            .bind(similar.score)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

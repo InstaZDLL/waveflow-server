@@ -154,3 +154,7 @@ path = "tests/canvas.rs"
 [[test]]
 name = "scrobbling"
 path = "tests/scrobbling.rs"
+
+[[test]]
+name = "enrichment"
+path = "tests/enrichment.rs"

@@ -6,9 +6,11 @@ pub mod catalog;
 pub mod cli;
 pub mod config;
 pub mod database;
+pub mod enrichment;
 pub mod lyrics;
 pub mod media;
 pub mod oauth;
+pub mod outbound;
 pub mod pid;
 pub mod playlist_file;
 pub mod scanner;
@@ -76,6 +78,9 @@ pub struct AppState {
     /// The body ceiling the canvas route carries, derived from
     /// `WAVEFLOW_CANVAS_MAX_BYTES` so the two cannot disagree.
     pub canvas_body_limit: usize,
+    /// Metadata enrichment — RFC-011. Disabled unless the operator named a
+    /// provider.
+    pub enrichment: enrichment::Enrichment,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -596,8 +601,9 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         scanner.clone(),
         config,
     );
-    // The only outbound surface this server has, and it is switched on by the
-    // operator naming a destination rather than by anybody linking an account.
+    // One of the two outbound surfaces this server has — metadata enrichment,
+    // below, is the other — and it is switched on by the operator naming a
+    // destination rather than by anybody linking an account.
     // Nothing leaves until both are true: an adapter with no authorisation
     // behind it is never handed a listen. RFC-010 decision 11.
     for destination in &config.destinations {
@@ -673,6 +679,9 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // the background task already runs leaves a window, short and sufficient,
     // in which listens leave for yesterday's destination. RFC-010 decision 10.
     services.reconcile_scrobble_links().await?;
+    // Off unless the operator named a provider, and then it still makes no
+    // request until somebody asks about an artist (RFC-011 decisions 3 and 6).
+    let enrichment = enrichment::Enrichment::new(db.clone(), &config.metadata)?;
     Ok(AppState {
         db,
         auth,
@@ -691,6 +700,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         // Refused at startup if it does not fit, so this conversion cannot be
         // the place that decides what a ceiling falls back to.
         canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
+        enrichment,
     })
 }
 

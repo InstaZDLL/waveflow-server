@@ -1,10 +1,18 @@
 # RFC-011 — Server-side metadata enrichment
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in this
-  project; this line is the one that says what is running, and today it says
-  the answer is still the empty container.
+- **Implemented by**: in progress, in the order of
+  [the implementation plan](../metadata-enrichment-plan.md):
+  InstaZDLL/WaveFlow#855 (the core's clients accept a client, an address and a
+  key), #270 (the pin moved onto them), and the pull request closing #265 (the
+  cache and the engine that fills it). No surface answers from the cache yet,
+  so every container is still the empty one. The *Status* field above never
+  flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-14
+- **Revised**: 2026-10-15, while implementing the cache (#265). Decisions 4, 6
+  and 10 rested on attachment points the code does not hold; each correction
+  below is marked and says what the first version asserted, rather than
+  erasing it.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-010](RFC-010-external-scrobbling.md)
@@ -170,6 +178,14 @@ The cache is therefore keyed on the **canonical name**, as the desktop's own
 - `metadata_album` — the same shape for album notes, keyed on the provider and
   the canonical `(artist, title)` pair that `album_match.rs` already computes.
 
+**Revised on 2026-10-15.** The migration that shipped
+(`20261015000000_metadata_artist.sql`) differs from this list in three places.
+The biography is two columns, `bio_summary` and `bio_full`, because that is how
+the providers return it. `image_url` is not there: portraits add their columns
+with the fetch that fills them. And `metadata_album` was not created — the
+open question on album notes below decides whether it exists, and
+`album_match.rs` was not even in the pinned core when this was written.
+
 ### One row per provider, merged on read
 
 **The provider belongs in the key, not in a column**, and the first draft of
@@ -203,6 +219,16 @@ Normalisation is `waveflow_core::metadata::name_match::normalize_name`, and
 matching a provider's ranked candidate list back to the name asked for is
 `select_by_name`. Neither is re-implemented here; both have a desktop issue
 behind them (#342) recording what naive equality dropped.
+
+**Revised on 2026-10-15: the key is not `normalize_name`.** The paragraph above
+asserted it was. Every `artist` row already stores a `canonical_name`, computed
+by `waveflow_core::scanner::canonical_name`, and the two functions disagree:
+`normalize_name` also folds diacritics and turns `&` into `and`, so "Björk" is
+`björk` in the column and `bjork` through it. The cache is keyed on the
+column's form, which lets the read path join
+`metadata_artist.name_canonical = artist.canonical_name` with nothing
+recomputed. `normalize_name` and `select_by_name` keep the job they were written
+for — matching a provider's candidates — where a provider returns candidates.
 
 **Nothing in these tables is account data**, which is what makes an
 instance-wide cache correct rather than merely convenient. Anything that ever
@@ -266,6 +292,13 @@ Enrichment is demand-driven, and a library nobody browses costs nothing.
 for someone to reload the page. The mechanism already exists and decision 8
 explains why it may now carry an artist: RFC-007's library event stream, whose
 decision 6 declined an artist event for a reason this RFC removes.
+
+**Revised on 2026-10-15: only one client is told.** The paragraph above implied
+every client is. The desktop is, because it mirrors the library through that
+feed. The web client is not: the only event stream it reads is a scan's
+progress. It re-asks instead, a bounded number of times while the answer says
+the lookup is pending, and then stops — which is the web client's step of the
+plan, not a property this mechanism gives it.
 
 ## Decision 7 — similar artists resolve to artists the caller can see, and to nothing else
 
@@ -415,6 +448,16 @@ them empty.
 - `getArtistInfo` / `getArtistInfo2` — `biography`, `similarArtist` entries
   (decision 7), and `smallImageUrl` / `mediumImageUrl` / `largeImageUrl`
   pointing at this server's own artwork route (decision 8).
+
+  **Revised on 2026-10-15: the three image URLs stay absent.** The bullet above
+  asserted a route they could point at. Neither artwork route serves a URL a
+  client loads as-is: `media::artwork` wants the native bearer, and
+  `getCoverArt` wants Subsonic credentials in the query string, which would put
+  a member's token into a URL that clients cache and log. A client finds the
+  portrait through `coverArt`, which every artist element already carries. The
+  compatibility campaign measures whether a client in the matrix reads
+  `largeImageUrl` at all; a sealed artwork ticket can be added then, while a URL
+  scheme cannot be withdrawn once clients have cached it.
 - `getSimilarSongs` / `getSimilarSongs2` — tracks by the neighbours the caller
   can see.
 - `getAlbumInfo` / `getAlbumInfo2` — `notes` beside the `musicBrainzId` they

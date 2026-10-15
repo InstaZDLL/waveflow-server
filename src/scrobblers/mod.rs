@@ -5,10 +5,11 @@
 //! That line is what decision 6 exists to draw, and putting an adapter beside
 //! the drain would rub it out within a release.
 //!
-//! **This is the only place in the server that makes an outbound request.**
-//! Decision 10 calls that the real risk of the whole RFC — a server that calls
-//! a URL is a server somebody can make call a URL — so the rules live here,
-//! once, rather than in each adapter.
+//! Decision 10 calls outbound requests the real risk of the whole RFC — a
+//! server that calls a URL is a server somebody can make call a URL — so the
+//! rules live once, in [`crate::outbound`], rather than in each adapter. That
+//! module is shared with metadata enrichment (RFC-011), the server's only other
+//! outbound surface.
 
 use std::time::Duration;
 
@@ -118,41 +119,10 @@ pub fn destination_fingerprint(url: &url::Url) -> String {
     ))
 }
 
-/// How much of the budget a connection may spend before the rest of the request
-/// has had any of it.
-///
-/// A third, so a destination that accepts slowly still leaves room for the
-/// submission itself rather than consuming the whole deadline in the handshake.
-const CONNECT_SHARE: u32 = 3;
-
-/// The client every adapter shares.
-///
-/// Each property below is decision 10 written down:
-///
-/// - **No redirect is followed.** `reqwest` follows up to ten by default, and
-///   the tenth can be anywhere. A destination that answers `302` to an internal
-///   address would otherwise have this server fetch it and hand back what it
-///   found, which is the shape of every request-forgery there is.
-/// - **No proxy is read from the environment.** An operator's `HTTP_PROXY`,
-///   set for something else entirely, must not silently become the route every
-///   listen takes.
-/// - **Only the connection is bounded here.** The request as a whole is bounded
-///   once, by the drain's own `tokio::time::timeout`, and deliberately not a
-///   second time by this client.
-///
-/// That last one was two equal deadlines racing until a review noticed. Both
-/// ended at `Ambiguous`, so the queue looked the same either way — but only the
-/// drain's own deadline records the link as stalled, and that record is what
-/// stops one silent destination from spending an entry per row. Which of the two
-/// fired was a coin toss, so which protection applied was a coin toss.
+/// The client every adapter shares: [`crate::outbound::client`], which holds
+/// decision 10's rules and is shared with metadata enrichment.
 pub fn outbound_client(timeout: Duration) -> Result<reqwest::Client, OutboundError> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(timeout / CONNECT_SHARE)
-        .no_proxy()
-        .user_agent(concat!("WaveFlowServer/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|_| OutboundError::Unbuildable)
+    crate::outbound::client(timeout).map_err(|_| OutboundError::Unbuildable)
 }
 
 /// Checks a destination an operator configured, before it is ever called.
