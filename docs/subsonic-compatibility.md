@@ -31,7 +31,9 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > Feishin row below records it as empty, which it was, and #215 has since filled
 > it from local play history — so that observation has stopped being true the
 > same way `getNowPlaying`'s child name did. `getArtistInfo`,
-> `getSimilarSongs` and `getSimilarSongs2` are unchanged and still empty.
+> `getSimilarSongs` and `getSimilarSongs2` stay empty by default, and fill
+> from the metadata cache once an operator configures a provider (RFC-011,
+> #272 and #267) — no client in this table has seen them do so yet.
 > **Two things to re-check in the next campaign**, neither of which these runs
 > can answer: whether the clients that call `getTopSongs` render what they are
 > now given, and that `topSongs.song` decodes as a list — it had never carried

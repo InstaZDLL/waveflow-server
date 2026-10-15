@@ -416,12 +416,11 @@ async fn dispatch(
         // listening. Not a recommendation: the reference server asks a remote
         // service what is popular, and this answers what was played here.
         "getTopSongs" => top_songs(state, principal, params).await,
-        // The recommendation surfaces WaveFlow still does not compute. The
-        // standard empty container is the honest answer and, unlike the
-        // not-implemented error, does not read to a client as a broken
-        // server on a page it opens by default.
-        "getSimilarSongs" => Ok(Node::new("similarSongs")),
-        "getSimilarSongs2" => Ok(Node::new("similarSongs2")),
+        // A draw from the artist and their neighbours, read from the
+        // enrichment cache (RFC-011). With no provider configured — the
+        // default — still the standard empty container.
+        "getSimilarSongs" => similar_songs(state, principal, params, "similarSongs").await,
+        "getSimilarSongs2" => similar_songs(state, principal, params, "similarSongs2").await,
         // The last empty container to be filled. It is per account, which the
         // reference server's list is not — see `src/subsonic/radio.rs` for that
         // deviation and the one about `homePageUrl`'s spelling.

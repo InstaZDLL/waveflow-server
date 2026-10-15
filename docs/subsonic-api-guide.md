@@ -241,7 +241,7 @@ with Subsonic error code `0`, like every other protocol failure.
 | Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account owns or manages and reports progress. |
 | Bookmarks | `getBookmarks`, `createBookmark`, `deleteBookmark` | One position per account and track; setting it again moves it. |
 | Internet radio | `getInternetRadioStations`, `createInternetRadioStation`, `updateInternetRadioStation`, `deleteInternetRadioStation` | One list **per account**, where the reference server keeps a global one. The three writes answer the bare envelope. `homePageUrl` is returned with a capital `P` and set with `homepageUrl`, as the specification spells them. An address must be absolute `http` or `https`; the server stores it and never connects to it. `homepageUrl=` with no value clears the page rather than failing. |
-| Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2` | `getTopSongs` answers the artist's most played tracks from this account's history. The other two return the standard empty container: WaveFlow computes no recommendations. |
+| Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2` | `getTopSongs` answers the artist's most played tracks from this account's history. The other two take an artist, album or song id, resolved first (error 70 when the caller cannot reach it), and answer a random draw of at most `count` (default 50) from the artist's tracks and their visible neighbours', read from the metadata cache. The standard empty container when no provider is configured, which is the default. |
 | Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
 
 ### Genres

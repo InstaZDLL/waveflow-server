@@ -158,15 +158,9 @@ impl DomainServices {
             .await
     }
 
-    /// What both forms of the question share, so the definition of "this
-    /// artist's tracks" exists once.
-    ///
-    /// Two credits count, and they are the two an artist page shows: a track
-    /// that names the artist in its own `artist` role, and a track whose album
-    /// is credited to the artist as album artist. The second is read from
-    /// `album_participant`, the same relation [`Self::artist`] lists the albums
-    /// from — a classical record whose files credit performers per track would
-    /// otherwise have a page full of albums and a most-played list of nothing.
+    /// What both forms of the question share. Which tracks are "this
+    /// artist's" is [`artist_credit_clause!`], shared with the similar-songs
+    /// draw so the definition exists once.
     async fn top_songs_on(
         &self,
         connection: &mut SqliteConnection,
@@ -197,12 +191,7 @@ impl DomainServices {
             "SELECT * FROM (",
             song_select!(),
             song_folder_clause!(),
-            " AND (EXISTS (SELECT 1 FROM track_participant tp \
-                     WHERE tp.track_id=t.id AND tp.role='artist' \
-                       AND tp.artist_id IN (SELECT value FROM json_each(?))) \
-                OR EXISTS (SELECT 1 FROM album_participant ap \
-                     WHERE ap.album_id=t.album_id AND ap.role='albumartist' \
-                       AND ap.artist_id IN (SELECT value FROM json_each(?))))",
+            artist_credit_clause!("SELECT value FROM json_each(?)"),
             ") AS s WHERE play_count > 0 \
              ORDER BY play_count DESC, title COLLATE NOCASE, id LIMIT ?"
         ))

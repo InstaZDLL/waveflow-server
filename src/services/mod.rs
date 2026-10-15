@@ -83,6 +83,32 @@ macro_rules! song_year_clause {
     };
 }
 
+/// Restricts [`song_select!`] to an artist's tracks, given a subquery naming
+/// the artist ids; binds whatever that subquery binds, twice.
+///
+/// Two credits count, and they are the two an artist page shows: a track that
+/// names the artist in its own `artist` role, and a track whose album is
+/// credited to the artist as album artist. The second is read from
+/// `album_participant`, the same relation `DomainServices::artist` lists the
+/// albums from — a classical record whose files credit performers per track
+/// would otherwise have a page full of albums and no tracks.
+macro_rules! artist_credit_clause {
+    ($artist_ids:literal) => {
+        concat!(
+            " AND (EXISTS (SELECT 1 FROM track_participant tp \
+                     WHERE tp.track_id=t.id AND tp.role='artist' \
+                       AND tp.artist_id IN (",
+            $artist_ids,
+            ")) \
+                OR EXISTS (SELECT 1 FROM album_participant ap \
+                     WHERE ap.album_id=t.album_id AND ap.role='albumartist' \
+                       AND ap.artist_id IN (",
+            $artist_ids,
+            ")))"
+        )
+    };
+}
+
 /// The song projection, wrapped so an ordering can name its own output.
 ///
 /// Mirrors [`album_scope!`], and for the same reason: `song_select!` computes

@@ -66,19 +66,9 @@ impl DomainServices {
         }
         let rows = engine.artist(name).await?;
         let canonical = waveflow_core::scanner::canonical_name(name);
-        let mut similar = None;
-        for row in rows.iter().filter(|row| row.outcome == Outcome::Hit) {
-            let artists = self
-                .visible_similar(user_id, row.provider, &canonical, similar_limit)
-                .await?;
-            if !artists.is_empty() {
-                similar = Some(EnrichedSimilar {
-                    artists,
-                    source: source_of(row),
-                });
-                break;
-            }
-        }
+        let similar = self
+            .neighbours(user_id, &rows, &canonical, similar_limit)
+            .await?;
         let bio = merged_bio(&rows);
         // Only a fresh row is an answer. An expired one has just had its
         // refresh scheduled, and an expired miss is not "nobody knows" but
@@ -96,6 +86,147 @@ impl DomainServices {
             bio,
             similar,
         })
+    }
+
+    /// The neighbours from the first provider, in the operator's order, whose
+    /// list names an artist the caller can see.
+    async fn neighbours(
+        &self,
+        user_id: Uuid,
+        rows: &[CachedArtist],
+        canonical: &str,
+        limit: usize,
+    ) -> Result<Option<EnrichedSimilar>, ServiceError> {
+        for row in rows.iter().filter(|row| row.outcome == Outcome::Hit) {
+            let artists = self
+                .visible_similar(user_id, row.provider, canonical, limit)
+                .await?;
+            if !artists.is_empty() {
+                return Ok(Some(EnrichedSimilar {
+                    artists,
+                    source: source_of(row),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// `getSimilarSongs` and `getSimilarSongs2`: a random draw of at most
+    /// `limit` tracks from the artist behind `id` and from their neighbours.
+    ///
+    /// `id` names an artist, an album or a track; an album stands for its
+    /// album artist and a track for its track artist. It is resolved first and
+    /// for its refusal, so an id the caller cannot reach answers as one naming
+    /// nothing, before the cache is read. An album or a track credited to no
+    /// artist has no one to be similar to, and draws nothing.
+    ///
+    /// **The artist is in the draw**, not the neighbours alone: the
+    /// specification's "songs from the given artist and similar artists".
+    /// Every name draws through [`artist_credit_clause!`] by canonical name,
+    /// so an artist the caller sees in two libraries contributes both, and
+    /// through `song_select!`, whose membership bind is what keeps a track in
+    /// a library the caller is not in out of the draw.
+    ///
+    /// With enrichment disabled — the default — the answer is the empty
+    /// container these methods always gave, rather than a draw from the
+    /// artist alone: no operator switched anything on, so nothing on the wire
+    /// moves. Enabled but not yet answered, the artist alone is drawn.
+    pub async fn similar_songs(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<SongItem>, ServiceError> {
+        if !(0..=MAX_BROWSE_LIMIT).contains(&limit) {
+            return Err(ServiceError::Invalid);
+        }
+        let Some(artist_id) = self.artist_behind(user_id, id).await? else {
+            return Ok(Vec::new());
+        };
+        let artist = self.artist_summary(user_id, artist_id).await?;
+        let engine = self
+            .enrichment
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone();
+        if limit == 0 || !engine.is_enabled() {
+            return Ok(Vec::new());
+        }
+        let canonical = waveflow_core::scanner::canonical_name(&artist.artist.name);
+        let rows = engine.artist(&artist.artist.name).await?;
+        let mut names = vec![canonical.clone()];
+        if let Some(similar) = self
+            .neighbours(user_id, &rows, &canonical, usize::MAX)
+            .await?
+        {
+            names.extend(
+                similar.artists.iter().map(|neighbour| {
+                    waveflow_core::scanner::canonical_name(&neighbour.artist.name)
+                }),
+            );
+        }
+        let names = serde_json::to_string(&names).map_err(|_| ServiceError::Invalid)?;
+        // No library narrowing: every library the caller reaches.
+        let folders = folder_filter(&[]);
+        let mut connection = self.db.pool().acquire().await?;
+        let mut songs = sqlx::query(concat!(
+            song_select!(),
+            song_folder_clause!(),
+            artist_credit_clause!(
+                "SELECT a.id FROM artist a \
+                 WHERE a.canonical_name IN (SELECT value FROM json_each(?))"
+            ),
+            " ORDER BY RANDOM() LIMIT ?"
+        ))
+        .bind(user_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
+        .bind(&names)
+        .bind(&names)
+        .bind(limit)
+        .fetch_all(&mut *connection)
+        .await?
+        .into_iter()
+        .map(song_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_song_relations(&mut connection, user_id, &mut songs).await?;
+        Ok(songs)
+    }
+
+    /// The artist an artist, album or track id stands for, if the caller can
+    /// reach it: `NotFound` when nothing reachable has that id, `None` when an
+    /// album or a track has it but credits no artist.
+    async fn artist_behind(&self, user_id: Uuid, id: Uuid) -> Result<Option<Uuid>, ServiceError> {
+        match self.artist_summary(user_id, id).await {
+            Err(ServiceError::NotFound) => {}
+            found => return found.map(|_| Some(id)),
+        }
+        for query in [
+            "SELECT al.album_artist_id FROM album al \
+             JOIN library_member m ON m.library_id=al.library_id \
+             WHERE m.user_id=? AND al.id=?",
+            "SELECT (SELECT tp.artist_id FROM track_participant tp \
+                     WHERE tp.track_id=t.id AND tp.role='artist' \
+                     ORDER BY tp.position LIMIT 1) \
+             FROM track t JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.id=?",
+        ] {
+            let found = sqlx::query_scalar::<_, Option<String>>(query)
+                .bind(user_id.to_string())
+                .bind(id.to_string())
+                .fetch_optional(self.db.pool())
+                .await?;
+            if let Some(artist) = found {
+                return artist
+                    .map(|artist| {
+                        Uuid::parse_str(&artist).map_err(|error| {
+                            ServiceError::Database(sqlx::Error::Decode(error.into()))
+                        })
+                    })
+                    .transpose();
+            }
+        }
+        Err(ServiceError::NotFound)
     }
 
     /// One provider's cached neighbours for `canonical`, resolved to artists
