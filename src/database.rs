@@ -2029,10 +2029,11 @@ impl Database {
         if let Some(image) = &answer.image {
             sqlx::query(
                 "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
-                 VALUES (?, ?, 'deezer', ?, ?) ON CONFLICT (hash) DO NOTHING",
+                 VALUES (?, ?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING",
             )
             .bind(&image.hash)
             .bind(image.format)
+            .bind(provider.as_str())
             .bind(image.byte_size)
             .bind(fetched_at)
             .execute(&mut *tx)
