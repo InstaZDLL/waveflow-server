@@ -615,7 +615,7 @@ fn artwork_input(dir: &Path, cover: waveflow_core::scanner::ExtractedCover) -> A
     ArtworkInput {
         hash: cover.hash,
         format: cover.format,
-        source: cover.source.into(),
+        source: cover.source.as_str().to_owned(),
         byte_size: bytes,
     }
 }
