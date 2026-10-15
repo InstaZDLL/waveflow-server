@@ -912,7 +912,7 @@ async fn no_track_from_a_library_the_caller_is_not_in() {
         .into_iter()
         .map(|artist| artist.artist.library_id)
         .collect::<Vec<_>>();
-    assert_eq!(songs.len(), 2, "{songs:?}");
+    assert_eq!(songs.len(), 2);
     assert!(songs.iter().all(|song| mine.contains(&song.library_id)));
 }
 
