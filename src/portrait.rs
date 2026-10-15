@@ -76,26 +76,28 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         // 198.18.0.0/15, benchmarking: routed inside some private networks.
         || (a == 198 && (b == 18 || b == 19))
         // 240.0.0.0/4, reserved.
-        || a >= 240)
+        || a >= 240
+        // 192.0.0.0/24, protocol assignments, and 192.88.99.0/24, the 6to4
+        // relay anycast.
+        || ip.octets()[..3] == [192, 0, 0]
+        || ip.octets()[..3] == [192, 88, 99])
 }
 
+/// IPv6 is admitted by what it is, not by what it is not: global unicast,
+/// `2000::/3`, is the only space a public host answers from, and everything
+/// outside it — unique and link local, site local, NAT64, IPv4-mapped,
+/// IPv4-compatible, discard — is refused without being listed. Inside it,
+/// the prefixes that carry an IPv4 address a gateway connects to (which may
+/// be a private one) are refused whole rather than decoded.
 fn is_public_v6(ip: Ipv6Addr) -> bool {
-    let segments = ip.segments();
-    let first = segments[0];
-    !(ip.is_unspecified()
-        || ip.is_multicast()
-        // fc00::/7, unique local.
-        || (first & 0xfe00) == 0xfc00
-        // fe80::/10, link local, and fec0::/10, the deprecated site local.
-        || (first & 0xffc0) == 0xfe80
-        || (first & 0xffc0) == 0xfec0
-        // Prefixes that carry an IPv4 address a gateway connects to, which
-        // may be a private one: 64:ff9b::/96 (NAT64), 64:ff9b:1::/48 (local
-        // NAT64) and 2002::/16 (6to4). Refused whole rather than decoded.
-        || (first == 0x0064 && segments[1] == 0xff9b)
-        || first == 0x2002
-        // ::/96, the deprecated IPv4-compatible form.
-        || segments[..6].iter().all(|segment| *segment == 0))
+    let [first, second, ..] = ip.segments();
+    (first & 0xe000) == 0x2000
+        // 2001::/32, Teredo.
+        && !(first == 0x2001 && second == 0)
+        // 2001:db8::/32, documentation.
+        && !(first == 0x2001 && second == 0x0db8)
+        // 2002::/16, 6to4.
+        && first != 0x2002
 }
 
 /// A fetched portrait, checked and hashed, not yet stored.
@@ -328,6 +330,12 @@ mod tests {
             "64:ff9b:1::1",
             "2002:a00:1::1",
             "::10.0.0.1",
+            "192.0.0.1",
+            "192.88.99.1",
+            "2001:0:a00:1::1",
+            "2001:db8::1",
+            "100::1",
+            "::ffff:0:a00:1",
         ] {
             assert!(!policy.admits(refused.parse().unwrap()), "{refused}");
         }
