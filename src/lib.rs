@@ -78,9 +78,6 @@ pub struct AppState {
     /// The body ceiling the canvas route carries, derived from
     /// `WAVEFLOW_CANVAS_MAX_BYTES` so the two cannot disagree.
     pub canvas_body_limit: usize,
-    /// Metadata enrichment — RFC-011. Disabled unless the operator named a
-    /// provider.
-    pub enrichment: enrichment::Enrichment,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -255,6 +252,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::ArtistSummary,
         services::AlbumDetail,
         services::ArtistDetail,
+        services::ArtistEnrichment,
+        services::EnrichmentState,
+        services::EnrichmentSource,
+        services::EnrichedBio,
+        services::EnrichedSimilar,
         services::SearchResult,
         services::PlaylistItem,
         services::QueueItem,
@@ -681,7 +683,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     services.reconcile_scrobble_links().await?;
     // Off unless the operator named a provider, and then it still makes no
     // request until somebody asks about an artist (RFC-011 decisions 3 and 6).
-    let enrichment = enrichment::Enrichment::new(db.clone(), &config.metadata)?;
+    services.use_enrichment(enrichment::Enrichment::new(db.clone(), &config.metadata)?);
     Ok(AppState {
         db,
         auth,
@@ -700,7 +702,6 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         // Refused at startup if it does not fit, so this conversion cannot be
         // the place that decides what a ceiling falls back to.
         canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
-        enrichment,
     })
 }
 

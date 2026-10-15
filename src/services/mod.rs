@@ -912,6 +912,75 @@ pub struct ArtistDetail {
     /// should not have to depend on one.
     pub album_count: i64,
     pub albums: Vec<AlbumItem>,
+    /// What metadata enrichment says about this artist — RFC-011 decision 11.
+    ///
+    /// Always present on `GET /api/v2/artists/{id}`, whose answer comes from
+    /// [`DomainServices::artist_page`]. Left out of the Subsonic `getArtist`
+    /// path, which renders its own nodes: clients that sync call it for every
+    /// artist, and asking providers about the whole catalogue at sync time is
+    /// the prefill decision 6 refuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enrichment: Option<ArtistEnrichment>,
+}
+
+/// What enrichment holds about one artist, merged across providers in the
+/// operator's order, field by field (RFC-011 decisions 4 and 11).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ArtistEnrichment {
+    pub state: EnrichmentState,
+    /// The first configured provider with a biography supplies it.
+    pub bio: Option<EnrichedBio>,
+    /// The first configured provider whose neighbours include artists the
+    /// caller can see supplies the list — those artists only, best first.
+    pub similar: Option<EnrichedSimilar>,
+}
+
+impl ArtistEnrichment {
+    pub(crate) fn disabled() -> Self {
+        Self {
+            state: EnrichmentState::Disabled,
+            bio: None,
+            similar: None,
+        }
+    }
+}
+
+/// Four situations that absence alone cannot tell apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EnrichmentState {
+    /// No provider is configured: nothing has been asked and nothing will be.
+    Disabled,
+    /// A provider has not answered yet — scheduled, in flight, or unreached
+    /// last time, which writes nothing and is retried on the next request.
+    Pending,
+    /// There is something to show.
+    Ready,
+    /// Every configured provider answered, and none of them has anything this
+    /// caller can be shown.
+    None,
+}
+
+/// Where one field came from.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EnrichmentSource {
+    /// The provider's name as `WAVEFLOW_METADATA_PROVIDERS` spells it.
+    pub provider: String,
+    /// When the provider gave this answer, in epoch milliseconds.
+    pub fetched_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EnrichedBio {
+    pub summary: Option<String>,
+    pub full: Option<String>,
+    pub source: EnrichmentSource,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EnrichedSimilar {
+    pub artists: Vec<ArtistSummary>,
+    pub source: EnrichmentSource,
 }
 
 /// Inputs for a native client's authorization request.
@@ -1185,6 +1254,10 @@ pub struct DomainServices {
     /// after construction like [`Self::register_scrobble_target`], and for the
     /// same reason.
     lastfm_exchanges: lastfm::LastFmExchanges,
+    /// Metadata enrichment — RFC-011. Disabled at construction and placed by
+    /// [`Self::use_enrichment`], like the scrobbling adapters and for the same
+    /// reason: a test drives it against a provider of its own.
+    enrichment: Arc<std::sync::RwLock<crate::enrichment::Enrichment>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1222,6 +1295,7 @@ impl From<crate::sync::SyncError> for ServiceError {
 
 mod admin;
 mod albums;
+mod artist_enrichment;
 mod artists;
 mod artwork;
 mod bookmarks;
@@ -1307,7 +1381,18 @@ impl DomainServices {
             lastfm_journey: lastfm::LastFmJourney::from_config(config),
             lastfm_unavailable: lastfm::lastfm_unavailability(config),
             lastfm_exchanges: Arc::new(dashmap::DashMap::new()),
+            enrichment: Arc::new(std::sync::RwLock::new(
+                crate::enrichment::Enrichment::disabled(),
+            )),
         }
+    }
+
+    /// Places the enrichment engine every reader goes through.
+    pub fn use_enrichment(&self, enrichment: crate::enrichment::Enrichment) {
+        *self
+            .enrichment
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner()) = enrichment;
     }
 
     async fn require_admin(&self, actor_id: Uuid) -> Result<(), ServiceError> {

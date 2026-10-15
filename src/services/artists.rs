@@ -36,14 +36,7 @@ impl DomainServices {
         user_id: Uuid,
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
-        let summary = sqlx::query(concat!(artist_select!(album_count), " AND ar.id=?"))
-            .bind(user_id.to_string())
-            .bind(artist_id.to_string())
-            .fetch_optional(self.db.pool())
-            .await?
-            .map(artist_summary_from_row)
-            .transpose()?
-            .ok_or(ServiceError::NotFound)?;
+        let summary = self.artist_summary(user_id, artist_id).await?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
             " AND EXISTS (SELECT 1 FROM album_participant ap \
@@ -62,7 +55,26 @@ impl DomainServices {
             artist: summary.artist,
             album_count: summary.album_count,
             albums,
+            enrichment: None,
         })
+    }
+
+    /// One artist the user can see, or [`ServiceError::NotFound`] — for one
+    /// that does not exist and one in a library they are not a member of
+    /// alike.
+    pub(super) async fn artist_summary(
+        &self,
+        user_id: Uuid,
+        artist_id: Uuid,
+    ) -> Result<ArtistSummary, ServiceError> {
+        sqlx::query(concat!(artist_select!(album_count), " AND ar.id=?"))
+            .bind(user_id.to_string())
+            .bind(artist_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await?
+            .map(artist_summary_from_row)
+            .transpose()?
+            .ok_or(ServiceError::NotFound)
     }
 
     /// The account's most played tracks of one artist, counted from local

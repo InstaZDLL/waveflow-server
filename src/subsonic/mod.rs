@@ -452,16 +452,17 @@ async fn dispatch(
         "getArtists" => indexes(state, principal, params, true).await,
         "getArtist" => get_artist(state, principal, params).await,
         // DSub requests artist information as soon as an artist page opens.
-        // WaveFlow does not enrich biographies yet, but a successful empty
-        // standard container avoids turning an optional capability into a
-        // blocking client error. The artist is still resolved tenant-side.
+        // Answered from the enrichment cache when an operator switched it on
+        // (RFC-011), and the empty standard container otherwise, so an
+        // optional capability never becomes a blocking client error. The
+        // artist is resolved tenant-side either way.
         "getArtistInfo" => artist_info(state, principal, params, "artistInfo").await,
         "getArtistInfo2" => artist_info(state, principal, params, "artistInfo2").await,
-        // Feishin and Symfonium call these as soon as an album page opens. As
-        // with getArtistInfo, WaveFlow enriches nothing yet, so the standard
-        // empty container is the honest answer — and it still resolves the
-        // album tenant-side, so a foreign id is indistinguishable from a
-        // missing one.
+        // Feishin and Symfonium call these as soon as an album page opens.
+        // Album notes are not enriched, so the standard container with only
+        // what the catalogue holds is the honest answer — and it still
+        // resolves the album tenant-side, so a foreign id is
+        // indistinguishable from a missing one.
         "getAlbumInfo" => album_info(state, principal, params, "albumInfo").await,
         "getAlbumInfo2" => album_info(state, principal, params, "albumInfo2").await,
         "getAlbum" => get_album(state, principal, params).await,

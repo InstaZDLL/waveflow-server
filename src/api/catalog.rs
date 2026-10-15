@@ -169,7 +169,7 @@ pub async fn get_artist(
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
-        .artist(user.id, artist_id)
+        .artist_page(user.id, artist_id)
         .await
         .map(Json)
         .map_err(service_error)

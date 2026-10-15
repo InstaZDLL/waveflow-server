@@ -152,7 +152,7 @@ pub(super) fn json_required_array_fields(parent: &str, name: &str) -> &'static [
         ],
         // The roles an artist is credited in, empty rather than absent for
         // the same reason: absent would say the server does not read them.
-        "artist" => &["roles"],
+        "artist" | "similarArtist" => &["roles"],
         _ => &[],
     }
 }
@@ -242,6 +242,12 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // so its roles stay an array there too — otherwise the field
             // collapses into a bare object the moment a directory carries it.
             | ("artist" | "child", "roles")
+            // Filled since RFC-011. Empty until then, so nothing had ever told
+            // the list apart from an object — the case `topSongs` and
+            // `internetRadioStations` were before it. A neighbour is an artist
+            // record under another name, so its roles keep their shape too.
+            | ("artistInfo" | "artistInfo2", "similarArtist")
+            | ("similarArtist", "roles")
     )
 }
 
