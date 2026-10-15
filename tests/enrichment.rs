@@ -977,3 +977,37 @@ async fn count_absent_yields_at_most_fifty() {
     }
     enrichment.idle().await;
 }
+
+/// The draw is balanced across names, not over one pool of tracks: sixty of
+/// Björk's beside five of Sigur Rós's, twenty drawn, and every one of Sigur
+/// Rós's five is in — the turns they cannot take go to Björk. One pool would
+/// draw about one and a half of them.
+#[tokio::test]
+async fn a_prolific_artist_does_not_crowd_out_the_neighbours() {
+    let (_temp, config, state) = support::test_app().await;
+    let owner = account(&state, "balanced-owner").await;
+    library_of(&state, &config, owner, "prolific", &["Björk"; 60]).await;
+    library_of(&state, &config, owner, "sparse", &["Sigur Rós"; 5]).await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    state.services.similar_songs(owner, bjork, 1).await.unwrap();
+    enrichment.idle().await;
+
+    let songs = state
+        .services
+        .similar_songs(owner, bjork, 20)
+        .await
+        .unwrap();
+    let neighbours = songs
+        .iter()
+        .filter(|song| song.artist.as_deref() == Some("Sigur Rós"))
+        .count();
+    assert_eq!(songs.len(), 20);
+    assert_eq!(neighbours, 5);
+}

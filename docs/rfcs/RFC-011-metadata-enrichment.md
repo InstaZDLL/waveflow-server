@@ -331,7 +331,10 @@ as if they were.
 - **The selection is random, and it includes the artist themselves.** The
   specification reads "a random collection of songs from the given artist *and*
   similar artists" — not the neighbours alone, which is what the first draft
-  said. `count` bounds it, and its default is **50**.
+  said. `count` bounds it, and its default is **50**. *(Revised with #273's
+  follow-up: the draw takes turns across artists rather than drawing from one
+  pool of tracks, so an artist with two hundred tracks beside neighbours with
+  ten each does not fill the answer with their own songs.)*
 
 Both are in the compatibility matrix with real callers behind them: Feishin
 calls `getSimilarSongs`, and without the `.view` suffix, which the router

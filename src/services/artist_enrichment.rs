@@ -127,6 +127,13 @@ impl DomainServices {
     /// through `song_select!`, whose membership bind is what keeps a track in
     /// a library the caller is not in out of the draw.
     ///
+    /// **The draw is balanced across names**, not over one pool of tracks:
+    /// with one pool, an artist with two hundred tracks beside neighbours
+    /// with ten each fills most of the answer with their own songs, which is
+    /// not what a client asking for similar songs means. Names take turns,
+    /// one track each at random, and a name that runs out leaves its turns
+    /// to the others, so `limit` is still reached while tracks remain.
+    ///
     /// With enrichment disabled — the default — the answer is the empty
     /// container these methods always gave, rather than a draw from the
     /// artist alone: no operator switched anything on, so nothing on the wire
@@ -169,14 +176,25 @@ impl DomainServices {
         // No library narrowing: every library the caller reaches.
         let folders = folder_filter(&[]);
         let mut connection = self.db.pool().acquire().await?;
+        // Innermost, the pool: every visible track credited to one of the
+        // names. Each is filed under its first track artist's name, else its
+        // album artist's, and ranked at random inside it. Taking rank 1 of
+        // every name, then rank 2, and so on, is the round robin; the
+        // outermost shuffle keeps the answer from playing name by name. The
+        // filing binds nothing, so the user id stays the first bind.
         let mut songs = sqlx::query(concat!(
+            "SELECT * FROM (SELECT * FROM (SELECT s.*, ROW_NUMBER() OVER (\
+               PARTITION BY COALESCE(ta.canonical_name, aa.canonical_name) \
+               ORDER BY RANDOM()) AS draw_rank FROM (",
             song_select!(),
             song_folder_clause!(),
             artist_credit_clause!(
                 "SELECT a.id FROM artist a \
                  WHERE a.canonical_name IN (SELECT value FROM json_each(?))"
             ),
-            " ORDER BY RANDOM() LIMIT ?"
+            ") AS s LEFT JOIN artist ta ON ta.id=s.artist_id \
+               LEFT JOIN artist aa ON aa.id=s.album_artist_id) \
+             ORDER BY draw_rank, RANDOM() LIMIT ?) ORDER BY RANDOM()"
         ))
         .bind(user_id.to_string())
         .bind(folders.as_deref())
