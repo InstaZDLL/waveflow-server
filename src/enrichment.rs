@@ -39,6 +39,16 @@ const LASTFM_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 /// see, which decision 7 drops at read time.
 const SIMILAR_LIMIT: u32 = 50;
 
+/// How many fills may be waiting or running at once, across providers.
+///
+/// Pacing reserves a slot for every request and refuses none, so without this
+/// a page that opens two thousand artists would queue two thousand fills —
+/// a quarter of an hour at the default rate — and an outage, which writes no
+/// row, would let every further visit add more. Beyond the ceiling nothing is
+/// scheduled; the visit after asks again, which is what an unreached lookup
+/// does anyway.
+pub const MAX_IN_FLIGHT: usize = 64;
+
 /// A provider an operator can name in `WAVEFLOW_METADATA_PROVIDERS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provider {
@@ -280,9 +290,13 @@ impl Enrichment {
 }
 
 impl Engine {
-    /// Starts a fill for one provider and one name, unless one is running.
+    /// Starts a fill for one provider and one name, unless one is running or
+    /// [`MAX_IN_FLIGHT`] are.
     fn schedule(self: Arc<Self>, index: usize, name: &str, canonical: &str) {
         let key = (self.sources[index].provider, canonical.to_owned());
+        if self.in_flight.len() >= MAX_IN_FLIGHT {
+            return;
+        }
         if self.in_flight.insert(key.clone(), ()).is_some() {
             return;
         }

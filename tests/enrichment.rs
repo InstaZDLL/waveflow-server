@@ -301,6 +301,34 @@ async fn ten_concurrent_first_visits_make_one_request() {
     assert_eq!(listener.fake.similar.load(Ordering::SeqCst), 1);
 }
 
+/// Pacing refuses no request, so the ceiling on fills in flight is what bounds
+/// the queue: one artist past it is not asked, and its next visit will be.
+#[tokio::test]
+async fn no_more_than_the_ceiling_of_fills_is_ever_queued() {
+    let (_temp, _config, state) = support::test_app().await;
+    // Slow enough that every fill is still out when the last visit lands.
+    let listener = fake_lastfm(Mode::Hit, Duration::from_secs(1)).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+
+    let names: Vec<String> = (0..=waveflow_server::enrichment::MAX_IN_FLIGHT)
+        .map(|index| format!("Artist {index}"))
+        .collect();
+    let visits = names.iter().map(|name| enrichment.artist(name));
+    for answer in futures_util::future::join_all(visits).await {
+        answer.unwrap();
+    }
+    enrichment.idle().await;
+
+    assert_eq!(
+        listener.fake.info.load(Ordering::SeqCst),
+        waveflow_server::enrichment::MAX_IN_FLIGHT
+    );
+}
+
 /// Decision 9: no redirect is followed. Followed, this one would have been
 /// cached as a hit from wherever the provider pointed.
 #[tokio::test]
@@ -404,11 +432,15 @@ async fn the_key_never_reaches_the_log() {
     let (_temp, _config, state) = support::test_app().await;
     let key = run_key();
     let settings = settings(vec![Provider::LastFm], &key);
-    for mode in [Mode::Hit, Mode::Unavailable] {
+    // One artist per mode: asked about the same one, the second engine would
+    // find the first one's fresh row and send nothing — and the 503 checked
+    // below would then only be found if another test happened to log one.
+    for (mode, artist) in [(Mode::Hit, "Björk"), (Mode::Unavailable, "Múm")] {
         let listener = fake_lastfm(mode, Duration::ZERO).await;
         let enrichment = engine(&state, &settings, &listener);
-        enrichment.artist("Björk").await.unwrap();
+        enrichment.artist(artist).await.unwrap();
         enrichment.idle().await;
+        assert_eq!(listener.fake.info.load(Ordering::SeqCst), 1, "{artist}");
     }
     // Nothing listens on port 1 of loopback: the connection itself fails.
     let closed = Enrichment::with_endpoints(
