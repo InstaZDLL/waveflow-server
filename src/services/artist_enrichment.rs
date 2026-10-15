@@ -80,9 +80,15 @@ impl DomainServices {
             }
         }
         let bio = merged_bio(&rows);
+        // Only a fresh row is an answer. An expired one has just had its
+        // refresh scheduled, and an expired miss is not "nobody knows" but
+        // "being asked again" — `pending`, as decision 11 defines it. Stale
+        // content still shows, and `ready` wins over both.
+        let now = crate::authentication::now_ms();
+        let answered = rows.iter().filter(|row| row.expires_at > now).count();
         let state = state_of(
             bio.is_some() || similar.is_some(),
-            rows.len(),
+            answered,
             engine.provider_count(),
         );
         Ok(ArtistEnrichment {

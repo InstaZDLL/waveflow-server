@@ -715,6 +715,41 @@ async fn each_of_the_four_states_appears_when_it_should() {
     assert!(none.bio.is_none() && none.similar.is_none());
 }
 
+/// An expired miss is being asked again, so it is `pending` rather than
+/// `none`: the miss window here is zero, so the row is stale the moment it is
+/// written, and the next visit schedules its refresh.
+#[tokio::test]
+async fn an_expired_miss_being_refreshed_is_pending() {
+    use waveflow_server::services::EnrichmentState;
+
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Miss, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &MetadataSettings {
+            miss_ttl: Duration::ZERO,
+            ..settings(vec![Provider::LastFm], &run_key())
+        },
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+
+    state.services.artist_page(owner, bjork).await.unwrap();
+    enrichment.idle().await;
+    let refreshing = state
+        .services
+        .artist_page(owner, bjork)
+        .await
+        .unwrap()
+        .enrichment
+        .unwrap();
+    enrichment.idle().await;
+
+    assert_eq!(refreshing.state, EnrichmentState::Pending);
+    assert_eq!(listener.fake.info.load(Ordering::SeqCst), 2);
+}
+
 /// The façade end to end, in JSON: the first visit is the empty container it
 /// always was; the next carries the biography, and the neighbours as an array
 /// even when there is one of them.
