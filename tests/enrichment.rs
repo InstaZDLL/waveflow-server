@@ -756,19 +756,7 @@ async fn an_expired_miss_being_refreshed_is_pending() {
 #[tokio::test]
 async fn get_artist_info_2_carries_the_biography_and_the_visible_neighbours() {
     let (_temp, config, state, owner, _outsider) = two_members().await;
-    let api_key = format!("wfsk_{}", run_key());
-    let password = run_key();
-    state
-        .db
-        .set_subsonic_credential(
-            owner,
-            owner,
-            &state.secret_box.encrypt(password.as_bytes()).unwrap(),
-            &waveflow_server::security::token_hash(&api_key),
-            waveflow_server::authentication::now_ms(),
-        )
-        .await
-        .unwrap();
+    let api_key = subsonic_key(&state, owner).await;
     let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
     let enrichment = engine(
         &state,
@@ -798,4 +786,194 @@ async fn get_artist_info_2_carries_the_biography_and_the_visible_neighbours() {
     assert_eq!(similar.len(), 1);
     assert_eq!(similar[0]["name"], "Sigur Rós");
     assert!(similar[0]["roles"].is_array(), "{next}");
+}
+
+/// A Subsonic API key for `user`, minted at run time, with the encrypted
+/// password beside it the credential row requires.
+async fn subsonic_key(state: &waveflow_server::AppState, user: uuid::Uuid) -> String {
+    let api_key = format!("wfsk_{}", run_key());
+    let password = run_key();
+    state
+        .db
+        .set_subsonic_credential(
+            user,
+            user,
+            &state.secret_box.encrypt(password.as_bytes()).unwrap(),
+            &waveflow_server::security::token_hash(&api_key),
+            waveflow_server::authentication::now_ms(),
+        )
+        .await
+        .unwrap();
+    api_key
+}
+
+// ── The draw: getSimilarSongs and getSimilarSongs2 ──
+
+/// The track artists of a draw, sorted, so a random order compares.
+async fn drawn(state: &waveflow_server::AppState, user: uuid::Uuid, id: uuid::Uuid) -> Vec<String> {
+    let mut names: Vec<_> = state
+        .services
+        .similar_songs(user, id, 50)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|song| song.artist.unwrap_or_default())
+        .collect();
+    names.sort();
+    names
+}
+
+/// `getSimilarSongs` takes "the artist, album or song ID": an album stands for
+/// its album artist and a track for its track artist, and both then draw what
+/// the artist id draws.
+#[tokio::test]
+async fn an_album_id_and_a_song_id_reach_the_same_artist_as_the_artist_id() {
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let album = state.services.artist(owner, bjork).await.unwrap().albums[0].id;
+    let song = state.services.album(owner, album).await.unwrap().songs[0].id;
+    drawn(&state, owner, bjork).await;
+    enrichment.idle().await;
+
+    for id in [bjork, album, song] {
+        assert_eq!(drawn(&state, owner, id).await, ["Björk", "Sigur Rós"]);
+    }
+}
+
+/// "Songs from the given artist *and* similar artists": the artist is in the
+/// draw, before the neighbours are known and after.
+#[tokio::test]
+async fn the_artist_s_own_tracks_are_in_the_draw() {
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+
+    assert_eq!(drawn(&state, owner, bjork).await, ["Björk"]);
+    enrichment.idle().await;
+    assert_eq!(drawn(&state, owner, bjork).await, ["Björk", "Sigur Rós"]);
+}
+
+/// A neighbour drawn by name draws only from the caller's libraries: Sigur
+/// Rós is also in a library of the outsider's, and that track stays out. And
+/// an id of the outsider's answers as a missing one, before any provider is
+/// asked about it.
+#[tokio::test]
+async fn no_track_from_a_library_the_caller_is_not_in() {
+    let (_temp, config, state, owner, outsider) = two_members().await;
+    library_of(&state, &config, outsider, "elsewhere", &["Sigur Rós"]).await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let mum = artist_id(&state, outsider, "Múm").await;
+    let foreign_album = state.services.artist(outsider, mum).await.unwrap().albums[0].id;
+
+    for id in [mum, foreign_album, uuid::Uuid::new_v4()] {
+        assert!(matches!(
+            state.services.similar_songs(owner, id, 50).await,
+            Err(waveflow_server::services::ServiceError::NotFound)
+        ));
+    }
+    assert_eq!(listener.fake.info.load(Ordering::SeqCst), 0);
+    drawn(&state, owner, bjork).await;
+    enrichment.idle().await;
+
+    let songs = state
+        .services
+        .similar_songs(owner, bjork, 50)
+        .await
+        .unwrap();
+    let mine = state
+        .services
+        .list_artists(
+            owner,
+            None,
+            waveflow_server::services::BrowsePage::new(None, None).unwrap(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|artist| artist.artist.library_id)
+        .collect::<Vec<_>>();
+    assert_eq!(songs.len(), 2);
+    assert!(songs.iter().all(|song| mine.contains(&song.library_id)));
+}
+
+/// The façade end to end: disabled, both methods are the empty container they
+/// always were; enabled, `count` absent draws the specification's fifty, the
+/// track list is an array, and a foreign id is error 70.
+#[tokio::test]
+async fn count_absent_yields_at_most_fifty() {
+    let (_temp, config, state) = support::test_app().await;
+    let owner = account(&state, "similar-owner").await;
+    let outsider = account(&state, "similar-outsider").await;
+    library_of(&state, &config, owner, "many", &["Björk"; 60]).await;
+    library_of(&state, &config, outsider, "foreign", &["Múm"]).await;
+    let api_key = subsonic_key(&state, owner).await;
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let mum = artist_id(&state, outsider, "Múm").await;
+    let router = waveflow_server::app(&config, state.clone());
+    let id = format!("&id={bjork}");
+
+    for (method, container) in [
+        ("getSimilarSongs", "similarSongs"),
+        ("getSimilarSongs2", "similarSongs2"),
+    ] {
+        let off = support::subsonic_json(&router, method, &api_key, &id).await;
+        assert_eq!(
+            off["subsonic-response"][container],
+            serde_json::json!({}),
+            "{off}"
+        );
+    }
+
+    let listener = fake_lastfm(Mode::Miss, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    for (method, container) in [
+        ("getSimilarSongs", "similarSongs"),
+        ("getSimilarSongs2", "similarSongs2"),
+    ] {
+        let on = support::subsonic_json(&router, method, &api_key, &id).await;
+        let songs = on["subsonic-response"][container]["song"]
+            .as_array()
+            .unwrap_or_else(|| panic!("an array: {on}"));
+        assert_eq!(songs.len(), 50, "{method}");
+        let one = support::subsonic_json(&router, method, &api_key, &format!("{id}&count=1")).await;
+        assert_eq!(
+            one["subsonic-response"][container]["song"]
+                .as_array()
+                .map(Vec::len),
+            Some(1),
+            "{one}"
+        );
+        let refused =
+            support::subsonic_json(&router, method, &api_key, &format!("&id={mum}")).await;
+        assert_eq!(
+            refused["subsonic-response"]["error"]["code"], 70,
+            "{refused}"
+        );
+    }
+    enrichment.idle().await;
 }

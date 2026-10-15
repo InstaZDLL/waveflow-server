@@ -208,6 +208,8 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // Added with the container's first real answer: it held nothing,
             // so nothing had ever told it apart from an object.
             | ("topSongs", "song")
+            // And again with RFC-011: these held nothing until #267.
+            | ("similarSongs" | "similarSongs2", "song")
             // The same case one mission later: `internetRadioStations` held
             // nothing until #217, so nothing had ever told it apart from an
             // object either.

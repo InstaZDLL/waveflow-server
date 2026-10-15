@@ -283,20 +283,21 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
         serde_json::json!({})
     );
 
-    // Surfaces WaveFlow does not compute answer the standard empty container
-    // rather than a not-implemented error.
-    // `getInternetRadioStations` left this list with #217: the container now
-    // holds whatever the account put in it, and its own test below asserts
-    // both the empty case and the filled one.
-    for (method, container) in [
-        ("getSimilarSongs", "similarSongs"),
-        ("getSimilarSongs2", "similarSongs2"),
-    ] {
-        let response = subsonic_json(&router, method, api_key, "&id=whatever&count=5").await;
-        assert_eq!(response["subsonic-response"]["status"], "ok", "{method}");
+    // The two similar-songs methods used to answer the empty container for
+    // any id at all. Since #267 the id is resolved first and for its refusal
+    // (RFC-011 decision 7), so one naming nothing is error 70; what they
+    // answer for a real one, enrichment off and on, is in `tests/enrichment.rs`.
+    // `getInternetRadioStations` left the empty-container list with #217.
+    for method in ["getSimilarSongs", "getSimilarSongs2"] {
+        let response = subsonic_json(
+            &router,
+            method,
+            api_key,
+            &format!("&id={}&count=5", uuid::Uuid::new_v4()),
+        )
+        .await;
         assert_eq!(
-            response["subsonic-response"][container],
-            serde_json::json!({}),
+            response["subsonic-response"]["error"]["code"], 70,
             "{method}"
         );
     }

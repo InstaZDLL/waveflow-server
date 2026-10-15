@@ -5,9 +5,9 @@
   [the implementation plan](../metadata-enrichment-plan.md):
   InstaZDLL/WaveFlow#855 (the core's clients accept a client, an address and a
   key), #270 (the pin moved onto them), #271 (the cache and the engine that
-  fills it), and the pull request closing #266 (`getArtistInfo`,
-  `getArtistInfo2` and the native artist page read it). Similar songs and
-  portraits are still to come. The *Status* field above never flips in this
+  fills it), #272 (`getArtistInfo`, `getArtistInfo2` and the native artist
+  page read it), and the pull request closing #267 (`getSimilarSongs` and
+  `getSimilarSongs2` draw from it). Portraits are still to come. The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-14
 - **Revised**: 2026-10-15, while implementing the cache (#265). Decisions 4, 6
