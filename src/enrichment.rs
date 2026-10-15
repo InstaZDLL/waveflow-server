@@ -170,7 +170,8 @@ struct Engine {
     /// The fills in flight, by provider and canonical name. A visit that finds
     /// its key here schedules nothing: the fill already running answers it.
     in_flight: DashMap<(Provider, String), ()>,
-    /// How many fills are running, for [`Enrichment::idle`].
+    /// How many fills are waiting or running: the count [`MAX_IN_FLIGHT`]
+    /// bounds, and the one [`Enrichment::idle`] waits on.
     running: tokio::sync::watch::Sender<usize>,
 }
 
@@ -294,13 +295,23 @@ impl Engine {
     /// [`MAX_IN_FLIGHT`] are.
     fn schedule(self: Arc<Self>, index: usize, name: &str, canonical: &str) {
         let key = (self.sources[index].provider, canonical.to_owned());
-        if self.in_flight.len() >= MAX_IN_FLIGHT {
+        // A place is reserved before the key is claimed, in one step under the
+        // counter's lock: a length read then an insert would let two visits on
+        // two threads both see one place left and both take it.
+        let reserved = self.running.send_if_modified(|count| {
+            let free = *count < MAX_IN_FLIGHT;
+            if free {
+                *count += 1;
+            }
+            free
+        });
+        if !reserved {
             return;
         }
         if self.in_flight.insert(key.clone(), ()).is_some() {
+            self.running.send_modify(|count| *count -= 1);
             return;
         }
-        self.running.send_modify(|count| *count += 1);
         // Released however the fill ends — a panic, or a task dropped before
         // its first poll included, which is why it is built here rather than
         // inside the task. A key left behind would stop that name from ever
