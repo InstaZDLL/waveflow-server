@@ -227,7 +227,8 @@ with Subsonic error code `0`, like every other protocol failure.
 |---|---|---|
 | System | `ping`, `getLicense`, `getOpenSubsonicExtensions`, `tokenInfo` | Extensions are listed below. `tokenInfo` returns the username the presented credential resolves to. |
 | Catalogue roots | `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getGenres`, `getMusicDirectory` | IDs and `musicFolderId` values are UUIDs. |
-| Artist and album information | `getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the standard empty container; enrichment is not implemented. |
+| Artist information | `getArtistInfo`, `getArtistInfo2` | Validate tenant access, then answer from the metadata cache: `biography` and the `similarArtist` entries the caller can see (at most `count`, default 20). The empty container when no provider is configured, which is the default, and on the first visit to an artist, which schedules the lookup. No image URLs; `includeNotPresent` is not honoured. |
+| Album information | `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the release identifier when the album has one; notes are not enriched. |
 | Album discovery | `getAlbumList`, `getAlbumList2`, `getRandomSongs`, `getSongsByGenre` | Both legacy and ID3 album-list containers are supported. |
 | Search | `search3`, `search2` | Independent artist, album and song pagination. `search2` is the same payload in the `searchResult2` container. |
 | Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. |
@@ -361,8 +362,8 @@ thing. An artist takes the identifier from the tracks it is the *first* credit
 of, because the tag is one value on a file that may credit several artists.
 
 `getAlbumInfo` and `getAlbumInfo2` carry that release identifier as their
-`musicBrainzId` element. They remain otherwise empty: WaveFlow queries no remote
-source, so there are no notes and no biography images. Being a classic Subsonic
+`musicBrainzId` element. They remain otherwise empty: album notes are not
+enriched, so there are no notes and no images. Being a classic Subsonic
 response rather than an OpenSubsonic one, the element is omitted when the album
 has no identifier instead of being sent empty.
 

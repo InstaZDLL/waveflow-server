@@ -465,3 +465,302 @@ async fn the_key_never_reaches_the_log() {
     );
     assert!(!log.contains(&key), "the key reached the log:\n{log}");
 }
+
+// ── The readers: getArtistInfo, getArtistInfo2 and the native artist page ──
+//
+// Accounts are inserted as rows rather than through `create_account`: these
+// tests need user ids and libraries, not a login, and a password hashed from a
+// literal is what makes CodeQL flag a test. They reach HTTP through an API
+// token and a Subsonic key minted at run time.
+
+async fn account(state: &waveflow_server::AppState, username: &str) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    let now = waveflow_server::authentication::now_ms();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(username)
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// A private library of `owner`'s holding one album by each of `artists`.
+async fn library_of(
+    state: &waveflow_server::AppState,
+    config: &waveflow_server::Config,
+    owner: uuid::Uuid,
+    name: &str,
+    artists: &[&str],
+) {
+    let now = waveflow_server::authentication::now_ms();
+    let root = config.data_dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            name,
+            &std::fs::canonicalize(&root).unwrap(),
+            waveflow_server::database::LibraryVisibility::Private,
+            now,
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state
+        .db
+        .start_scan_job(scan, artists.len() as i64, false)
+        .await
+        .unwrap();
+    for (index, artist) in artists.iter().enumerate() {
+        let mut input = support::browse_input(
+            index + name.len() * 100,
+            "A song",
+            &format!("{artist} album"),
+            artist,
+            Some(1),
+            Some(1),
+        );
+        input.relative_path = format!("{name}-{index}.flac");
+        input.quick_hash = format!("{:064x}", 70_000 + index + name.len() * 100);
+        input.full_hash = format!("{:064x}", 80_000 + index + name.len() * 100);
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+}
+
+async fn artist_id(state: &waveflow_server::AppState, user: uuid::Uuid, name: &str) -> uuid::Uuid {
+    state
+        .services
+        .list_artists(
+            user,
+            None,
+            waveflow_server::services::BrowsePage::new(None, None).unwrap(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|artist| artist.artist.name == name)
+        .unwrap_or_else(|| panic!("{name} is not visible"))
+        .artist
+        .id
+}
+
+/// Björk and Sigur Rós in the owner's library; Múm only in the outsider's.
+/// The fake answers Sigur Rós and Múm as Björk's neighbours.
+async fn two_members() -> (
+    tempfile::TempDir,
+    waveflow_server::Config,
+    waveflow_server::AppState,
+    uuid::Uuid,
+    uuid::Uuid,
+) {
+    let (temp, config, state) = support::test_app().await;
+    let owner = account(&state, "enrichment-owner").await;
+    let outsider = account(&state, "enrichment-outsider").await;
+    library_of(&state, &config, owner, "owned", &["Björk", "Sigur Rós"]).await;
+    library_of(&state, &config, outsider, "foreign", &["Múm"]).await;
+    (temp, config, state, owner, outsider)
+}
+
+/// Decision 7: a neighbour is an artist the caller can see, or nothing. Múm
+/// is in Last.fm's list and in this instance, in a library the owner is not a
+/// member of; returning it would hand out an id `getArtist` then refuses,
+/// having already confirmed the row exists.
+#[tokio::test]
+async fn a_similar_artist_living_only_in_another_members_library_is_not_returned() {
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+
+    state
+        .services
+        .artist_enrichment(owner, bjork, 20)
+        .await
+        .unwrap();
+    enrichment.idle().await;
+    let answer = state
+        .services
+        .artist_enrichment(owner, bjork, 20)
+        .await
+        .unwrap();
+
+    let similar = answer.similar.expect("a neighbour the owner can see");
+    let names: Vec<_> = similar
+        .artists
+        .iter()
+        .map(|artist| artist.artist.name.as_str())
+        .collect();
+    assert_eq!(names, ["Sigur Rós"]);
+    assert_eq!(similar.source.provider, "lastfm");
+}
+
+/// The lookup comes first and for its refusal: an artist in another member's
+/// library answers as a missing one, and no provider is asked about it.
+#[tokio::test]
+async fn a_foreign_artist_id_answers_as_a_missing_one() {
+    let (_temp, _config, state, owner, outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let mum = artist_id(&state, outsider, "Múm").await;
+
+    let refused = state.services.artist_enrichment(owner, mum, 20).await;
+    let missing = state
+        .services
+        .artist_enrichment(owner, uuid::Uuid::new_v4(), 20)
+        .await;
+    enrichment.idle().await;
+
+    assert!(matches!(
+        refused,
+        Err(waveflow_server::services::ServiceError::NotFound)
+    ));
+    assert!(matches!(
+        missing,
+        Err(waveflow_server::services::ServiceError::NotFound)
+    ));
+    assert_eq!(listener.fake.info.load(Ordering::SeqCst), 0);
+}
+
+/// Decision 11's four states, each where it holds, through the native page —
+/// the one surface that publishes them.
+#[tokio::test]
+async fn each_of_the_four_states_appears_when_it_should() {
+    use waveflow_server::services::EnrichmentState;
+
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let state_now = |state: &waveflow_server::AppState| {
+        let services = state.services.clone();
+        async move {
+            services
+                .artist_page(owner, bjork)
+                .await
+                .unwrap()
+                .enrichment
+                .expect("the native page always carries it")
+                .state
+        }
+    };
+
+    // Nothing configured: the server's default.
+    assert_eq!(state_now(&state).await, EnrichmentState::Disabled);
+
+    // Configured, first visit: scheduled, not waited for.
+    let found = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &found,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    assert_eq!(state_now(&state).await, EnrichmentState::Pending);
+    enrichment.idle().await;
+    assert_eq!(state_now(&state).await, EnrichmentState::Ready);
+
+    // A provider that knows nothing about an artist: `none`, not absence.
+    let unknown = fake_lastfm(Mode::Miss, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &unknown,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let sigur = artist_id(&state, owner, "Sigur Rós").await;
+    let page = |state: &waveflow_server::AppState| {
+        let services = state.services.clone();
+        async move {
+            services
+                .artist_page(owner, sigur)
+                .await
+                .unwrap()
+                .enrichment
+                .unwrap()
+        }
+    };
+    assert_eq!(page(&state).await.state, EnrichmentState::Pending);
+    enrichment.idle().await;
+    let none = page(&state).await;
+    assert_eq!(none.state, EnrichmentState::None);
+    assert!(none.bio.is_none() && none.similar.is_none());
+}
+
+/// The façade end to end, in JSON: the first visit is the empty container it
+/// always was; the next carries the biography, and the neighbours as an array
+/// even when there is one of them.
+#[tokio::test]
+async fn get_artist_info_2_carries_the_biography_and_the_visible_neighbours() {
+    let (_temp, config, state, owner, _outsider) = two_members().await;
+    let api_key = format!("wfsk_{}", run_key());
+    let password = run_key();
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state.secret_box.encrypt(password.as_bytes()).unwrap(),
+            &waveflow_server::security::token_hash(&api_key),
+            waveflow_server::authentication::now_ms(),
+        )
+        .await
+        .unwrap();
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let router = waveflow_server::app(&config, state.clone());
+
+    let first =
+        support::subsonic_json(&router, "getArtistInfo2", &api_key, &format!("&id={bjork}")).await;
+    assert_eq!(
+        first["subsonic-response"]["artistInfo2"],
+        serde_json::json!({}),
+        "{first}"
+    );
+    enrichment.idle().await;
+    let next =
+        support::subsonic_json(&router, "getArtistInfo2", &api_key, &format!("&id={bjork}")).await;
+
+    let info = &next["subsonic-response"]["artistInfo2"];
+    assert_eq!(info["biography"], "Icelandic singer.", "{next}");
+    let similar = info["similarArtist"]
+        .as_array()
+        .unwrap_or_else(|| panic!("an array even with one entry: {next}"));
+    assert_eq!(similar.len(), 1);
+    assert_eq!(similar[0]["name"], "Sigur Rós");
+    assert!(similar[0]["roles"].is_array(), "{next}");
+}

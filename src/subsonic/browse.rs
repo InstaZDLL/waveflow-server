@@ -76,24 +76,53 @@ pub(super) async fn get_artist(
         .children(detail.albums.iter().map(album_node)))
 }
 
+/// `getArtistInfo` and `getArtistInfo2`.
+///
+/// Answered from the enrichment cache (RFC-011), never by waiting on a
+/// provider: the first visit to an artist schedules a lookup and answers the
+/// empty container, as this method always did; a later one carries what came
+/// back. With no provider configured — the default — it stays the empty
+/// container for good.
+///
+/// `biography` is the provider's summary, or its full text when it gave no
+/// summary. `similarArtist` lists only artists the caller can see, at most
+/// `count` (default 20), and nothing that is not in a library they belong to:
+/// `includeNotPresent` asks for exactly that, and is not honoured — an entry
+/// whose id a client cannot follow would hand out one it must not have. The
+/// three image URLs stay absent (RFC-011 decision 10, revised).
+///
+/// The lookup runs first and for its refusal, so an artist the caller cannot
+/// reach answers as one that does not exist.
 pub(super) async fn artist_info(
     state: &AppState,
     principal: &Principal,
     params: &Params,
     container: &'static str,
 ) -> Result<Node, ProtocolError> {
-    state
+    let count = params.usize_or("count", 20, 100)?;
+    let enrichment = state
         .services
-        .artist(principal.id, params.uuid("id")?)
+        .artist_enrichment(principal.id, params.uuid("id")?, count)
         .await
         .map_err(service_protocol)?;
-    Ok(Node::new(container))
+    let biography = enrichment
+        .bio
+        .and_then(|bio| bio.summary.or(bio.full))
+        .map(|text| Node::new("biography").text(text));
+    let similar = enrichment
+        .similar
+        .into_iter()
+        .flat_map(|similar| similar.artists)
+        .map(|artist| {
+            artist_node(&artist.artist, artist.album_count as usize).renamed("similarArtist")
+        });
+    Ok(Node::new(container).children(biography).children(similar))
 }
 
 /// `getAlbumInfo` and `getAlbumInfo2`.
 ///
-/// WaveFlow queries no remote source, so notes and biography images stay
-/// absent. The release identifier is the one part of the answer the catalogue
+/// Album notes are not enriched — RFC-011 leaves `metadata_album` to an open
+/// question — so notes and images stay absent. The release identifier is the one part of the answer the catalogue
 /// actually holds, and it is emitted when the album has one. `AlbumInfo`
 /// predates the OpenSubsonic presence rule, so an album without a release id
 /// omits the element rather than sending it empty.

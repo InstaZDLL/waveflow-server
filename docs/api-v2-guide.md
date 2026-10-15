@@ -252,12 +252,32 @@ curl "https://music.example.com/api/v2/artists/ARTIST_UUID/top-songs?limit=10" \
 every other genre filter, and both are the native form of a Subsonic method
 (`getSongsByGenre`, `getRandomSongs`) resolving through the same service.
 
+`GET /api/v2/artists/{artist_id}` carries an `enrichment` object: what metadata
+providers said about the artist, when an operator switched enrichment on
+([RFC-011](rfcs/RFC-011-metadata-enrichment.md)). It is always present, and its
+`state` says which of four situations holds, because absence could not:
+
+| `state` | meaning |
+| --- | --- |
+| `disabled` | no provider is configured; nothing has been asked and nothing will be |
+| `pending` | a provider has not answered yet; ask again shortly |
+| `ready` | there is something to show |
+| `none` | every provider answered, and none has anything this account can be shown |
+
+`bio` (`summary`, `full`) and `similar` (`artists`, each an artist summary) are
+`null` when there is nothing, and each carries its own `source` — `provider`
+and `fetched_at` — because the fields are merged across providers and may come
+from different ones. `similar` lists only artists in libraries this account
+belongs to. The page never waits on a provider: the first request schedules
+the lookup and answers `pending`.
+
 `GET /api/v2/artists/{artist_id}/top-songs` answers that artist's most played
 tracks **for the calling account**, ordered by `play_count` and then by title.
 It is the native form of `getTopSongs`, through the same service.
 
 It is computed from local listening history alone — `play_event` — and not from
-any remote notion of popularity, because the server queries no remote source.
+any remote notion of popularity. Metadata enrichment, when an operator switches
+it on, asks providers about artists, never about plays.
 Three consequences worth knowing before building on it:
 
 - **a track the account has never played is absent**, not last, so a fresh

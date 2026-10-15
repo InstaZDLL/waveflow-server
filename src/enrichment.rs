@@ -247,6 +247,14 @@ impl Enrichment {
         self.engine.is_some()
     }
 
+    /// How many providers are configured — the number of rows a name has
+    /// once every one of them has answered.
+    pub fn provider_count(&self) -> usize {
+        self.engine
+            .as_ref()
+            .map_or(0, |engine| engine.sources.len())
+    }
+
     /// What the cache holds about the artist called `name`, one row per
     /// configured provider that has one, in the operator's order — and a fill
     /// scheduled for every configured provider whose row is missing or stale.
