@@ -422,9 +422,9 @@ pub(super) async fn top_songs(
 /// The id is resolved first and for its refusal, so one the caller cannot
 /// reach is error 70, like one naming nothing.
 ///
-/// A random draw from the artist's own tracks and their visible neighbours',
-/// at most `count` (default 50, as specified). With enrichment disabled, the
-/// empty container these methods always answered.
+/// A random draw, balanced across artists, from the artist's own tracks and
+/// their visible neighbours', at most `count` (default 50, as specified). With
+/// enrichment disabled, the empty container these methods always answered.
 pub(super) async fn similar_songs(
     state: &AppState,
     principal: &Principal,

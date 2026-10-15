@@ -498,6 +498,19 @@ async fn library_of(
     name: &str,
     artists: &[&str],
 ) {
+    let credits: Vec<_> = artists.iter().map(|artist| (*artist, *artist)).collect();
+    library_with(state, config, owner, name, &credits).await;
+}
+
+/// The same, one track per `(track artist, album artist)` pair, on the album
+/// named after its album artist.
+async fn library_with(
+    state: &waveflow_server::AppState,
+    config: &waveflow_server::Config,
+    owner: uuid::Uuid,
+    name: &str,
+    artists: &[(&str, &str)],
+) {
     let now = waveflow_server::authentication::now_ms();
     let root = config.data_dir.join(name);
     std::fs::create_dir_all(&root).unwrap();
@@ -522,15 +535,16 @@ async fn library_of(
         .start_scan_job(scan, artists.len() as i64, false)
         .await
         .unwrap();
-    for (index, artist) in artists.iter().enumerate() {
+    for (index, (artist, album_artist)) in artists.iter().enumerate() {
         let mut input = support::browse_input(
             index + name.len() * 100,
             "A song",
-            &format!("{artist} album"),
+            &format!("{album_artist} album"),
             artist,
             Some(1),
             Some(1),
         );
+        input.album_artist = Some((*album_artist).into());
         input.relative_path = format!("{name}-{index}.flac");
         input.quick_hash = format!("{:064x}", 70_000 + index + name.len() * 100);
         input.full_hash = format!("{:064x}", 80_000 + index + name.len() * 100);
@@ -976,4 +990,74 @@ async fn count_absent_yields_at_most_fifty() {
         );
     }
     enrichment.idle().await;
+}
+
+/// The draw is balanced across names, not over one pool of tracks: sixty of
+/// Björk's beside five of Sigur Rós's, twenty drawn, and every one of Sigur
+/// Rós's five is in — the turns they cannot take go to Björk. One pool would
+/// draw about one and a half of them.
+#[tokio::test]
+async fn a_prolific_artist_does_not_crowd_out_the_neighbours() {
+    let (_temp, config, state) = support::test_app().await;
+    let owner = account(&state, "balanced-owner").await;
+    library_of(&state, &config, owner, "prolific", &["Björk"; 60]).await;
+    library_of(&state, &config, owner, "sparse", &["Sigur Rós"; 5]).await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    state.services.similar_songs(owner, bjork, 1).await.unwrap();
+    enrichment.idle().await;
+
+    let songs = state
+        .services
+        .similar_songs(owner, bjork, 20)
+        .await
+        .unwrap();
+    let neighbours = songs
+        .iter()
+        .filter(|song| song.artist.as_deref() == Some("Sigur Rós"))
+        .count();
+    assert_eq!(songs.len(), 20);
+    assert_eq!(neighbours, 5);
+}
+
+/// A track is filed under the name that put it in the pool, not under its
+/// first track artist: ten tracks on Sigur Rós's album, each by a different
+/// guest, are one neighbour's share. Filed by track artist they would be ten
+/// names, each taking a turn before Björk's second, and a draw of four would
+/// hold one of Björk's at most.
+#[tokio::test]
+async fn a_neighbour_s_album_of_guests_takes_one_share() {
+    let (_temp, config, state) = support::test_app().await;
+    let owner = account(&state, "guests-owner").await;
+    library_of(&state, &config, owner, "prolific", &["Björk"; 60]).await;
+    let guests: Vec<String> = (0..10).map(|n| format!("Guest {n}")).collect();
+    let credits: Vec<_> = guests
+        .iter()
+        .map(|guest| (guest.as_str(), "Sigur Rós"))
+        .collect();
+    library_with(&state, &config, owner, "guests", &credits).await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+    state.services.similar_songs(owner, bjork, 1).await.unwrap();
+    enrichment.idle().await;
+
+    let songs = state.services.similar_songs(owner, bjork, 4).await.unwrap();
+    let own = songs
+        .iter()
+        .filter(|song| song.artist.as_deref() == Some("Björk"))
+        .count();
+    assert_eq!(songs.len(), 4);
+    assert_eq!(own, 2);
 }
