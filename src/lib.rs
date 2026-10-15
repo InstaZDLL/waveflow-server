@@ -13,6 +13,7 @@ pub mod oauth;
 pub mod outbound;
 pub mod pid;
 pub mod playlist_file;
+pub mod portrait;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
@@ -683,7 +684,11 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     services.reconcile_scrobble_links().await?;
     // Off unless the operator named a provider, and then it still makes no
     // request until somebody asks about an artist (RFC-011 decisions 3 and 6).
-    services.use_enrichment(enrichment::Enrichment::new(db.clone(), &config.metadata)?);
+    services.use_enrichment(enrichment::Enrichment::new(
+        db.clone(),
+        &config.metadata,
+        config.artwork_dir.clone(),
+    )?);
     Ok(AppState {
         db,
         auth,

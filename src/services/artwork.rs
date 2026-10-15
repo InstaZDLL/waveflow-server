@@ -40,6 +40,12 @@
 //! reported as a dead link meanwhile, rather than bytes that no longer exist
 //! anywhere.
 //!
+//! An artist portrait (RFC-011 decision 8) is the exception: its bytes came
+//! from a provider, not from a file on disk, and no scan writes them back. The
+//! window costs it more — a dead link until the cache entry expires and the
+//! next visit downloads it again, up to the hit TTL — and is the same width,
+//! since its row is committed in one transaction under this same gate.
+//!
 //! That is an argument for tolerating the window, not for pretending it is
 //! shut. It is narrow, it needs a scan and a sweep to interleave at one
 //! instant, and no test here forces that ordering.

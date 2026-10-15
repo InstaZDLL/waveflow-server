@@ -1917,7 +1917,7 @@ impl Database {
         name_canonical: &str,
     ) -> Result<Vec<crate::enrichment::CachedArtist>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT provider, outcome, bio_summary, bio_full, fetched_at, expires_at \
+            "SELECT provider, outcome, bio_summary, bio_full, image_hash, fetched_at, expires_at \
              FROM metadata_artist WHERE name_canonical = ?",
         )
         .bind(name_canonical)
@@ -1938,6 +1938,7 @@ impl Database {
                 outcome,
                 bio_summary: row.try_get("bio_summary")?,
                 bio_full: row.try_get("bio_full")?,
+                image_hash: row.try_get("image_hash")?,
                 fetched_at: row.try_get("fetched_at")?,
                 expires_at: row.try_get("expires_at")?,
             });
@@ -1970,12 +1971,51 @@ impl Database {
             .collect()
     }
 
-    /// Records what a provider answered: its row and its whole neighbour list,
+    /// Links the portrait `hash` to every artist called `name_canonical` that
+    /// does not show it yet, emitting one artist event per row it moved.
+    ///
+    /// Read first without the writer gate, since this runs on the read path
+    /// and almost always finds nothing to do. The artwork row is checked in
+    /// the same statement as the link: the sweeper may have taken it since
+    /// the cache row was read.
+    pub(crate) async fn link_artist_portrait(
+        &self,
+        name_canonical: &str,
+        hash: &str,
+    ) -> Result<(), sqlx::Error> {
+        let unlinked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM artist \
+               WHERE canonical_name = ? AND artwork_hash IS NOT ?)",
+        )
+        .bind(name_canonical)
+        .bind(hash)
+        .fetch_one(&self.pool)
+        .await?;
+        if !unlinked {
+            return Ok(());
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        link_portrait_in(
+            &mut tx,
+            name_canonical,
+            hash,
+            crate::authentication::now_ms(),
+        )
+        .await?;
+        tx.commit().await
+    }
+
+    /// Records what a provider answered: its row, its whole neighbour list,
+    /// and its portrait — the artwork row and every artist it belongs to —
     /// in one transaction.
     ///
-    /// The writer gate is taken here and nowhere earlier — the request that
-    /// produced `answer` is over before this is called, so no network I/O ever
-    /// runs under it.
+    /// One transaction is what keeps the sweeper from ever seeing the artwork
+    /// row unreferenced: it deletes under this same gate, so it runs wholly
+    /// before or wholly after. The writer gate is taken here and nowhere
+    /// earlier — the requests that produced `answer` are over, and the
+    /// portrait's file is already in the store, so no network or file I/O
+    /// ever runs under it.
     pub(crate) async fn write_metadata_artist(
         &self,
         provider: crate::enrichment::Provider,
@@ -1986,24 +2026,41 @@ impl Database {
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool.begin().await?;
+        if let Some(image) = &answer.image {
+            sqlx::query(
+                "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
+                 VALUES (?, ?, 'deezer', ?, ?) ON CONFLICT (hash) DO NOTHING",
+            )
+            .bind(&image.hash)
+            .bind(image.format)
+            .bind(image.byte_size)
+            .bind(fetched_at)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO metadata_artist \
-                (provider, name_canonical, outcome, bio_summary, bio_full, fetched_at, expires_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+                (provider, name_canonical, outcome, bio_summary, bio_full, image_hash, \
+                 fetched_at, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (provider, name_canonical) DO UPDATE SET \
                 outcome = excluded.outcome, bio_summary = excluded.bio_summary, \
-                bio_full = excluded.bio_full, fetched_at = excluded.fetched_at, \
-                expires_at = excluded.expires_at",
+                bio_full = excluded.bio_full, image_hash = excluded.image_hash, \
+                fetched_at = excluded.fetched_at, expires_at = excluded.expires_at",
         )
         .bind(provider.as_str())
         .bind(name_canonical)
         .bind(answer.outcome().as_str())
         .bind(answer.bio_summary.as_deref())
         .bind(answer.bio_full.as_deref())
+        .bind(answer.image.as_ref().map(|image| image.hash.as_str()))
         .bind(fetched_at)
         .bind(expires_at)
         .execute(&mut *tx)
         .await?;
+        if let Some(image) = &answer.image {
+            link_portrait_in(&mut tx, name_canonical, &image.hash, fetched_at).await?;
+        }
         sqlx::query(
             "DELETE FROM metadata_artist_similar WHERE provider = ? AND name_canonical = ?",
         )
@@ -2028,6 +2085,55 @@ impl Database {
         }
         tx.commit().await
     }
+}
+
+/// Points every artist called `name_canonical` at the portrait `hash`, and
+/// records one artist event for each row that actually moved — RFC-007
+/// decision 6's rule for albums, which an artist now follows: a refresh that
+/// fetched the same picture changes nothing and says nothing.
+///
+/// Artist rows are per library, and so are events, so each moved row carries
+/// its own library. A row whose artwork row is gone is not linked: the cache
+/// may name a hash the sweeper has since taken.
+async fn link_portrait_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name_canonical: &str,
+    hash: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let moved = sqlx::query(
+        "UPDATE artist SET artwork_hash = ?, updated_at = ? \
+         WHERE canonical_name = ? AND artwork_hash IS NOT ? \
+           AND EXISTS (SELECT 1 FROM artwork WHERE artwork.hash = ?) \
+         RETURNING id, library_id",
+    )
+    .bind(hash)
+    .bind(now)
+    .bind(name_canonical)
+    .bind(hash)
+    .bind(hash)
+    .fetch_all(&mut **tx)
+    .await?;
+    for row in moved {
+        let id: String = row.try_get("id")?;
+        let library_id: String = row.try_get("library_id")?;
+        let parse =
+            |value: &str| Uuid::parse_str(value).map_err(|error| sqlx::Error::Decode(error.into()));
+        crate::catalog::record_library_event(
+            tx,
+            crate::catalog::LibraryChange {
+                library_id: parse(&library_id)?,
+                entity_type: "artist",
+                entity_id: parse(&id)?,
+                action: "upsert",
+                payload: serde_json::json!({}),
+                changed_at: now,
+                origin_device_id: None,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -231,6 +231,18 @@ over this server and **written nowhere**. An artist photo cannot change because
 there never is one. The question reopens the day something writes it, and on
 that day this is the line to re-read.
 
+> **Amended 2026-10-16 (#268): an artist now emits one, for its portrait only.**
+> [RFC-011](RFC-011-metadata-enrichment.md) decision 8 writes
+> `artist.artwork_hash` — a portrait fetched from a metadata provider — so the
+> case the desktop reserved exists. The rule is the album's: an `upsert` with an
+> empty payload, emitted **only when the hash actually moved**, by the same
+> `UPDATE … WHERE artwork_hash IS NOT ? RETURNING` pattern, so a refresh that
+> fetched the same picture says nothing. Artist rows are per library, so a
+> portrait shared by a name emits one event per row, each in its own library.
+> `library_event.entity_type` admitted `'artist'` from the start, so no
+> migration was needed. The counters stay derived and still emit nothing: the
+> reasoning above holds for everything but the photo.
+
 ## Decision 7 — two bounds, because one alone is always wrong
 
 > **Built.** See the *Implemented by* line in the header.

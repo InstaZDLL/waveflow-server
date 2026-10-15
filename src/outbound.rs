@@ -38,10 +38,16 @@ const CONNECT_SHARE: u32 = 3;
 /// Which of the two fired was a coin toss, so which protection applied was a
 /// coin toss.
 pub fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
+    builder(timeout).build()
+}
+
+/// The same rules, left open for one caller to add to: the portrait fetcher
+/// pins the address it checked (`ClientBuilder::resolve`), which is a property
+/// of one connection rather than of every client.
+pub(crate) fn builder(timeout: Duration) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(timeout / CONNECT_SHARE)
         .no_proxy()
         .user_agent(concat!("WaveFlowServer/", env!("CARGO_PKG_VERSION")))
-        .build()
 }

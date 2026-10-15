@@ -200,7 +200,8 @@ pub struct ScrobbleDestination {
 #[derive(Clone)]
 pub struct MetadataSettings {
     /// `WAVEFLOW_METADATA_PROVIDERS`: an ordered, comma-separated list, empty
-    /// by default. The order is the order fields are merged in when read.
+    /// by default, of `lastfm` and `deezer`. The order is the order fields are
+    /// merged in when read.
     pub providers: Vec<crate::enrichment::Provider>,
     /// `WAVEFLOW_METADATA_IMAGES`, on by default, `off` to keep the lookups and
     /// refuse decision 8's image fetch. A narrowing only: it switches nothing
@@ -1246,6 +1247,15 @@ mod tests {
         assert!(parse_metadata_providers("lastfm", false).is_err());
         assert!(parse_metadata_providers("lastfm,lastfm", true).is_err());
         assert!(parse_metadata_providers("last.fm", true).is_err());
+        // Deezer asks for no key, so none is required of it.
+        assert_eq!(
+            parse_metadata_providers("lastfm, deezer", true).unwrap(),
+            [Provider::LastFm, Provider::Deezer]
+        );
+        assert_eq!(
+            parse_metadata_providers("deezer", false).unwrap(),
+            [Provider::Deezer]
+        );
     }
 
     #[test]
