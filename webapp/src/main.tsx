@@ -17,16 +17,12 @@ import {
   ensureSession,
   forgetOnSessionChange,
   logout,
-} from "./api";
-import { I18nProvider, type TranslationKey, useI18n } from "./i18n";
-import { Icon, type IconName } from "./icons";
-import {
-  LibraryPicker,
-  LibraryScopeProvider,
-  mayUploadTo,
-  useLibraryScope,
-} from "./library-scope";
-import { Waiting } from "./page-shell";
+} from "./api/api";
+import { createQueryClient } from "./api/query-client";
+import { Icon, type IconName } from "./components/icons";
+import { Waiting } from "./components/page-shell";
+import { TrackEditorPage } from "./components/track-editor";
+import { dismissSplash } from "./lib/splash";
 import {
   AdminPage,
   AlbumPage,
@@ -46,18 +42,22 @@ import {
   SearchPage,
   SharesPage,
   SongsPage,
-} from "./pages";
-import { PlayerBar, PlayerProvider } from "./player";
-import { PlayingPage } from "./playing-page";
-import { PreferencesProvider } from "./preferences";
-import { createQueryClient } from "./query-client";
-import { RadioPage } from "./radio-page";
-import { ScrobblingPage } from "./scrobbling-page";
-import { SettingsPage } from "./settings-page";
-import { dismissSplash } from "./splash";
-import { TrackEditorPage } from "./track-editor";
-import { UploadPage } from "./upload-page";
-import "./styles.css";
+} from "./pages/pages";
+import { PlayingPage } from "./pages/playing-page";
+import { RadioPage } from "./pages/radio-page";
+import { ScrobblingPage } from "./pages/scrobbling-page";
+import { SettingsPage } from "./pages/settings-page";
+import { UploadPage } from "./pages/upload-page";
+import { PlayerBar, PlayerProvider } from "./player/player";
+import { I18nProvider, type TranslationKey, useI18n } from "./state/i18n";
+import {
+  LibraryPicker,
+  LibraryScopeProvider,
+  mayUploadTo,
+  useLibraryScope,
+} from "./state/library-scope";
+import { PreferencesProvider } from "./state/preferences";
+import "./styles/styles.css";
 
 const navigation: Array<{
   to:

@@ -12,7 +12,7 @@ import {
   findTheme,
   THEME_PRESETS,
   type ThemePreset,
-} from "./design-tokens";
+} from "../styles/design-tokens";
 import { type TranslationKey, useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.theme";

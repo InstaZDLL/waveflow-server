@@ -8,17 +8,17 @@ import {
   putUploadChunk,
   type UploadDecision,
   type UploadSessionState,
-} from "./api";
-import type { HashRequest, HashResponse } from "./hash-worker";
-import { type TranslationKey, useI18n } from "./i18n";
-import { mayUploadTo, useLibraryScope } from "./library-scope";
-import { PageHeader } from "./page-shell";
+} from "../api/api";
+import { PageHeader } from "../components/page-shell";
+import type { HashRequest, HashResponse } from "../lib/hash-worker";
 import {
   extensionOf,
   isUploadable,
   nextRange,
   UPLOAD_EXTENSIONS,
-} from "./uploads";
+} from "../lib/uploads";
+import { type TranslationKey, useI18n } from "../state/i18n";
+import { mayUploadTo, useLibraryScope } from "../state/library-scope";
 
 type Status =
   | "waiting"
@@ -101,7 +101,7 @@ function hashFile(
   file: File,
   onProgress: (read: number) => void,
 ): Promise<string> {
-  worker ??= new Worker(new URL("./hash-worker.ts", import.meta.url), {
+  worker ??= new Worker(new URL("../lib/hash-worker.ts", import.meta.url), {
     type: "module",
   });
   const hasher = worker;

@@ -7,11 +7,11 @@ import {
   revokeOwnApiToken,
   revokeOwnSubsonicCredential,
   rotateOwnSubsonicCredential,
-} from "./api";
-import { LanguagePicker, type Locale, useI18n } from "./i18n";
-import { Loading, PageHeader, useReload } from "./page-shell";
-import { ThemePicker } from "./preferences";
-import { ownApiTokensQuery, ownSubsonicCredentialQuery } from "./queries";
+} from "../api/api";
+import { ownApiTokensQuery, ownSubsonicCredentialQuery } from "../api/queries";
+import { Loading, PageHeader, useReload } from "../components/page-shell";
+import { LanguagePicker, type Locale, useI18n } from "../state/i18n";
+import { ThemePicker } from "../state/preferences";
 
 /**
  * Settings, and the clients allowed to read the library.

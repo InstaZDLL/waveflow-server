@@ -82,12 +82,13 @@
 'scope: components':
   - changed-files:
       - any-glob-to-any-file:
-          - 'webapp/src/pages.tsx'
+          - 'webapp/src/pages/**'
+          - 'webapp/src/components/**'
 
 'scope: design-tokens':
   - changed-files:
       - any-glob-to-any-file:
-          - 'webapp/src/design-tokens/**'
+          - 'webapp/src/styles/design-tokens/**'
 
 # ─────────────────────────────────────────────────────────────
 # Cross-cutting.

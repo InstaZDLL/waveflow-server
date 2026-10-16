@@ -13,12 +13,17 @@ import {
   deleteRadioStation,
   type RadioStation,
   replaceRadioStation,
-} from "./api";
-import { useI18n } from "./i18n";
-import { Icon } from "./icons";
-import { EmptyState, Loading, PageHeader, useReload } from "./page-shell";
-import { usePlayer } from "./player";
-import { radioStationsQuery } from "./queries";
+} from "../api/api";
+import { radioStationsQuery } from "../api/queries";
+import { Icon } from "../components/icons";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+  useReload,
+} from "../components/page-shell";
+import { usePlayer } from "../player/player";
+import { useI18n } from "../state/i18n";
 
 /**
  * The same rule the server applies, applied early enough to say so.

@@ -3,7 +3,7 @@
 > Survey of 2026-09-06, taken read-only against `main` at `84d0f8b`.
 > The figures come from the code: the paths declared by `#[utoipa::path]` under
 > `src/api/` and `src/media.rs` on one side, the calls in
-> `webapp/src/api.ts` on the other. Navidrome is described from its own
+> `webapp/src/api/api.ts` on the other. Navidrome is described from its own
 > documentation ([navidrome.org/docs/overview](https://www.navidrome.org/docs/overview/)),
 > not from memory.
 >
@@ -209,7 +209,7 @@ Heavier, because the interaction has to be designed as much as called.
     >
     > **The four are done, on 2026-09-14** by
     > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), in
-    > `webapp/src/scrobbling.ts`
+    > `webapp/src/lib/scrobbling.ts`
     > and `scrobbling-page.tsx`. The screen is at `/settings/scrobbling`, and
     > that path is not a choice: `lastfm_callback` redirects there once the link
     > is concluded, so no other spelling works — and as long as it did not

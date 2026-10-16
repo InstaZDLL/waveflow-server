@@ -219,7 +219,7 @@ protection turned off.
 
 ### G — the web client
 
-`ArtistPage` in `webapp/src/pages.tsx` and the `ArtistDetail` type in
+`ArtistPage` in `webapp/src/pages/pages.tsx` and the `ArtistDetail` type in
 `api.ts`. The query re-asks a bounded number of times while the state is
 `pending`. Provenance is shown, because decision 11 says it must be. A
 production build before any Playwright run, since a stale `dist` has already

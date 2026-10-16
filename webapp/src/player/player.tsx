@@ -17,11 +17,11 @@ import {
   saveQueue,
   scrobble,
   streamUrl,
-} from "./api";
+} from "../api/api";
 
-import { Artwork } from "./artwork";
-import { useI18n } from "./i18n";
-import { Icon } from "./icons";
+import { Artwork } from "../components/artwork";
+import { Icon } from "../components/icons";
+import { useI18n } from "../state/i18n";
 
 const VOLUME_KEY = "waveflow.volume";
 

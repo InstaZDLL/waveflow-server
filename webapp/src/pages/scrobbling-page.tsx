@@ -12,11 +12,11 @@ import {
   type ScrobbleUnavailable,
   type UncertainScrobble,
   unlinkScrobble,
-} from "./api";
-import { type Locale, type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader } from "./page-shell";
-import { scrobbleRowsQuery, uncertainScrobblesQuery } from "./queries";
-import { returnedFrom, type ScrobbleRow } from "./scrobbling";
+} from "../api/api";
+import { scrobbleRowsQuery, uncertainScrobblesQuery } from "../api/queries";
+import { Loading, PageHeader } from "../components/page-shell";
+import { returnedFrom, type ScrobbleRow } from "../lib/scrobbling";
+import { type Locale, type TranslationKey, useI18n } from "../state/i18n";
 
 /**
  * The four gestures RFC-010 leaves to a client.

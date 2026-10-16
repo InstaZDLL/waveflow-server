@@ -3,7 +3,7 @@ import type {
   TrackCorrectionPatch,
   TrackOverrides,
   TrackOverrideValues,
-} from "./api";
+} from "../api/api";
 
 /**
  * The seven tags a correction can carry beside the file's own value. The

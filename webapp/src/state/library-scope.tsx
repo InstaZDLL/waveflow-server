@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-import { type Library, listLibraries } from "./api";
+import { type Library, listLibraries } from "../api/api";
 import { useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.library";

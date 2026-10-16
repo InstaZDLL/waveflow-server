@@ -5,7 +5,7 @@ import type {
   ScrobbleDestination,
   ScrobbleLink,
   ScrobbleUnavailable,
-} from "./api";
+} from "../api/api";
 import {
   NAMED_UNCERTAIN,
   playsByInstant,

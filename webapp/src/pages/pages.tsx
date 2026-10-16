@@ -43,20 +43,7 @@ import {
   startScan,
   type User,
   watchScan,
-} from "./api";
-import { Artwork } from "./artwork";
-import { type TranslationKey, useI18n } from "./i18n";
-import { Icon } from "./icons";
-import { mayCorrectTracks, useLibraryScope, useScopeId } from "./library-scope";
-import {
-  EmptyState,
-  Loading,
-  PageHeader,
-  useReload,
-  Waiting,
-} from "./page-shell";
-import { usePlayer } from "./player";
-import { downloadPlaylist, PlaylistImportPanel } from "./playlist-import";
+} from "../api/api";
 import {
   administrationQuery,
   albumQuery,
@@ -77,7 +64,27 @@ import {
   searchQuery,
   sharesQuery,
   songsQuery,
-} from "./queries";
+} from "../api/queries";
+import { Artwork } from "../components/artwork";
+import { Icon } from "../components/icons";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+  useReload,
+  Waiting,
+} from "../components/page-shell";
+import {
+  downloadPlaylist,
+  PlaylistImportPanel,
+} from "../components/playlist-import";
+import { usePlayer } from "../player/player";
+import { type TranslationKey, useI18n } from "../state/i18n";
+import {
+  mayCorrectTracks,
+  useLibraryScope,
+  useScopeId,
+} from "../state/library-scope";
 
 /**
  * How long the typing has to settle before the search is asked.
