@@ -2095,7 +2095,9 @@ impl Database {
 ///
 /// Artist rows are per library, and so are events, so each moved row carries
 /// its own library. A row whose artwork row is gone is not linked: the cache
-/// may name a hash the sweeper has since taken.
+/// may name a hash the sweeper has since taken. Nor is a hash the cache no
+/// longer names: a read that saw the old row, then repairs after a fill
+/// replaced it, would put the old portrait back and announce it.
 async fn link_portrait_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     name_canonical: &str,
@@ -2106,12 +2108,16 @@ async fn link_portrait_in(
         "UPDATE artist SET artwork_hash = ?, updated_at = ? \
          WHERE canonical_name = ? AND artwork_hash IS NOT ? \
            AND EXISTS (SELECT 1 FROM artwork WHERE artwork.hash = ?) \
+           AND EXISTS (SELECT 1 FROM metadata_artist \
+                       WHERE name_canonical = ? AND image_hash = ?) \
          RETURNING id, library_id",
     )
     .bind(hash)
     .bind(now)
     .bind(name_canonical)
     .bind(hash)
+    .bind(hash)
+    .bind(name_canonical)
     .bind(hash)
     .fetch_all(&mut **tx)
     .await?;
@@ -2647,5 +2653,71 @@ mod tests {
                 "a {state} row has not finished and must not become purgeable"
             );
         }
+    }
+
+    /// A read takes the cache row without the gate, so a fill can replace and
+    /// link a newer portrait before the read's repair runs. That repair must
+    /// not put the hash it read back over the newer one, nor announce it.
+    #[tokio::test]
+    async fn a_repair_does_not_restore_a_portrait_the_cache_replaced() {
+        let (_temp, database) = migrated_database().await;
+        const ACCOUNT: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000021";
+        const LIBRARY: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000022";
+        const ARTIST: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000023";
+        let read = "a".repeat(64);
+        let replaced = "b".repeat(64);
+        for (statement, binds) in [
+            (
+                "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+                   VALUES (?, 'owner', 'this-account-never-authenticates', 'admin', 0, 0)",
+                vec![ACCOUNT],
+            ),
+            (
+                "INSERT INTO library (id, owner_user_id, name, root_path, visibility, \
+                                      created_at, updated_at) \
+                   VALUES (?, ?, 'Library', '/music', 'private', 0, 0)",
+                vec![LIBRARY, ACCOUNT],
+            ),
+            (
+                "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
+                   VALUES (?, 'jpg', 'deezer', 1, 0), (?, 'jpg', 'deezer', 1, 0)",
+                vec![read.as_str(), replaced.as_str()],
+            ),
+            (
+                "INSERT INTO artist (id, library_id, name, canonical_name, artwork_hash, \
+                                     created_at, updated_at) \
+                   VALUES (?, ?, 'Nova Kern', 'nova kern', ?, 0, 0)",
+                vec![ARTIST, LIBRARY, replaced.as_str()],
+            ),
+            (
+                "INSERT INTO metadata_artist (provider, name_canonical, outcome, image_hash, \
+                                              fetched_at, expires_at) \
+                   VALUES ('deezer', 'nova kern', 'hit', ?, 0, 0)",
+                vec![replaced.as_str()],
+            ),
+        ] {
+            let mut query = sqlx::query(statement);
+            for bind in binds {
+                query = query.bind(bind.to_owned());
+            }
+            query.execute(&database.pool).await.expect("seed row");
+        }
+
+        database
+            .link_artist_portrait("nova kern", &read)
+            .await
+            .expect("repair");
+
+        let linked: String = sqlx::query_scalar("SELECT artwork_hash FROM artist WHERE id = ?")
+            .bind(ARTIST)
+            .fetch_one(&database.pool)
+            .await
+            .expect("artist row");
+        assert!(linked == replaced, "the newer portrait was replaced");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_event")
+            .fetch_one(&database.pool)
+            .await
+            .expect("event count");
+        assert_eq!(events, 0);
     }
 }
