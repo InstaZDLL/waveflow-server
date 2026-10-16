@@ -2,6 +2,7 @@ import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import {
   type AlbumSort,
+  type ArtistDetail,
   artistTopSongs,
   canvasUrl,
   getAlbum,
@@ -94,10 +95,41 @@ export const artistsQuery = (scope: string | undefined) =>
     queryFn: () => listArtists(scope),
   });
 
+/** How many times an artist page is asked in all while enrichment is pending. */
+export const ENRICHMENT_ASKS = 6;
+/** The pause between two of those asks. */
+export const ENRICHMENT_RETRY_MS = 3_000;
+
+/**
+ * When to ask for an artist again, or `false` for never.
+ *
+ * The web client does not read the library event stream, so it learns that a
+ * provider answered only by asking. It asks while the state is `pending`, up
+ * to {@link ENRICHMENT_ASKS} answers in all, and then stops: a provider that
+ * is unreachable stays `pending` on the server, and a page left open must
+ * not ask forever. The count is the query's, so a later visit refetches once
+ * on mount, as every page does, and does not start the series again.
+ */
+export function enrichmentRetryDelay(
+  artist: ArtistDetail | undefined,
+  answers: number,
+): number | false {
+  if (artist?.enrichment?.state !== "pending") return false;
+  return answers < ENRICHMENT_ASKS ? ENRICHMENT_RETRY_MS : false;
+}
+
 export const artistQuery = (artistId: string) =>
   queryOptions({
     queryKey: ["artist", artistId],
     queryFn: () => getArtist(artistId),
+    // Failed asks count too: an error leaves the last answer — still
+    // `pending` — in place and does not move `dataUpdateCount`, so a server
+    // that keeps failing would otherwise be asked every few seconds for ever.
+    refetchInterval: (query) =>
+      enrichmentRetryDelay(
+        query.state.data,
+        query.state.dataUpdateCount + query.state.errorUpdateCount,
+      ),
   });
 
 export const artistTopSongsQuery = (artistId: string) =>

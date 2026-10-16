@@ -7,8 +7,10 @@
   key), #270 (the pin moved onto them), #271 (the cache and the engine that
   fills it), #272 (`getArtistInfo`, `getArtistInfo2` and the native artist
   page read it), #273 and #274 (`getSimilarSongs` and `getSimilarSongs2` draw
-  from it), and the pull request closing #268 (portraits from Deezer). The web
-  client and the compatibility campaign are still to come. The *Status* field
+  from it), #275 (portraits from Deezer), and the pull request closing #269
+  (the web client's artist page, and `enrichment.image` on the native API,
+  which #275 had left out). The compatibility campaign is still to come. The
+  *Status* field
   above never flips in this project; this line is the one that says what is
   running.
 - **Date**: 2026-10-14

@@ -1039,6 +1039,31 @@ main {
   font-size: var(--text-xl);
 }
 
+.artist-about,
+.artist-similar {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.artist-about h3,
+.artist-similar h3 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+/* Paragraphs arrive as line breaks in plain text, not as markup. */
+.artist-bio {
+  max-width: 70ch;
+  margin: 0;
+  white-space: pre-line;
+}
+
+.artist-source {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
 .list,
 .queue-list,
 .resource-list {
