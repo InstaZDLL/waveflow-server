@@ -352,9 +352,13 @@ impl Enrichment {
         }
         // A portrait already fetched, and an artist row that does not show
         // it: an artist re-identified by a PID spec change, or one scanned
-        // since. Linked again from the cache, without a second download.
+        // since. Linked again from the cache, without a second download. A
+        // repair, not the answer: if it fails, the page is still served and
+        // the next visit tries again.
         if let Some(hash) = ordered.iter().find_map(|row| row.image_hash.as_deref()) {
-            engine.db.link_artist_portrait(&canonical, hash).await?;
+            if let Err(error) = engine.db.link_artist_portrait(&canonical, hash).await {
+                tracing::warn!(%error, "cached artist portrait could not be linked");
+            }
         }
         Ok(ordered)
     }
