@@ -1216,6 +1216,24 @@ async fn a_portrait_is_fetched_once_and_shown_on_every_artist_with_the_name() {
     assert_eq!(source, "deezer");
     assert_eq!(artist_events(&state).await, 2);
     assert_eq!(listener.fake.images.load(Ordering::SeqCst), 1);
+
+    // Decision 11: the native page names where the portrait came from.
+    state.services.use_enrichment(enrichment);
+    let bjork = artist_id(&state, owner, "Björk").await;
+    let enriched = state
+        .services
+        .artist_page(owner, bjork)
+        .await
+        .unwrap()
+        .enrichment
+        .expect("the native page always carries it");
+    let image = enriched.image.expect("the portrait is published");
+    assert!(image.artwork_hash == hash, "another portrait was published");
+    assert_eq!(image.source.provider, "deezer");
+    assert_eq!(
+        enriched.state,
+        waveflow_server::services::EnrichmentState::Ready
+    );
 }
 
 /// A picture URL naming a host off the allowlist is dropped without being

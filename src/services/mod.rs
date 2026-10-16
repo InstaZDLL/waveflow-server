@@ -956,6 +956,8 @@ pub struct ArtistEnrichment {
     pub state: EnrichmentState,
     /// The first configured provider with a biography supplies it.
     pub bio: Option<EnrichedBio>,
+    /// The first configured provider with a portrait supplies it.
+    pub image: Option<EnrichedImage>,
     /// The first configured provider whose neighbours include artists the
     /// caller can see supplies the list — those artists only, best first.
     pub similar: Option<EnrichedSimilar>,
@@ -966,6 +968,7 @@ impl ArtistEnrichment {
         Self {
             state: EnrichmentState::Disabled,
             bio: None,
+            image: None,
             similar: None,
         }
     }
@@ -1000,6 +1003,14 @@ pub struct EnrichmentSource {
 pub struct EnrichedBio {
     pub summary: Option<String>,
     pub full: Option<String>,
+    pub source: EnrichmentSource,
+}
+
+/// A portrait, as a key into the artwork store.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EnrichedImage {
+    /// Served by the artwork route, as every `artwork_hash` is.
+    pub artwork_hash: String,
     pub source: EnrichmentSource,
 }
 
