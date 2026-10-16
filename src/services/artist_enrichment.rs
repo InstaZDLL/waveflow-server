@@ -353,6 +353,7 @@ mod tests {
             outcome,
             bio_summary: bio.map(str::to_owned),
             bio_full: None,
+            image_hash: None,
             fetched_at,
             expires_at: fetched_at + 1,
         }

@@ -1917,7 +1917,7 @@ impl Database {
         name_canonical: &str,
     ) -> Result<Vec<crate::enrichment::CachedArtist>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT provider, outcome, bio_summary, bio_full, fetched_at, expires_at \
+            "SELECT provider, outcome, bio_summary, bio_full, image_hash, fetched_at, expires_at \
              FROM metadata_artist WHERE name_canonical = ?",
         )
         .bind(name_canonical)
@@ -1938,6 +1938,7 @@ impl Database {
                 outcome,
                 bio_summary: row.try_get("bio_summary")?,
                 bio_full: row.try_get("bio_full")?,
+                image_hash: row.try_get("image_hash")?,
                 fetched_at: row.try_get("fetched_at")?,
                 expires_at: row.try_get("expires_at")?,
             });
@@ -1970,12 +1971,51 @@ impl Database {
             .collect()
     }
 
-    /// Records what a provider answered: its row and its whole neighbour list,
+    /// Links the portrait `hash` to every artist called `name_canonical` that
+    /// does not show it yet, emitting one artist event per row it moved.
+    ///
+    /// Read first without the writer gate, since this runs on the read path
+    /// and almost always finds nothing to do. The artwork row is checked in
+    /// the same statement as the link: the sweeper may have taken it since
+    /// the cache row was read.
+    pub(crate) async fn link_artist_portrait(
+        &self,
+        name_canonical: &str,
+        hash: &str,
+    ) -> Result<(), sqlx::Error> {
+        let unlinked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM artist \
+               WHERE canonical_name = ? AND artwork_hash IS NOT ?)",
+        )
+        .bind(name_canonical)
+        .bind(hash)
+        .fetch_one(&self.pool)
+        .await?;
+        if !unlinked {
+            return Ok(());
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        link_portrait_in(
+            &mut tx,
+            name_canonical,
+            hash,
+            crate::authentication::now_ms(),
+        )
+        .await?;
+        tx.commit().await
+    }
+
+    /// Records what a provider answered: its row, its whole neighbour list,
+    /// and its portrait — the artwork row and every artist it belongs to —
     /// in one transaction.
     ///
-    /// The writer gate is taken here and nowhere earlier — the request that
-    /// produced `answer` is over before this is called, so no network I/O ever
-    /// runs under it.
+    /// One transaction is what keeps the sweeper from ever seeing the artwork
+    /// row unreferenced: it deletes under this same gate, so it runs wholly
+    /// before or wholly after. The writer gate is taken here and nowhere
+    /// earlier — the requests that produced `answer` are over, and the
+    /// portrait's file is already in the store, so no network or file I/O
+    /// ever runs under it.
     pub(crate) async fn write_metadata_artist(
         &self,
         provider: crate::enrichment::Provider,
@@ -1986,24 +2026,42 @@ impl Database {
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool.begin().await?;
+        if let Some(image) = &answer.image {
+            sqlx::query(
+                "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
+                 VALUES (?, ?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING",
+            )
+            .bind(&image.hash)
+            .bind(image.format)
+            .bind(provider.as_str())
+            .bind(image.byte_size)
+            .bind(fetched_at)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO metadata_artist \
-                (provider, name_canonical, outcome, bio_summary, bio_full, fetched_at, expires_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+                (provider, name_canonical, outcome, bio_summary, bio_full, image_hash, \
+                 fetched_at, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (provider, name_canonical) DO UPDATE SET \
                 outcome = excluded.outcome, bio_summary = excluded.bio_summary, \
-                bio_full = excluded.bio_full, fetched_at = excluded.fetched_at, \
-                expires_at = excluded.expires_at",
+                bio_full = excluded.bio_full, image_hash = excluded.image_hash, \
+                fetched_at = excluded.fetched_at, expires_at = excluded.expires_at",
         )
         .bind(provider.as_str())
         .bind(name_canonical)
         .bind(answer.outcome().as_str())
         .bind(answer.bio_summary.as_deref())
         .bind(answer.bio_full.as_deref())
+        .bind(answer.image.as_ref().map(|image| image.hash.as_str()))
         .bind(fetched_at)
         .bind(expires_at)
         .execute(&mut *tx)
         .await?;
+        if let Some(image) = &answer.image {
+            link_portrait_in(&mut tx, name_canonical, &image.hash, fetched_at).await?;
+        }
         sqlx::query(
             "DELETE FROM metadata_artist_similar WHERE provider = ? AND name_canonical = ?",
         )
@@ -2028,6 +2086,61 @@ impl Database {
         }
         tx.commit().await
     }
+}
+
+/// Points every artist called `name_canonical` at the portrait `hash`, and
+/// records one artist event for each row that actually moved — RFC-007
+/// decision 6's rule for albums, which an artist now follows: a refresh that
+/// fetched the same picture changes nothing and says nothing.
+///
+/// Artist rows are per library, and so are events, so each moved row carries
+/// its own library. A row whose artwork row is gone is not linked: the cache
+/// may name a hash the sweeper has since taken. Nor is a hash the cache no
+/// longer names: a read that saw the old row, then repairs after a fill
+/// replaced it, would put the old portrait back and announce it.
+async fn link_portrait_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name_canonical: &str,
+    hash: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let moved = sqlx::query(
+        "UPDATE artist SET artwork_hash = ?, updated_at = ? \
+         WHERE canonical_name = ? AND artwork_hash IS NOT ? \
+           AND EXISTS (SELECT 1 FROM artwork WHERE artwork.hash = ?) \
+           AND EXISTS (SELECT 1 FROM metadata_artist \
+                       WHERE name_canonical = ? AND image_hash = ?) \
+         RETURNING id, library_id",
+    )
+    .bind(hash)
+    .bind(now)
+    .bind(name_canonical)
+    .bind(hash)
+    .bind(hash)
+    .bind(name_canonical)
+    .bind(hash)
+    .fetch_all(&mut **tx)
+    .await?;
+    for row in moved {
+        let id: String = row.try_get("id")?;
+        let library_id: String = row.try_get("library_id")?;
+        let parse =
+            |value: &str| Uuid::parse_str(value).map_err(|error| sqlx::Error::Decode(error.into()));
+        crate::catalog::record_library_event(
+            tx,
+            crate::catalog::LibraryChange {
+                library_id: parse(&library_id)?,
+                entity_type: "artist",
+                entity_id: parse(&id)?,
+                action: "upsert",
+                payload: serde_json::json!({}),
+                changed_at: now,
+                origin_device_id: None,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2540,5 +2653,71 @@ mod tests {
                 "a {state} row has not finished and must not become purgeable"
             );
         }
+    }
+
+    /// A read takes the cache row without the gate, so a fill can replace and
+    /// link a newer portrait before the read's repair runs. That repair must
+    /// not put the hash it read back over the newer one, nor announce it.
+    #[tokio::test]
+    async fn a_repair_does_not_restore_a_portrait_the_cache_replaced() {
+        let (_temp, database) = migrated_database().await;
+        const ACCOUNT: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000021";
+        const LIBRARY: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000022";
+        const ARTIST: &str = "6f1d1b6e-0f1a-4a3d-9c21-000000000023";
+        let read = "a".repeat(64);
+        let replaced = "b".repeat(64);
+        for (statement, binds) in [
+            (
+                "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
+                   VALUES (?, 'owner', 'this-account-never-authenticates', 'admin', 0, 0)",
+                vec![ACCOUNT],
+            ),
+            (
+                "INSERT INTO library (id, owner_user_id, name, root_path, visibility, \
+                                      created_at, updated_at) \
+                   VALUES (?, ?, 'Library', '/music', 'private', 0, 0)",
+                vec![LIBRARY, ACCOUNT],
+            ),
+            (
+                "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
+                   VALUES (?, 'jpg', 'deezer', 1, 0), (?, 'jpg', 'deezer', 1, 0)",
+                vec![read.as_str(), replaced.as_str()],
+            ),
+            (
+                "INSERT INTO artist (id, library_id, name, canonical_name, artwork_hash, \
+                                     created_at, updated_at) \
+                   VALUES (?, ?, 'Nova Kern', 'nova kern', ?, 0, 0)",
+                vec![ARTIST, LIBRARY, replaced.as_str()],
+            ),
+            (
+                "INSERT INTO metadata_artist (provider, name_canonical, outcome, image_hash, \
+                                              fetched_at, expires_at) \
+                   VALUES ('deezer', 'nova kern', 'hit', ?, 0, 0)",
+                vec![replaced.as_str()],
+            ),
+        ] {
+            let mut query = sqlx::query(statement);
+            for bind in binds {
+                query = query.bind(bind.to_owned());
+            }
+            query.execute(&database.pool).await.expect("seed row");
+        }
+
+        database
+            .link_artist_portrait("nova kern", &read)
+            .await
+            .expect("repair");
+
+        let linked: String = sqlx::query_scalar("SELECT artwork_hash FROM artist WHERE id = ?")
+            .bind(ARTIST)
+            .fetch_one(&database.pool)
+            .await
+            .expect("artist row");
+        assert!(linked == replaced, "the newer portrait was replaced");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_event")
+            .fetch_one(&database.pool)
+            .await
+            .expect("event count");
+        assert_eq!(events, 0);
     }
 }

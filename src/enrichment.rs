@@ -21,18 +21,35 @@
 //! URL nor a response body is ever written to a log (decision 9).
 
 use std::{
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use dashmap::DashMap;
-use waveflow_core::metadata::{lastfm::LastfmClient, LookupError};
+use waveflow_core::metadata::{
+    deezer::{DeezerClient, DeezerError},
+    lastfm::LastfmClient,
+    name_match::{normalize_name, select_by_name},
+    LookupError,
+};
 
-use crate::{config::MetadataSettings, database::Database};
+use crate::{
+    config::MetadataSettings,
+    database::Database,
+    portrait::{self, AddressPolicy, Refusal},
+};
 
 /// Last.fm's API root. A constant, not a setting (decision 9): there is no
 /// operator field, so there is no URL to validate.
 const LASTFM_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
+
+/// Deezer's API root, a constant for the same reason. It asks for no key.
+const DEEZER_BASE_URL: &str = "https://api.deezer.com";
+
+/// The hosts Deezer serves its pictures from (decision 8). A picture URL
+/// naming any other host is dropped without being contacted.
+const DEEZER_IMAGE_HOSTS: [&str; 2] = ["e-cdns-images.dzcdn.net", "cdn-images.dzcdn.net"];
 
 /// How many neighbours are asked for and kept. Subsonic's `getArtistInfo`
 /// defaults to twenty; asking for more leaves room for the ones a caller cannot
@@ -53,12 +70,16 @@ pub const MAX_IN_FLIGHT: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provider {
     LastFm,
+    /// Portraits only: Deezer has no biography, and its related artists are
+    /// not asked for.
+    Deezer,
 }
 
 impl Provider {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "lastfm" => Some(Self::LastFm),
+            "deezer" => Some(Self::Deezer),
             _ => None,
         }
     }
@@ -67,6 +88,7 @@ impl Provider {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LastFm => "lastfm",
+            Self::Deezer => "deezer",
         }
     }
 }
@@ -103,8 +125,19 @@ pub struct CachedArtist {
     pub outcome: Outcome,
     pub bio_summary: Option<String>,
     pub bio_full: Option<String>,
+    /// The portrait this provider supplied, in the artwork store. Cleared by
+    /// the database when the sweeper takes the artwork row.
+    pub image_hash: Option<String>,
     pub fetched_at: i64,
     pub expires_at: i64,
+}
+
+/// A portrait already in the artwork store, waiting for its row.
+#[derive(Debug)]
+pub(crate) struct StoredPortrait {
+    pub(crate) hash: String,
+    pub(crate) format: &'static str,
+    pub(crate) byte_size: i64,
 }
 
 /// One neighbour in a provider's cached list.
@@ -121,12 +154,17 @@ pub(crate) struct ArtistAnswer {
     pub(crate) bio_summary: Option<String>,
     pub(crate) bio_full: Option<String>,
     pub(crate) similar: Vec<CachedSimilar>,
+    pub(crate) image: Option<StoredPortrait>,
 }
 
 impl ArtistAnswer {
     /// A hit carries something; an answer with nothing in it is a miss.
     pub(crate) fn outcome(&self) -> Outcome {
-        if self.bio_summary.is_some() || self.bio_full.is_some() || !self.similar.is_empty() {
+        if self.bio_summary.is_some()
+            || self.bio_full.is_some()
+            || !self.similar.is_empty()
+            || self.image.is_some()
+        {
             Outcome::Hit
         } else {
             Outcome::Miss
@@ -140,12 +178,21 @@ impl ArtistAnswer {
 #[derive(Debug, Clone)]
 pub struct Endpoints {
     pub lastfm: String,
+    pub deezer: String,
+    /// The hosts a Deezer picture may be fetched from.
+    pub deezer_image_hosts: Vec<String>,
+    /// The addresses a picture may be fetched from. Only the test suite,
+    /// whose image host is on loopback, sets anything but the default.
+    pub image_addresses: AddressPolicy,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
         Self {
             lastfm: LASTFM_BASE_URL.to_owned(),
+            deezer: DEEZER_BASE_URL.to_owned(),
+            deezer_image_hosts: DEEZER_IMAGE_HOSTS.map(str::to_owned).to_vec(),
+            image_addresses: AddressPolicy::default(),
         }
     }
 }
@@ -167,6 +214,9 @@ struct Engine {
     ttl_ms: i64,
     miss_ttl_ms: i64,
     request_timeout: Duration,
+    /// Where fetched portraits are stored: the artwork store.
+    artwork_dir: PathBuf,
+    image_addresses: AddressPolicy,
     /// The fills in flight, by provider and canonical name. A visit that finds
     /// its key here schedules nothing: the fill already running answers it.
     in_flight: DashMap<(Provider, String), ()>,
@@ -182,7 +232,14 @@ struct Source {
 }
 
 enum Client {
-    LastFm { client: LastfmClient, key: String },
+    LastFm {
+        client: LastfmClient,
+        key: String,
+    },
+    Deezer {
+        client: DeezerClient,
+        image_hosts: Vec<String>,
+    },
 }
 
 impl Enrichment {
@@ -192,18 +249,24 @@ impl Enrichment {
     }
 
     /// The engine `settings` describe, against the providers' real addresses.
-    pub fn new(db: Database, settings: &MetadataSettings) -> anyhow::Result<Self> {
-        Self::with_endpoints(db, settings, Endpoints::default())
+    pub fn new(
+        db: Database,
+        settings: &MetadataSettings,
+        artwork_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
+        Self::with_endpoints(db, settings, artwork_dir, Endpoints::default())
     }
 
     /// [`Self::new`], with the providers reached at `endpoints`.
     ///
     /// Only the configured providers are built. A key placed with no provider
     /// naming it builds nothing — the provider list is the switch, and a key
-    /// is not consent (decision 3).
+    /// is not consent (decision 3). With `WAVEFLOW_METADATA_IMAGES=off`,
+    /// Deezer is not built either: portraits are all it is asked for.
     pub fn with_endpoints(
         db: Database,
         settings: &MetadataSettings,
+        artwork_dir: PathBuf,
         endpoints: Endpoints,
     ) -> anyhow::Result<Self> {
         let mut sources = Vec::new();
@@ -220,6 +283,11 @@ impl Enrichment {
                         key,
                     }
                 }
+                Provider::Deezer if !settings.images => continue,
+                Provider::Deezer => Client::Deezer {
+                    client: DeezerClient::with_http(http, endpoints.deezer.clone()),
+                    image_hosts: endpoints.deezer_image_hosts.clone(),
+                },
             };
             sources.push(Source {
                 provider,
@@ -237,6 +305,8 @@ impl Enrichment {
                 ttl_ms: duration_ms(settings.ttl),
                 miss_ttl_ms: duration_ms(settings.miss_ttl),
                 request_timeout: settings.request_timeout,
+                artwork_dir,
+                image_addresses: endpoints.image_addresses,
                 in_flight: DashMap::new(),
                 running: tokio::sync::watch::channel(0).0,
             })),
@@ -279,6 +349,16 @@ impl Enrichment {
                 Arc::clone(engine).schedule(index, name, &canonical);
             }
             ordered.extend(row.cloned());
+        }
+        // A portrait already fetched, and an artist row that does not show
+        // it: an artist re-identified by a PID spec change, or one scanned
+        // since. Linked again from the cache, without a second download. A
+        // repair, not the answer: if it fails, the page is still served and
+        // the next visit tries again.
+        if let Some(hash) = ordered.iter().find_map(|row| row.image_hash.as_deref()) {
+            if let Err(error) = engine.db.link_artist_portrait(&canonical, hash).await {
+                tracing::warn!(%error, "cached artist portrait could not be linked");
+            }
         }
         Ok(ordered)
     }
@@ -336,6 +416,10 @@ impl Engine {
         let source = &self.sources[index];
         let answer = match &source.client {
             Client::LastFm { client, key } => self.ask_lastfm(source, client, key, name).await,
+            Client::Deezer {
+                client,
+                image_hosts,
+            } => self.ask_deezer(source, client, image_hosts, name).await,
         };
         let answer = match answer {
             Ok(answer) => answer,
@@ -414,18 +498,75 @@ impl Engine {
             bio_summary,
             bio_full,
             similar,
+            image: None,
+        })
+    }
+
+    /// The artist search, then the picture it names — decision 8.
+    ///
+    /// No artist by that name, or one without a picture, is a miss. So is a
+    /// picture the fetcher refuses for what it is — off the allowlist, at a
+    /// refused address, not an image, too large — since asking again would
+    /// get the same answer. A picture host that could not be reached is
+    /// unreached, like the search, and writes nothing.
+    async fn ask_deezer(
+        &self,
+        source: &Source,
+        client: &DeezerClient,
+        image_hosts: &[String],
+        name: &str,
+    ) -> Result<ArtistAnswer, Verdict> {
+        source.pace.wait().await;
+        let hits = self.bounded(client.search_artist(name)).await?;
+        let picture = select_by_name(hits, &normalize_name(name), |hit| Some(hit.name.as_str()))
+            .and_then(|hit| hit.best_picture());
+        let Some(picture) = picture else {
+            return Ok(ArtistAnswer::default());
+        };
+        let fetched = portrait::fetch(
+            &picture,
+            image_hosts,
+            self.image_addresses,
+            self.request_timeout,
+        )
+        .await;
+        let portrait = match fetched {
+            Ok(portrait) => portrait,
+            Err(refusal) if refusal.is_answer() => {
+                tracing::warn!(
+                    provider = source.provider.as_str(),
+                    verdict = %refusal,
+                    "artist portrait refused; cached as a miss"
+                );
+                return Ok(ArtistAnswer::default());
+            }
+            Err(refusal) => return Err(Verdict::Image(refusal)),
+        };
+        portrait::store(&self.artwork_dir, &portrait)
+            .await
+            .map_err(|_| Verdict::Store)?;
+        Ok(ArtistAnswer {
+            image: Some(StoredPortrait {
+                hash: portrait.hash,
+                format: portrait.format,
+                byte_size: portrait.bytes.len() as i64,
+            }),
+            ..ArtistAnswer::default()
         })
     }
 
     /// One request, under the request timeout; anything but an answer is a
     /// verdict.
-    async fn bounded<T>(
+    async fn bounded<T, E>(
         &self,
-        request: impl std::future::Future<Output = Result<T, LookupError>>,
-    ) -> Result<T, Verdict> {
+        request: impl std::future::Future<Output = Result<T, E>>,
+    ) -> Result<T, Verdict>
+    where
+        Verdict: From<E>,
+    {
         match tokio::time::timeout(self.request_timeout, request).await {
             Ok(Ok(answer)) => Ok(answer),
-            Ok(Err(error)) => Err(Verdict::of(&error)),
+            Ok(Err(error)) => Err(Verdict::from(error)),
             Err(_) => Err(Verdict::Timeout),
         }
     }
@@ -450,21 +591,51 @@ impl Drop for Flight {
 enum Verdict {
     Timeout,
     Transport,
-    Refused { code: i64 },
-    Status { status: u16 },
+    Refused {
+        code: i64,
+    },
+    Status {
+        status: u16,
+    },
     TooLarge,
     Undecodable,
+    RateLimited,
+    /// The picture host, not the provider, was not reached.
+    Image(Refusal),
+    /// The picture came back and could not be written to the artwork store.
+    Store,
 }
 
-impl Verdict {
-    fn of(error: &LookupError) -> Self {
+impl From<LookupError> for Verdict {
+    fn from(error: LookupError) -> Self {
         match error {
             LookupError::Http(error) if error.is_timeout() => Self::Timeout,
             LookupError::Http(_) => Self::Transport,
-            LookupError::Refused { code } => Self::Refused { code: *code },
-            LookupError::Status { status } => Self::Status { status: *status },
+            LookupError::Refused { code } => Self::Refused { code },
+            LookupError::Status { status } => Self::Status { status },
             LookupError::TooLarge { .. } => Self::TooLarge,
             LookupError::Decode(_) => Self::Undecodable,
+        }
+    }
+}
+
+impl From<DeezerError> for Verdict {
+    fn from(error: DeezerError) -> Self {
+        match error {
+            DeezerError::Http(error) if error.is_timeout() => Self::Timeout,
+            DeezerError::Http(error) => {
+                error
+                    .status()
+                    .map_or(Self::Transport, |status| Self::Status {
+                        status: status.as_u16(),
+                    })
+            }
+            DeezerError::Api(error) => Self::Refused {
+                code: error.code.unwrap_or_default(),
+            },
+            DeezerError::RateLimited => Self::RateLimited,
+            DeezerError::TooLarge { .. } => Self::TooLarge,
+            DeezerError::Decode(_) => Self::Undecodable,
         }
     }
 }
@@ -478,6 +649,9 @@ impl std::fmt::Display for Verdict {
             Self::Status { status } => write!(formatter, "answered HTTP {status}"),
             Self::TooLarge => formatter.write_str("answer over the size ceiling"),
             Self::Undecodable => formatter.write_str("answer not understood"),
+            Self::RateLimited => formatter.write_str("rate-limited"),
+            Self::Image(refusal) => refusal.fmt(formatter),
+            Self::Store => formatter.write_str("portrait could not be stored"),
         }
     }
 }

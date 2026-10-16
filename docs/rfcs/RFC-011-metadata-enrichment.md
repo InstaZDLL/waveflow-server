@@ -6,9 +6,11 @@
   InstaZDLL/WaveFlow#855 (the core's clients accept a client, an address and a
   key), #270 (the pin moved onto them), #271 (the cache and the engine that
   fills it), #272 (`getArtistInfo`, `getArtistInfo2` and the native artist
-  page read it), and the pull request closing #267 (`getSimilarSongs` and
-  `getSimilarSongs2` draw from it). Portraits are still to come. The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+  page read it), #273 and #274 (`getSimilarSongs` and `getSimilarSongs2` draw
+  from it), and the pull request closing #268 (portraits from Deezer). The web
+  client and the compatibility campaign are still to come. The *Status* field
+  above never flips in this project; this line is the one that says what is
+  running.
 - **Date**: 2026-10-14
 - **Revised**: 2026-10-15, while implementing the cache (#265). Decisions 4, 6
   and 10 rested on attachment points the code does not hold; each correction

@@ -182,9 +182,9 @@ WAVEFLOW_METADATA_LASTFM_KEY=…   # your own Last.fm API application's key
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `WAVEFLOW_METADATA_PROVIDERS` | empty | The switch: an ordered, comma-separated list. Empty is off. Today the only provider is `lastfm` |
+| `WAVEFLOW_METADATA_PROVIDERS` | empty | The switch: an ordered, comma-separated list. Empty is off. The providers are `lastfm` (biographies and similar artists) and `deezer` (artist portraits, no key) |
 | `WAVEFLOW_METADATA_LASTFM_KEY` | — | Required when `lastfm` is listed; the server refuses to start without it. No key ships in the binary |
-| `WAVEFLOW_METADATA_IMAGES` | on | `off` keeps the lookups and refuses artist image downloads |
+| `WAVEFLOW_METADATA_IMAGES` | on | `off` keeps the lookups and refuses artist image downloads; `deezer` is then not asked at all, since portraits are all it is asked for |
 | `WAVEFLOW_METADATA_TTL_DAYS` | 30 | How long an answer with content is kept before it is asked again |
 | `WAVEFLOW_METADATA_MISS_TTL_DAYS` | 7 | How long "the provider knows nothing about this artist" is kept |
 | `WAVEFLOW_METADATA_RATE_PER_SEC` | 4 | Requests per second, per provider |
@@ -201,9 +201,22 @@ request carries the artist's name and your key, and no redirect is followed.
 Requests are spaced to the rate above, and simultaneous visits to one artist
 share one request.
 
+With `deezer` listed, also `api.deezer.com`, which needs no key, and then the
+picture it names — but only from Deezer's image hosts
+(`e-cdns-images.dzcdn.net`, `cdn-images.dzcdn.net`), only over https, only at
+a public address (the address checked is the one connected to), only a JPEG,
+PNG or WebP by its own bytes, and at most 10 MiB. A picture that fails any of
+these is not fetched and the artist is remembered as having none until the
+short TTL runs out.
+
 **What it stores.** In `waveflow.db`, for each provider and each artist name
-asked about: the biography, the ranked list of similar artists by name, whether
-the provider knew the artist, and when to ask again. Nothing in it belongs to an
+asked about: the biography, the ranked list of similar artists by name, the
+portrait's hash, whether the provider knew the artist, and when to ask again.
+The portrait itself goes in the artwork store beside the covers, and every
+artist with that name shows it through the `coverArt` it already carries —
+**back it up with the rest of `artwork_dir`**: unlike a cover, it cannot be
+extracted again from your files, only downloaded again once the cache entry
+expires. Nothing in it belongs to an
 account, and nothing records who asked. A failed request stores nothing, so the
 next visit asks again.
 
