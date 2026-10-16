@@ -257,6 +257,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::EnrichmentState,
         services::EnrichmentSource,
         services::EnrichedBio,
+        services::EnrichedImage,
         services::EnrichedSimilar,
         services::SearchResult,
         services::PlaylistItem,

@@ -87,7 +87,37 @@ export type Artist = {
   artwork_hash: string | null;
 };
 
-export type ArtistDetail = Artist & { albums: Album[] };
+/** Where one enriched field came from — RFC-011 decision 11. */
+export type EnrichmentSource = {
+  /** As `WAVEFLOW_METADATA_PROVIDERS` spells it: `lastfm`, `deezer`. */
+  provider: string;
+  /** When the provider gave this answer, in epoch milliseconds. */
+  fetched_at: number;
+};
+
+/**
+ * What the server learned about an artist from outside the library.
+ *
+ * `pending` means a provider has not answered yet, `none` that every one
+ * answered with nothing, `disabled` that none is configured. The page asks
+ * again while `pending`, a bounded number of times.
+ */
+export type ArtistEnrichment = {
+  state: "disabled" | "pending" | "ready" | "none";
+  bio: {
+    summary: string | null;
+    full: string | null;
+    source: EnrichmentSource;
+  } | null;
+  image: { artwork_hash: string; source: EnrichmentSource } | null;
+  similar: { artists: Artist[]; source: EnrichmentSource } | null;
+};
+
+export type ArtistDetail = Artist & {
+  albums: Album[];
+  /** Always present on the native page; optional so an older server parses. */
+  enrichment?: ArtistEnrichment;
+};
 
 export type SearchResult = {
   artists: Artist[];

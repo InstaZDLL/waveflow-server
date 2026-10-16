@@ -9,6 +9,7 @@ import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import {
   type Album,
   type AlbumSort,
+  type ArtistEnrichment,
   addLibrary,
   appendToPlaylist,
   authorize,
@@ -64,6 +65,7 @@ import {
   artistQuery,
   artistsQuery,
   artistTopSongsQuery,
+  enrichmentRetryDelay,
   favoriteTracksQuery,
   genreSongsQuery,
   genresQuery,
@@ -1913,9 +1915,91 @@ export function ArtistsPage() {
   );
 }
 
+/** A provider as a reader knows it, rather than as the setting spells it. */
+const PROVIDER_NAMES: Record<string, string> = {
+  lastfm: "Last.fm",
+  deezer: "Deezer",
+};
+
+/**
+ * What the server learned about an artist, and where each part came from.
+ *
+ * Provenance is part of the data (RFC-011 decision 11): each field names its
+ * provider and the day it answered, because the fields are merged across
+ * providers and one credit for the whole section would be wrong as soon as
+ * two contributed. `none` and `disabled` render nothing; `pending` says so
+ * only while the page is still asking.
+ */
+function ArtistEnrichmentSection({
+  enrichment,
+  asking,
+}: {
+  enrichment: ArtistEnrichment | undefined;
+  asking: boolean;
+}) {
+  const { t, locale } = useI18n();
+  if (!enrichment) return null;
+  const credit = (source: { provider: string; fetched_at: number }) => ({
+    provider: PROVIDER_NAMES[source.provider] ?? source.provider,
+    date: new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(
+      new Date(source.fetched_at),
+    ),
+  });
+  const { bio, similar } = enrichment;
+  const full = bio?.full && bio.full !== bio.summary ? bio.full : null;
+  return (
+    <>
+      {enrichment.state === "pending" && asking ? (
+        <p className="muted artist-enrichment-pending" role="status">
+          {t("artists.enrichmentPending")}
+        </p>
+      ) : null}
+      {bio && (bio.summary || full) ? (
+        <section className="artist-about">
+          <h3>{t("artists.about")}</h3>
+          {bio.summary ? <p className="artist-bio">{bio.summary}</p> : null}
+          {full ? (
+            <details>
+              <summary>{t("artists.readMore")}</summary>
+              <p className="artist-bio">{full}</p>
+            </details>
+          ) : null}
+          <p className="muted artist-source">
+            {t("artists.bioSource", credit(bio.source))}
+          </p>
+        </section>
+      ) : null}
+      {similar && similar.artists.length > 0 ? (
+        <section className="artist-similar">
+          <h3>{t("artists.similar")}</h3>
+          <ul className="list artist-list">
+            {similar.artists.map((artist) => (
+              <li key={artist.id}>
+                <Link to="/artists/$artistId" params={{ artistId: artist.id }}>
+                  <Artwork
+                    artworkId={artist.artwork_hash}
+                    title={artist.name}
+                    className="artist-avatar"
+                  />
+                  <strong>{artist.name}</strong>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="muted artist-source">
+            {t("artists.similarSource", credit(similar.source))}
+          </p>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
 export function ArtistPage({ artistId }: { artistId: string }) {
-  const { t } = useI18n();
-  const { data: value, error } = useQuery(artistQuery(artistId));
+  const { t, locale } = useI18n();
+  const client = useQueryClient();
+  const query = artistQuery(artistId);
+  const { data: value, error } = useQuery(query);
   /**
    * Asked beside the artist rather than with it, and never blocking it.
    *
@@ -1926,11 +2010,23 @@ export function ArtistPage({ artistId }: { artistId: string }) {
    */
   const { data: played } = useQuery(artistTopSongsQuery(artistId));
   if (!value) return <Loading error={error} />;
+  const image = value.enrichment?.image ?? null;
+  // The artist row carries the portrait once the server has linked it; the
+  // enrichment names it as soon as it is cached, which may be a visit sooner.
+  const portrait = value.artwork_hash ?? image?.artwork_hash ?? null;
+  // Counted exactly as `artistQuery` counts, so the note goes when the asking
+  // does.
+  const asked = client.getQueryState(query.queryKey);
+  const asking =
+    enrichmentRetryDelay(
+      value,
+      (asked?.dataUpdateCount ?? 0) + (asked?.errorUpdateCount ?? 0),
+    ) !== false;
   return (
     <section>
       <header className="artist-hero">
         <Artwork
-          artworkId={value.artwork_hash}
+          artworkId={portrait}
           title={value.name}
           className="artist-portrait"
         />
@@ -1940,8 +2036,21 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <p className="muted">
             {t("artists.libraryCount", { count: value.album_count })}
           </p>
+          {image && image.artwork_hash === portrait ? (
+            <p className="muted artist-source">
+              {t("artists.portraitSource", {
+                provider:
+                  PROVIDER_NAMES[image.source.provider] ??
+                  image.source.provider,
+                date: new Intl.DateTimeFormat(locale, {
+                  dateStyle: "medium",
+                }).format(new Date(image.source.fetched_at)),
+              })}
+            </p>
+          ) : null}
         </div>
       </header>
+      <ArtistEnrichmentSection enrichment={value.enrichment} asking={asking} />
       {/* Shown only once there is a history to show. An artist nobody has
           played has nothing to say here, and a heading above an empty table
           would say it anyway. */}

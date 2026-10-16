@@ -235,6 +235,15 @@ const artistDetail = {
 let artistPlayed: Array<ReturnType<typeof song>> = [];
 /** The limits the page asked for, so a screenful can be told from a catalogue. */
 let topSongAsks: Array<string | null> = [];
+/** How many times the artist page was asked for. */
+let artistAsks = 0;
+/**
+ * The `enrichment` object of the artist's nth answer, counting from one.
+ * Undefined leaves it out, as a server from before RFC-011 does.
+ */
+let enrichmentOf: (ask: number) => unknown = () => undefined;
+/** Every artist answer after the first is a 500. */
+let artistFailsAfterFirst = false;
 
 /**
  * A dry run's answer: three of five entries placed, two it could not.
@@ -1032,7 +1041,14 @@ async function mockAuthenticatedApi(page: Page) {
       return;
     }
     if (url.pathname === "/api/v2/artists/artist-1") {
-      await route.fulfill({ json: artistDetail });
+      artistAsks += 1;
+      if (artistFailsAfterFirst && artistAsks > 1) {
+        await route.fulfill({ status: 500, json: { error: "internal" } });
+        return;
+      }
+      await route.fulfill({
+        json: { ...artistDetail, enrichment: enrichmentOf(artistAsks) },
+      });
       return;
     }
     if (url.pathname === "/api/v2/albums") {
@@ -1061,6 +1077,9 @@ test.beforeEach(async ({ page }) => {
   radioGate = Promise.resolve();
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
+  artistAsks = 0;
+  enrichmentOf = () => undefined;
+  artistFailsAfterFirst = false;
   // **Reset here, and they were not.** These four reached the mock without
   // reaching this block, because a `replace` whose needle had already been
   // reformatted did nothing and said nothing. So `subsonicWrites`
@@ -1533,6 +1552,109 @@ test("an artist page shows this account's most played, and no heading without a 
   await expect(
     page.getByRole("heading", { name: "Most played here" }),
   ).toHaveCount(0);
+});
+
+/**
+ * RFC-011 decision 11 on the screen: what a provider said, and which one said
+ * it. The first answer is `pending`, as an artist's first visit is; the page
+ * asks again on its own, since the web client reads no event stream, and the
+ * second answer fills it.
+ */
+test("an artist page shows what the server learned, and where each part came from", async ({
+  page,
+}) => {
+  const lastfm = { provider: "lastfm", fetched_at: Date.UTC(2026, 9, 14) };
+  enrichmentOf = (ask) =>
+    ask === 1
+      ? { state: "pending", bio: null, image: null, similar: null }
+      : {
+          state: "ready",
+          bio: {
+            summary: "An Icelandic singer and songwriter.",
+            full: "An Icelandic singer and songwriter.\nHer albums are many.",
+            source: lastfm,
+          },
+          image: {
+            artwork_hash: "a".repeat(64),
+            source: { provider: "deezer", fetched_at: Date.UTC(2026, 9, 15) },
+          },
+          similar: {
+            artists: [
+              {
+                id: "artist-2",
+                name: "Sigur Rós",
+                album_count: 1,
+                artwork_hash: null,
+              },
+            ],
+            source: lastfm,
+          },
+        };
+  // Only the portrait's hash answers with an image: the artist row names
+  // none, so the hero can show it only through `enrichment.image`.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route(`**/api/v2/artwork/${"a".repeat(64)}`, async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+
+  await page.goto("/artists/artist-1");
+  await expect(page.getByRole("status")).toContainText(
+    "Looking this artist up",
+  );
+  await expect(page.getByRole("heading", { name: "About" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText("An Icelandic singer and songwriter.").first()).toBeVisible();
+  await expect(page.getByText(/^Biography from Last\.fm, /)).toBeVisible();
+  await expect(page.getByText(/^Portrait from Deezer, /)).toBeVisible();
+  await expect(page.locator(".artist-hero img.artist-portrait")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Similar artists in your library" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: /Sigur Rós/ })).toBeVisible();
+  await expect(page.getByText(/^Suggested by Last\.fm, /)).toBeVisible();
+  await expect(page.getByText("Looking this artist up")).toHaveCount(0);
+  expect(artistAsks).toBe(2);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+/** `none` is an answer: nothing is shown, and nothing is asked again. */
+test("an artist nobody knows shows no enrichment and is not asked again", async ({
+  page,
+}) => {
+  enrichmentOf = () => ({ state: "none", bio: null, image: null, similar: null });
+  await page.goto("/artists/artist-1");
+  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+  await page.waitForTimeout(4_000);
+  await expect(page.getByRole("heading", { name: "About" })).toHaveCount(0);
+  await expect(page.getByText("Looking this artist up")).toHaveCount(0);
+  expect(artistAsks).toBe(1);
+});
+
+/**
+ * A server that fails after a `pending` answer leaves that answer on screen,
+ * and a failed ask does not move the count of answers. The failures are
+ * counted with them, so the page still stops at the bound.
+ */
+test("a pending artist whose server keeps failing is asked a bounded number of times", async ({
+  page,
+}) => {
+  test.setTimeout(45_000);
+  artistFailsAfterFirst = true;
+  enrichmentOf = () => ({ state: "pending", bio: null, image: null, similar: null });
+  await page.goto("/artists/artist-1");
+  await expect(page.getByRole("heading", { name: "Björk", level: 2 })).toBeVisible();
+  await expect.poll(() => artistAsks, { timeout: 30_000 }).toBe(6);
+  await page.waitForTimeout(5_000);
+  expect(artistAsks).toBe(6);
+  await expect(page.getByText("Looking this artist up")).toHaveCount(0);
 });
 
 /**
