@@ -1590,6 +1590,15 @@ test("an artist page shows what the server learned, and where each part came fro
             source: lastfm,
           },
         };
+  // Only the portrait's hash answers with an image: the artist row names
+  // none, so the hero can show it only through `enrichment.image`.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route(`**/api/v2/artwork/${"a".repeat(64)}`, async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
 
   await page.goto("/artists/artist-1");
   await expect(page.getByRole("status")).toContainText(
@@ -1601,6 +1610,7 @@ test("an artist page shows what the server learned, and where each part came fro
   await expect(page.getByText("An Icelandic singer and songwriter.").first()).toBeVisible();
   await expect(page.getByText(/^Biography from Last\.fm, /)).toBeVisible();
   await expect(page.getByText(/^Portrait from Deezer, /)).toBeVisible();
+  await expect(page.locator(".artist-hero img.artist-portrait")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Similar artists in your library" }),
   ).toBeVisible();
