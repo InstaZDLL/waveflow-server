@@ -1,5 +1,5 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
-
+import { playsByInstant, scrobbleRows, tracksToName } from "../lib/scrobbling";
 import {
   type AlbumSort,
   type ArtistDetail,
@@ -37,7 +37,6 @@ import {
   type SongSort,
   search,
 } from "./api";
-import { playsByInstant, scrobbleRows, tracksToName } from "./scrobbling";
 
 /**
  * Every question this client asks the server, and the key each answer is held

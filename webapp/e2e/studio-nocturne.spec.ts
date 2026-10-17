@@ -471,7 +471,7 @@ let lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
  * The words the mock holds for each track. Absent is a track without any.
  *
  * Shaped like `src/lyrics.rs` answers, `camelCase` envelope included — written
- * from the server rather than from `LyricsList` in `webapp/src/api.ts`, which
+ * from the server rather than from `LyricsList` in `webapp/src/api/api.ts`, which
  * is how that type spent a release claiming `structured_lyrics` while every
  * read of it threw.
  */
@@ -3241,7 +3241,7 @@ test("declares an icon, and serves the one it declares", async ({
  * the one vector file.
  *
  * Structural only: nothing here times anything. The floor and the fade are
- * pinned in `src/splash.test.ts` against fake timers, because an assertion on
+ * pinned in `src/lib/splash.test.ts` against fake timers, because an assertion on
  * when the screen left would be an assertion about how fast the runner parsed
  * 276 kB of React.
  *

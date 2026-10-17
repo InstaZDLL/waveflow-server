@@ -7,11 +7,8 @@ import {
   correctTrack,
   type SongCredits,
   type TrackOverrides,
-} from "./api";
-import { CanvasPanel } from "./canvas-panel";
-import { type TranslationKey, useI18n } from "./i18n";
-import { Loading, PageHeader } from "./page-shell";
-import { trackEditQuery } from "./queries";
+} from "../api/api";
+import { trackEditQuery } from "../api/queries";
 import {
   buildCorrectionPatch,
   type CorrectionDraft,
@@ -24,7 +21,10 @@ import {
   type ListField,
   SCALAR_FIELDS,
   type ScalarField,
-} from "./track-corrections";
+} from "../lib/track-corrections";
+import { type TranslationKey, useI18n } from "../state/i18n";
+import { CanvasPanel } from "./canvas-panel";
+import { Loading, PageHeader } from "./page-shell";
 
 const LABELS: Record<CorrectionField, TranslationKey> = {
   title: "correction.fieldTitle",

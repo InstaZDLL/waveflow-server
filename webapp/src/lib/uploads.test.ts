@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { UploadSessionState } from "./api";
+import type { UploadSessionState } from "../api/api";
 import { extensionOf, hashChunks, isUploadable, nextRange } from "./uploads";
 
 async function* chunksOf(...parts: Uint8Array[]): AsyncGenerator<Uint8Array> {

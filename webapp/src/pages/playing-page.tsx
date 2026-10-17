@@ -9,15 +9,15 @@ import {
   type Song,
   type StructuredLyrics,
   setBookmark,
-} from "./api";
-import { Artwork } from "./artwork";
-import { CanvasStage, usePrefersReducedMotion } from "./canvas";
-import { FileQuality } from "./file-quality";
-import { type TranslationKey, useI18n } from "./i18n";
-import { Icon } from "./icons";
-import { EmptyState, PageHeader, useReload } from "./page-shell";
-import { usePlayer, usePlayerProgress } from "./player";
-import { bookmarksQuery, lyricsQuery } from "./queries";
+} from "../api/api";
+import { bookmarksQuery, lyricsQuery } from "../api/queries";
+import { Artwork } from "../components/artwork";
+import { CanvasStage, usePrefersReducedMotion } from "../components/canvas";
+import { FileQuality } from "../components/file-quality";
+import { Icon } from "../components/icons";
+import { EmptyState, PageHeader, useReload } from "../components/page-shell";
+import { usePlayer, usePlayerProgress } from "../player/player";
+import { type TranslationKey, useI18n } from "../state/i18n";
 
 /**
  * What the playing screen is showing.

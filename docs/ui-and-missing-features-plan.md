@@ -22,11 +22,11 @@ canvas, and the client **asks again endlessly** — once per mount of the panel,
 visible as a burst in the console.
 
 The client handles the case correctly, though: `canvasUrl`
-(`webapp/src/api.ts:647`) catches the `404` and returns `null`. No exception is
+(`webapp/src/api/api.ts:647`) catches the `404` and returns `null`. No exception is
 raised; what the console shows is the request itself, which the browser logs
 whatever the JavaScript does with it.
 
-The cause is in `canvasQuery` (`webapp/src/queries.ts:231`): `staleTime: 0` and
+The cause is in `canvasQuery` (`webapp/src/api/queries.ts:231`): `staleTime: 0` and
 `gcTime: 0`. Those two zeros were placed **on purpose** by PR #204 — a canvas
 ticket expires, so it must never be served from a cache. But they do not
 distinguish two answers of opposite nature:
@@ -42,8 +42,8 @@ favicon — a stable answer asked for indefinitely.
 
 `GET /api/v2/now-playing` answers `401`, and starts again.
 
-`nowPlayingQuery` (`webapp/src/queries.ts:125`) carries
-`refetchInterval: 30_000`. And `call` (`webapp/src/api.ts:314`) retries **once**
+`nowPlayingQuery` (`webapp/src/api/queries.ts:125`) carries
+`refetchInterval: 30_000`. And `call` (`webapp/src/api/api.ts:314`) retries **once**
 after a successful `refresh()`. So a `401` that reaches the console means the
 refresh itself failed: the session is definitively dead.
 
@@ -84,7 +84,7 @@ the neighbouring repository's, `assets/logo.svg` from
 
 **And the server's mark is copied in three places, none of which is an SVG**:
 
-- `webapp/src/styles.css:308` — `.brand-mark`, drawn in CSS;
+- `webapp/src/styles/styles.css:308` — `.brand-mark`, drawn in CSS;
 - `webapp/src/main.tsx:120` — the four `<i>`s that CSS shapes;
 - `webapp/public/favicon.svg` — the only vector version, written by hand from
   the previous two.
@@ -237,7 +237,7 @@ The technical metadata is **stored and already projected in SQL** — `codec`,
 in the migrations and in the `song_select!` projection.
 
 But **they do not come out**: none appears in `src/api/`'s responses, and
-`webapp/src/api.ts` does not know them. So file information and a quality bar
+`webapp/src/api/api.ts` does not know them. So file information and a quality bar
 **require no migration** — only serialising them, extending the client type, and
 drawing. It is the document's biggest saving.
 
@@ -293,7 +293,7 @@ This point is not a list of fixes: it is a design pass. It deserves being
 treated as one — a survey of the spacings, sizes and contrast levels actually in
 use, then a chosen scale, rather than a touch-up screen by screen.
 
-**A clue as to where it is decided**: `webapp/src/styles.css` has **two naming
+**A clue as to where it is decided**: `webapp/src/styles/styles.css` has **two naming
 systems** living side by side. On one side roles — `--panel`, `--panel-soft`,
 `--panel-strong`, `--line`, `--line-strong`, `--muted`; on the other surfaces
 named after their appearance — `--color-surface-dark`, `--color-surface-light`,
@@ -307,7 +307,7 @@ no step — when a scale is exactly what this observation needs.
 >
 > **The two naming systems are not competing, they are layered.**
 > `--color-surface-*` and `--accent-*` are written **at runtime** by
-> `applyTheme` (`webapp/src/design-tokens/apply.ts`) from a `ThemePreset`;
+> `applyTheme` (`webapp/src/styles/design-tokens/apply.ts`) from a `ThemePreset`;
 > `--panel`, `--panel-soft` and `--panel-strong` are `color-mix()`es **derived**
 > from them. So there is a rule after all: a theme writes surfaces, a screen uses
 > roles. And it is respected — every `--color-surface-*` usage is inside the
@@ -326,7 +326,7 @@ no step — when a scale is exactly what this observation needs.
 > complaint was tightness. 267 literals carried onto the scale: 96 widened, 87
 > tightened, **a net +4.42 rem**. A `rem` in a width, a height, a radius or an
 > offset is left alone — that is a dimension, not a step — and
-> `webapp/src/styles.test.ts` holds the rule rather than a list of exceptions:
+> `webapp/src/styles/styles.test.ts` holds the rule rather than a list of exceptions:
 > inside the scale's range, the scale is what is used.
 >
 > What is **not** done: the taste half of a design pass. Judging a hierarchy

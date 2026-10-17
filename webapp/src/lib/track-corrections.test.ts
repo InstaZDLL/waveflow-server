@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { SongCredits, TrackOverrides, TrackOverrideValues } from "./api";
+import type {
+  SongCredits,
+  TrackOverrides,
+  TrackOverrideValues,
+} from "../api/api";
 import {
   buildCorrectionPatch,
   type CorrectionField,

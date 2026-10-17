@@ -5,7 +5,7 @@ import type {
   ScrobbleProvider,
   ScrobbleUnavailable,
   UncertainScrobble,
-} from "./api";
+} from "../api/api";
 
 /**
  * The pure half of the scrobbling screen — RFC-010.

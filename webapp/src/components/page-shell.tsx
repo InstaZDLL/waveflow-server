@@ -21,7 +21,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { useI18n } from "./i18n";
+import { useI18n } from "../state/i18n";
 
 /** Eight placeholder cards, keyed by name because their order is their only identity. */
 const SKELETON_KEYS = [

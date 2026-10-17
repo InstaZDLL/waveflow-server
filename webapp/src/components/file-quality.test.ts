@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Song } from "./api";
+import type { Song } from "../api/api";
 import {
   containerName,
   fileSize,

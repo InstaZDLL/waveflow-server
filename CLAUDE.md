@@ -23,7 +23,7 @@ English.
 Layout:
 
 - `/` — the server crate (`waveflow-server`).
-- `webapp/` — the embedded React client, built to `webapp/dist` and compiled in by `rust_embed`.
+- `webapp/` — the embedded React client, built to `webapp/dist` and compiled in by `rust_embed`. Under `webapp/src/`, only `main.tsx` (the router and the providers) sits at the root; everything else is filed by what it is: `api/` (the HTTP client, query keys, the query client), `pages/` (one screen per file), `components/` (pieces shared between screens), `player/`, `state/` (contexts: i18n, preferences, library scope), `lib/` (logic with no React in it) and `styles/` (the sheet and the design tokens). A test sits beside the file it tests.
 
 The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) is a separate repository. It consumes this API but is not part of this codebase.
 

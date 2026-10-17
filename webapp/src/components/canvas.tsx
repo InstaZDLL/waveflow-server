@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 
-import { canvasUrl } from "./api";
-import type { TranslationKey } from "./i18n";
+import { canvasUrl } from "../api/api";
+import type { TranslationKey } from "../state/i18n";
 
 /**
  * A refused placement or removal, in words. The statuses are the ones the

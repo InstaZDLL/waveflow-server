@@ -5,9 +5,9 @@ import {
   importPlaylist,
   type PlaylistImport,
   type UnresolvedEntry,
-} from "./api";
-import { useI18n } from "./i18n";
-import { useLibraryScope } from "./library-scope";
+} from "../api/api";
+import { useI18n } from "../state/i18n";
+import { useLibraryScope } from "../state/library-scope";
 
 /**
  * Arriving with an existing collection's playlists, and leaving with them.
