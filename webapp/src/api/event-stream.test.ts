@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { drainEventStream } from "./api";
+import { drainEventStream } from "./index";
 
 /**
  * Scan progress arrives as `text/event-stream` read through `fetch`, because

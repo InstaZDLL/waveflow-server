@@ -36,7 +36,7 @@ import {
   SONG_PAGE,
   type SongSort,
   search,
-} from "./api";
+} from "./index";
 
 /**
  * Every question this client asks the server, and the key each answer is held

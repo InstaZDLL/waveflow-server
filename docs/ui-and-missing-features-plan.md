@@ -22,7 +22,7 @@ canvas, and the client **asks again endlessly** — once per mount of the panel,
 visible as a burst in the console.
 
 The client handles the case correctly, though: `canvasUrl`
-(`webapp/src/api/api.ts:647`) catches the `404` and returns `null`. No exception is
+(`webapp/src/api/canvas.ts`) catches the `404` and returns `null`. No exception is
 raised; what the console shows is the request itself, which the browser logs
 whatever the JavaScript does with it.
 
@@ -43,7 +43,7 @@ favicon — a stable answer asked for indefinitely.
 `GET /api/v2/now-playing` answers `401`, and starts again.
 
 `nowPlayingQuery` (`webapp/src/api/queries.ts:125`) carries
-`refetchInterval: 30_000`. And `call` (`webapp/src/api/api.ts:314`) retries **once**
+`refetchInterval: 30_000`. And `call` (`webapp/src/api/client.ts`) retries **once**
 after a successful `refresh()`. So a `401` that reaches the console means the
 refresh itself failed: the session is definitively dead.
 
@@ -237,7 +237,7 @@ The technical metadata is **stored and already projected in SQL** — `codec`,
 in the migrations and in the `song_select!` projection.
 
 But **they do not come out**: none appears in `src/api/`'s responses, and
-`webapp/src/api/api.ts` does not know them. So file information and a quality bar
+the client under `webapp/src/api/` does not know them. So file information and a quality bar
 **require no migration** — only serialising them, extending the client type, and
 drawing. It is the document's biggest saving.
 

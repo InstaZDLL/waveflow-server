@@ -471,7 +471,7 @@ let lastFmAuthorizeUrl = "https://www.last.fm/api/auth/?api_key=k&cb=back";
  * The words the mock holds for each track. Absent is a track without any.
  *
  * Shaped like `src/lyrics.rs` answers, `camelCase` envelope included — written
- * from the server rather than from `LyricsList` in `webapp/src/api/api.ts`, which
+ * from the server rather than from `LyricsList` in `webapp/src/api/tracks.ts`, which
  * is how that type spent a release claiming `structured_lyrics` while every
  * read of it threw.
  */

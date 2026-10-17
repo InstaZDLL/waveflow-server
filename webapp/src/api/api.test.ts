@@ -10,7 +10,7 @@ import {
   logout,
   safeInternalPath,
   search,
-} from "./api";
+} from "./index";
 
 /**
  * Where the module sent the browser.

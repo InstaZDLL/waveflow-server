@@ -17,7 +17,7 @@ import {
   saveQueue,
   scrobble,
   streamUrl,
-} from "../api/api";
+} from "../api";
 
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";

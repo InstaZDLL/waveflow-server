@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ArtistDetail, ArtistEnrichment } from "./api";
+import type { ArtistDetail, ArtistEnrichment } from "./index";
 import {
   ENRICHMENT_ASKS,
   ENRICHMENT_RETRY_MS,

@@ -5,7 +5,7 @@ import {
   importPlaylist,
   type PlaylistImport,
   type UnresolvedEntry,
-} from "../api/api";
+} from "../api";
 import { useI18n } from "../state/i18n";
 import { useLibraryScope } from "../state/library-scope";
 

@@ -7,7 +7,7 @@ import {
   revokeOwnApiToken,
   revokeOwnSubsonicCredential,
   rotateOwnSubsonicCredential,
-} from "../api/api";
+} from "../api";
 import { ownApiTokensQuery, ownSubsonicCredentialQuery } from "../api/queries";
 import { Loading, PageHeader, useReload } from "../components/page-shell";
 import { LanguagePicker, type Locale, useI18n } from "../state/i18n";

@@ -13,7 +13,7 @@ import {
   deleteRadioStation,
   type RadioStation,
   replaceRadioStation,
-} from "../api/api";
+} from "../api";
 import { radioStationsQuery } from "../api/queries";
 import { Icon } from "../components/icons";
 import {

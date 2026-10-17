@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 
-import { canvasUrl } from "../api/api";
+import { canvasUrl } from "../api";
 import type { TranslationKey } from "../state/i18n";
 
 /**
