@@ -10,15 +10,13 @@ on:
       - "migrations-v2/**"
       - "tests/**"
       - ".github/workflows/**"
+  # Every pull request, with no path filter. The ruleset on `main` requires a
+  # CodeQL result, and a filtered run never comes for a branch that touches
+  # only `webapp/` or `docs/`: such a PR finished green and still BLOCKED,
+  # waiting for an analysis nothing would start. On those the analysis finds
+  # nothing new, which is the answer the requirement is waiting for.
   pull_request:
     branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "src/**"
-      - "migrations-v2/**"
-      - "tests/**"
-      - ".github/workflows/**"
   schedule:
     - cron: "34 7 * * 4"
 
