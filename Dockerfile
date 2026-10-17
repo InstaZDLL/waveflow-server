@@ -8,9 +8,10 @@ RUN bun run build
 
 FROM rust:1.98-bookworm AS builder
 WORKDIR /build
-# cmake builds the libopus that waveflow-core bundles (`opusic-sys`); the
-# rust image ships a C compiler but not cmake.
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates cmake && rm -rf /var/lib/apt/lists/*
+# No cmake: waveflow-core's libopus decoder sits behind its `opus` feature,
+# which `default-features = false` leaves off. The server decodes through
+# FFmpeg (#282).
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY . .
 # After COPY . ., so the built assets win over any stale local dist/.
 COPY --from=web /web/dist ./webapp/dist
