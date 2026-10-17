@@ -131,7 +131,10 @@ export function SongTable({
             const starred = stars[song.id] ?? song.starred_at !== null;
             const active = player.current?.id === song.id;
             return (
-              <tr key={song.id} className={active ? "active" : undefined}>
+              <tr
+                key={`${position}-${song.id}`}
+                className={active ? "active" : undefined}
+              >
                 <td className="index">
                   {numbering === "track"
                     ? (song.track ?? position + 1)
@@ -160,7 +163,7 @@ export function SongTable({
                   <div>
                     <StarRating
                       label={`${t("rating.label")}: ${song.title}`}
-                      name={`rating-${song.id}`}
+                      name={`rating-${position}-${song.id}`}
                       value={ratings[song.id] ?? song.user_rating ?? 0}
                       onRate={(rating) => void rate(song, rating)}
                     />
