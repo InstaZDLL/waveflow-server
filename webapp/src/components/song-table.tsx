@@ -123,6 +123,15 @@ export function SongTable({
     }
   }
 
+  // A playlist can hold the same track twice, so the track id alone does not
+  // name a row: each copy is told apart by how many came before it.
+  const seen = new Map<string, number>();
+  const rowIds = songs.map((song) => {
+    const copy = seen.get(song.id) ?? 0;
+    seen.set(song.id, copy + 1);
+    return `${song.id}#${copy}`;
+  });
+
   return (
     <div className="songs-scroll">
       <table className="songs">
@@ -132,7 +141,7 @@ export function SongTable({
             const active = player.current?.id === song.id;
             return (
               <tr
-                key={`${position}-${song.id}`}
+                key={rowIds[position]}
                 className={active ? "active" : undefined}
               >
                 <td className="index">
@@ -163,7 +172,7 @@ export function SongTable({
                   <div>
                     <StarRating
                       label={`${t("rating.label")}: ${song.title}`}
-                      name={`rating-${position}-${song.id}`}
+                      name={`rating-${rowIds[position]}`}
                       value={ratings[song.id] ?? song.user_rating ?? 0}
                       onRate={(rating) => void rate(song, rating)}
                     />
