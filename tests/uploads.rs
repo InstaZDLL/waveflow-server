@@ -1465,8 +1465,18 @@ async fn abandoned_transfers_are_swept_without_a_negotiation() {
 
     // No negotiation, no request of any kind: only the scheduled sweep.
     state.services.spawn_upload_sweeper();
+    // The sweep removes the file first and the row second, so waiting on the
+    // file alone and then counting the row once reads the gap between the
+    // two: a slow runner failed here with the row still present (#280).
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_session WHERE id=?")
+            .bind(&session)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap()
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while staging.exists() && std::time::Instant::now() < deadline {
+    while (staging.exists() || rows().await > 0) && std::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 
@@ -1474,12 +1484,7 @@ async fn abandoned_transfers_are_swept_without_a_negotiation() {
         !staging.exists(),
         "an abandoned transfer must not hold the disk until someone happens to upload again"
     );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_session WHERE id=?")
-        .bind(&session)
-        .fetch_one(state.db.pool())
-        .await
-        .unwrap();
-    assert_eq!(rows, 0);
+    assert_eq!(rows().await, 0);
 }
 
 /// A staging file that cannot be removed keeps its session.
