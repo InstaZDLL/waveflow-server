@@ -1507,6 +1507,42 @@ test("saves a playlist as an .m3u8 the next player can read", async ({
 });
 
 /**
+ * A playlist holds a position, not a set: the same track can be on it twice.
+ * Each row's rating is a radio group named after the row, and a name built
+ * from the track alone put both copies in one group — the browser keeps one
+ * checked radio per group, so the first copy showed no rating at all.
+ */
+test("shows the same track twice in a playlist, each with its rating", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/playlists", (route) =>
+    route.fulfill({
+      json: [
+        {
+          ...playlists[0],
+          songs: [
+            song(1, "Hidden Place", 5, true),
+            song(2, "Cocoon", 0, false),
+            song(1, "Hidden Place", 5, true),
+          ],
+        },
+      ],
+    }),
+  );
+  await page.goto("/playlists");
+  await expect(page.getByRole("heading", { name: "Evening" })).toBeVisible();
+
+  const copies = page.getByRole("group", { name: "Rating: Hidden Place" });
+  await expect(copies).toHaveCount(2);
+  await expect(
+    copies.first().getByRole("radio", { name: "5 stars" }),
+  ).toBeChecked();
+  await expect(
+    copies.last().getByRole("radio", { name: "5 stars" }),
+  ).toBeChecked();
+});
+
+/**
  * An artist page carries what this account played, and nothing when it played
  * nothing.
  *
