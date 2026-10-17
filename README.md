@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/static/v1?label=version&message=2.0.0-beta.1&color=emerald&style=flat-square" alt="Version" />
-  <img src="https://img.shields.io/badge/rust-1.94%2B-orange?style=flat-square&logo=rust" alt="Rust 1.94+" />
+  <img src="https://img.shields.io/badge/rust-1.98%2B-orange?style=flat-square&logo=rust" alt="Rust 1.98+" />
   <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
   <img src="https://img.shields.io/badge/API-OpenSubsonic-6a4bd6?style=flat-square" alt="OpenSubsonic" />
   <img src="https://img.shields.io/badge/docker-ghcr.io-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR" />
@@ -57,7 +57,7 @@ Open `http://your-host:4533` and sign in. The scan starts on its own.
 
 ### From source
 
-Requires **Rust 1.94+** as well.
+Requires **Rust 1.98+** as well.
 
 ```bash
 bun --cwd=webapp install

@@ -40,10 +40,34 @@ use waveflow_server::Config;
 /// `git ls-tree --name-only <tag> migrations-v2/`, not read off the changelog,
 /// because the changelog records what was written and the tree records what
 /// shipped.
+///
+/// Remembering was the whole mechanism, so
+/// `the_version_being_shipped_has_its_schema_recorded` now holds it: the PR
+/// that bumps `version` in `Cargo.toml` for a release fails until it adds that
+/// tag here, with the newest migration of that moment as its baseline.
 const RELEASED_SCHEMAS: [(&str, i64); 2] = [
     ("v2.0.0-beta.0", 20_260_823_020_000),
     ("v2.0.0-beta.1", 20_260_914_030_000),
 ];
+
+/// The crate's version is the tag it ships as, so it must name a line above.
+///
+/// A release is cut by a PR that bumps `version` and is then tagged, and the
+/// version stays put until the next one. So this holds between releases, and
+/// fails exactly on the bump that forgot the schema — before the tag exists,
+/// which is the only moment the baseline is still the newest migration and
+/// needs no archaeology to find.
+#[test]
+fn the_version_being_shipped_has_its_schema_recorded() {
+    let tag = concat!("v", env!("CARGO_PKG_VERSION"));
+    assert!(
+        RELEASED_SCHEMAS
+            .iter()
+            .any(|(released, _)| *released == tag),
+        "Cargo.toml is at {tag}, and RELEASED_SCHEMAS has no line for it: add \
+         (\"{tag}\", <version of the newest file under migrations-v2/>)"
+    );
+}
 
 /// The identifiers the fixture below writes and the assertions read back.
 ///

@@ -1316,9 +1316,19 @@ impl IntoResponse for MediaError {
     }
 }
 
+/// How long `ffmpeg -version` and `ffprobe -version` get at start-up.
+///
+/// The check refuses to boot on a binary that is missing or hangs; it is not
+/// timing a healthy one. Five seconds was overrun on the Windows CI runner,
+/// where a parallel test run starts several cold FFmpeg processes at once
+/// (#281). Thirty still catches a hung binary, and a healthy boot answers long
+/// before it, so the only thing the larger budget changes is how long a broken
+/// installation takes to say so.
+const TOOL_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 async fn check_tool(path: &Path, name: &str) -> anyhow::Result<()> {
     let output = tokio::time::timeout(
-        Duration::from_secs(5),
+        TOOL_CHECK_TIMEOUT,
         Command::new(path)
             .arg("-version")
             .stdin(Stdio::null())

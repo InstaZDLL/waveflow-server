@@ -6,7 +6,7 @@ RUN bun install --frozen-lockfile
 COPY webapp/ ./
 RUN bun run build
 
-FROM rust:1.94-bookworm AS builder
+FROM rust:1.98-bookworm AS builder
 WORKDIR /build
 # cmake builds the libopus that waveflow-core bundles (`opusic-sys`); the
 # rust image ships a C compiler but not cmake.
