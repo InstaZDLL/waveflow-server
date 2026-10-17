@@ -17,36 +17,34 @@ import {
   ensureSession,
   forgetOnSessionChange,
   logout,
-} from "./api/api";
+} from "./api";
 import { createQueryClient } from "./api/query-client";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
 import { dismissSplash } from "./lib/splash";
-import {
-  AdminPage,
-  AlbumPage,
-  AlbumsPage,
-  ArtistPage,
-  ArtistsPage,
-  AuthorizePage,
-  FavoritesPage,
-  GenrePage,
-  GenresPage,
-  HistoryPage,
-  LoginPage,
-  NotFoundPage,
-  PlaylistsPage,
-  QueuePage,
-  RandomPage,
-  SearchPage,
-  SharesPage,
-  SongsPage,
-} from "./pages/pages";
+import { AdminPage } from "./pages/admin-page";
+import { AlbumPage } from "./pages/album-page";
+import { AlbumsPage } from "./pages/albums-page";
+import { ArtistPage } from "./pages/artist-page";
+import { ArtistsPage } from "./pages/artists-page";
+import { AuthorizePage } from "./pages/authorize-page";
+import { FavoritesPage } from "./pages/favorites-page";
+import { GenrePage } from "./pages/genre-page";
+import { GenresPage } from "./pages/genres-page";
+import { HistoryPage } from "./pages/history-page";
+import { LoginPage } from "./pages/login-page";
+import { NotFoundPage } from "./pages/not-found-page";
 import { PlayingPage } from "./pages/playing-page";
+import { PlaylistsPage } from "./pages/playlists-page";
+import { QueuePage } from "./pages/queue-page";
 import { RadioPage } from "./pages/radio-page";
+import { RandomPage } from "./pages/random-page";
 import { ScrobblingPage } from "./pages/scrobbling-page";
+import { SearchPage } from "./pages/search-page";
 import { SettingsPage } from "./pages/settings-page";
+import { SharesPage } from "./pages/shares-page";
+import { SongsPage } from "./pages/songs-page";
 import { UploadPage } from "./pages/upload-page";
 import { PlayerBar, PlayerProvider } from "./player/player";
 import { I18nProvider, type TranslationKey, useI18n } from "./state/i18n";

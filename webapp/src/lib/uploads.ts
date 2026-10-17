@@ -1,7 +1,7 @@
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import type { UploadSessionState } from "../api/api";
+import type { UploadSessionState } from "../api";
 
 /**
  * The extensions the server's scanner indexes — `AUDIO_EXTENSIONS` in

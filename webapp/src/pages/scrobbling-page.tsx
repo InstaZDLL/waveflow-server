@@ -12,7 +12,7 @@ import {
   type ScrobbleUnavailable,
   type UncertainScrobble,
   unlinkScrobble,
-} from "../api/api";
+} from "../api";
 import { scrobbleRowsQuery, uncertainScrobblesQuery } from "../api/queries";
 import { Loading, PageHeader } from "../components/page-shell";
 import { returnedFrom, type ScrobbleRow } from "../lib/scrobbling";

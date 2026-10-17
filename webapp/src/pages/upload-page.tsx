@@ -8,7 +8,7 @@ import {
   putUploadChunk,
   type UploadDecision,
   type UploadSessionState,
-} from "../api/api";
+} from "../api";
 import { PageHeader } from "../components/page-shell";
 import type { HashRequest, HashResponse } from "../lib/hash-worker";
 import {

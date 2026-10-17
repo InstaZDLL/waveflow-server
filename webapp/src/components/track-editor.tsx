@@ -7,7 +7,7 @@ import {
   correctTrack,
   type SongCredits,
   type TrackOverrides,
-} from "../api/api";
+} from "../api";
 import { trackEditQuery } from "../api/queries";
 import {
   buildCorrectionPatch,

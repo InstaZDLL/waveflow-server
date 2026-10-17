@@ -23,7 +23,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 async function freshApi() {
   vi.resetModules();
-  return import("./api");
+  return import("./index");
 }
 
 let fetchStub: FetchStub;

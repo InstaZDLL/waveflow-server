@@ -9,7 +9,7 @@ import {
   type Song,
   type StructuredLyrics,
   setBookmark,
-} from "../api/api";
+} from "../api";
 import { bookmarksQuery, lyricsQuery } from "../api/queries";
 import { Artwork } from "../components/artwork";
 import { CanvasStage, usePrefersReducedMotion } from "../components/canvas";

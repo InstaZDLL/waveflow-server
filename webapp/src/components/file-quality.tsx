@@ -1,4 +1,4 @@
-import type { Song } from "../api/api";
+import type { Song } from "../api";
 import { type Locale, type TranslationKey, useI18n } from "../state/i18n";
 
 /**

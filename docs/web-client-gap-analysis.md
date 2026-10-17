@@ -3,7 +3,7 @@
 > Survey of 2026-09-06, taken read-only against `main` at `84d0f8b`.
 > The figures come from the code: the paths declared by `#[utoipa::path]` under
 > `src/api/` and `src/media.rs` on one side, the calls in
-> `webapp/src/api/api.ts` on the other. Navidrome is described from its own
+> `webapp/src/api/` on the other. Navidrome is described from its own
 > documentation ([navidrome.org/docs/overview](https://www.navidrome.org/docs/overview/)),
 > not from memory.
 >
