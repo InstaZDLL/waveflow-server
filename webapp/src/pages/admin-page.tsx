@@ -516,7 +516,11 @@ export function AdminPage() {
 
   return (
     <section className="admin-page">
-      <PageHeader title={t("admin.title")} detail={t("admin.detail")} />
+      <PageHeader
+        kicker={t("nav.group.account")}
+        title={t("admin.title")}
+        detail={t("admin.detail")}
+      />
       {notice ? <p className="notice">{notice}</p> : null}
       {adminError ? <p className="error">{adminError}</p> : null}
       {watchedScan ? (

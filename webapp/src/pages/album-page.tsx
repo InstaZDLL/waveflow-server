@@ -96,9 +96,14 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         </div>
         <SongTable songs={value.songs} numbering="track" variant="album" />
         {related?.length ? (
-          <section className="album-related" aria-labelledby="album-related-title">
+          <section
+            className="album-related"
+            aria-labelledby="album-related-title"
+          >
             <h3 id="album-related-title">
-              {t("album.moreBy", { artist: value.artist ?? t("common.variousArtists") })}
+              {t("album.moreBy", {
+                artist: value.artist ?? t("common.variousArtists"),
+              })}
             </h3>
             <div className="album-related-grid">
               {related.map((album) => (
@@ -107,10 +112,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   to="/albums/$albumId"
                   params={{ albumId: album.id }}
                 >
-                  <Artwork
-                    artworkId={album.artwork_hash}
-                    title={album.title}
-                  />
+                  <Artwork artworkId={album.artwork_hash} title={album.title} />
                   <strong>{album.title}</strong>
                   {album.year ? <span>{album.year}</span> : null}
                 </Link>

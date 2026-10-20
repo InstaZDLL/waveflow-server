@@ -354,7 +354,11 @@ export function SettingsPage() {
   const { t } = useI18n();
   return (
     <section className="settings-page">
-      <PageHeader title={t("nav.settings")} detail={t("settings.detail")} />
+      <PageHeader
+        kicker={t("nav.group.account")}
+        title={t("nav.settings")}
+        detail={t("settings.detail")}
+      />
       <div className="settings-grid">
         <article className="settings-panel">
           <h3>{t("settings.appearance")}</h3>

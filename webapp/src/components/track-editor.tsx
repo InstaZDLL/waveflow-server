@@ -149,7 +149,11 @@ function CorrectionForm({ initial }: { initial: Loaded }) {
 
   return (
     <section className="correction-page">
-      <PageHeader title={t("correction.edit")} detail={song.title}>
+      <PageHeader
+        kicker={t("nav.group.library")}
+        title={t("correction.edit")}
+        detail={song.title}
+      >
         {song.album_id ? (
           <Link to="/albums/$albumId" params={{ albumId: song.album_id }}>
             {t("correction.back", { album: song.album ?? song.title })}

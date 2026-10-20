@@ -140,7 +140,9 @@ export function SongTable({
         {variant === "album" ? (
           <thead>
             <tr>
-              <th scope="col" className="index">#</th>
+              <th scope="col" className="index">
+                #
+              </th>
               <th scope="col">{t("album.title")}</th>
               <th scope="col" className="album-duration-heading">
                 {t("album.duration")}
@@ -180,14 +182,18 @@ export function SongTable({
                     ) : null}
                     <span>
                       {song.title}
-                      <small>{variant === "album" ? song.artist : song.album}</small>
+                      <small>
+                        {variant === "album" ? song.artist : song.album}
+                      </small>
                     </span>
                   </button>
                 </td>
                 {variant === "default" ? (
                   <td className="muted">{song.artist}</td>
                 ) : null}
-                <td className="muted song-duration">{formatDuration(song.duration_ms)}</td>
+                <td className="muted song-duration">
+                  {formatDuration(song.duration_ms)}
+                </td>
                 <td className="song-marks">
                   <div>
                     <StarRating

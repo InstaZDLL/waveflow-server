@@ -79,6 +79,7 @@ export function PlaylistsPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.playlists")}
         detail={t("playlists.detail", { count: value.length })}
       />

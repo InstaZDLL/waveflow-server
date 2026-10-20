@@ -20,6 +20,7 @@ export function QueuePage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.listen")}
         title={t("nav.queue")}
         detail={t("queue.detail", { count: player.queue.length })}
       />

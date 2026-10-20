@@ -38,6 +38,7 @@ export function GenrePage({ genre }: { genre: string }) {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={genre}
         detail={t("common.tracks", { count: value.length })}
       >

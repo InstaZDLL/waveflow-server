@@ -15,6 +15,7 @@ export function RandomPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.listen")}
         title={t("nav.random")}
         detail={t("random.detail", { count: value.length })}
       >

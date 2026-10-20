@@ -31,6 +31,7 @@ export function ArtistsPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.artists")}
         detail={
           needle

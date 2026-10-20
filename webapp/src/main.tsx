@@ -47,6 +47,7 @@ import {
   uncertainScrobblesQuery,
 } from "./api/queries";
 import { createQueryClient } from "./api/query-client";
+import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
@@ -85,6 +86,30 @@ import {
 import { PreferencesProvider } from "./state/preferences";
 import "./styles/styles.css";
 import "./styles/refresh.css";
+// The Fluid Editorial faces. Declared for every theme and fetched only where a
+// rule names them, which is the dark themes alone.
+import "@fontsource-variable/dm-sans/opsz.css";
+import "@fontsource/playfair-display/400-italic.css";
+import "./styles/fluid.css";
+
+/**
+ * The rail's sections, in the order it shows them.
+ *
+ * `pinned` is the four places reached for most, drawn as tiles by the dark
+ * themes; the others carry a label. A light theme keeps its plain list, so the
+ * grouping changes its order and nothing else.
+ */
+const NAVIGATION_GROUPS = ["pinned", "library", "listen", "account"] as const;
+type NavigationGroup = (typeof NAVIGATION_GROUPS)[number];
+
+const GROUP_LABELS: Record<
+  Exclude<NavigationGroup, "pinned">,
+  TranslationKey
+> = {
+  library: "nav.group.library",
+  listen: "nav.group.listen",
+  account: "nav.group.account",
+};
 
 const navigation: Array<{
   to:
@@ -111,38 +136,89 @@ const navigation: Array<{
   /** Shown only where the active library takes files from this account. */
   upload?: boolean;
   primary?: boolean;
+  /** The rail section it is filed under. */
+  group: NavigationGroup;
 }> = [
-  { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
-  { to: "/artists", labelKey: "nav.artists", icon: "artists" },
-  { to: "/songs", labelKey: "nav.songs", icon: "songs" },
-  { to: "/genres", labelKey: "nav.genres", icon: "genres" },
-  { to: "/search", labelKey: "nav.search", icon: "search", primary: true },
-  { to: "/playing", labelKey: "nav.playing", icon: "lyrics", primary: true },
-  { to: "/random", labelKey: "nav.random", icon: "random" },
-  { to: "/history", labelKey: "nav.history", icon: "history" },
+  {
+    to: "/",
+    labelKey: "nav.albums",
+    icon: "albums",
+    primary: true,
+    group: "pinned",
+  },
+  { to: "/artists", labelKey: "nav.artists", icon: "artists", group: "pinned" },
+  { to: "/songs", labelKey: "nav.songs", icon: "songs", group: "pinned" },
+  { to: "/genres", labelKey: "nav.genres", icon: "genres", group: "library" },
+  {
+    to: "/search",
+    labelKey: "nav.search",
+    icon: "search",
+    primary: true,
+    group: "pinned",
+  },
+  {
+    to: "/playing",
+    labelKey: "nav.playing",
+    icon: "lyrics",
+    primary: true,
+    group: "listen",
+  },
+  { to: "/random", labelKey: "nav.random", icon: "random", group: "listen" },
+  {
+    to: "/history",
+    labelKey: "nav.history",
+    icon: "history",
+    group: "library",
+  },
   {
     to: "/favourites",
     labelKey: "nav.favourites",
     icon: "heart",
     primary: true,
+    group: "library",
   },
   {
     to: "/playlists",
     labelKey: "nav.playlists",
     icon: "playlists",
     primary: true,
+    group: "library",
   },
-  { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
-  { to: "/shares", labelKey: "nav.shares", icon: "shares" },
-  { to: "/radio", labelKey: "nav.radio", icon: "radio" },
-  { to: "/settings", labelKey: "nav.settings", icon: "admin" },
+  {
+    to: "/queue",
+    labelKey: "nav.queue",
+    icon: "queue",
+    primary: true,
+    group: "listen",
+  },
+  { to: "/shares", labelKey: "nav.shares", icon: "shares", group: "account" },
+  { to: "/radio", labelKey: "nav.radio", icon: "radio", group: "listen" },
+  {
+    to: "/settings",
+    labelKey: "nav.settings",
+    icon: "admin",
+    group: "account",
+  },
   {
     to: "/settings/scrobbling",
     labelKey: "nav.scrobbling",
     icon: "scrobbling",
+    group: "account",
   },
-  { to: "/upload", labelKey: "nav.upload", icon: "upload", upload: true },
-  { to: "/admin", labelKey: "nav.admin", icon: "admin", admin: true },
+  {
+    to: "/upload",
+    labelKey: "nav.upload",
+    icon: "upload",
+    upload: true,
+    group: "account",
+  },
+  {
+    to: "/admin",
+    labelKey: "nav.admin",
+    icon: "admin",
+    admin: true,
+    group: "account",
+  },
 ];
 
 type NavigationTarget = (typeof navigation)[number]["to"];
@@ -293,26 +369,39 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
     })();
   }
 
+  const entry = (item: (typeof navigation)[number]) => (
+    <Link
+      key={item.to}
+      to={item.to}
+      onClick={(event) => openTab(event, item.to)}
+      aria-busy={pendingTab === item.to}
+      aria-label={mobile ? t(item.labelKey) : undefined}
+      activeOptions={{
+        exact: item.to === "/" || item.to === "/settings",
+      }}
+    >
+      <Icon name={item.icon} />
+      <span>{t(item.labelKey)}</span>
+    </Link>
+  );
+
   return (
     <>
       <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
-        {visible
-          .filter((item) => !mobile || item.primary)
-          .map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              onClick={(event) => openTab(event, item.to)}
-              aria-busy={pendingTab === item.to}
-              aria-label={mobile ? t(item.labelKey) : undefined}
-              activeOptions={{
-                exact: item.to === "/" || item.to === "/settings",
-              }}
-            >
-              <Icon name={item.icon} />
-              <span>{t(item.labelKey)}</span>
-            </Link>
-          ))}
+        {mobile
+          ? visible.filter((item) => item.primary).map(entry)
+          : NAVIGATION_GROUPS.map((group) => {
+              const entries = visible.filter((item) => item.group === group);
+              if (entries.length === 0) return null;
+              return (
+                <div className="nav-group" data-group={group} key={group}>
+                  {group === "pinned" ? null : (
+                    <span className="nav-label">{t(GROUP_LABELS[group])}</span>
+                  )}
+                  {entries.map(entry)}
+                </div>
+              );
+            })}
         {overflow.length > 0 ? (
           <button
             type="button"
@@ -489,6 +578,7 @@ function Shell() {
   return (
     <LibraryScopeProvider>
       <PlayerProvider>
+        <CoverLight />
         <a className="skip-link" href="#main-content">
           {t("nav.skip")}
         </a>

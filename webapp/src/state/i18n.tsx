@@ -374,6 +374,9 @@ const en = {
   "nav.random": "Random",
   "nav.playing": "Now playing",
   "nav.upload": "Upload",
+  "nav.group.library": "Library",
+  "nav.group.listen": "Listening",
+  "nav.group.account": "Account",
   "upload.title": "Upload to {library}",
   "upload.detail":
     "Each file is fingerprinted in your browser first, so a file the library already holds is never sent again, and an interrupted transfer picks up where it stopped.",
@@ -931,6 +934,9 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.random": "Aléatoire",
   "nav.playing": "En écoute",
   "nav.upload": "Téléverser",
+  "nav.group.library": "Bibliothèque",
+  "nav.group.listen": "Écoute",
+  "nav.group.account": "Compte",
   "upload.title": "Téléverser dans {library}",
   "upload.detail":
     "Chaque fichier est d’abord identifié dans votre navigateur : un fichier que la bibliothèque possède déjà n’est jamais renvoyé, et un transfert interrompu reprend là où il s’était arrêté.",

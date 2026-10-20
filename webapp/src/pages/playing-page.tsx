@@ -497,6 +497,7 @@ export function PlayingPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.listen")}
         title={t("nav.playing")}
         detail={current ? undefined : t("playing.idle")}
       >

@@ -2071,6 +2071,14 @@ button.danger {
   object-fit: cover;
 }
 
+/* An image has its own size to start from; the stand-in for a missing cover
+   has none, because its letter is positioned out of flow. With `width: auto`
+   in a centred column it shrank to its border — two pixels — and a borderless
+   theme took even those away. */
+.immersive-cover.cover-fallback {
+  width: min(78vw, 60vh);
+}
+
 .immersive-detail {
   display: grid;
   justify-items: center;

@@ -92,7 +92,9 @@ export function SongsPage() {
   if (!data) {
     return (
       <section>
-        <PageHeader title={t("nav.songs")}>{controls}</PageHeader>
+        <PageHeader kicker={t("nav.group.library")} title={t("nav.songs")}>
+          {controls}
+        </PageHeader>
         <Loading error={error} />
       </section>
     );
@@ -104,6 +106,7 @@ export function SongsPage() {
           the route sends no total, and inventing one would mean a second
           `COUNT(*)` over the same filter on every request. */}
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.songs")}
         detail={
           hasNextPage
