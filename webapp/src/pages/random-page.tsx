@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { randomSongsQuery } from "../api/queries";
+import { Icon } from "../components/icons";
 import { EmptyState, Loading, PageHeader } from "../components/page-shell";
 import { PlaySetActions } from "../components/play-set-actions";
 import { SongTable } from "../components/song-table";
@@ -23,7 +24,12 @@ export function RandomPage() {
               so it refetches rather than changing a key. The query holds
               nothing between visits — a shuffle that came back identical
               would be the cache working and the page failing. */}
-          <button type="button" onClick={() => void refetch()}>
+          <button
+            className="action-secondary"
+            type="button"
+            onClick={() => void refetch()}
+          >
+            <Icon name="random" size={17} />
             {t("random.again")}
           </button>
         </div>

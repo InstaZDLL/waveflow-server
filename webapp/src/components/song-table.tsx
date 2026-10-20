@@ -60,9 +60,11 @@ function StarRating({
 export function SongTable({
   songs,
   numbering = "position",
+  variant = "default",
 }: {
   songs: Song[];
   numbering?: "track" | "position";
+  variant?: "default" | "album";
 }) {
   const player = usePlayer();
   const { t } = useI18n();
@@ -134,7 +136,21 @@ export function SongTable({
 
   return (
     <div className="songs-scroll">
-      <table className="songs">
+      <table className={`songs${variant === "album" ? " album-songs" : ""}`}>
+        {variant === "album" ? (
+          <thead>
+            <tr>
+              <th scope="col" className="index">#</th>
+              <th scope="col">{t("album.title")}</th>
+              <th scope="col" className="album-duration-heading">
+                {t("album.duration")}
+              </th>
+              <th scope="col" className="album-actions-heading">
+                {t("album.trackActions")}
+              </th>
+            </tr>
+          </thead>
+        ) : null}
         <tbody>
           {songs.map((song, position) => {
             const starred = stars[song.id] ?? song.starred_at !== null;
@@ -155,19 +171,23 @@ export function SongTable({
                     className="link song-title"
                     onClick={() => player.play(songs, position)}
                   >
-                    <Artwork
-                      artworkId={song.artwork_hash}
-                      title={song.title}
-                      className="song-cover"
-                    />
+                    {variant === "default" ? (
+                      <Artwork
+                        artworkId={song.artwork_hash}
+                        title={song.title}
+                        className="song-cover"
+                      />
+                    ) : null}
                     <span>
                       {song.title}
-                      <small>{song.album}</small>
+                      <small>{variant === "album" ? song.artist : song.album}</small>
                     </span>
                   </button>
                 </td>
-                <td className="muted">{song.artist}</td>
-                <td className="muted">{formatDuration(song.duration_ms)}</td>
+                {variant === "default" ? (
+                  <td className="muted">{song.artist}</td>
+                ) : null}
+                <td className="muted song-duration">{formatDuration(song.duration_ms)}</td>
                 <td className="song-marks">
                   <div>
                     <StarRating

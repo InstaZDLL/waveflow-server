@@ -353,7 +353,7 @@ function SubsonicPassword() {
 export function SettingsPage() {
   const { t } = useI18n();
   return (
-    <section>
+    <section className="settings-page">
       <PageHeader title={t("nav.settings")} detail={t("settings.detail")} />
       <div className="settings-grid">
         <article className="settings-panel">

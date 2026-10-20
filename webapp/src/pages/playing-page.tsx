@@ -554,32 +554,45 @@ export function PlayingPage() {
       )}
 
       {bookmarks?.length ? (
-        <article className="collection">
-          <header className="collection-header">
+        <article className="playing-bookmarks">
+          <header className="playing-bookmarks-header">
             <div>
-              <h3>{t("bookmarks.title")}</h3>
-              <span className="muted">{t("bookmarks.detail")}</span>
+              <h3 className="playing-bookmarks-title">
+                {t("bookmarks.title")}
+              </h3>
+              <p className="playing-bookmarks-detail muted">
+                {t("bookmarks.detail")}
+              </p>
             </div>
           </header>
-          <ul className="list bookmark-list">
+          <ul className="bookmark-list">
             {bookmarks.map((bookmark) => (
               <li key={bookmark.song.id}>
                 <button
                   type="button"
-                  className="link"
+                  className="bookmark-track"
                   onClick={() => player.play([bookmark.song], 0)}
                 >
-                  <strong>{bookmark.song.title}</strong>
-                  <small className="muted">
-                    {bookmark.song.artist ?? t("common.unknownArtist")}
-                  </small>
+                  <Artwork
+                    artworkId={bookmark.song.artwork_hash}
+                    title={bookmark.song.title}
+                    className="bookmark-cover"
+                  />
+                  <span className="bookmark-copy">
+                    <strong className="bookmark-title">
+                      {bookmark.song.title}
+                    </strong>
+                    <small className="bookmark-artist muted">
+                      {bookmark.song.artist ?? t("common.unknownArtist")}
+                    </small>
+                  </span>
                 </button>
-                <span className="muted">
+                <span className="bookmark-position muted">
                   {formatDuration(bookmark.position_ms)}
                 </span>
                 <button
                   type="button"
-                  className="danger"
+                  className="bookmark-forget"
                   onClick={() => void forget(bookmark.song.id)}
                   aria-label={`${t("bookmarks.forget")}: ${bookmark.song.title}`}
                 >

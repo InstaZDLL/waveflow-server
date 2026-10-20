@@ -119,7 +119,12 @@ let bookmarks: Array<{
   comment: string | null;
   created_at: number;
   updated_at: number;
-  song: { id: string; title: string; artist: string | null };
+  song: {
+    id: string;
+    title: string;
+    artist: string | null;
+    artwork_hash?: string | null;
+  };
 }> = [];
 /** Every registration the clients route received. */
 let clientWrites: string[] = [];
@@ -1166,6 +1171,136 @@ test("renders the studio shell and persists appearance preferences", async ({
   }
 });
 
+test("keeps navigation and player controls within their own space", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(page.locator(".player")).toBeVisible();
+
+  if (testInfo.project.name === "mobile") {
+    await expect(page.locator(".sidebar")).toBeHidden();
+    const bounds = await page.evaluate(() => {
+      const track = document.querySelector(".player-track")?.getBoundingClientRect();
+      const progress = document.querySelector(".player-progress")?.getBoundingClientRect();
+      const player = document.querySelector(".player")?.getBoundingClientRect();
+      const navigation = document.querySelector(".mobile-navigation")?.getBoundingClientRect();
+      return {
+        trackBottom: track?.bottom ?? 0,
+        progressTop: progress?.top ?? 0,
+        playerBottom: player?.bottom ?? 0,
+        navigationTop: navigation?.top ?? 0,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    expect(bounds.progressTop).toBeGreaterThanOrEqual(bounds.trackBottom);
+    expect(bounds.navigationTop).toBeGreaterThanOrEqual(bounds.playerBottom);
+    expect(bounds.overflow).toBeLessThanOrEqual(1);
+    await page.setViewportSize({ width: 320, height: 700 });
+    const narrow = await page.evaluate(() => ({
+      trackBottom: document.querySelector(".player-track")?.getBoundingClientRect().bottom ?? 0,
+      progressTop: document.querySelector(".player-progress")?.getBoundingClientRect().top ?? 0,
+      playerBottom: document.querySelector(".player")?.getBoundingClientRect().bottom ?? 0,
+      navigationTop: document.querySelector(".mobile-navigation")?.getBoundingClientRect().top ?? 0,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    }));
+    expect(narrow.progressTop).toBeGreaterThanOrEqual(narrow.trackBottom);
+    expect(narrow.navigationTop).toBeGreaterThanOrEqual(narrow.playerBottom);
+    expect(narrow.overflow).toBeLessThanOrEqual(1);
+  } else {
+    const bounds = await page.evaluate(() => {
+      const sidebar = document.querySelector(".sidebar")?.getBoundingClientRect();
+      const footer = document.querySelector(".sidebar-footer")?.getBoundingClientRect();
+      const navigation = document.querySelector(".primary-navigation")?.getBoundingClientRect();
+      return {
+        sidebarBottom: sidebar?.bottom ?? 0,
+        footerBottom: footer?.bottom ?? 0,
+        navigationBottom: navigation?.bottom ?? 0,
+      };
+    });
+    expect(bounds.footerBottom).toBeLessThanOrEqual(bounds.sidebarBottom);
+    expect(bounds.navigationBottom).toBeLessThanOrEqual(bounds.footerBottom);
+    await expect(page.locator(".sidebar-footer").getByRole("button", { name: "Sign out" })).toBeVisible();
+    await page.setViewportSize({ width: 821, height: 650 });
+    const compact = await page.evaluate(() => ({
+      sidebarBottom: document.querySelector(".sidebar")?.getBoundingClientRect().bottom ?? 0,
+      footerBottom: document.querySelector(".sidebar-footer")?.getBoundingClientRect().bottom ?? 0,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    }));
+    expect(compact.footerBottom).toBeLessThanOrEqual(compact.sidebarBottom);
+    expect(compact.overflow).toBeLessThanOrEqual(1);
+  }
+});
+
+test("shows one current navigation item and separates administration panels", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "sidebar layout is desktop-only");
+  await page.goto("/settings/scrobbling");
+  const current = page.locator(".primary-navigation a[data-status='active']");
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveText("Scrobbling");
+
+  const settings = page.locator(".primary-navigation").getByRole("link", {
+    name: "Settings",
+  });
+  await settings.hover();
+  const activeBackground = await current.evaluate((node) =>
+    getComputedStyle(node).backgroundColor,
+  );
+  const hoverBackground = await settings.evaluate((node) =>
+    getComputedStyle(node).backgroundColor,
+  );
+  expect(hoverBackground).not.toBe(activeBackground);
+
+  await page.goto("/admin");
+  await expect(page.locator(".admin-page > .stack .user-row")).toBeVisible();
+  await expect(page.locator(".now-playing-panel")).toBeVisible();
+  const gap = await page.evaluate(() => {
+    const accounts = document.querySelector(".admin-page > .stack");
+    const playing = document.querySelector(".now-playing-panel");
+    return (
+      (playing?.getBoundingClientRect().top ?? 0) -
+      (accounts?.getBoundingClientRect().bottom ?? 0)
+    );
+  });
+  expect(gap).toBeGreaterThanOrEqual(24);
+});
+
+test("puts the songs playback action beside the sort and names its scope", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({
+      json: [track, { ...track, id: "song-2", title: "Second track" }],
+    }),
+  );
+  await page.goto("/songs");
+  const play = page.locator(".page-header").getByRole("button", {
+    name: "Play all 2 tracks",
+  });
+  await expect(play).toBeVisible();
+  await play.click();
+  await expect(page.locator(".player-track strong")).toHaveText("Army of Me");
+});
+
+test("gives random playback one clear primary action", async ({ page }) => {
+  await page.route("**/api/v2/songs/random?*", (route) =>
+    route.fulfill({ json: [track] }),
+  );
+  await page.goto("/random");
+  const controls = page.locator(".page-header");
+  const play = controls.getByRole("button", { name: "Play", exact: true });
+  const queue = controls.getByRole("button", { name: "Add queue" });
+  const redraw = controls.getByRole("button", { name: "Draw again" });
+  await expect(play).toBeVisible();
+  await expect(queue).toBeVisible();
+  await expect(redraw).toBeVisible();
+  const playFill = await play.evaluate((node) => getComputedStyle(node).backgroundColor);
+  const queueFill = await queue.evaluate((node) => getComputedStyle(node).backgroundColor);
+  expect(playFill).not.toBe(queueFill);
+});
+
 test("offers a keyboard skip link and a localized not-found route", async ({
   page,
 }) => {
@@ -1187,6 +1322,19 @@ test("offers a keyboard skip link and a localized not-found route", async ({
 test("has no automated WCAG A or AA violations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test("keeps the light appearance readable", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("waveflow.theme", "default");
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
@@ -1336,6 +1484,43 @@ test("keeps each card's actions guarded while its own fetch is out", async ({
 
   releaseSlow();
   await expect(slowPlay).toBeEnabled();
+});
+
+test("album view plays its tracks and keeps its compact list readable", async ({
+  page,
+}) => {
+  await page.goto("/albums/album-2");
+  await expect(page.locator(".album-hero h2")).toHaveText("Vespertine");
+  await expect(page.locator(".album-meta")).toContainText("3 tracks");
+  await expect(page.locator(".album-meta")).toContainText("15:00");
+  await expect(page.locator(".album-songs tbody tr")).toHaveCount(3);
+  await expect(page.locator(".album-songs .song-cover")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "More by Björk" })).toBeVisible();
+  await expect(page.locator(".album-related-grid a")).toHaveCount(1);
+  const actions = await page.locator(".album-actions button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const style = getComputedStyle(button);
+      return {
+        left: Number.parseFloat(style.paddingLeft),
+        right: Number.parseFloat(style.paddingRight),
+      };
+    }),
+  );
+  expect(actions).toHaveLength(2);
+  for (const action of actions) {
+    expect(action.left).toBeGreaterThanOrEqual(20);
+    expect(action.right).toBeGreaterThanOrEqual(20);
+  }
+
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await page.locator(".album-songs .song-title").nth(1).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
+  expect(
+    await page.evaluate(() =>
+      document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
 });
 
 /**
@@ -1772,6 +1957,81 @@ test("carries shuffle and the three repeat states in the player bar", async ({
   await expect(
     page.getByRole("link", { name: "Open the album: Vespertine" }),
   ).toHaveAttribute("href", "/albums/album-2");
+});
+
+test("shows queue artwork beside tracks without crowding times or actions", async ({
+  page,
+}) => {
+  const songs = [
+    { ...track, artwork_hash: "queue-cover-1" },
+    {
+      ...track,
+      id: "song-2",
+      title: "A much longer title in the listening queue",
+      duration_ms: 92_000,
+      artwork_hash: "queue-cover-2",
+    },
+    {
+      ...track,
+      id: "song-3",
+      title: "Rising",
+      duration_ms: 236_000,
+      artwork_hash: "queue-cover-3",
+    },
+  ];
+  await page.route("**/api/v2/queue", async (route) => {
+    await route.fulfill({
+      json: {
+        current: "song-1",
+        position_ms: 0,
+        changed_by: null,
+        updated_at: 1,
+        songs,
+      },
+    });
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+
+  await page.goto("/queue");
+  const rows = page.locator(".queue-list li");
+  await expect(rows).toHaveCount(3);
+  await rows.last().scrollIntoViewIfNeeded();
+  const covers = page.locator(".queue-list img.queue-cover");
+  await expect(covers).toHaveCount(3);
+  await expect
+    .poll(() =>
+      covers.evaluateAll((images) =>
+        images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+      ),
+    )
+    .toBe(true);
+  const timeEdges = await page.locator(".queue-duration").evaluateAll((times) =>
+    times.map((time) => Math.round(time.getBoundingClientRect().right)),
+  );
+  expect(new Set(timeEdges).size).toBe(1);
+
+  await page.setViewportSize({ width: 320, height: 700 });
+  const narrow = await rows.first().evaluate((row) => {
+    const [song, time, remove] = [...row.children].map((child) =>
+      child.getBoundingClientRect(),
+    );
+    return {
+      songRight: song?.right ?? 0,
+      timeLeft: time?.left ?? 0,
+      timeRight: time?.right ?? 0,
+      removeLeft: remove?.left ?? 0,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  expect(narrow.songRight).toBeLessThanOrEqual(narrow.timeLeft);
+  expect(narrow.timeRight).toBeLessThanOrEqual(narrow.removeLeft);
+  expect(narrow.overflow).toBeLessThanOrEqual(1);
 });
 
 /**
@@ -2340,6 +2600,71 @@ test("offers removal but no new canvas where the library takes none", async ({
  * name. It steps aside when motion is reduced, and when the browser cannot play
  * it — the cover shows then, never an empty frame.
  */
+/** Saved positions use their song artwork and a shared time column. */
+test("shows saved tracks with artwork and one aligned time column", async ({
+  page,
+}) => {
+  bookmarks = ["Soleil Bleu", "A much longer song title", "Rising"].map(
+    (title, index) => ({
+      position_ms: [224_000, 236_000, 92_000][index] as number,
+      comment: null,
+      created_at: 1,
+      updated_at: 1,
+      song: {
+        id: `saved-${index}`,
+        title,
+        artist: "Rue Delacour",
+        artwork_hash: `saved-cover-${index}`,
+      },
+    }),
+  );
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("**/api/v2/artwork/*", async (route) => {
+    await route.fulfill({ contentType: "image/png", body: png });
+  });
+
+  await page.goto("/playing");
+  const rows = page.locator(".bookmark-list li");
+  await expect(rows).toHaveCount(3);
+  await rows.last().scrollIntoViewIfNeeded();
+  const covers = page.locator(".bookmark-list img.bookmark-cover");
+  await expect(covers).toHaveCount(3);
+  await expect
+    .poll(() =>
+      covers.evaluateAll((images) =>
+        images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+      ),
+    )
+    .toBe(true);
+  const timeEdges = await page.locator(".bookmark-position").evaluateAll(
+    (times) => times.map((time) => Math.round(time.getBoundingClientRect().right)),
+  );
+  expect(new Set(timeEdges).size).toBe(1);
+  await expect(page.locator(".playing-bookmarks")).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await page.setViewportSize({ width: 320, height: 700 });
+  const narrow = await rows.first().evaluate((row) => {
+    const [track, time, forget] = [...row.children].map((child) =>
+      child.getBoundingClientRect(),
+    );
+    return {
+      trackRight: track?.right ?? 0,
+      timeLeft: time?.left ?? 0,
+      timeRight: time?.right ?? 0,
+      forgetLeft: forget?.left ?? 0,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  expect(narrow.trackRight).toBeLessThanOrEqual(narrow.timeLeft);
+  expect(narrow.timeRight).toBeLessThanOrEqual(narrow.forgetLeft);
+  expect(narrow.overflow).toBeLessThanOrEqual(1);
+});
+
 /**
  * The playing page, reading what the server actually sends.
  *
@@ -2804,73 +3129,53 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
 });
 
-/**
- * A page already visited comes back without passing through its skeleton.
- *
- * Every screen used to load on mount and blank itself first, so leaving a page
- * and returning drew the loading state again even when the answer took nine
- * milliseconds. Measured on a real library over a local network, that was 79ms
- * of flicker on every navigation — brief, and on every single one.
- *
- * **The delay below is what makes this test able to fail.** Every other mock in
- * this file answers instantly, and against an instant answer a cache miss and a
- * cache hit look identical: both paint within a frame and neither shows a
- * skeleton long enough to observe. A question that takes 150ms leaves a mark if
- * it is asked, and none if it is not.
- *
- * The first visit still draws it, and that is deliberate — a page holding
- * nothing has to say it is working. Losing that would trade a flicker for a
- * screen that looks broken on a slow link.
- */
-test("draws the skeleton on a first visit, and never again on a return", async ({
+/** A tab switch keeps the current screen until the destination can render. */
+test("keeps the current tab visible while the next tab loads", async ({
   page,
 }) => {
   const asked: string[] = [];
-  for (const path of ["/api/v2/genres*", "/api/v2/albums*"]) {
-    await page.route(`**${path}`, async (route) => {
-      const url = new URL(route.request().url());
-      asked.push(url.pathname);
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      await route.fulfill({
-        json: url.pathname.endsWith("genres")
-          ? [{ name: "Trip hop", song_count: 4, album_count: 1 }]
-          : albums,
-      });
+  let answerGenres: (() => void) | undefined;
+  const genresReady = new Promise<void>((resolve) => {
+    answerGenres = resolve;
+  });
+  await page.route("**/api/v2/genres*", async (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    await genresReady;
+    await route.fulfill({
+      json: [{ name: "Trip hop", song_count: 4, album_count: 1 }],
     });
-  }
+  });
+  await page.route("**/api/v2/albums*", async (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    await route.fulfill({ json: albums });
+  });
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-
-  const seen = await page.evaluate(async () => {
-    // Watched across the whole navigation rather than sampled after it: the
-    // skeleton is on screen for a matter of frames when it is on screen at all,
-    // and a check that ran once would miss it and call the flicker fixed.
-    const visit = async (label: string) => {
-      const started = performance.now();
-      let appeared = false;
-      const link = [...document.querySelectorAll("a")].find((anchor) =>
-        anchor.textContent?.includes(label),
-      ) as HTMLElement;
-      link.click();
-      return await new Promise<boolean>((resolve) => {
-        const tick = () => {
-          if (document.querySelector(".skeleton-grid")) appeared = true;
-          if (performance.now() - started > 500) return resolve(appeared);
-          requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      });
-    };
-    return {
-      first: await visit("Genres"),
-      back: await visit("Albums"),
-      again: await visit("Genres"),
-    };
-  });
-
-  expect(seen).toEqual({ first: true, back: false, again: false });
-  // And the reason: the return asked nothing. Three visits, two questions.
+  const mobile = await page.locator(".mobile-navigation").isVisible();
+  const genresLink = mobile
+    ? page.locator('.more-sheet a[href="/genres"]')
+    : page.locator(".primary-navigation").getByRole("link", { name: "Genres" });
+  async function visitGenres() {
+    if (mobile) {
+      await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+    }
+    await genresLink.click();
+  }
+  await visitGenres();
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(page.locator(".skeleton-grid")).toHaveCount(0);
+  await expect(genresLink).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  answerGenres?.();
+  await expect(page.getByRole("heading", { name: "Genres" })).toBeVisible();
+  await page.getByRole("link", { name: "Albums" }).click();
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await visitGenres();
+  await expect(page.getByRole("heading", { name: "Genres" })).toBeVisible();
+  await expect(page.locator(".skeleton-grid")).toHaveCount(0);
   expect(asked).toEqual(["/api/v2/albums", "/api/v2/genres"]);
 });
 
