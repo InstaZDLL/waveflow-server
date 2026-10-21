@@ -424,7 +424,9 @@ its hash — a shared cache keyed on the URL would hand one tenant's artwork to
 another with no credential presented. A private cache is the client's own and
 loses nothing by the restriction.
 
-Lyrics return embedded or UTF-8 `.lrc`/`.txt` sidecar content. Synchronized
+Lyrics return embedded or `.lrc`/`.txt` sidecar content. A sidecar need not be
+UTF-8: a byte-order mark names its encoding, and otherwise one such as GB18030,
+Big5, Shift_JIS or a Windows code page is recognised from the bytes. Synchronized
 line starts are milliseconds; plain lines omit `start`:
 
 ```bash

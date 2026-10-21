@@ -3649,6 +3649,7 @@ dependencies = [
  "clap",
  "dashmap",
  "dotenvy",
+ "encoding_rs",
  "futures-util",
  "hex",
  "http-body-util",

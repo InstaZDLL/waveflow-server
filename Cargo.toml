@@ -78,6 +78,7 @@ walkdir = "2"
 waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df0031bef8ba44062e03337807592b3d51102", default-features = false }
 
 [dev-dependencies]
+encoding_rs = "0.8.42"
 http-body-util = "0.1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
