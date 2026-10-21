@@ -970,7 +970,11 @@ fn read_sidecar(path: &Path) -> Option<String> {
     if bytes.len() as u64 > MAX_LYRICS_BYTES {
         return None;
     }
-    String::from_utf8(bytes).ok()
+    // Not `String::from_utf8`: lyrics written by a tool on a Chinese, Japanese
+    // or Korean Windows are in that system's code page, and a strict UTF-8
+    // read dropped them whole. The core decoder is the one the desktop reads
+    // the same files with, so both answer the same text for them.
+    Some(waveflow_core::text_encoding::decode(&bytes).into_owned())
 }
 
 fn lyrics_hash(entries: &[LyricsInput]) -> String {
@@ -1082,9 +1086,6 @@ mod tests {
         std::fs::write(&oversized, vec![b'x'; MAX_LYRICS_BYTES as usize + 1]).unwrap();
         assert!(read_sidecar(&oversized).is_none());
 
-        let invalid_utf8 = temp.path().join("invalid.lrc");
-        std::fs::write(&invalid_utf8, [0xff]).unwrap();
-        assert!(read_sidecar(&invalid_utf8).is_none());
         assert!(read_sidecar(temp.path()).is_none());
 
         let link = temp.path().join("linked.lrc");
@@ -1095,5 +1096,32 @@ mod tests {
         if linked {
             assert!(read_sidecar(&link).is_none());
         }
+    }
+
+    /// Lyrics saved by a tool on a Japanese Windows, in that system's code
+    /// page. A strict UTF-8 read dropped the file whole, so the track had no
+    /// lyrics at all.
+    #[test]
+    fn sidecar_lyrics_that_are_not_utf8_are_read_in_their_own_encoding() {
+        let temp = tempfile::tempdir().unwrap();
+        let text = "[00:01.00]今日はいい天気ですね、一緒に公園を散歩しましょう\n\
+                    [00:05.50]湖に光が映って、風が森を通り抜ける音がする";
+        let (bytes, _, unmappable) = encoding_rs::SHIFT_JIS.encode(text);
+        assert!(!unmappable, "Shift_JIS holds the sample");
+        assert!(
+            std::str::from_utf8(&bytes).is_err(),
+            "the sample is not UTF-8 by accident"
+        );
+        let japanese = temp.path().join("japanese.lrc");
+        std::fs::write(&japanese, &bytes).unwrap();
+        assert_eq!(read_sidecar(&japanese).as_deref(), Some(text));
+
+        // A byte-order mark names the encoding and is not part of the text.
+        // Kept, it sat in front of the first timestamp.
+        let marked = temp.path().join("marked.lrc");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"[00:01]marked");
+        std::fs::write(&marked, bytes).unwrap();
+        assert_eq!(read_sidecar(&marked).as_deref(), Some("[00:01]marked"));
     }
 }

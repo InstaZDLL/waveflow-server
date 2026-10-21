@@ -26,10 +26,16 @@ base64 = "0.23"
 blake3 = "1"
 bytes = "1"
 chacha20poly1305 = "0.11"
+# Both arrive with `waveflow-core`, whose `text_encoding` decodes the text
+# files users bring. Named here so an imported playlist can say which
+# encoding it was read as (`playlist_file`), which the core does not answer.
+# Same versions as the core's, so nothing new is compiled.
+chardetng = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 dotenvy = "0.15"
+encoding_rs = "0.8.42"
 futures-util = "0.3"
 hex = "0.4"
 lofty = "0.25"
@@ -75,7 +81,7 @@ utoipa-scalar = { version = "0.4", features = ["axum"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "9b50f3de288d62b0ff9f867ab7bda504b255cc5c", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df0031bef8ba44062e03337807592b3d51102", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"

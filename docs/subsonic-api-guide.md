@@ -193,8 +193,10 @@ curl -X POST https://music.example.com/rest/getLyricsBySongId.view \
   --data-urlencode "id=TRACK_UUID"
 ```
 
-WaveFlow returns embedded text and UTF-8 `.lrc`/`.txt` sidecars. LRC timestamps
-are milliseconds. The legacy `getLyrics` exact artist/title lookup is also
+WaveFlow returns embedded text and `.lrc`/`.txt` sidecars. A sidecar need not
+be UTF-8: a byte-order mark names its encoding, and otherwise one such as
+GB18030, Big5, Shift_JIS or a Windows code page is recognised from the bytes.
+LRC timestamps are milliseconds. The legacy `getLyrics` exact artist/title lookup is also
 implemented.
 
 Stream an original with a byte range:

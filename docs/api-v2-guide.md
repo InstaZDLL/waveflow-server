@@ -424,7 +424,9 @@ its hash — a shared cache keyed on the URL would hand one tenant's artwork to
 another with no credential presented. A private cache is the client's own and
 loses nothing by the restriction.
 
-Lyrics return embedded or UTF-8 `.lrc`/`.txt` sidecar content. Synchronized
+Lyrics return embedded or `.lrc`/`.txt` sidecar content. A sidecar need not be
+UTF-8: a byte-order mark names its encoding, and otherwise one such as GB18030,
+Big5, Shift_JIS or a Windows code page is recognised from the bytes. Synchronized
 line starts are milliseconds; plain lines omit `start`:
 
 ```bash
@@ -738,8 +740,14 @@ name `comment` in `clear`. Shares use the same rule for `description` and
 JSON. The encoding of a playlist file is part of the problem (`.m3u` is
 frequently not UTF-8), so the bytes have to arrive as bytes; a JSON envelope
 would have forced the caller to decode them first, which is the one decision it
-cannot make correctly. The server reads UTF-8 when the bytes are UTF-8 and
-Windows-1252 otherwise, and **says which it used** in the response.
+cannot make correctly. A byte-order mark names the encoding (UTF-8, UTF-16 LE or
+BE); otherwise the server reads UTF-8 when the bytes are UTF-8 and recognises
+the encoding from the bytes when they are not — GB18030, Big5, Shift_JIS,
+EUC-KR, Windows-1252 and the like — and **says which it used** in the response,
+as the encoding's WHATWG name in lower case (`utf-8`, `utf-16le`, `shift_jis`,
+`windows-1252`…). A GB18030 file is reported as `gbk`: the detector never
+names GB18030, and the GBK decoder is the GB18030 one, so the text is read in
+full under either name.
 
 ```bash
 # What it would do, without doing it

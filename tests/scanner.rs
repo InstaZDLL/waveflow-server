@@ -109,6 +109,77 @@ async fn scanner_indexes_moves_and_marks_tracks_unavailable() {
     assert!(!tracks[0].available);
 }
 
+/// Sidecar lyrics in GB18030, the way a tool on a Chinese Windows saves them
+/// (WaveFlow#910). The scanner read sidecars as strict UTF-8 and dropped this
+/// one whole, so the track reached every client with no lyrics.
+#[tokio::test]
+async fn sidecar_lyrics_that_are_not_utf8_reach_the_lyrics_service() {
+    let (_temp, config, state) = test_app().await;
+    // Inserted rather than created: a scan needs an owner, not a login, and
+    // hashing a literal password is what `rust/hard-coded-cryptographic-value`
+    // reports.
+    let owner = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind("scanner-encodings")
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let music = config.data_dir.join("encoded-lyrics");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Song.wav"));
+    let (bytes, _, unmappable) = encoding_rs::GB18030
+        .encode("[00:01.00]今天的天气很好，我们一起去公园散步吧\n[00:05.50]阳光照在湖面上");
+    assert!(!unmappable);
+    assert!(
+        std::str::from_utf8(&bytes).is_err(),
+        "the sample is not UTF-8 by accident"
+    );
+    std::fs::write(music.join("Song.lrc"), &bytes).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Encoded lyrics",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Encoded lyrics".into(),
+        root_path: root,
+    };
+
+    run_scan(&state, owner, library).await;
+    let tracks = state
+        .db
+        .list_tracks_for_user(owner, library_id)
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    let lyrics = state.services.lyrics(owner, tracks[0].id).await.unwrap();
+    assert_eq!(
+        lyrics.structured_lyrics.len(),
+        1,
+        "the sidecar was read rather than dropped"
+    );
+    let lines = &lyrics.structured_lyrics[0].lines;
+    assert!(lyrics.structured_lyrics[0].synced);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].start, Some(1_000));
+    assert_eq!(lines[0].value, "今天的天气很好，我们一起去公园散步吧");
+    assert_eq!(lines[1].value, "阳光照在湖面上");
+}
+
 #[tokio::test]
 async fn scanner_batches_more_than_one_write_group_without_deduplicating_copies() {
     let (_temp, config, state) = test_app().await;
