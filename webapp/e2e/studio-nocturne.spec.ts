@@ -5357,3 +5357,30 @@ test("takes no file while the folder cannot be checked", async ({ page }) => {
   await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
   await expect(page.getByLabel("Choose audio files")).toBeEnabled();
 });
+
+/**
+ * The tag editor is reached from somewhere — a song row, the track menu — and
+ * its arrow goes back there. Opened from a typed address, with nowhere to go
+ * back to, it lands on the songs list rather than off the site.
+ */
+test("goes back from the tag editor to where it was opened", async ({
+  page,
+}) => {
+  // Opened from an album, the arrow goes back to the album, not to a list
+  // it would also have landed on had it ignored where the visitor came from.
+  await page.route("**/api/v2/albums/album-2", (route) =>
+    route.fulfill({ json: { ...albumDetail, songs: [correctable.song] } }),
+  );
+  await page.goto("/albums/album-2");
+  await page.getByRole("link", { name: "Correct tags: Army Of Me" }).click();
+  await expect(page).toHaveURL(/\/tracks\/song-9\/edit$/);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(/\/albums\/album-2$/);
+
+  // A full load starts the router's history afresh: with nowhere to go back
+  // to, the arrow lands on the songs list, not on the album the browser
+  // still holds behind this page.
+  await page.goto("/tracks/song-9/edit");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(/\/songs$/);
+});

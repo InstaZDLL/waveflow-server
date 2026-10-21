@@ -31,9 +31,17 @@ export type IconName =
   | "radio"
   | "info"
   | "download"
-  | "folder";
+  | "folder"
+  | "back";
 
 const paths: Record<IconName, ReactNode> = {
+  // An arrow pointing left: back to where the visitor came from.
+  back: (
+    <>
+      <path d="M19 12H5" />
+      <path d="m11 18-6-6 6-6" />
+    </>
+  ),
   // A folder with its tab: a place the files are, on disk or filed.
   folder: (
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
