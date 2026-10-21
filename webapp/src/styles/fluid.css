@@ -91,6 +91,8 @@
   --fe-radius-hero: 1.25rem;
   --fe-radius-tile: 0.625rem;
   --fe-radius-input: 0.625rem;
+  /* The progress thumb, which the wave and the line both measure from. */
+  --fe-thumb: 0.625rem;
 
   /* The mark: one sine-like stroke in a 40 × 10 box, used as a mask so it
      takes whatever colour it is painted with. `--fe-wave` is the same
@@ -1014,7 +1016,19 @@
     transform: scale(1.04);
   }
 
+  /* Where the heard part ends: the thumb's centre, which travels half its
+     width in from each end of the track rather than from edge to edge.
+     Declared here, where the player writes `--played`, so the share is read
+     from it; the `100%` resolves where it is used, against the wave's box
+     and against the track's. */
   :where(:root.dark) .player-progress {
+    --fe-played-at: calc(
+      var(--fe-thumb) /
+      2 +
+      var(--played, 0) *
+      (100% - var(--fe-thumb))
+    );
+
     position: relative;
     grid-area: 2 / 2;
   }
@@ -1031,9 +1045,13 @@
     position: absolute;
     top: 50%;
     left: 0;
-    grid-column: 2;
+    /* Both lines named: an absolutely placed grid item with an `auto` end
+       runs to the container's padding edge, so `grid-column: 2` alone took
+       in the gap and the duration's column, and the wave outran the thumb
+       further the later the track — a ninth too long at the end. */
+    grid-column: 2 / 3;
     grid-row: 1;
-    width: calc(var(--played, 0) * 100%);
+    width: var(--fe-played-at);
     height: 0.5rem;
     background: var(--accent);
     mask: var(--fe-wave) repeat-x left center / 1rem 0.5rem;
@@ -1054,7 +1072,7 @@
     height: 1px;
     background: linear-gradient(
       90deg,
-      transparent calc(var(--played, 0) * 100%),
+      transparent var(--fe-played-at),
       var(--fe-hairline-strong) 0
     );
   }
@@ -1063,15 +1081,15 @@
     height: 1px;
     background: linear-gradient(
       90deg,
-      transparent calc(var(--played, 0) * 100%),
+      transparent var(--fe-played-at),
       var(--fe-hairline-strong) 0
     );
   }
 
   :where(:root.dark) .player-progress input::-webkit-slider-thumb {
-    width: 0.625rem;
-    height: 0.625rem;
-    margin-top: calc(-0.3125rem + 0.5px);
+    width: var(--fe-thumb);
+    height: var(--fe-thumb);
+    margin-top: calc(var(--fe-thumb) / -2 + 0.5px);
     border: 0;
     border-radius: 50%;
     background: var(--fe-ink);
@@ -1081,8 +1099,8 @@
   }
 
   :where(:root.dark) .player-progress input::-moz-range-thumb {
-    width: 0.625rem;
-    height: 0.625rem;
+    width: var(--fe-thumb);
+    height: var(--fe-thumb);
     border: 0;
     border-radius: 50%;
     background: var(--fe-ink);
