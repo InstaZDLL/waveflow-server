@@ -4312,4 +4312,31 @@ async fn uploaded_lyrics_lead_the_order_download_as_they_came_and_stay_off_subso
         .unwrap()
         .get("source")
         .is_none());
+
+    // A track whose file is gone takes no upload: the read refuses it, and a
+    // write the read would refuse is no write at all.
+    sqlx::query("UPDATE track SET is_available = 0 WHERE id = ?")
+        .bind(track.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let gone = send(
+        Method::PUT,
+        format!("{lyrics_uri}/lrc"),
+        &owner_token,
+        b"[00:01.00]too late".to_vec(),
+    )
+    .await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+    // The answer alone proves nothing: the lyrics read after the write says
+    // 404 for this track whether or not the row went in.
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM track_lyrics_upload WHERE track_id = ? AND content LIKE ?",
+    )
+    .bind(track.to_string())
+    .bind("%too late%")
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, 0);
 }

@@ -290,9 +290,11 @@ impl DomainServices {
         track_id: Uuid,
     ) -> Result<String, ServiceError> {
         let row = sqlx::query(
+            // Available, as the read requires: lyrics stored for a track
+            // nobody can read would answer 200 here and 404 there.
             "SELECT t.library_id, m.role FROM track t \
              JOIN library_member m ON m.library_id=t.library_id \
-             WHERE t.id=? AND m.user_id=?",
+             WHERE t.id=? AND m.user_id=? AND t.is_available=1",
         )
         .bind(track_id.to_string())
         .bind(user_id.to_string())
