@@ -5325,3 +5325,35 @@ test("offers no tracks at the root after visiting the unfiled ones", async ({
   await expect(controls.getByRole("button", { name: /Play/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
+
+/**
+ * A tree that could not be read says nothing about the folder: it is not
+ * "missing", and no file is taken until a reading works.
+ */
+test("takes no file while the folder cannot be checked", async ({ page }) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  let answers = 0;
+  await page.route("**/api/v2/libraries/library-1/folders", (route) => {
+    answers += 1;
+    return answers === 1
+      ? route.fulfill({ status: 500, json: { error: "boom" } })
+      : route.fulfill({
+          json: {
+            folders: [{ id: "folder-1", parent_id: null, name: "Rock", track_count: 0 }],
+            unfiled_track_count: 0,
+          },
+        });
+  });
+
+  await page.goto("/upload?folder=folder-1");
+  const unchecked = page.getByRole("alert").filter({
+    hasText: "could not be checked",
+  });
+  await expect(unchecked).toBeVisible();
+  await expect(page.getByLabel("Choose audio files")).toBeDisabled();
+  await expect(page.getByText("cannot be found", { exact: false })).toHaveCount(0);
+
+  await unchecked.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await expect(page.getByLabel("Choose audio files")).toBeEnabled();
+});

@@ -501,6 +501,9 @@ const en = {
   "upload.doneUnfiled": "Added to the library, but not filed",
   "upload.folderMissing":
     "The folder this upload was opened for cannot be found: received files will stay unfiled.",
+  "upload.folderUnchecked":
+    "The folder this upload was opened for could not be checked, so no file is taken yet.",
+  "upload.checkAgain": "Check again",
   "nav.group.library": "Library",
   "nav.group.listen": "Listening",
   "nav.group.account": "Account",
@@ -1191,6 +1194,9 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "upload.doneUnfiled": "Ajouté à la bibliothèque, mais pas classé",
   "upload.folderMissing":
     "Le dossier pour lequel cet envoi a été ouvert est introuvable : les fichiers reçus resteront non classés.",
+  "upload.folderUnchecked":
+    "Le dossier pour lequel cet envoi a été ouvert n’a pas pu être vérifié : aucun fichier n’est pris pour l’instant.",
+  "upload.checkAgain": "Vérifier à nouveau",
   "nav.group.library": "Bibliothèque",
   "nav.group.listen": "Écoute",
   "nav.group.account": "Compte",

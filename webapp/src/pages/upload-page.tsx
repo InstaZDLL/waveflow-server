@@ -219,7 +219,11 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
   const { active } = useLibraryScope();
   // The folder is named only if it is one of the active library's: a link
   // kept across a change of library must not file into the other one.
-  const { data: tree, isPending: treePending } = useQuery({
+  const {
+    data: tree,
+    isPending: treePending,
+    refetch: checkFolder,
+  } = useQuery({
     ...filedTreeQuery(active?.id ?? ""),
     enabled: active !== null && folder !== undefined,
   });
@@ -228,9 +232,12 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     : undefined;
   // Files are not taken until the folder is known: one picked before would
   // be captured with no folder and arrive unfiled, with nothing to say so.
-  const awaitingFolder = folder !== undefined && treePending;
-  // And a folder that cannot be found is said before anything is sent.
-  const folderMissing = folder !== undefined && !treePending && !into;
+  // A tree that could not be read is not known either — it says nothing about
+  // whether the folder exists — so the picker waits for a reading that works.
+  const awaitingFolder = folder !== undefined && tree === undefined;
+  const folderUnchecked = awaitingFolder && !treePending;
+  // A folder the tree was read without is said before anything is sent.
+  const folderMissing = folder !== undefined && tree !== undefined && !into;
   const [items, setItems] = useState<Item[]>([]);
   const pending = useRef<Item[]>([]);
   const running = useRef(false);
@@ -407,6 +414,14 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
         <p className="notice upload-into">
           {t("upload.into", { folder: into.name })}
         </p>
+      ) : null}
+      {folderUnchecked ? (
+        <div className="notice upload-into" role="alert">
+          <span>{t("upload.folderUnchecked")}</span>{" "}
+          <button type="button" onClick={() => void checkFolder()}>
+            {t("upload.checkAgain")}
+          </button>
+        </div>
       ) : null}
       {folderMissing ? (
         <p className="notice upload-into" role="status">
