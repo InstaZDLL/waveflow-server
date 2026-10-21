@@ -8,6 +8,7 @@ import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 import { Artwork } from "./artwork";
 import { Icon } from "./icons";
+import { useTrackMenu } from "./track-menu";
 
 const RATING_STARS = [1, 2, 3, 4, 5];
 
@@ -96,6 +97,7 @@ export function SongTable({
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const { libraries } = useLibraryScope();
+  const { rowProps, menu } = useTrackMenu();
   // Offered only where the server would accept the correction. It refuses
   // anyway; this keeps the table from offering a refusal on every row.
   const mayCorrect = (song: Song) =>
@@ -161,6 +163,7 @@ export function SongTable({
               <tr
                 key={rowIds[position]}
                 className={active ? "active" : undefined}
+                {...rowProps(songs, position)}
               >
                 <td className="index">
                   {numbering === "track"
@@ -232,6 +235,7 @@ export function SongTable({
           })}
         </tbody>
       </table>
+      {menu}
     </div>
   );
 }

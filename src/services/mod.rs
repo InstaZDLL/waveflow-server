@@ -356,6 +356,25 @@ pub struct SongItem {
     pub moods: Vec<String>,
     /// `explicit` or `clean`; the scanner stores nothing else.
     pub explicit_status: Option<String>,
+    /// Where the file sits in its library, relative to the library root.
+    ///
+    /// Read with every song and serialised with none: listings would carry a
+    /// path per row that nobody browsing albums needs. `GET /tracks/{id}`
+    /// sends it, through [`TrackDetail`], for the properties panel and the
+    /// library browser (RFC-012 decision 1). The root itself is never sent.
+    #[serde(skip)]
+    pub relative_path: String,
+}
+
+/// One track as `GET /api/v2/tracks/{id}` answers it: the song, and where its
+/// file sits in the library.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TrackDetail {
+    #[serde(flatten)]
+    pub song: SongItem,
+    /// Relative to the library root, with `/` separators whatever the
+    /// server's platform. Never absolute.
+    pub relative_path: String,
 }
 
 /// One credited artist of a track. Only `id` and `name` are carried: those are
@@ -1941,7 +1960,7 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         duration_ms: row.try_get("duration_ms")?,
         bitrate: row.try_get("bitrate")?,
         codec: row.try_get("codec")?,
-        suffix: PathBuf::from(relative)
+        suffix: PathBuf::from(&relative)
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("")
@@ -1978,6 +1997,7 @@ fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sqlx::Error> 
         isrc: split_tag_values(row.try_get::<Option<String>, _>("isrc")?.as_deref()),
         moods: split_tag_values(row.try_get::<Option<String>, _>("moods")?.as_deref()),
         explicit_status: row.try_get("explicit_status")?,
+        relative_path: relative,
     })
 }
 

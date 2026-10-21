@@ -1266,3 +1266,65 @@
     transform: none;
   }
 }
+
+/* ── The track menu and its properties ──────────────────────── */
+
+/* A menu is a popover: `surface-2`, the card radius, no border, an inset
+   top highlight and a deep soft shadow; rows with their own radius. */
+:where(:root.dark) .track-menu {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface-2);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 1.5rem 3rem rgb(0 0 0 / 55%);
+}
+
+:where(:root.dark) .track-menu-item {
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--fe-ink-2);
+}
+
+:where(:root.dark) .track-menu-item:hover,
+:where(:root.dark) .track-menu-item:focus-visible {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root.dark) .track-properties[open] {
+  border: 0;
+  border-radius: var(--fe-radius-hero);
+  background: var(--fe-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--fe-hairline),
+    0 2rem 5rem rgb(0 0 0 / 55%);
+}
+
+:where(:root.dark) .track-properties h3 {
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  font-weight: 540;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+:where(:root.dark) .property-row {
+  border-bottom-color: rgb(255 255 255 / 5%);
+}
+
+:where(:root.dark) .property-list dt {
+  color: var(--fe-ink-3);
+}
+
+:where(:root.dark) .property-list dd {
+  color: var(--fe-ink);
+}
+
+:where(:root.dark) .properties-cover {
+  border-radius: var(--fe-radius-tile);
+}
+
+:where(:root.dark) .properties-close {
+  background: var(--fe-tone-2);
+}

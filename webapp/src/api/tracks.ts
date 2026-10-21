@@ -16,6 +16,34 @@ export const getTrackCredits = (id: string) =>
   call<SongCredits>(`/api/v2/tracks/${id}`);
 
 /**
+ * Everything the properties panel shows for one track: what `GET
+ * /api/v2/tracks/{id}` answers, which is the `SongItem` every listing carries
+ * plus where the file sits in its library.
+ *
+ * Each field below is one the panel prints; the rest of the answer is not
+ * declared, for the reason `Song` gives — a declaration is a claim the mocks
+ * then confirm, so it should only be made about what is read.
+ */
+export type TrackProperties = SongCredits & {
+  /** Relative to the library root, `/`-separated. Only this route sends it. */
+  relative_path: string;
+  full_hash: string;
+  created_at: number;
+  album_artist: string | null;
+  comment: string | null;
+  musicbrainz_id: string | null;
+  isrc: string[];
+  bpm: number | null;
+  replay_gain_track_gain: number | null;
+  replay_gain_track_peak: number | null;
+  replay_gain_album_gain: number | null;
+  replay_gain_album_peak: number | null;
+};
+
+export const getTrackProperties = (id: string) =>
+  call<TrackProperties>(`/api/v2/tracks/${id}`);
+
+/**
  * What the file's tags say, as the last scan read them. Artists and genres are
  * absent on purpose: a correction to either replaces the rows the scan wrote,
  * so the file's own credits are no longer in the database to be shown.

@@ -2665,3 +2665,135 @@ button.danger {
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* The right click on a track (RFC-012 decision 4). Fixed to the viewport at
+   the pointer, and moved back inside it by the component when it would hang
+   off an edge. */
+.track-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  min-width: 13rem;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.75rem;
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+
+.track-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.25rem;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.track-menu-item:hover,
+.track-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+/* A track's properties: a sheet of facts, read-only. */
+.track-properties[open] {
+  display: grid;
+  gap: var(--space-6);
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(48rem, calc(100dvh - 2rem));
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.track-properties::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.track-properties header {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.properties-cover {
+  width: 4.5rem;
+}
+
+.track-properties h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+}
+
+.track-properties header p {
+  margin: var(--space-1) 0 0;
+}
+
+.properties-close {
+  display: grid;
+  width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0;
+  place-items: center;
+}
+
+.track-properties h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-base);
+}
+
+.property-list {
+  display: grid;
+  margin: 0;
+}
+
+.property-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.property-list dt {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.property-list dd {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.property-list code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--text-xs);
+}
+
+.property-corrected {
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+
+@media (width <= 35rem) {
+  .property-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}

@@ -11,6 +11,7 @@ import {
   getTrack,
   getTrackCredits,
   getTrackOverrides,
+  getTrackProperties,
   listAlbums,
   listApiTokens,
   listArtistAlbums,
@@ -184,6 +185,26 @@ export const bookmarksQuery = () =>
 
 export const radioStationsQuery = () =>
   queryOptions({ queryKey: ["radio-stations"], queryFn: listRadioStations });
+
+/**
+ * One track as its properties panel shows it, with the corrections behind
+ * its tags so each corrected value can say that it is one.
+ *
+ * Not `trackEditQuery`, though it reads the same two routes: that one is the
+ * editor's and is invalidated by its saves; sharing a key would tie the two
+ * screens' lifetimes together for no saving worth having.
+ */
+export const trackPropertiesQuery = (trackId: string) =>
+  queryOptions({
+    queryKey: ["track-properties", trackId],
+    queryFn: async () => {
+      const [track, tracked] = await Promise.all([
+        getTrackProperties(trackId),
+        getTrackOverrides(trackId),
+      ]);
+      return { track, tracked };
+    },
+  });
 
 export const lyricsQuery = (trackId: string) =>
   queryOptions({

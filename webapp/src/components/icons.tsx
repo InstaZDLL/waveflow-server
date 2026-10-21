@@ -28,9 +28,18 @@ export type IconName =
   | "more"
   | "close"
   | "upload"
-  | "radio";
+  | "radio"
+  | "info";
 
 const paths: Record<IconName, ReactNode> = {
+  // A circled i: what a track is, read and not changed.
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6" />
+      <path d="M12 7.5v.5" />
+    </>
+  ),
   // An arrow into a tray: a file going into the library.
   upload: (
     <>
