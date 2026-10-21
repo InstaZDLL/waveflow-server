@@ -1,3 +1,4 @@
+import type { Song } from "./catalog";
 import { call, renewFor, session, sessionGeneration } from "./client";
 
 export type Library = {
@@ -20,6 +21,57 @@ export type Library = {
 };
 
 export const listLibraries = () => call<Library[]>("/api/v2/libraries");
+
+/**
+ * The folder RFC-008 writes received files into, under its real path. The
+ * client draws it as **Received**; the path is what addresses it.
+ */
+export const RECEIVED_FOLDER = ".waveflow-managed";
+
+export type DiskFolder = {
+  name: string;
+  /** Relative to the library, segments joined by `/`. */
+  path: string;
+  /** The tracks directly in it. */
+  track_count: number;
+  /** The tracks anywhere beneath it, its own included. */
+  nested_track_count: number;
+};
+
+/** A track under the name its file has. */
+export type DiskTrack = { name: string; song: Song };
+
+/**
+ * One level of a library's disk tree (RFC-012 decision 1). A page runs over
+ * the folders, then the tracks; the totals say how long each part is.
+ */
+export type DiskListing = {
+  path: string;
+  folder_total: number;
+  track_total: number;
+  folders: DiskFolder[];
+  tracks: DiskTrack[];
+};
+
+/** How many entries, folders and tracks together, one page carries. */
+export const DISK_TREE_PAGE = 200;
+
+/** One page of the folder at `path`: empty for the library's root. */
+export const getDiskTree = (
+  libraryId: string,
+  path: string,
+  offset: number,
+  limit = DISK_TREE_PAGE,
+  signal?: AbortSignal,
+) =>
+  call<DiskListing>(
+    `/api/v2/libraries/${libraryId}/tree?${new URLSearchParams({
+      path,
+      offset: String(offset),
+      limit: String(limit),
+    })}`,
+    { signal },
+  );
 
 export const addLibrary = (
   name: string,

@@ -58,6 +58,7 @@ import { ArtistPage } from "./pages/artist-page";
 import { ArtistsPage } from "./pages/artists-page";
 import { AuthorizePage } from "./pages/authorize-page";
 import { FavoritesPage } from "./pages/favorites-page";
+import { FoldersPage } from "./pages/folders-page";
 import { GenrePage } from "./pages/genre-page";
 import { GenresPage } from "./pages/genres-page";
 import { HistoryPage } from "./pages/history-page";
@@ -115,6 +116,7 @@ const navigation: Array<{
     | "/"
     | "/artists"
     | "/songs"
+    | "/folders"
     | "/genres"
     | "/search"
     | "/favourites"
@@ -148,6 +150,12 @@ const navigation: Array<{
   { to: "/artists", labelKey: "nav.artists", icon: "artists", group: "pinned" },
   { to: "/songs", labelKey: "nav.songs", icon: "songs", group: "pinned" },
   { to: "/genres", labelKey: "nav.genres", icon: "genres", group: "library" },
+  {
+    to: "/folders",
+    labelKey: "nav.folders",
+    icon: "folder",
+    group: "library",
+  },
   {
     to: "/search",
     labelKey: "nav.search",
@@ -288,6 +296,9 @@ async function prepareTab(
     case "/playing":
     case "/queue":
     case "/upload":
+    // The folder is in the address, and the rail links to the root: the
+    // page draws its own frame and waits for its folder there.
+    case "/folders":
       break;
     // A fresh draw on every ask, held for no time at all: a draw made here
     // is thrown away before the page mounts, and the page then draws again.
@@ -845,6 +856,21 @@ const adminRoute = createRoute({
   component: AdminPage,
 });
 
+// The folder is a search parameter rather than a path segment: a folder's
+// name may hold any character a file system allows, `$` and `?` included,
+// and a parameter carries it whole.
+const foldersRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/folders",
+  validateSearch: (search: Record<string, unknown>): { path: string } => ({
+    path: typeof search.path === "string" ? search.path : "",
+  }),
+  component: function FoldersRoute() {
+    const { path } = foldersRoute.useSearch();
+    return <FoldersPage path={path} />;
+  },
+});
+
 const uploadRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/upload",
@@ -866,6 +892,7 @@ const routeTree = rootRoute.addChildren([
     albumsRoute,
     albumRoute,
     songsRoute,
+    foldersRoute,
     artistsRoute,
     artistRoute,
     genresRoute,

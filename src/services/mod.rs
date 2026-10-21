@@ -1364,6 +1364,7 @@ mod credentials;
 mod favorites;
 mod lastfm;
 mod library_events;
+mod library_tree;
 mod lyrics_uploads;
 mod playback;
 mod playlists;
@@ -1393,6 +1394,7 @@ pub use lastfm::{
     LastFmApproval, LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX,
     LASTFM_JOURNEY_COOKIE,
 };
+pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,

@@ -332,3 +332,55 @@ pub async fn library_events(
         .map(Json)
         .map_err(service_error)
 }
+
+#[derive(Debug, Deserialize)]
+pub struct DiskTreeQuery {
+    /// The folder to list, relative to the library; absent or empty for its
+    /// root, `.waveflow-managed` for the files received through uploads.
+    pub path: Option<String>,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+/// One level of a library's disk tree (RFC-012 decision 1): the sub-folders
+/// of `path` with their track counts, then the tracks directly in it, paged as
+/// one list. Derived from the indexed paths, read-only, and open to every
+/// member of the library.
+#[utoipa::path(
+    get,
+    path = "/api/v2/libraries/{library_id}/tree",
+    tag = "catalog",
+    params(
+        ("library_id" = Uuid, Path),
+        ("path" = Option<String>, Query),
+        ("offset" = Option<i64>, Query),
+        ("limit" = Option<i64>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::services::DiskListing),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 422, body = ErrorResponse)
+    )
+)]
+pub async fn library_tree(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    Query(query): Query<DiskTreeQuery>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::DiskListing>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .disk_tree(
+            user.id,
+            library_id,
+            query.path.as_deref().unwrap_or(""),
+            page,
+        )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}

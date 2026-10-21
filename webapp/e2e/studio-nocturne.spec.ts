@@ -3431,14 +3431,16 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The eleven the bar cannot hold — including the two this account is
+  // The twelve the bar cannot hold — including the two this account is
   // entitled to as an administrator of a library that takes files. `Radio`
-  // joined them with #217, and this count is what said so: a new entry in the
-  // sidebar reaches the sheet, and the sheet is pinned.
+  // joined them with #217, and `Folders` with RFC-012's disk tree; this count
+  // is what said so: a new entry in the sidebar reaches the sheet, and the
+  // sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
     "Genres",
+    "Folders",
     "Settings",
     "Random",
     "Recently played",
@@ -3452,7 +3454,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(11);
+  await expect(sheet.getByRole("link")).toHaveCount(12);
 
   await expectNoWcagViolations(page);
 
@@ -4882,4 +4884,126 @@ test("closes the form while a station is saving, and leaves listening alone", as
   // Open again, and empty, once the save has landed.
   await expect(page.getByLabel("Station name")).toBeEnabled();
   await expect(page.getByLabel("Station name")).toHaveValue("");
+});
+
+/**
+ * The disk tree (RFC-012 decision 1): one folder at a time, the folder in the
+ * address, a trail back up, the received folder under its own name, and the
+ * file names under each title. Read-only: no control here moves anything.
+ */
+test("walks a library's folders on disk and back up the trail", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  const folder = (name: string, path: string, direct: number, nested: number) => ({
+    name,
+    path,
+    track_count: direct,
+    nested_track_count: nested,
+  });
+  const listings: Record<string, unknown> = {
+    "": {
+      path: "",
+      folder_total: 2,
+      track_total: 0,
+      folders: [
+        folder(".waveflow-managed", ".waveflow-managed", 1, 1),
+        folder("Björk", "Björk", 0, 2),
+      ],
+      tracks: [],
+    },
+    Björk: {
+      path: "Björk",
+      folder_total: 1,
+      track_total: 0,
+      folders: [folder("Vespertine", "Björk/Vespertine", 2, 2)],
+      tracks: [],
+    },
+    "Björk/Vespertine": {
+      path: "Björk/Vespertine",
+      folder_total: 0,
+      track_total: 2,
+      folders: [],
+      tracks: [
+        { name: "01 Hidden Place.flac", song: song(1, "Hidden Place", 0, false) },
+        { name: "02 Cocoon.flac", song: song(2, "Cocoon", 0, false) },
+      ],
+    },
+    ".waveflow-managed": {
+      path: ".waveflow-managed",
+      folder_total: 0,
+      track_total: 1,
+      folders: [],
+      tracks: [{ name: "9ad0f9e.flac", song: song(3, "Pagan Poetry", 0, false) }],
+    },
+  };
+  const asked: string[] = [];
+  await page.route("**/api/v2/libraries/library-1/tree?*", (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path") ?? "";
+    asked.push(path);
+    const listing = listings[path];
+    return listing
+      ? route.fulfill({ json: listing })
+      : route.fulfill({ status: 404, json: { error: "not_found" } });
+  });
+
+  await page.goto("/folders");
+  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
+  await expect(page.getByText("Nothing here moves a file.", { exact: false })).toBeVisible();
+  const folders = page.getByRole("list", { name: "Folders" });
+  // The received folder by its label, and an artist folder by what is beneath.
+  await expect(folders.getByRole("link", { name: /Received/ })).toBeVisible();
+  await expect(folders.getByRole("link", { name: /Björk/ })).toContainText("2 tracks");
+  await expect(page.getByRole("link", { name: "Upload music" })).toHaveAttribute(
+    "href",
+    "/upload",
+  );
+
+  await folders.getByRole("link", { name: /Björk/ }).click();
+  await expect(page).toHaveURL(/path=Bj%C3%B6rk$/);
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Vespertine/ }).click();
+  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
+  const trail = page.getByRole("navigation", { name: "Folder path" });
+  await expect(trail.getByRole("link")).toHaveText(["Ma musique", "Björk", "Vespertine"]);
+  await expect(trail.getByRole("link", { name: "Vespertine" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  // The file's name stands under each title.
+  const rows = page.locator(".songs tbody tr");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("Hidden Place");
+  await expect(rows.first()).toContainText("01 Hidden Place.flac");
+  await expectNoWcagViolations(page);
+
+  // Back up the trail to the root, then into the received files.
+  await trail.getByRole("link", { name: "Ma musique" }).click();
+  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Received/ }).click();
+  await expect(page.getByRole("heading", { name: "Received" })).toBeVisible();
+  await expect(page.locator(".songs tbody tr")).toContainText("9ad0f9e.flac");
+  expect([...new Set(asked)]).toEqual(["", "Björk", "Björk/Vespertine", ".waveflow-managed"]);
+});
+
+/** A listener walks the same tree and is offered no upload. */
+test("offers a listener the folders without the upload", async ({ page }) => {
+  libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener", accepts_uploads: true },
+  ];
+  await page.route("**/api/v2/libraries/library-1/tree?*", (route) =>
+    route.fulfill({
+      json: {
+        path: "",
+        folder_total: 1,
+        track_total: 0,
+        folders: [{ name: "Björk", path: "Björk", track_count: 0, nested_track_count: 2 }],
+        tracks: [],
+      },
+    }),
+  );
+  await page.goto("/folders");
+  await expect(
+    page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Björk/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Upload music" })).toHaveCount(0);
 });

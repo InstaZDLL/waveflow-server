@@ -30,9 +30,14 @@ export type IconName =
   | "upload"
   | "radio"
   | "info"
-  | "download";
+  | "download"
+  | "folder";
 
 const paths: Record<IconName, ReactNode> = {
+  // A folder with its tab: a place the files are, on disk or filed.
+  folder: (
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  ),
   // An arrow out of the library onto a tray: the file, saved.
   download: (
     <>
