@@ -1204,6 +1204,46 @@ test("renders the studio shell and persists appearance preferences", async ({
   }
 });
 
+/**
+ * The heard part of the line ends under the thumb, wherever the track is.
+ *
+ * The wave is placed in the progress grid's middle column. Named by its start
+ * alone, an absolutely placed item runs to the container's edge, so the wave
+ * was measured against the gap and the duration's column as well and outran
+ * the thumb further the later the track. Driven through `--played`, the value
+ * the player writes, so every position is reached without playing anything.
+ */
+test("ends the played wave under the progress thumb", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the wave is drawn beside the rail");
+  await page.goto("/");
+  const progress = page.locator(".player-progress");
+  await expect(progress).toBeVisible();
+  const measured = await progress.evaluate((node: HTMLElement) => {
+    const wave = node.querySelector(".progress-wave") as HTMLElement;
+    const input = node.querySelector("input") as HTMLInputElement;
+    const thumb =
+      Number.parseFloat(getComputedStyle(document.documentElement).fontSize) *
+      0.625;
+    return [0, 0.25, 0.5, 0.81, 1].map((played) => {
+      node.style.setProperty("--played", String(played));
+      const w = wave.getBoundingClientRect();
+      const i = input.getBoundingClientRect();
+      return {
+        played,
+        waveEnd: w.right,
+        thumbCentre: i.left + thumb / 2 + played * (i.width - thumb),
+        trackEnd: i.right,
+      };
+    });
+  });
+  for (const { played, waveEnd, thumbCentre, trackEnd } of measured) {
+    expect(Math.abs(waveEnd - thumbCentre), `at ${played}`).toBeLessThanOrEqual(1);
+    expect(waveEnd, `at ${played}`).toBeLessThanOrEqual(trackEnd);
+  }
+});
+
 test("keeps navigation and player controls within their own space", async ({
   page,
 }, testInfo) => {
