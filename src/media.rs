@@ -1279,7 +1279,7 @@ async fn download_name(state: &AppState, user_id: Uuid, track: &StreamTrack) -> 
         .relative_path
         .split('/')
         .next()
-        .is_some_and(|first| first == crate::services::MANAGED_DIR);
+        .is_some_and(|first| first == crate::services::uploads::MANAGED_DIR);
     if !received {
         return basename;
     }

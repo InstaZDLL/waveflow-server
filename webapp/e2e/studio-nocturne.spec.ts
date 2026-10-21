@@ -1471,6 +1471,17 @@ test("opens a track's properties from its context menu", async ({ page }) => {
   await expect(menu).toBeVisible();
   await page.mouse.click(5, 5);
   await expect(menu).toHaveCount(0);
+
+  // The wheel closes it even turned over the menu, which does not scroll:
+  // the page beneath would move and leave the menu off its row. Dispatched
+  // on the entry itself, because a real wheel in a headless browser brings
+  // side effects of its own that close the menu either way.
+  await row.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await menu
+    .getByRole("menuitem", { name: "Play" })
+    .dispatchEvent("wheel", { deltaY: 120, bubbles: true });
+  await expect(menu).toHaveCount(0);
 });
 
 /**

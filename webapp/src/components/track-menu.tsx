@@ -296,6 +296,10 @@ function TrackMenu({
     const away = (event: Event) => {
       if (!list.current?.contains(event.target as Node)) closeRef.current();
     };
+    // The wheel closes it wherever it turns, over the menu too: the menu does
+    // not scroll, so a wheel over it scrolls the page beneath and leaves the
+    // menu where its row used to be.
+    const wheel = () => closeRef.current();
     const leave = () => closeRef.current();
     // A long press opens the menu with the finger still down, and that finger
     // drifts as it lifts: its moves are the gesture that opened the menu, not
@@ -308,7 +312,7 @@ function TrackMenu({
       if (armed) away(event);
     };
     document.addEventListener("pointerdown", away, true);
-    document.addEventListener("wheel", away, { capture: true, passive: true });
+    document.addEventListener("wheel", wheel, { capture: true, passive: true });
     document.addEventListener("touchstart", arm, {
       capture: true,
       passive: true,
@@ -321,7 +325,7 @@ function TrackMenu({
     window.addEventListener("resize", leave);
     return () => {
       document.removeEventListener("pointerdown", away, true);
-      document.removeEventListener("wheel", away, true);
+      document.removeEventListener("wheel", wheel, true);
       document.removeEventListener("touchstart", arm, true);
       document.removeEventListener("touchmove", dragged, true);
       window.removeEventListener("blur", leave);
