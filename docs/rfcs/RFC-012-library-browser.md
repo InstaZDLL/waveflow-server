@@ -8,7 +8,8 @@
   contract, the depth check on a move, the folder cap that bounds the tree's
   listing, and one order for the lyrics, all made explicit. Then the root's
   depth, the cap under concurrency, all-or-nothing placements, empty sheets
-  skipped, and lyrics downloads that are never rendered.
+  skipped, and lyrics downloads that are never rendered. Last, listeners'
+  access to the disk tree, settled in decision 3 rather than left open.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md),
@@ -167,6 +168,12 @@ exactly like one, by `LibraryRole::may_write_metadata` — **owner and manager**
 A listener browses both trees and opens properties, and is refused every write
 with the same `404` a foreign library would give, so the refusal confirms
 nothing (CLAUDE.md, "404 blurs everything").
+
+**Both trees, the disk one included.** A listener reads the disk tree through
+`GET /libraries/{id}/tree?path=` exactly as an owner does. Hiding it would hide
+nothing: every member already reads each track's `relative_path` through the
+library's own track listing, and the tree is only those paths, grouped. A disk
+layout its owner wants private belongs in a library that is not shared.
 
 The filed tree is **shared by the library's members**, not kept per user. A
 per-user tree would be a private way of sorting a shared library, which is
@@ -335,11 +342,6 @@ Each step is its own pull request, shippable and useful without the next:
 
 ## What is still open
 
-- Whether a listener should see the disk tree at all, or only the filed one.
-  This document says yes, because a member may already read every track's
-  path through the library's track listing. An owner who files precisely so
-  that their disk layout stays private would say otherwise. Not decided here;
-  it is a flag, if it is ever asked for.
 - Whether the filed tree should become the Subsonic folder view for clients
   that browse by folder. It cannot under the frozen contract; it could in a
   later contract version.
