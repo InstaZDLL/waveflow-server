@@ -223,11 +223,17 @@ function TrackMenu({
   // frame, and a page still rising into place moves the row under it — and
   // closing on those shut the menu the instant it appeared. What closes it is
   // the visitor setting out to scroll, outside the menu.
+  //
+  // Installed once per menu, with the latest `onClose` read through a ref: the
+  // parent hands a new one on every render, and re-installing on each would
+  // also reset `armed` below in the middle of a gesture.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const away = (event: Event) => {
-      if (!list.current?.contains(event.target as Node)) onClose();
+      if (!list.current?.contains(event.target as Node)) closeRef.current();
     };
-    const leave = () => onClose();
+    const leave = () => closeRef.current();
     // A long press opens the menu with the finger still down, and that finger
     // drifts as it lifts: its moves are the gesture that opened the menu, not
     // one leaving it. Only a touch that starts after the menu is open counts.
@@ -258,7 +264,7 @@ function TrackMenu({
       window.removeEventListener("blur", leave);
       window.removeEventListener("resize", leave);
     };
-  }, [onClose]);
+  }, []);
 
   const items: Array<{
     key: string;
