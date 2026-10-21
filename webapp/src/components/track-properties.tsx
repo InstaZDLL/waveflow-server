@@ -32,7 +32,9 @@ export function TrackProperties({
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const { data, error } = useQuery(trackPropertiesQuery(song.id));
-  const { data: lyrics } = useQuery(lyricsQuery(song.id));
+  const { data: lyrics, isSuccess: lyricsKnown } = useQuery(
+    lyricsQuery(song.id),
+  );
 
   useEffect(() => {
     const node = dialog.current;
@@ -204,6 +206,8 @@ export function TrackProperties({
   ];
 
   const sheets = lyrics?.structuredLyrics ?? [];
+  // "None" is an answer, so it waits for one: while the lyrics are still
+  // being asked for, the section says nothing rather than something false.
   const words: Row[] = sheets.length
     ? sheets.map((sheet, index) => ({
         label: t("properties.lyricsSheet", { number: index + 1 }),
@@ -211,12 +215,14 @@ export function TrackProperties({
           lang: sheet.lang,
         }),
       }))
-    : [
-        {
-          label: t("properties.lyricsSheets"),
-          value: t("properties.noLyrics"),
-        },
-      ];
+    : lyricsKnown
+      ? [
+          {
+            label: t("properties.lyricsSheets"),
+            value: t("properties.noLyrics"),
+          },
+        ]
+      : [];
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes a <dialog> natively

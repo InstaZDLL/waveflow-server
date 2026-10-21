@@ -198,9 +198,11 @@ export const trackPropertiesQuery = (trackId: string) =>
   queryOptions({
     queryKey: ["track-properties", trackId],
     queryFn: async () => {
+      // The corrections only mark which tags were corrected. A failure to
+      // read them costs those marks, not the panel.
       const [track, tracked] = await Promise.all([
         getTrackProperties(trackId),
-        getTrackOverrides(trackId),
+        getTrackOverrides(trackId).catch(() => null),
       ]);
       return { track, tracked };
     },

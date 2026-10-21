@@ -51,6 +51,10 @@ export function useTrackMenu() {
     song: Song;
     returnTo: HTMLElement | null;
   } | null>(null);
+  // A long press that opened the menu is followed, as the finger lifts, by the
+  // click the browser synthesises for the tap it thinks it saw; on a row whose
+  // title plays the track, that click would start playback under the menu.
+  const swallowClick = useRef(false);
   const press = useRef<{
     timer: number;
     x: number;
@@ -98,7 +102,14 @@ export function useTrackMenu() {
         open(songs, position, rect.left + 24, rect.bottom);
       }
     },
+    onClickCapture: (event: MouseEvent<HTMLElement>) => {
+      if (!swallowClick.current) return;
+      swallowClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
     onTouchStart: (event: TouchEvent<HTMLElement>) => {
+      swallowClick.current = false;
       const touch = event.touches[0];
       if (!touch || event.touches.length > 1) return;
       cancelPress();
@@ -109,6 +120,7 @@ export function useTrackMenu() {
         y,
         timer: window.setTimeout(() => {
           press.current = null;
+          swallowClick.current = true;
           open(songs, position, x, y);
         }, LONG_PRESS_MS),
       };
