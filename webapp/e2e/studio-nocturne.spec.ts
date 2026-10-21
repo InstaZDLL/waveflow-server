@@ -3180,6 +3180,89 @@ test("keeps the current tab visible while the next tab loads", async ({
 });
 
 /**
+ * The random tab draws once.
+ *
+ * Its answer is held for no time at all, so a draw made ahead of the switch
+ * was thrown away before the page mounted, and the page drew again: two
+ * requests, and a wait for both.
+ */
+test("draws the random tab once when switching to it", async ({ page }) => {
+  let draws = 0;
+  await page.route("**/api/v2/songs/random*", async (route) => {
+    draws += 1;
+    await route.fulfill({ json: [track] });
+  });
+  await page.route("**/api/v2/albums*", (route) =>
+    route.fulfill({ json: albums }),
+  );
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  if (await page.locator(".mobile-navigation").isVisible()) {
+    await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+    await page.locator('.more-sheet a[href="/random"]').click();
+  } else {
+    await page.locator(".primary-navigation").getByRole("link", { name: "Random" }).click();
+  }
+  await expect(page.getByRole("heading", { name: "Random" })).toBeVisible();
+  await expect(page.locator(".songs")).toContainText("Army of Me");
+  // Long enough for a second draw from the mount to have been asked.
+  await page.waitForTimeout(500);
+  expect(draws).toBe(1);
+});
+
+/**
+ * A tab that is still loading does not overrule a later move.
+ *
+ * The switch waits for the destination's first answer, and the page stays
+ * usable meanwhile. Following a link in it during that wait is a newer
+ * decision than the tab: arriving on the tab afterwards took the visitor away
+ * from the album they had just opened.
+ */
+test("leaves a tab switch behind when the visitor moves on while it loads", async ({
+  page,
+}) => {
+  let answerGenres: (() => void) | undefined;
+  const genresReady = new Promise<void>((resolve) => {
+    answerGenres = resolve;
+  });
+  let genresAnswered = false;
+  await page.route("**/api/v2/genres*", async (route) => {
+    await genresReady;
+    await route.fulfill({
+      json: [{ name: "Trip hop", song_count: 4, album_count: 1 }],
+    });
+    genresAnswered = true;
+  });
+  await page.route("**/api/v2/albums*", (route) =>
+    route.fulfill({ json: albums }),
+  );
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  const mobile = await page.locator(".mobile-navigation").isVisible();
+  if (mobile) {
+    await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+  }
+  const genresLink = mobile
+    ? page.locator('.more-sheet a[href="/genres"]')
+    : page.locator(".primary-navigation").getByRole("link", { name: "Genres" });
+  await genresLink.click();
+  await expect(genresLink).toHaveAttribute("aria-busy", "true");
+
+  await page.locator('.grid a[href="/albums/album-1"]').click();
+  await expect(page).toHaveURL(/\/albums\/album-1$/);
+
+  answerGenres?.();
+  await expect.poll(() => genresAnswered).toBe(true);
+  await expect(genresLink).not.toHaveAttribute("aria-busy", "true");
+  // Long enough for the navigation the answer used to trigger to land.
+  await page.waitForTimeout(500);
+  await expect(page).toHaveURL(/\/albums\/album-1$/);
+  await expect(page.getByRole("heading", { name: "Genres" })).toHaveCount(0);
+});
+
+/**
  * Signing out empties what was answered for the account that left.
  *
  * The cache is the first thing in this client that outlives a screen, and a

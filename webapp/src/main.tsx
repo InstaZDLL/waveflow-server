@@ -40,7 +40,6 @@ import {
   ownSubsonicCredentialQuery,
   playlistsQuery,
   radioStationsQuery,
-  randomSongsQuery,
   scrobbleRowsQuery,
   sharesQuery,
   songsQuery,
@@ -244,9 +243,6 @@ async function prepareTab(
     case "/genres":
       await client.ensureQueryData(genresQuery(scope));
       break;
-    case "/random":
-      await client.ensureQueryData(randomSongsQuery(scope));
-      break;
     case "/history":
       await client.ensureQueryData(historyTracksQuery(50));
       break;
@@ -283,6 +279,11 @@ async function prepareTab(
     case "/playing":
     case "/queue":
     case "/upload":
+      break;
+    // A fresh draw on every ask, held for no time at all: a draw made here
+    // is thrown away before the page mounts, and the page then draws again.
+    // Waiting for it would double the wait for nothing.
+    case "/random":
       break;
   }
 }
@@ -355,6 +356,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
       return;
     }
     const attempt = ++navigationAttempt.current;
+    const origin = window.location.pathname + window.location.search;
     setPendingTab(to);
     void (async () => {
       try {
@@ -365,6 +367,9 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
       }
       if (attempt !== navigationAttempt.current) return;
       setPendingTab(null);
+      // The visitor moved on while this loaded — a link in the page, Back —
+      // and that move is the later decision. Arriving now would undo it.
+      if (window.location.pathname + window.location.search !== origin) return;
       await navigate({ to });
     })();
   }
