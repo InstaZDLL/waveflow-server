@@ -13,6 +13,12 @@ import { useTrackMenu } from "./track-menu";
 const RATING_STARS = [1, 2, 3, 4, 5];
 
 /**
+ * What a dragged row carries: the track ids, as JSON. A type of its own, so a
+ * folder takes a drop from a song row and nothing else.
+ */
+export const TRACK_DRAG_TYPE = "application/x-waveflow-tracks";
+
+/**
  * Five stars, where clicking the star already set clears the rating — the
  * server spells that `rating: 0`, and without it a rating could be changed but
  * never taken back.
@@ -63,6 +69,7 @@ export function SongTable({
   numbering = "position",
   variant = "default",
   captions,
+  draggableRows = false,
 }: {
   songs: Song[];
   numbering?: "track" | "position";
@@ -72,6 +79,11 @@ export function SongTable({
    * name, where the screen is about files.
    */
   captions?: string[];
+  /**
+   * Rows may be dragged onto a filed folder. Only where filing is offered:
+   * a row that drags anywhere else is a gesture that does nothing.
+   */
+  draggableRows?: boolean;
 }) {
   const player = usePlayer();
   const { t } = useI18n();
@@ -170,6 +182,19 @@ export function SongTable({
                 key={rowIds[position]}
                 className={active ? "active" : undefined}
                 {...rowProps(songs, position)}
+                draggable={draggableRows || undefined}
+                onDragStart={
+                  draggableRows
+                    ? (event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData(
+                          TRACK_DRAG_TYPE,
+                          JSON.stringify([song.id]),
+                        );
+                        event.dataTransfer.setData("text/plain", song.title);
+                      }
+                    : undefined
+                }
               >
                 <td className="index">
                   {numbering === "track"

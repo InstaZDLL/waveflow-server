@@ -1,9 +1,10 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { type ReactNode, useMemo } from "react";
 
 import { type DiskFolder, RECEIVED_FOLDER } from "../api";
 import { diskTreeQuery } from "../api/queries";
+import { FiledFolders } from "../components/filed-folders";
 import { Icon } from "../components/icons";
 import { Loading, PageHeader } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
@@ -33,7 +34,13 @@ function crumbsOf(path: string): Array<{ name: string; path: string }> {
  * The folder is in the address (`?path=`), so back and forward walk the tree
  * and a folder can be linked to.
  */
-export function FoldersPage({ path }: { path: string }) {
+function DiskFolders({
+  path,
+  switcher,
+}: {
+  path: string;
+  switcher: ReactNode;
+}) {
   const { t } = useI18n();
   const player = usePlayer();
   const { active, ready } = useLibraryScope();
@@ -137,6 +144,7 @@ export function FoldersPage({ path }: { path: string }) {
     return (
       <section>
         {header}
+        {switcher}
         <p className="muted">{t("folders.noLibrary")}</p>
       </section>
     );
@@ -146,6 +154,7 @@ export function FoldersPage({ path }: { path: string }) {
     return (
       <section>
         {header}
+        {switcher}
         {breadcrumbs}
         <Loading error={error} />
       </section>
@@ -155,6 +164,7 @@ export function FoldersPage({ path }: { path: string }) {
   return (
     <section>
       {header}
+      {switcher}
       {breadcrumbs}
       <p className="muted folder-note">{t("folders.readOnly")}</p>
       {folders.length ? (
@@ -197,5 +207,47 @@ export function FoldersPage({ path }: { path: string }) {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The two trees of a library, side by side and never mixed (RFC-012 decision
+ * 1): **On disk**, read-only, and **Filed**, sorted in WaveFlow. The view is in
+ * the address with the place in it, so back and forward walk both.
+ */
+export function FoldersPage({
+  view,
+  path,
+  folder,
+}: {
+  view: "disk" | "filed";
+  path: string;
+  folder: string;
+}) {
+  const { t } = useI18n();
+  const switcher = (
+    <nav className="view-switcher folder-views" aria-label={t("folders.views")}>
+      <Link
+        to="/folders"
+        search={{ view: "disk" }}
+        aria-current={view === "disk" ? "page" : undefined}
+        activeOptions={{ exact: true, includeSearch: true }}
+      >
+        {t("folders.viewDisk")}
+      </Link>
+      <Link
+        to="/folders"
+        search={{ view: "filed" }}
+        aria-current={view === "filed" ? "page" : undefined}
+        activeOptions={{ exact: true, includeSearch: true }}
+      >
+        {t("folders.viewFiled")}
+      </Link>
+    </nav>
+  );
+  return view === "filed" ? (
+    <FiledFolders folder={folder} switcher={switcher} />
+  ) : (
+    <DiskFolders path={path} switcher={switcher} />
   );
 }

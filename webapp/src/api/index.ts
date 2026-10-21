@@ -67,6 +67,21 @@ export {
   setFavorite,
   setRating,
 } from "./favorites";
+export type { FiledFolder, FiledTree } from "./folders";
+export {
+  createFolder,
+  deleteFolder,
+  FOLDER_TRACKS_PAGE,
+  folderOutline,
+  folderTrail,
+  isWithin,
+  listFolders,
+  listFolderTracks,
+  MAX_PLACEMENTS,
+  placeTracks,
+  UNFILED,
+  updateFolder,
+} from "./folders";
 export type {
   DiskFolder,
   DiskListing,
