@@ -1052,6 +1052,20 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     assert_eq!(detail["albums"].as_array().unwrap().len(), 1);
     assert_eq!(detail["albums"][0]["title"], "Nocturne Bleue");
 
+    // The same albums on their own, without the page around them: what an
+    // album page reads to list the artist's other records.
+    let albums_of = get(
+        format!("/api/v2/artists/{artist_id}/albums"),
+        owner_token.clone(),
+    )
+    .await;
+    assert_eq!(albums_of.status(), StatusCode::OK);
+    let albums_of = json_body(albums_of).await;
+    assert_eq!(
+        albums_of, detail["albums"],
+        "the page's albums, one for one"
+    );
+
     // FTS5 folds diacritics, so an unaccented query still reaches "Écho Solaire".
     let found = get("/api/v2/search?q=echo".into(), owner_token.clone()).await;
     assert_eq!(found.status(), StatusCode::OK);
@@ -1148,6 +1162,8 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     for uri in [
         format!("/api/v2/albums/{album_id}"),
         format!("/api/v2/artists/{artist_id}"),
+        format!("/api/v2/artists/{artist_id}/albums"),
+        format!("/api/v2/artists/{}/albums", uuid::Uuid::new_v4()),
     ] {
         let response = get(uri, intruder_token.clone()).await;
         assert_eq!(

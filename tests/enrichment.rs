@@ -671,6 +671,35 @@ async fn a_foreign_artist_id_answers_as_a_missing_one() {
     assert_eq!(listener.fake.info.load(Ordering::SeqCst), 0);
 }
 
+/// An artist's albums ask no provider; the artist's page does.
+///
+/// `GET /api/v2/artists/{id}/albums` exists so an album page can list the
+/// artist's other records without the enrichment the artist page carries. The
+/// page is read here too, against the same engine, so a provider that is never
+/// asked is the engine working and not a fake that cannot be reached.
+#[tokio::test]
+async fn an_artists_albums_ask_no_provider() {
+    let (_temp, _config, state, owner, _outsider) = two_members().await;
+    let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
+    let enrichment = engine(
+        &state,
+        &settings(vec![Provider::LastFm], &run_key()),
+        &listener,
+    );
+    state.services.use_enrichment(enrichment.clone());
+    let bjork = artist_id(&state, owner, "Björk").await;
+
+    let albums = state.services.artist(owner, bjork).await.unwrap();
+    enrichment.idle().await;
+    assert!(!albums.albums.is_empty());
+    assert!(albums.enrichment.is_none());
+    assert_eq!(listener.fake.info.load(Ordering::SeqCst), 0);
+
+    state.services.artist_page(owner, bjork).await.unwrap();
+    enrichment.idle().await;
+    assert_eq!(listener.fake.info.load(Ordering::SeqCst), 1);
+}
+
 /// Decision 11's four states, each where it holds, through the native page —
 /// the one surface that publishes them.
 #[tokio::test]

@@ -175,6 +175,29 @@ pub async fn get_artist(
         .map_err(service_error)
 }
 
+/// The albums credited to an artist, as album artist, that this account can see.
+///
+/// The albums [`get_artist`] carries, without the rest of its page. That page
+/// is the artist's own screen: it asks the enrichment engine, which schedules
+/// a fill from every configured provider whose row is missing or stale. An
+/// album page that only wants the artist's other records would otherwise send
+/// a request to a third party for every album opened — or page through the
+/// whole library to keep six of them.
+#[utoipa::path(get, path = "/api/v2/artists/{artist_id}/albums", tag = "catalog", params(("artist_id" = Uuid, Path)), responses((status = 200, body = [crate::services::AlbumItem]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn list_artist_albums(
+    State(state): State<AppState>,
+    Path(artist_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::AlbumItem>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    state
+        .services
+        .artist(user.id, artist_id)
+        .await
+        .map(|detail| Json(detail.albums))
+        .map_err(service_error)
+}
+
 /// An artist's most played tracks, for this account.
 ///
 /// Its own route rather than a field on [`get_artist`]: the artist page draws
