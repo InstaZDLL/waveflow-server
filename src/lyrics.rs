@@ -141,9 +141,13 @@ pub fn parse_ttml(content: &str) -> Option<ParsedUpload> {
     if root.tag_name().name() != "tt" {
         return None;
     }
-    let lang = root
-        .descendants()
-        .filter(|node| node.is_element())
+    // The root's, else the body's: a `xml:lang` deeper down names one
+    // fragment — a span, a paragraph, a head element — not the sheet.
+    let lang = std::iter::once(root)
+        .chain(
+            root.children()
+                .filter(|node| node.is_element() && node.tag_name().name() == "body"),
+        )
         .find_map(|node| node.attribute(("http://www.w3.org/XML/1998/namespace", "lang")))
         .map(str::trim)
         .filter(|lang| !lang.is_empty())
@@ -167,10 +171,19 @@ pub fn parse_ttml(content: &str) -> Option<ParsedUpload> {
         let Some(start) = paragraph.attribute("begin").and_then(ttml_time) else {
             continue;
         };
+        // A `<br/>` breaks the line on screen; here it keeps the words on
+        // either side of it apart.
         let text = paragraph
             .descendants()
-            .filter(|node| node.is_text())
-            .filter_map(|node| node.text())
+            .filter_map(|node| {
+                if node.is_text() {
+                    node.text()
+                } else if node.is_element() && node.tag_name().name() == "br" {
+                    Some(" ")
+                } else {
+                    None
+                }
+            })
             .collect::<String>();
         let value = text.split_whitespace().collect::<Vec<_>>().join(" ");
         lines.push((start, order, value));
@@ -364,6 +377,33 @@ fn parse_timestamp(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ttml_line_break_keeps_its_words_apart() {
+        let parsed = parse_ttml(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+                <p begin="1s">hello<br/>world</p>
+            </div></body></tt>"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.lines[0].value, "hello world");
+    }
+
+    #[test]
+    fn a_ttml_language_comes_from_the_root_or_the_body_only() {
+        let deep = parse_ttml(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml"><head><metadata xml:lang="de"/></head>
+                <body><div><p begin="1s"><span xml:lang="en">hi</span></p></div></body></tt>"#,
+        )
+        .unwrap();
+        assert_eq!(deep.lang, UNKNOWN_LANG);
+        let body = parse_ttml(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml"><head><metadata xml:lang="de"/></head>
+                <body xml:lang="ko"><div><p begin="1s">hi</p></div></body></tt>"#,
+        )
+        .unwrap();
+        assert_eq!(body.lang, "ko");
+    }
 
     #[test]
     fn a_paragraph_nested_in_a_paragraph_reads_once() {
