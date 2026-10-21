@@ -190,6 +190,16 @@ export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
 
 /**
+ * The albums credited to an artist, without the artist's page.
+ *
+ * Not {@link getArtist}, whose answer carries the artist's enrichment: asking
+ * for it schedules a provider fill, which an album page listing the artist's
+ * other records has no reason to cause.
+ */
+export const listArtistAlbums = (id: string) =>
+  call<Album[]>(`/api/v2/artists/${id}/albums`);
+
+/**
  * An artist’s most played tracks, for this account.
  *
  * Its own request rather than a field on {@link getArtist}: the artist page

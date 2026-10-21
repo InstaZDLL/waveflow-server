@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatDuration } from "../api";
-import { albumQuery, albumsQuery } from "../api/queries";
+import { albumQuery, artistAlbumsQuery } from "../api/queries";
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import { Loading } from "../components/page-shell";
@@ -13,11 +13,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const { t } = useI18n();
   const player = usePlayer();
   const { data: value, error } = useQuery(albumQuery(albumId));
-  // The album's own library, not the active one: an album reached from
-  // another library's listing would otherwise look for its siblings where
-  // they are not, and find none.
+  // The artist's albums alone, not a library paged through to keep six of
+  // them, and not the artist's page, which would ask a provider. Kept to the
+  // album's own library below, whichever library is active.
   const { data: albums } = useQuery({
-    ...albumsQuery("alphabeticalByName", value?.library_id),
+    ...artistAlbumsQuery(value?.artist_id ?? ""),
     enabled: Boolean(value?.artist_id),
   });
   if (!value) return <Loading error={error} />;

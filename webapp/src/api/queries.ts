@@ -13,6 +13,7 @@ import {
   getTrackOverrides,
   listAlbums,
   listApiTokens,
+  listArtistAlbums,
   listArtists,
   listBookmarks,
   listFavorites,
@@ -129,6 +130,13 @@ export const artistQuery = (artistId: string) =>
         query.state.data,
         query.state.dataUpdateCount + query.state.errorUpdateCount,
       ),
+  });
+
+/** An artist's albums alone, for the album page's "more by". */
+export const artistAlbumsQuery = (artistId: string) =>
+  queryOptions({
+    queryKey: ["artist-albums", artistId],
+    queryFn: () => listArtistAlbums(artistId),
   });
 
 export const artistTopSongsQuery = (artistId: string) =>

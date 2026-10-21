@@ -1045,6 +1045,10 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: artistPlayed });
       return;
     }
+    if (url.pathname === "/api/v2/artists/artist-1/albums") {
+      await route.fulfill({ json: albums });
+      return;
+    }
     if (url.pathname === "/api/v2/artists/artist-1") {
       artistAsks += 1;
       if (artistFailsAfterFirst && artistAsks > 1) {
@@ -1489,6 +1493,16 @@ test("keeps each card's actions guarded while its own fetch is out", async ({
 test("album view plays its tracks and keeps its compact list readable", async ({
   page,
 }) => {
+  // "More by" reads the artist's albums alone. The library listing would page
+  // through every album to keep six, and the artist's page asks a metadata
+  // provider; neither has any business being asked from here.
+  const listings: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v2/albums" || path === "/api/v2/artists/artist-1") {
+      listings.push(path);
+    }
+  });
   await page.goto("/albums/album-2");
   await expect(page.locator(".album-hero h2")).toHaveText("Vespertine");
   await expect(page.locator(".album-meta")).toContainText("3 tracks");
@@ -1497,6 +1511,7 @@ test("album view plays its tracks and keeps its compact list readable", async ({
   await expect(page.locator(".album-songs .song-cover")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "More by Björk" })).toBeVisible();
   await expect(page.locator(".album-related-grid a")).toHaveCount(1);
+  expect(listings).toEqual([]);
   const actions = await page.locator(".album-actions button").evaluateAll((buttons) =>
     buttons.map((button) => {
       const style = getComputedStyle(button);
