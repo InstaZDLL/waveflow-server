@@ -46,7 +46,8 @@ pub struct FiledFolder {
 /// A library's whole filed tree, as one flat list a client draws from.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FiledTree {
-    /// Every folder, siblings by name, case-insensitively.
+    /// Every folder, siblings by name in natural order: numbers by value,
+    /// letters case-folded.
     pub folders: Vec<FiledFolder>,
     /// The available tracks filed nowhere: the root's **Unfiled** entry.
     pub unfiled_track_count: i64,
@@ -267,7 +268,7 @@ impl DomainServices {
                (SELECT COUNT(*) FROM track_placement p JOIN track t ON t.id=p.track_id \
                 WHERE p.folder_id=f.id AND t.is_available=1) AS track_count \
              FROM library_folder f WHERE f.library_id=? \
-             ORDER BY f.name_key, f.name, f.id",
+             ORDER BY f.name COLLATE natural_order, f.id",
         )
         .bind(library_id.to_string())
         .fetch_all(self.db.pool())

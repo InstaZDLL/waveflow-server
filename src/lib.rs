@@ -9,6 +9,7 @@ pub mod database;
 pub mod enrichment;
 pub mod lyrics;
 pub mod media;
+pub mod natural_order;
 pub mod oauth;
 pub mod outbound;
 pub mod pid;

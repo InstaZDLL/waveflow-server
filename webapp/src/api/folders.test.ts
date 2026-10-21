@@ -51,6 +51,17 @@ describe("the filed tree, read on the client", () => {
     ]);
   });
 
+  it("outlines numbered siblings by value", () => {
+    const numbered = [
+      folder("v10", null, "Vol 10"),
+      folder("v2", null, "Vol 2"),
+      folder("v1", null, "vol 1"),
+    ];
+    expect(
+      folderOutline(numbered).map(({ folder: entry }) => entry.name),
+    ).toEqual(["vol 1", "Vol 2", "Vol 10"]);
+  });
+
   it("knows what sits beneath a folder", () => {
     expect(isWithin(tree, "lofi", "rock")).toBe(true);
     expect(isWithin(tree, "rock", "rock")).toBe(true);

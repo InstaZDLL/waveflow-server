@@ -5115,3 +5115,125 @@ async fn filed_folders_sort_a_library_in_the_database_only() {
         StatusCode::CREATED
     );
 }
+
+/// Names with numbers in them sort by value, in SQL, so a page cut there cuts
+/// the order a person reads: `2 …` before `10 …` before `100 …`, `Disc 2`
+/// before `Disc 10`, in the disk tree and among filed folders alike.
+#[tokio::test]
+async fn numbered_names_sort_by_value_in_both_trees() {
+    let (_temp, config, state) = test_app().await;
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("natural-owner", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let root = std::fs::canonicalize(&config.data_dir).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Natural",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    let paths = [
+        "100 Snooze.m4a",
+        "2 Paradise.m4a",
+        "10 Ballad.m4a",
+        "1 Morning.mp3",
+        "Disc 10/a.flac",
+        "Disc 2/a.flac",
+        "disc 1/a.flac",
+    ];
+    state
+        .db
+        .start_scan_job(scan_id, paths.len() as i64, false)
+        .await
+        .unwrap();
+    for (index, path) in paths.iter().enumerate() {
+        let mut input = browse_input(40_000 + index, path, "Album", "Artist", None, None);
+        input.relative_path = (*path).to_owned();
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "natural-owner", &password).await;
+    let get = |uri: String| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            json_body(
+                router
+                    .oneshot(
+                        Request::get(uri)
+                            .header("authorization", format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let names = |listing: &serde_json::Value, key: &str| -> Vec<String> {
+        listing[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let top = get(format!("/api/v2/libraries/{library_id}/tree")).await;
+    assert_eq!(names(&top, "folders"), ["disc 1", "Disc 2", "Disc 10"]);
+    assert_eq!(
+        names(&top, "tracks"),
+        [
+            "1 Morning.mp3",
+            "2 Paradise.m4a",
+            "10 Ballad.m4a",
+            "100 Snooze.m4a"
+        ]
+    );
+    // The page is cut in that order: past the three folders, the second and
+    // third tracks are 2 and 10, not 10 and 100.
+    let page = get(format!(
+        "/api/v2/libraries/{library_id}/tree?offset=4&limit=2"
+    ))
+    .await;
+    assert_eq!(names(&page, "tracks"), ["2 Paradise.m4a", "10 Ballad.m4a"]);
+
+    let folders_uri = format!("/api/v2/libraries/{library_id}/folders");
+    for name in ["Vol 10", "Vol 2", "vol 1"] {
+        let created = router
+            .clone()
+            .oneshot(
+                Request::post(folders_uri.clone())
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "name": name }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+    }
+    let filed = get(folders_uri).await;
+    assert_eq!(names(&filed, "folders"), ["vol 1", "Vol 2", "Vol 10"]);
+}

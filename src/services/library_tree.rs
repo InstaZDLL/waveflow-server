@@ -125,8 +125,9 @@ impl DomainServices {
     /// member of, and for a folder no available track runs through; the root
     /// of an empty library is an empty listing. `Invalid` for a malformed path.
     ///
-    /// Folders sort by name, case-insensitively. Tracks sort by file name,
-    /// except in the received folder, whose file names are hashes: there they
+    /// Folders and tracks sort by name in natural order — numbers by value,
+    /// letters case-folded (`crate::natural_order`) — so `2 …` comes before
+    /// `10 …`. Tracks sort by file name, except in the received folder, whose file names are hashes: there they
     /// sort by artist then title, a missing artist last.
     pub async fn disk_tree(
         &self,
@@ -160,7 +161,7 @@ impl DomainServices {
                     SUM(instr(rest, '/') > 0 \
                         AND instr(substr(rest, instr(rest, '/') + 1), '/') = 0) AS direct \
              FROM beneath GROUP BY name \
-             ORDER BY name IS NOT NULL, name COLLATE NOCASE, name",
+             ORDER BY name IS NOT NULL, name COLLATE natural_order",
         )
         .bind(tree.rest_from())
         .bind(user_id.to_string())
@@ -221,7 +222,7 @@ impl DomainServices {
                 concat!(
                     song_select!(),
                     directly_in!(),
-                    " ORDER BY t.relative_path COLLATE NOCASE, t.relative_path LIMIT ? OFFSET ?"
+                    " ORDER BY t.relative_path COLLATE natural_order LIMIT ? OFFSET ?"
                 )
             };
             tracks = sqlx::query(sql)

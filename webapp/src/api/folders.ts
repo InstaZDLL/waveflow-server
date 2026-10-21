@@ -137,7 +137,10 @@ export function folderOutline(
   const seen = new Set<string>();
   const walk = (parent: string | null, depth: number) => {
     const siblings = [...(children.get(parent) ?? [])].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      a.name.localeCompare(b.name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      }),
     );
     for (const folder of siblings) {
       if (seen.has(folder.id)) continue;
