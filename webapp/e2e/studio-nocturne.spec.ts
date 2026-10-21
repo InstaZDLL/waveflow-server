@@ -1423,6 +1423,11 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "Edit tags",
   ]);
   await expect(menu.getByRole("menuitem", { name: "Play" })).toBeFocused();
+  // Where focus is shows on its own, not only as a faint tint.
+  await expect(menu.getByRole("menuitem", { name: "Play" })).toHaveCSS(
+    "outline-style",
+    "solid",
+  );
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitem", { name: "Properties" })).toBeFocused();

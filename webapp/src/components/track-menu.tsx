@@ -144,7 +144,16 @@ export function useTrackMenu() {
         cancelPress();
       }
     },
-    onTouchEnd: cancelPress,
+    onTouchEnd: (event: TouchEvent<HTMLElement>) => {
+      cancelPress();
+      // Cancelling the lift is what stops the browser from synthesising the
+      // tap's click at all; `onClickCapture` above stays as the net for a
+      // browser that sends one anyway.
+      if (swallowClick.current) {
+        swallowClick.current = false;
+        event.preventDefault();
+      }
+    },
     onTouchCancel: cancelPress,
   });
 

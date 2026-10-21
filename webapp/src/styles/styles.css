@@ -2698,7 +2698,13 @@ button.danger {
 .track-menu-item:hover,
 .track-menu-item:focus-visible {
   background: var(--accent-soft);
-  outline: none;
+}
+
+/* The arrow keys move focus through the menu, so where it is must be seen
+   on its own: a tint alone is too faint against the light themes' panel. */
+.track-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* A track's properties: a sheet of facts, read-only. */
