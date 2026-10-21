@@ -75,7 +75,13 @@ export function FiledFolders({
     ...folderTracksQuery(libraryId, folder || UNFILED),
     enabled: active !== null && listsTracks,
   });
-  const songs = useMemo(() => tracks.data?.pages.flat() ?? [], [tracks.data]);
+  // A disabled query still answers from its cache: at the root, the unfiled
+  // tracks read on the way in would otherwise be offered to play and to page.
+  const songs = useMemo(
+    () => (listsTracks ? (tracks.data?.pages.flat() ?? []) : []),
+    [listsTracks, tracks.data],
+  );
+  const morePages = listsTracks && tracks.hasNextPage;
   const [notice, setNotice] = useState<Notice>(null);
   const [form, setForm] = useState<"create" | "rename" | null>(null);
   const [moving, setMoving] = useState(false);
@@ -228,7 +234,7 @@ export function FiledFolders({
           onClick={() => player.play(songs, 0)}
         >
           <Icon name="play" size={17} />
-          {tracks.hasNextPage
+          {morePages
             ? t("songs.playLoaded", { count: songs.length })
             : t("songs.playAll", { count: songs.length })}
         </button>
@@ -433,7 +439,7 @@ export function FiledFolders({
               </p>
             ) : null
           ) : null}
-          {tracks.hasNextPage ? (
+          {morePages ? (
             <div className="actions">
               <button
                 type="button"

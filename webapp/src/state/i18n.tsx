@@ -499,6 +499,8 @@ const en = {
   "trackMenu.move": "Move to folder…",
   "upload.into": "Received files go into the folder {folder}.",
   "upload.doneUnfiled": "Added to the library, but not filed",
+  "upload.folderMissing":
+    "The folder this upload was opened for cannot be found: received files will stay unfiled.",
   "nav.group.library": "Library",
   "nav.group.listen": "Listening",
   "nav.group.account": "Account",
@@ -1187,6 +1189,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "trackMenu.move": "Déplacer vers un dossier…",
   "upload.into": "Les fichiers reçus vont dans le dossier {folder}.",
   "upload.doneUnfiled": "Ajouté à la bibliothèque, mais pas classé",
+  "upload.folderMissing":
+    "Le dossier pour lequel cet envoi a été ouvert est introuvable : les fichiers reçus resteront non classés.",
   "nav.group.library": "Bibliothèque",
   "nav.group.listen": "Écoute",
   "nav.group.account": "Compte",

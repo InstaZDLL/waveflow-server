@@ -4939,6 +4939,17 @@ async fn filed_folders_sort_a_library_in_the_database_only() {
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
+    // Nor under a folder of another library, though the caller owns both.
+    assert_eq!(
+        patch(
+            &owner_token,
+            &rock_id,
+            serde_json::json!({ "parent_id": foreign_folder })
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
     let mut chain = Vec::new();
     let mut parent: Option<String> = None;
     for depth in 1..=16 {

@@ -219,13 +219,18 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
   const { active } = useLibraryScope();
   // The folder is named only if it is one of the active library's: a link
   // kept across a change of library must not file into the other one.
-  const { data: tree } = useQuery({
+  const { data: tree, isPending: treePending } = useQuery({
     ...filedTreeQuery(active?.id ?? ""),
     enabled: active !== null && folder !== undefined,
   });
   const into = folder
     ? tree?.folders.find((entry) => entry.id === folder)
     : undefined;
+  // Files are not taken until the folder is known: one picked before would
+  // be captured with no folder and arrive unfiled, with nothing to say so.
+  const awaitingFolder = folder !== undefined && treePending;
+  // And a folder that cannot be found is said before anything is sent.
+  const folderMissing = folder !== undefined && !treePending && !into;
   const [items, setItems] = useState<Item[]>([]);
   const pending = useRef<Item[]>([]);
   const running = useRef(false);
@@ -403,9 +408,20 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
           {t("upload.into", { folder: into.name })}
         </p>
       ) : null}
+      {folderMissing ? (
+        <p className="notice upload-into" role="status">
+          {t("upload.folderMissing")}
+        </p>
+      ) : null}
       <label className="upload-pick">
         <span>{t("upload.pick")}</span>
-        <input type="file" multiple accept={ACCEPT} onChange={pick} />
+        <input
+          type="file"
+          multiple
+          accept={ACCEPT}
+          onChange={pick}
+          disabled={awaitingFolder}
+        />
       </label>
       <p className="muted upload-formats">
         {t("upload.formats", { extensions: UPLOAD_EXTENSIONS.join(", ") })}

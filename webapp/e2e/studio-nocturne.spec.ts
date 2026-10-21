@@ -5250,3 +5250,78 @@ test("files a received track into the folder the upload started from", async ({
     },
   ]);
 });
+
+/**
+ * Received is not undone by a filing that fails: the commit stands, and the
+ * line says the track arrived unfiled rather than claiming it was filed.
+ */
+test("keeps a received track when filing it fails, and says so", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  const state = await serveFiledFolders(page, []);
+  state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
+  await page.route("**/api/v2/libraries/library-1/placements", (route) =>
+    route.fulfill({ status: 422, json: { error: "validation" } }),
+  );
+
+  await page.goto("/upload?folder=folder-1");
+  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await page.getByLabel("Choose audio files").setInputFiles({
+    name: "Army of Me.flac",
+    mimeType: "audio/flac",
+    buffer: Buffer.from(Array.from({ length: 20 }, (_, i) => i)),
+  });
+  await expect(page.getByText("Added to the library, but not filed")).toBeVisible();
+  expect(uploadCommits).toEqual(["upload-1"]);
+});
+
+/**
+ * No file is taken before the folder is known, and a folder that is gone is
+ * said before anything is sent: either way a file would have arrived unfiled
+ * under a page that promised a folder.
+ */
+test("waits for the folder before taking files, and says when it is gone", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v2/libraries/library-1/folders", async (route) => {
+    await held;
+    await route.fulfill({ json: { folders: [], unfiled_track_count: 0 } });
+  });
+  try {
+    await page.goto("/upload?folder=folder-gone");
+    await expect(page.getByLabel("Choose audio files")).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(page.getByLabel("Choose audio files")).toBeEnabled();
+  await expect(page.getByRole("status")).toHaveText(
+    "The folder this upload was opened for cannot be found: received files will stay unfiled.",
+  );
+});
+
+/**
+ * The root lists folders, not tracks. Coming back to it from the unfiled
+ * tracks must not leave those tracks behind in its controls.
+ */
+test("offers no tracks at the root after visiting the unfiled ones", async ({
+  page,
+}) => {
+  await serveFiledFolders(page, [song(1, "Hidden Place", 0, false)]);
+  await page.goto("/folders?view=filed&folder=unfiled");
+  await expect(page.locator(".songs tbody tr")).toHaveCount(1);
+  const controls = page.locator(".page-controls");
+  await expect(controls.getByRole("button", { name: /Play/ })).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Folder path" })
+    .getByRole("link", { name: "Filed", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "Filed" })).toBeVisible();
+  await expect(controls.getByRole("button", { name: /Play/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+});
