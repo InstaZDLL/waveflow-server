@@ -3,10 +3,12 @@
 - **Status**: Proposed
 - **Implemented by**: in progress, in the order of "The order of the work"
   below: [#298](https://github.com/InstaZDLL/waveflow-server/pull/298) (the
-  context menu and Properties, with `relative_path` on the track) and the pull
-  request adding download (`?download=1` on the stream ticket). The *Status*
-  field above never flips in this project; this line is the one that says what
-  is running.
+  context menu and Properties, with `relative_path` on the track),
+  [#299](https://github.com/InstaZDLL/waveflow-server/pull/299) (download,
+  `?download=1` on the stream ticket) and the pull request adding uploaded
+  lyrics (`track_lyrics_upload`, the TTML parser, the order, and the lyrics
+  download). The *Status* field above never flips in this project; this line
+  is the one that says what is running.
 - **Date**: 2026-10-21
 - **Revised**: 2026-10-21, after review on #297: the **Received** folder's
   contract, the depth check on a move, the folder cap that bounds the tree's

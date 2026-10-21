@@ -1364,6 +1364,7 @@ mod credentials;
 mod favorites;
 mod lastfm;
 mod library_events;
+mod lyrics_uploads;
 mod playback;
 mod playlists;
 mod radio;
@@ -1392,6 +1393,7 @@ pub use lastfm::{
     LastFmApproval, LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX,
     LASTFM_JOURNEY_COOKIE,
 };
+pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
     ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
@@ -1916,6 +1918,8 @@ fn lyrics_list_from_rows(
                 .unwrap_or_else(|| "xxx".into()),
             synced,
             lines: lyrics::lines(&content, synced),
+            // The façade's sheets name no source: its answer is frozen.
+            source: None,
         });
     }
     Ok(LyricsList {

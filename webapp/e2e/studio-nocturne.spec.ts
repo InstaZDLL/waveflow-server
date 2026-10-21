@@ -1485,6 +1485,128 @@ test("opens a track's properties from its context menu", async ({ page }) => {
 });
 
 /**
+ * The lyrics in a track's properties (RFC-012 decision 6).
+ *
+ * The sheets come in the server's order, the first marked as the one shown,
+ * each naming its source. An owner uploads a sheet as the bytes it is and
+ * takes an upload back; anyone downloads the shown sheet, saved under the
+ * name the server gives in `Content-Disposition`.
+ */
+test("uploads, removes and downloads lyrics from a track's properties", async ({
+  page,
+}) => {
+  const sheet = (source: string, synced: boolean, value: string) => ({
+    displayArtist: "Björk",
+    displayTitle: "Army Of Me",
+    lang: "eng",
+    synced,
+    line: [{ start: synced ? 1000 : undefined, value }],
+    source,
+  });
+  let sheets = [sheet("sidecar_lrc", true, "from the sidecar")];
+  const sent: Array<{ method: string; path: string; body: string }> = [];
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9/lyrics", (route) =>
+    route.fulfill({
+      json: { trackId: "song-9", structuredLyrics: sheets },
+    }),
+  );
+  await page.route("**/api/v2/tracks/song-9/lyrics/ttml", (route) => {
+    const request = route.request();
+    sent.push({
+      method: request.method(),
+      path: "ttml",
+      body: request.postData() ?? "",
+    });
+    if (request.method() === "PUT") {
+      sheets = [sheet("upload_ttml", true, "bonjour"), ...sheets];
+      return route.fulfill({
+        json: { trackId: "song-9", structuredLyrics: sheets },
+      });
+    }
+    sheets = sheets.filter((entry) => entry.source !== "upload_ttml");
+    return route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/v2/tracks/song-9/lyrics/file", (route) =>
+    route.fulfill({
+      body: "[00:01.00]from the sidecar\n",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-disposition":
+          "attachment; filename=\"Bj_rk - Army Of Me.lrc\"; filename*=UTF-8''Bj%C3%B6rk%20-%20Army%20Of%20Me.lrc",
+      },
+    }),
+  );
+  await page.goto("/songs");
+  await page.evaluate(() => {
+    const seen = window as unknown as { __saved: string[] };
+    seen.__saved = [];
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      seen.__saved.push(this.download);
+    };
+  });
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
+  await page.keyboard.press("Shift+F10");
+  await page
+    .getByRole("menu", { name: "Actions for Army Of Me" })
+    .getByRole("menuitem", { name: "Properties" })
+    .click();
+  const panel = page.getByRole("dialog", { name: "Army Of Me" });
+  const lyrics = panel.locator(".lyrics-section");
+  await expect(lyrics).toContainText("Shown");
+  await expect(lyrics).toContainText("LRC file beside the track");
+
+  // An upload goes as the file's own bytes, and leads once it is in.
+  await panel.locator('input[type="file"]').setInputFiles({
+    name: "Army Of Me.ttml",
+    mimeType: "application/ttml+xml",
+    buffer: Buffer.from('<tt xmlns="http://www.w3.org/ns/ttml"/>'),
+  });
+  await expect(lyrics).toContainText("Uploaded TTML");
+  expect(sent).toEqual([
+    {
+      method: "PUT",
+      path: "ttml",
+      body: '<tt xmlns="http://www.w3.org/ns/ttml"/>',
+    },
+  ]);
+  await expect(lyrics.locator(".property-row").first()).toContainText(
+    "Uploaded TTML",
+  );
+
+  // A file that is not a sheet is refused before anything is sent.
+  await panel.locator('input[type="file"]').setInputFiles({
+    name: "notes.srt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("1"),
+  });
+  await expect(lyrics.getByRole("alert")).toHaveText(
+    "Choose a .lrc, .txt or .ttml file.",
+  );
+  expect(sent).toHaveLength(1);
+
+  // Taking the upload back leaves the scanned sheet shown again.
+  await lyrics.getByRole("button", { name: "Remove the TTML" }).click();
+  await expect(lyrics).not.toContainText("Uploaded TTML");
+  expect(sent.at(-1)?.method).toBe("DELETE");
+
+  // The download is saved under the server's name, accents and all.
+  await lyrics.getByRole("button", { name: "Download lyrics" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __saved: string[] }).__saved),
+    )
+    .toEqual(["Björk - Army Of Me.lrc"]);
+  await expectNoWcagViolations(page);
+});
+
+/**
  * Download is the stream ticket with `?download=1` (RFC-012 decision 5).
  *
  * The browser cannot send the session on a navigation, so the menu mints a

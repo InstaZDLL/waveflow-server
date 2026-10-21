@@ -6,6 +6,7 @@ import { lyricsQuery, trackPropertiesQuery } from "../api/queries";
 import { useI18n } from "../state/i18n";
 import { Artwork } from "./artwork";
 import { Icon } from "./icons";
+import { LyricsSection } from "./lyrics-section";
 
 /** One row of a list, left out entirely when it has nothing to say. */
 type Row = { label: string; value: ReactNode; corrected?: string | null };
@@ -205,25 +206,6 @@ export function TrackProperties({
     { label: t("properties.bpm"), value: known(track?.bpm) },
   ];
 
-  const sheets = lyrics?.structuredLyrics ?? [];
-  // "None" is an answer, so it waits for one: while the lyrics are still
-  // being asked for, the section says nothing rather than something false.
-  const words: Row[] = sheets.length
-    ? sheets.map((sheet, index) => ({
-        label: t("properties.lyricsSheet", { number: index + 1 }),
-        value: t(sheet.synced ? "properties.synced" : "properties.plain", {
-          lang: sheet.lang,
-        }),
-      }))
-    : lyricsKnown
-      ? [
-          {
-            label: t("properties.lyricsSheets"),
-            value: t("properties.noLyrics"),
-          },
-        ]
-      : [];
-
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes a <dialog> natively
     <dialog
@@ -277,7 +259,7 @@ export function TrackProperties({
       <Section title={t("properties.file")} rows={file} />
       <Section title={t("properties.tags")} rows={tags} />
       <Section title={t("properties.sound")} rows={sound} />
-      <Section title={t("properties.lyrics")} rows={words} />
+      <LyricsSection song={song} list={lyrics} known={lyricsKnown} />
     </dialog>
   );
 }

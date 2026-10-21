@@ -138,6 +138,18 @@ pub fn router(state: AppState) -> Router {
             get(get_track).patch(update_track),
         )
         .route("/api/v2/tracks/{track_id}/lyrics", get(get_track_lyrics))
+        // A sheet is text, but a mebibyte of it: the one route besides the
+        // upload chunks that asks for more than the global 16 KiB.
+        .route(
+            "/api/v2/tracks/{track_id}/lyrics/{format}",
+            put(put_track_lyrics).delete(delete_track_lyrics).layer(
+                axum::extract::DefaultBodyLimit::max(crate::services::MAX_LYRICS_UPLOAD_BYTES),
+            ),
+        )
+        .route(
+            "/api/v2/tracks/{track_id}/lyrics/file",
+            get(get_track_lyrics_file),
+        )
         .route(
             "/api/v2/tracks/{track_id}/overrides",
             get(get_track_overrides),

@@ -1319,7 +1319,7 @@ async fn download_name(state: &AppState, user_id: Uuid, track: &StreamTrack) -> 
 /// ASCII — replaced by `_`, and a separator too, so no browser builds a path
 /// from it. `filename*` carries the real name, percent-encoded UTF-8, and
 /// every current browser prefers it.
-fn attachment(name: &str) -> HeaderValue {
+pub(crate) fn attachment(name: &str) -> HeaderValue {
     let cleaned: String = name
         .chars()
         .map(|c| match c {

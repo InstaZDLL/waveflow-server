@@ -2835,3 +2835,28 @@ button.danger {
   background: transparent;
   color: var(--text);
 }
+
+/* The lyrics in a track's properties: each sheet with its source, and what
+   may be done with them under the list. */
+.lyrics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.lyrics-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lyrics-remove {
+  justify-self: start;
+  min-height: 1.75rem;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
