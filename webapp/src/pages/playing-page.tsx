@@ -98,6 +98,18 @@ export function lyricSheetState(answer: {
 }
 
 /**
+ * What a line with no words shows: a non-breaking space, not a plain one.
+ *
+ * A plain space is collapsible, so the line box around it has no height — a
+ * blank timed line became a button zero pixels tall, which the keyboard still
+ * reached and nobody could see, focus ring included. A non-breaking space
+ * holds one line of height, so the pause keeps its place in the sheet and its
+ * button a box. It is still whitespace to axe, which trims it before asking
+ * whether the name contains what is on screen.
+ */
+const BLANK_LINE = "\u00a0";
+
+/**
  * The sheet a track travels with, and where in it the playing head is.
  *
  * Shared by the strip and the dedicated view below, so the two cannot disagree
@@ -156,7 +168,7 @@ function LyricsStrip({ trackId }: { trackId: string }) {
             className={index === active ? "on" : undefined}
             aria-current={index === active ? "true" : undefined}
           >
-            {line.value || " "}
+            {line.value || BLANK_LINE}
           </li>
         ))}
       </ol>
@@ -282,10 +294,10 @@ function LyricsView({ song }: { song: Song }) {
                       : t("lyrics.seekTo", { when: formatDuration(at) })
                   }
                 >
-                  {line.value || " "}
+                  {line.value || BLANK_LINE}
                 </button>
               ) : (
-                line.value || " "
+                line.value || BLANK_LINE
               )}
             </li>
           );
