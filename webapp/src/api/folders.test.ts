@@ -15,11 +15,12 @@ const folder = (id: string, parent: string | null, name = id): FiledFolder => ({
 });
 
 describe("the filed tree, read on the client", () => {
+  // In the order the server answers: every folder by name, natural order.
   const tree = [
-    folder("rock", null, "Rock"),
+    folder("ambient", null, "ambient"),
     folder("indie", "rock", "Indie"),
     folder("lofi", "indie", "lo-fi"),
-    folder("ambient", null, "ambient"),
+    folder("rock", null, "Rock"),
   ];
 
   it("walks from the root down to a folder", () => {
@@ -37,7 +38,7 @@ describe("the filed tree, read on the client", () => {
     expect(folderOutline(looped)).toEqual([]);
   });
 
-  it("outlines siblings by name, case aside, each before its children", () => {
+  it("outlines siblings in the server's order, each before its children", () => {
     expect(
       folderOutline(tree).map(({ folder: entry, depth }) => [
         entry.name,
@@ -49,6 +50,21 @@ describe("the filed tree, read on the client", () => {
       ["Indie", 1],
       ["lo-fi", 2],
     ]);
+  });
+
+  it("keeps the server's sibling order rather than sorting again", () => {
+    // `natural_order` puts these as listed; a locale sort would move "Ä 2"
+    // to the front, and the picker would disagree with the cards.
+    const answered = [
+      folder("a2", null, "a 2"),
+      folder("a10", null, "A 10"),
+      folder("umlaut", null, "Ä 2"),
+      folder("v2", null, "Vol 2"),
+      folder("v10", null, "Vol 10"),
+    ];
+    expect(
+      folderOutline(answered).map(({ folder: entry }) => entry.name),
+    ).toEqual(["a 2", "A 10", "Ä 2", "Vol 2", "Vol 10"]);
   });
 
   it("knows what sits beneath a folder", () => {

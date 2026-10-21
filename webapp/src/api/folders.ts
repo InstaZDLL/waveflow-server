@@ -121,8 +121,14 @@ export function folderTrail(
 }
 
 /**
- * The tree flattened in display order — siblings by name, each followed by
- * its own sub-folders — with each folder's depth, the root's children at 0.
+ * The tree flattened in display order — siblings as the server ordered them,
+ * each followed by its own sub-folders — with each folder's depth, the
+ * root's children at 0.
+ *
+ * **No sort here.** The server orders folders by its `natural_order`
+ * collation, and the cards beside this list draw them in that order; a second
+ * sort written in JavaScript would be a second rule, and two rules drift — the
+ * picker and the cards would disagree on where "Ä 2" goes.
  */
 export function folderOutline(
   folders: FiledFolder[],
@@ -136,10 +142,7 @@ export function folderOutline(
   const outline: Array<{ folder: FiledFolder; depth: number }> = [];
   const seen = new Set<string>();
   const walk = (parent: string | null, depth: number) => {
-    const siblings = [...(children.get(parent) ?? [])].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-    );
-    for (const folder of siblings) {
+    for (const folder of children.get(parent) ?? []) {
       if (seen.has(folder.id)) continue;
       seen.add(folder.id);
       outline.push({ folder, depth });

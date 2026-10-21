@@ -372,7 +372,13 @@ impl Database {
             .foreign_keys(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(config.sqlite_busy_timeout);
+            .busy_timeout(config.sqlite_busy_timeout)
+            // Numbers in names by value, for listings paged in SQL; see
+            // `natural_order` for why no schema object may name it.
+            .collation(
+                crate::natural_order::COLLATION,
+                crate::natural_order::compare,
+            );
 
         let pool = SqlitePoolOptions::new()
             .max_connections(config.db_max_connections)
