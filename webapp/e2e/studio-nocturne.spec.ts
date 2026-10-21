@@ -1223,17 +1223,35 @@ test("ends the played wave under the progress thumb", async ({
   const measured = await progress.evaluate((node: HTMLElement) => {
     const wave = node.querySelector(".progress-wave") as HTMLElement;
     const input = node.querySelector("input") as HTMLInputElement;
+    // The thumb's size as the stylesheet declares it, in rem — and the size it
+    // has always had where no token names it, so a stylesheet without one is
+    // judged on where its wave ends rather than on a missing variable.
+    const rem =
+      Number.parseFloat(
+        getComputedStyle(node).getPropertyValue("--fe-thumb"),
+      ) || 0.625;
     const thumb =
-      Number.parseFloat(getComputedStyle(document.documentElement).fontSize) *
-      0.625;
+      rem *
+      Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    // The range's own bounds. A mocked track may carry no duration, which
+    // leaves `max` at zero and every value clamped to it, so the range is
+    // given a span to move along when it has none.
+    const min = Number(input.min) || 0;
+    if (!(Number(input.max) > min)) input.max = String(min + 100);
+    const max = Number(input.max);
     return [0, 0.25, 0.5, 0.81, 1].map((played) => {
+      // The range moved, and the share the player would write beside it.
+      input.value = String(min + played * (max - min));
       node.style.setProperty("--played", String(played));
+      // Where the native thumb sits, read back from the range's value rather
+      // than from `--played`: the wave has to follow the thumb, not itself.
+      const fraction = (Number(input.value) - min) / (max - min);
       const w = wave.getBoundingClientRect();
       const i = input.getBoundingClientRect();
       return {
         played,
         waveEnd: w.right,
-        thumbCentre: i.left + thumb / 2 + played * (i.width - thumb),
+        thumbCentre: i.left + thumb / 2 + fraction * (i.width - thumb),
         trackEnd: i.right,
       };
     });
