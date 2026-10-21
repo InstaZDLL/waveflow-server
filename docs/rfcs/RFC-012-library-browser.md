@@ -4,6 +4,9 @@
 - **Implemented by**: not started. The *Status* field above never flips in this
   project; this line is the one that will say what is running.
 - **Date**: 2026-10-21
+- **Revised**: 2026-10-21, after review on #297: the **Received** folder's
+  contract, the depth check on a move, the folder cap that bounds the tree's
+  listing, and one order for the lyrics, all made explicit.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md),
@@ -67,8 +70,23 @@ path guard, and expose names the scanner was never asked to read. The view is
 of the catalogue, not of the disk.
 
 Files received through RFC-008 live in `.waveflow-managed/` under their hash.
-That folder is shown under one fixed name (**Received**, translated) and its
-entries by their tags. Showing `9ad0…f9e.flac` would be truthful and useless.
+Showing `9ad0…f9e.flac` would be truthful and useless, so that one folder is
+presented differently, and its contract is stated here rather than left to the
+client:
+
+- **Its path is its real one.** It is reached as `GET
+  /libraries/{id}/tree?path=.waveflow-managed`, the same address scheme as
+  every other folder, and the root's listing returns it under that `path`.
+  The name **Received** (translated) is a label the client draws; the stable
+  identifier is the path, which RFC-008 fixes and nothing renames.
+- **It is flat.** RFC-008 writes no sub-folder there, so the folder has no
+  sub-folders and no tag grouping is invented for it: its tracks are listed
+  directly, ordered by artist then title, case-insensitively and NULLS LAST.
+- **Its count is its tracks**, counted like any other folder's: the indexed
+  tracks whose `relative_path` sits directly in it.
+- **A tag change moves nothing.** A received track's place in the tree is its
+  path, which is its hash; correcting its title or artist changes how its row
+  reads and where it sorts, never which folder holds it or its address.
 
 ### Paths are shown to members, and only to them
 
@@ -104,8 +122,18 @@ entirely visible there before anyone has sorted anything.
 - A name is 1 to 120 characters after trimming, holds no control characters,
   and is unique among its siblings, case-insensitively. It holds `/` if its
   author wants it to: no path is ever built from it.
-- Depth is capped at 16. A move that would make a folder its own ancestor is
-  refused with `422`, not repaired.
+- Depth is capped at 16, a root folder being at depth 1. A create is refused
+  with `422` when its parent is already at 16.
+- **A move is checked for the whole sub-tree it carries**, before anything is
+  written: the new parent's depth plus the height of the moved folder's
+  sub-tree must stay within 16, or the move is refused with `422`. Checking
+  only the moved folder would let a move bury its deepest descendant below the
+  cap. A move that would make a folder its own ancestor is refused with `422`
+  too, and neither refusal is repaired.
+- A library holds at most **5,000** filed folders. A create past that answers
+  `422`. The cap is what makes the whole tree one bounded answer (see the
+  surface below): at most 5,000 entries of an id, a parent id, a name of at
+  most 120 characters and a count — under a megabyte in the worst case.
 - Deleting a folder **files nothing elsewhere and deletes nothing on disk**.
   Its sub-folders go with it, and every track in it or under it becomes
   unfiled. The response says how many tracks were unfiled, so the client can
@@ -182,11 +210,21 @@ corrections live beside the file (RFC-008 decision 5).
 
 - **One upload per track and format.** Uploading again replaces it. Deleting
   it falls back to what the scanner found.
-- **Precedence**: an uploaded synced sheet wins over everything; an uploaded
-  plain text wins over scanned plain text but not over a scanned synced sheet.
+- **Precedence** is one fixed order, the same everywhere a single sheet is
+  chosen — the lyrics the clients read, Properties, and the download below:
+  1. an uploaded `.ttml`;
+  2. an uploaded `.lrc`;
+  3. a scanned synced sheet (a sidecar `.lrc`, then embedded synced lyrics);
+  4. an uploaded `.txt`;
+  5. scanned plain text (a sidecar `.txt`, then embedded plain lyrics).
+
   Timings beat their absence, and "uploaded" only breaks ties between sheets
   that are alike: an owner who uploads a `.txt` for a track whose file carries
-  a synced sheet has not asked to lose the timings.
+  a synced sheet has not asked to lose the timings. Between the two synced
+  uploads, TTML ranks first because it carries strictly more — line timings
+  and, kept in the original, word timings — so an owner who uploads both has
+  given the richer one last word. The order depends on formats only, never on
+  upload times, so two readers of the same track always agree.
 - **The original bytes are kept**, decoded to UTF-8 through
   `waveflow_core::text_encoding` (#296), so the download gives back what was
   uploaded and not a re-serialisation of it. The size cap is the sidecar's,
@@ -198,9 +236,11 @@ corrections live beside the file (RFC-008 decision 5).
   not advertised (RFC-002). Serving word cues is a separate change with its
   own contract. The parser is `roxmltree`, already in the lock file, with
   external entities and DTDs refused.
-- **Download** of lyrics gives back the uploaded original as it came. For
-  lyrics the scanner found, it gives `.lrc` when they are synced and `.txt`
-  when they are not.
+- **Download** of lyrics gives back the sheet the order above selects: the
+  uploaded original as it came when that sheet is an upload, and, for lyrics
+  the scanner found, `.lrc` when they are synced and `.txt` when they are
+  not. `?format=lrc|txt|ttml` asks for one upload by name instead, and
+  answers `404` when the track has no upload in that format.
 
 ## Decision 7 — uploading from the browser is RFC-008, unchanged
 
@@ -221,16 +261,16 @@ library or a track the caller may not see.
 
 | Route | What |
 | --- | --- |
-| `GET /libraries/{id}/tree?path=` | One level of the disk tree: sub-folders with their track counts, and the tracks directly in `path`. Paged. |
-| `GET /libraries/{id}/folders` | The whole filed tree, without tracks. Small by construction. |
+| `GET /libraries/{id}/tree?path=` | One level of the disk tree: sub-folders with their track counts, and the tracks directly in `path` (empty for the root; `.waveflow-managed` for **Received**). Paged, like every listing. |
+| `GET /libraries/{id}/folders` | The whole filed tree, without tracks, as one flat list of `id`, `parent_id`, `name` and the count of tracks filed directly in each. Not paged: bounded by the 5,000-folder cap of decision 2, which is what lets a client draw the tree from one answer. |
 | `POST /libraries/{id}/folders` | Create: `name`, `parent_id`. |
-| `PATCH /folders/{id}` | Rename, or move under another `parent_id` (or to the root). |
+| `PATCH /folders/{id}` | Rename, or move under another `parent_id` (or to the root); `422` past the depth cap for the whole sub-tree, or on a cycle. |
 | `DELETE /folders/{id}` | Delete with its sub-folders; returns the number of tracks unfiled. |
 | `GET /folders/{id}/tracks` | The tracks filed directly in a folder. Paged. `unfiled` stands for the root's unfiled entry. |
 | `PUT /libraries/{id}/placements` | File up to 500 tracks into one folder, or unfile them (`folder_id: null`). |
 | `PUT /tracks/{id}/lyrics/{format}` | Upload `lrc`, `txt` or `ttml`. |
 | `DELETE /tracks/{id}/lyrics/{format}` | Remove an upload. |
-| `GET /tracks/{id}/lyrics/file` | Download the lyrics as a file (decision 6). |
+| `GET /tracks/{id}/lyrics/file?format=` | Download the sheet decision 6's order selects, or with `format`, one upload by name. |
 | `GET /stream/{ticket}?download=1` | Download the audio (decision 5). |
 
 `GET /tracks/{id}` gains `relative_path`. Nothing else changes shape.
