@@ -33,6 +33,28 @@
 
 /* ── Tokens ──────────────────────────────────────────────────── */
 
+/* The cover's light, registered as colours so a new record's light can fade
+   in. A gradient does not interpolate, so a transition on the backgrounds
+   that read these did nothing and the light jumped; a typed property does,
+   and every gradient built from it follows. */
+@property --glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1f5a48;
+}
+
+@property --glow-deep {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0f2b22;
+}
+
+:root.dark {
+  transition:
+    --glow 900ms var(--fe-ease),
+    --glow-deep 900ms var(--fe-ease);
+}
+
 :root.dark {
   --fe-bg: #0b0b0e;
   --fe-surface: #121216;
@@ -114,7 +136,7 @@
 }
 
 /* Two soft pools of the cover's colour behind the page. Fixed, so nothing
-   repaints on scroll, and eased so a new record's light fades in. */
+   repaints on scroll; the fade comes from the registered `--glow`. */
 :where(:root.dark) body::before {
   display: block;
   position: fixed;
@@ -134,7 +156,6 @@
     );
   content: "";
   pointer-events: none;
-  transition: background 900ms var(--fe-ease);
 }
 
 :where(:root.dark) #root {
@@ -862,7 +883,6 @@
     color-mix(in srgb, var(--fe-surface) 92%, transparent);
   box-shadow: inset 0 0 0 1px var(--fe-hairline);
   backdrop-filter: blur(1.5rem) saturate(120%);
-  transition: background 900ms var(--fe-ease);
 }
 
 :where(:root.dark) .player-cover {
@@ -1196,8 +1216,8 @@
     animation: none;
   }
 
-  :where(:root.dark) body::before,
-  :where(:root.dark) .player {
+  /* The new record's light arrives at once. */
+  :root.dark {
     transition: none;
   }
 

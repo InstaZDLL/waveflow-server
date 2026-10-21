@@ -8,15 +8,16 @@ import { Loading } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
 
 export function AlbumPage({ albumId }: { albumId: string }) {
   const { t } = useI18n();
   const player = usePlayer();
-  const scope = useScopeId();
   const { data: value, error } = useQuery(albumQuery(albumId));
+  // The album's own library, not the active one: an album reached from
+  // another library's listing would otherwise look for its siblings where
+  // they are not, and find none.
   const { data: albums } = useQuery({
-    ...albumsQuery("alphabeticalByName", scope),
+    ...albumsQuery("alphabeticalByName", value?.library_id),
     enabled: Boolean(value?.artist_id),
   });
   if (!value) return <Loading error={error} />;

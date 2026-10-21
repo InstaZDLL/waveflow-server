@@ -222,6 +222,15 @@ const navigation: Array<{
 
 type NavigationTarget = (typeof navigation)[number]["to"];
 
+/**
+ * How long a tab switch holds the current screen while the next one loads.
+ *
+ * Long enough that an ordinary answer arrives first and the switch shows no
+ * skeleton; short enough that a server slow to answer leaves the visitor on
+ * the screen they asked for, with its wait, rather than on the old one.
+ */
+const TAB_WAIT_MS = 1500;
+
 /** Have the destination's first answer ready before replacing the current tab. */
 async function prepareTab(
   to: NavigationTarget,
@@ -348,19 +357,28 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
     ) {
       return;
     }
-    event.preventDefault();
     if (window.location.pathname === to) {
       // A second click on the current tab cancels a destination still loading.
+      // With nothing loading it is an ordinary link: it takes the tab back to
+      // its plain address, `/playing?view=lyrics` to `/playing`.
+      if (pendingTab === null) return;
+      event.preventDefault();
       navigationAttempt.current += 1;
       setPendingTab(null);
       return;
     }
+    event.preventDefault();
     const attempt = ++navigationAttempt.current;
     const origin = window.location.pathname + window.location.search;
     setPendingTab(to);
     void (async () => {
       try {
-        await prepareTab(to, active?.id, client);
+        // Waited for, but not for ever: past the deadline the destination
+        // shows its own wait, which says more than a busy tab does.
+        await Promise.race([
+          prepareTab(to, active?.id, client),
+          new Promise((resolve) => setTimeout(resolve, TAB_WAIT_MS)),
+        ]);
       } catch {
         // The destination owns its error state. Navigate to it even when its
         // first request fails, rather than leaving the old tab stuck as busy.

@@ -984,7 +984,7 @@ main > section {
   font-size: var(--text-xs);
 }
 
-@media (width <= 52rem) {
+@media (max-width: 820px) {
   .album-hero {
     margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) 0;
   }

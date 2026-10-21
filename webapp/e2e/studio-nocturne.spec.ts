@@ -3180,6 +3180,57 @@ test("keeps the current tab visible while the next tab loads", async ({
 });
 
 /**
+ * A tab switch waits for its answer, but not for ever.
+ *
+ * Past a short deadline the destination is shown with its own wait. A server
+ * that never answered held the previous screen, with nothing but a busy tab
+ * to say anything was happening.
+ */
+test("shows the next tab with its wait when the answer is slow", async ({
+  page,
+}) => {
+  // Never answered: the deadline is the only way out.
+  await page.route("**/api/v2/genres*", () => new Promise<void>(() => {}));
+  await page.route("**/api/v2/albums*", (route) =>
+    route.fulfill({ json: albums }),
+  );
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  const mobile = await page.locator(".mobile-navigation").isVisible();
+  if (mobile) {
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
+  }
+  const genresLink = mobile
+    ? page.locator('.more-sheet a[href="/genres"]')
+    : page.locator(".primary-navigation").getByRole("link", { name: "Genres" });
+  await genresLink.click();
+  await expect(page).toHaveURL(/\/genres$/);
+  // The destination's own wait, which is what the visitor now looks at.
+  await expect(page.locator("main .skeleton-grid")).toBeVisible();
+});
+
+/**
+ * The current tab's link still goes to its plain address.
+ *
+ * A click on the tab already open is how a second click cancels a switch
+ * still loading. With nothing loading, swallowing it left `/playing?view=lyrics`
+ * where it was, though the link says `/playing`.
+ */
+test("takes the current tab back to its plain address", async ({ page }) => {
+  await page.goto("/playing?view=lyrics");
+  await expect(page).toHaveURL(/\/playing\?view=lyrics$/);
+  const navigation = (await page.locator(".mobile-navigation").isVisible())
+    ? page.locator(".mobile-navigation")
+    : page.locator(".primary-navigation");
+  await navigation.getByRole("link", { name: "Now playing" }).click();
+  await expect(page).toHaveURL(/\/playing$/);
+});
+
+/**
  * The random tab draws once.
  *
  * Its answer is held for no time at all, so a draw made ahead of the switch
