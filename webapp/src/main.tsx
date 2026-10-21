@@ -862,19 +862,38 @@ const adminRoute = createRoute({
 const foldersRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/folders",
-  validateSearch: (search: Record<string, unknown>): { path: string } => ({
-    path: typeof search.path === "string" ? search.path : "",
+  // Every key optional, so a link names only what it changes: the rail links
+  // to the disk root, a crumb names its path, a filed card its folder.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { view?: "disk" | "filed"; path?: string; folder?: string } => ({
+    view: search.view === "filed" ? "filed" : undefined,
+    path: typeof search.path === "string" ? search.path : undefined,
+    folder: typeof search.folder === "string" ? search.folder : undefined,
   }),
   component: function FoldersRoute() {
-    const { path } = foldersRoute.useSearch();
-    return <FoldersPage path={path} />;
+    const { view, path, folder } = foldersRoute.useSearch();
+    return (
+      <FoldersPage
+        view={view ?? "disk"}
+        path={path ?? ""}
+        folder={folder ?? ""}
+      />
+    );
   },
 });
 
 const uploadRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/upload",
-  component: UploadPage,
+  // A filed folder to put what is received into (RFC-012 decision 7).
+  validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
+    folder: typeof search.folder === "string" ? search.folder : undefined,
+  }),
+  component: function UploadRoute() {
+    const { folder } = uploadRoute.useSearch();
+    return <UploadPage folder={folder} />;
+  },
 });
 
 const trackEditRoute = createRoute({

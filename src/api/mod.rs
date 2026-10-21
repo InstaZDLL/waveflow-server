@@ -28,6 +28,7 @@ mod bookmarks;
 mod catalog;
 mod error;
 mod favorites;
+mod folders;
 mod libraries;
 mod oauth;
 mod playback;
@@ -51,6 +52,7 @@ pub use bookmarks::*;
 pub use catalog::*;
 pub use error::*;
 pub use favorites::*;
+pub use folders::*;
 pub use libraries::*;
 pub use oauth::*;
 pub use playback::*;
@@ -114,6 +116,24 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
         .route("/api/v2/libraries/{library_id}/tree", get(library_tree))
+        .route(
+            "/api/v2/libraries/{library_id}/folders",
+            get(list_folders).post(create_folder),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/folders/{folder}/tracks",
+            get(folder_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/placements",
+            put(place_tracks).layer(axum::extract::DefaultBodyLimit::max(
+                folders::placement_body_limit(),
+            )),
+        )
+        .route(
+            "/api/v2/folders/{folder_id}",
+            axum::routing::patch(update_folder).delete(delete_folder),
+        )
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
         .route(
             "/api/v2/libraries/{library_id}/events/ack",

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
@@ -10,11 +11,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { type Song, streamUrl } from "../api";
+import { placeTracks, type Song, streamUrl } from "../api";
 import { downloadUrl, saveFrom } from "../lib/download";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
+import { FolderPicker } from "./folder-picker";
 import { Icon } from "./icons";
 import { TrackProperties } from "./track-properties";
 
@@ -53,6 +55,13 @@ export function useTrackMenu() {
     song: Song;
     returnTo: HTMLElement | null;
   } | null>(null);
+  // Filing, like Properties, replaces the menu with a dialog of its own.
+  const [moving, setMoving] = useState<{
+    song: Song;
+    returnTo: HTMLElement | null;
+  } | null>(null);
+  const client = useQueryClient();
+  const { t } = useI18n();
   // A long press that opened the menu is followed, as the finger lifts, by the
   // click the browser synthesises for the tap it thinks it saw; on a row whose
   // title plays the track, that click would start playback under the menu.
@@ -192,6 +201,10 @@ export function useTrackMenu() {
                 setProperties({ song, returnTo: opened.returnTo });
                 setOpened(null);
               }}
+              onMove={(song) => {
+                setMoving({ song, returnTo: opened.returnTo });
+                setOpened(null);
+              }}
             />,
             document.body,
           )
@@ -202,6 +215,29 @@ export function useTrackMenu() {
           onClose={() => {
             const returnTo = properties.returnTo;
             setProperties(null);
+            returnTo?.focus();
+          }}
+        />
+      ) : null}
+      {moving ? (
+        <FolderPicker
+          libraryId={moving.song.library_id}
+          title={t("filed.moveTrack", { title: moving.song.title })}
+          rootLabel={t("filed.unfiled")}
+          onPick={async (folderId) => {
+            await placeTracks(
+              moving.song.library_id,
+              [moving.song.id],
+              folderId,
+            );
+            await Promise.all([
+              client.invalidateQueries({ queryKey: ["filed-tree"] }),
+              client.invalidateQueries({ queryKey: ["folder-tracks"] }),
+            ]);
+          }}
+          onClose={() => {
+            const returnTo = moving.returnTo;
+            setMoving(null);
             returnTo?.focus();
           }}
         />
@@ -240,11 +276,13 @@ function TrackMenu({
   opened,
   onClose,
   onProperties,
+  onMove,
   onDownloadFailed,
 }: {
   opened: Opened;
   onClose: () => void;
   onProperties: (song: Song) => void;
+  onMove: (song: Song) => void;
   onDownloadFailed: () => void;
 }) {
   const { t } = useI18n();
@@ -380,6 +418,13 @@ function TrackMenu({
                 params: { trackId: song.id },
               }),
           },
+          // Filing is gated as a correction is (RFC-012 decision 3).
+          {
+            key: "move",
+            icon: "folder" as const,
+            label: t("trackMenu.move"),
+            run: () => onMove(song),
+          },
         ]
       : []),
   ];
@@ -436,9 +481,9 @@ function TrackMenu({
           tabIndex={-1}
           onClick={() => {
             item.run();
-            // Properties replaces the menu with its own dialog, which takes
-            // focus; every other entry hands it back to the row.
-            if (item.key !== "properties") onClose();
+            // Properties and filing replace the menu with a dialog of their
+            // own, which takes focus; every other entry hands it back to the row.
+            if (item.key !== "properties" && item.key !== "move") onClose();
           }}
         >
           <Icon name={item.icon} size={16} />

@@ -1364,6 +1364,7 @@ mod credentials;
 mod favorites;
 mod lastfm;
 mod library_events;
+mod library_folders;
 mod library_tree;
 mod lyrics_uploads;
 mod playback;
@@ -1393,6 +1394,10 @@ pub(crate) use lastfm::LASTFM_AUTHORIZE_URL;
 pub use lastfm::{
     LastFmApproval, LastFmJourneyStart, LastFmSessionExchange, LASTFM_CALLBACK_PREFIX,
     LASTFM_JOURNEY_COOKIE,
+};
+pub use library_folders::{
+    FiledFolder, FiledTree, FolderPatch, FolderRemoved, Placed, MAX_FOLDERS_PER_LIBRARY,
+    MAX_FOLDER_DEPTH, MAX_PLACEMENTS,
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};

@@ -2949,3 +2949,89 @@ button.danger {
 .folder-upload:hover {
   border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
 }
+
+/* The filed tree (RFC-012 decision 2). A folder a drag hovers over says it
+   will take the drop. */
+.folder-views {
+  margin: 0 0 var(--space-3);
+}
+
+.folder-row.drop-target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
+}
+
+.folder-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.folder-form-field {
+  display: grid;
+  flex: 1 1 14rem;
+  gap: var(--space-1);
+}
+
+.folder-notice {
+  margin: 0 0 var(--space-3);
+}
+
+.folder-picker[open] {
+  display: grid;
+  gap: var(--space-4);
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: min(36rem, calc(100dvh - 2rem));
+  padding: var(--space-5);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.folder-picker::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.folder-picker header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.folder-picker h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.folder-pick-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: start;
+}
+
+.folder-pick span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload-into {
+  margin: 0 0 var(--space-3);
+}

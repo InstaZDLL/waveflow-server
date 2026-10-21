@@ -4588,3 +4588,519 @@ async fn the_disk_tree_lists_one_level_of_the_indexed_paths_to_members_only() {
         );
     }
 }
+
+/// Filed folders (RFC-012 decisions 2 and 3), through the router: names,
+/// depth, cycles and the folder cap checked before anything is written,
+/// placements all or nothing, a delete that unfiles, and a listener who reads
+/// every bit of it and writes none. No file exists here at all: filing never
+/// needs one. Passwords are drawn at run time, for CodeQL.
+#[tokio::test]
+async fn filed_folders_sort_a_library_in_the_database_only() {
+    let (_temp, config, state) = test_app().await;
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let mut accounts = Vec::new();
+    for name in ["filer-owner", "filer-listener", "filer-stranger"] {
+        accounts.push(
+            state
+                .db
+                .create_account(name, &hash, AccountRole::User, now_ms())
+                .await
+                .unwrap(),
+        );
+    }
+    let (owner, listener) = (accounts[0], accounts[1]);
+    let root = std::fs::canonicalize(&config.data_dir).unwrap();
+    let mut libraries = Vec::new();
+    let mut tracks = Vec::new();
+    for (offset, name) in [(0, "Filed"), (10, "Elsewhere")] {
+        let library_id = state
+            .db
+            .create_library(
+                owner,
+                name,
+                &root.join(name),
+                LibraryVisibility::Private,
+                now_ms(),
+            )
+            .await
+            .unwrap();
+        let scan_id = state
+            .db
+            .create_scan_job(library_id, Some(owner), "manual")
+            .await
+            .unwrap();
+        state.db.start_scan_job(scan_id, 5, false).await.unwrap();
+        for index in 0..5 {
+            let title = format!("{name} {index}");
+            let mut input = browse_input(
+                30_000 + offset + index,
+                &title,
+                "Album",
+                "Artist",
+                Some(index as i64 + 1),
+                Some(1),
+            );
+            input.relative_path = format!("{name}/{index}.flac");
+            state
+                .db
+                .apply_catalog_track(library_id, scan_id, &input, None, false)
+                .await
+                .unwrap();
+        }
+        state.db.finish_scan_job(scan_id, 0).await.unwrap();
+        let ids: Vec<uuid::Uuid> = state
+            .db
+            .list_tracks_for_user(owner, library_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|track| track.id)
+            .collect();
+        libraries.push(library_id);
+        tracks.push(ids);
+    }
+    let (library, elsewhere) = (libraries[0], libraries[1]);
+    state
+        .db
+        .add_library_member(
+            owner,
+            library,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    // Sorted by title, so `t[0]` is "Filed 0".
+    let t = &tracks[0];
+    let foreign_track = tracks[1][0];
+
+    let router = waveflow_server::app(&config, state.clone());
+    let owner_token = login_token(&router, "filer-owner", &password).await;
+    let listener_token = login_token(&router, "filer-listener", &password).await;
+    let stranger_token = login_token(&router, "filer-stranger", &password).await;
+    let send = |method: Method, uri: String, token: &str, body: Option<serde_json::Value>| {
+        let router = router.clone();
+        let token = token.to_owned();
+        async move {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"));
+            let request = match body {
+                Some(body) => request
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string())),
+                None => request.body(Body::empty()),
+            };
+            router.oneshot(request.unwrap()).await.unwrap()
+        }
+    };
+    let folders_uri = format!("/api/v2/libraries/{library}/folders");
+    let placements_uri = format!("/api/v2/libraries/{library}/placements");
+    let create = |token: &str, name: &str, parent: Option<&str>| {
+        send(
+            Method::POST,
+            folders_uri.clone(),
+            token,
+            Some(serde_json::json!({ "name": name, "parent_id": parent })),
+        )
+    };
+    let tree = || async {
+        json_body(send(Method::GET, folders_uri.clone(), &owner_token, None).await).await
+    };
+    let count_of = |tree: &serde_json::Value, name: &str| -> Option<i64> {
+        tree["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|folder| folder["name"] == name)
+            .map(|folder| folder["track_count"].as_i64().unwrap())
+    };
+    let titles = |songs: serde_json::Value| -> Vec<String> {
+        songs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|song| song["title"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // A fresh library is entirely unfiled.
+    let fresh = tree().await;
+    assert_eq!(fresh["folders"], serde_json::json!([]));
+    assert_eq!(fresh["unfiled_track_count"], 5);
+
+    // Names: trimmed, folded for siblings beyond ASCII, bounded, `/` allowed.
+    let rock = create(&owner_token, "  Rock ", None).await;
+    assert_eq!(rock.status(), StatusCode::CREATED);
+    let rock = json_body(rock).await;
+    assert_eq!(rock["name"], "Rock");
+    assert_eq!(rock["parent_id"], serde_json::Value::Null);
+    let rock_id = rock["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        create(&owner_token, "ROCK", None).await.status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        create(&owner_token, "Été", None).await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        create(&owner_token, "ÉTÉ", None).await.status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        create(&owner_token, "A/B", None).await.status(),
+        StatusCode::CREATED
+    );
+    for refused in ["   ".to_owned(), "x".repeat(121), "line\nbreak".to_owned()] {
+        assert_eq!(
+            create(&owner_token, &refused, None).await.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{refused:?}"
+        );
+    }
+    let indie = json_body(create(&owner_token, "Indie", Some(&rock_id)).await).await;
+    let indie_id = indie["id"].as_str().unwrap().to_owned();
+    assert_eq!(indie["parent_id"], rock_id.as_str());
+    // A sibling elsewhere in the tree is no clash: "Indie" again, at the root.
+    assert_eq!(
+        create(&owner_token, "Indie", None).await.status(),
+        StatusCode::CREATED
+    );
+
+    // A listener reads and writes nothing; a stranger does not even read.
+    assert_eq!(
+        send(Method::GET, folders_uri.clone(), &listener_token, None)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(Method::GET, folders_uri.clone(), &stranger_token, None)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        create(&listener_token, "Mine", None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Placements: filed, then moved, a track in one folder at a time.
+    let place = |token: &str, ids: Vec<String>, folder: Option<&str>| {
+        send(
+            Method::PUT,
+            placements_uri.clone(),
+            token,
+            Some(serde_json::json!({ "track_ids": ids, "folder_id": folder })),
+        )
+    };
+    let placed = place(
+        &owner_token,
+        vec![t[0].to_string(), t[1].to_string()],
+        Some(&indie_id),
+    )
+    .await;
+    assert_eq!(placed.status(), StatusCode::OK);
+    assert_eq!(json_body(placed).await["placed"], 2);
+    let moved = place(&owner_token, vec![t[0].to_string()], Some(&rock_id)).await;
+    assert_eq!(moved.status(), StatusCode::OK);
+    let sorted = tree().await;
+    assert_eq!(
+        (count_of(&sorted, "Rock"), count_of(&sorted, "A/B")),
+        (Some(1), Some(0))
+    );
+    assert_eq!(sorted["unfiled_track_count"], 3);
+    let in_indie = send(
+        Method::GET,
+        format!("{folders_uri}/{indie_id}/tracks"),
+        &listener_token,
+        None,
+    )
+    .await;
+    assert_eq!(titles(json_body(in_indie).await), ["Filed 1"]);
+    let unfiled = send(
+        Method::GET,
+        format!("{folders_uri}/unfiled/tracks"),
+        &listener_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        titles(json_body(unfiled).await),
+        ["Filed 2", "Filed 3", "Filed 4"]
+    );
+    assert_eq!(
+        send(
+            Method::GET,
+            format!("{folders_uri}/nonsense/tracks"),
+            &owner_token,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // All or nothing: one track from another library, and nothing is filed.
+    let mixed = place(
+        &owner_token,
+        vec![t[2].to_string(), foreign_track.to_string()],
+        Some(&rock_id),
+    )
+    .await;
+    assert_eq!(mixed.status(), StatusCode::NOT_FOUND);
+    // A folder of another library, the listener, and one track too many.
+    let foreign_folder = json_body(
+        send(
+            Method::POST,
+            format!("/api/v2/libraries/{elsewhere}/folders"),
+            &owner_token,
+            Some(serde_json::json!({ "name": "Theirs" })),
+        )
+        .await,
+    )
+    .await;
+    let foreign_folder = foreign_folder["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        place(&owner_token, vec![t[2].to_string()], Some(&foreign_folder))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            Method::GET,
+            format!("{folders_uri}/{foreign_folder}/tracks"),
+            &owner_token,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        place(&listener_token, vec![t[2].to_string()], Some(&rock_id))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let many = |count: usize| {
+        (0..count)
+            .map(|_| uuid::Uuid::new_v4().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Five hundred ids fit the body, and name nothing here; one more is refused
+    // as a number before anything is looked up.
+    assert_eq!(
+        place(&owner_token, many(500), Some(&rock_id))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        place(&owner_token, many(501), Some(&rock_id))
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(tree().await["unfiled_track_count"], 3);
+    // Unfiling is a placement in no folder.
+    assert_eq!(
+        place(&owner_token, vec![t[1].to_string()], None)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(tree().await["unfiled_track_count"], 4);
+    place(&owner_token, vec![t[1].to_string()], Some(&indie_id)).await;
+
+    // Moves: never under itself, and the whole sub-tree within the cap.
+    let patch = |token: &str, id: &str, body: serde_json::Value| {
+        send(
+            Method::PATCH,
+            format!("/api/v2/folders/{id}"),
+            token,
+            Some(body),
+        )
+    };
+    for parent in [&rock_id, &indie_id] {
+        assert_eq!(
+            patch(
+                &owner_token,
+                &rock_id,
+                serde_json::json!({ "parent_id": parent })
+            )
+            .await
+            .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let mut chain = Vec::new();
+    let mut parent: Option<String> = None;
+    for depth in 1..=16 {
+        let folder =
+            json_body(create(&owner_token, &format!("Level {depth}"), parent.as_deref()).await)
+                .await;
+        let id = folder["id"].as_str().unwrap().to_owned();
+        chain.push(id.clone());
+        parent = Some(id);
+    }
+    assert_eq!(
+        create(&owner_token, "Seventeen", Some(&chain[15]))
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    // Rock carries Indie: two high. Under depth 15 it would reach 17.
+    assert_eq!(
+        patch(
+            &owner_token,
+            &rock_id,
+            serde_json::json!({ "parent_id": chain[14] })
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let buried = patch(
+        &owner_token,
+        &rock_id,
+        serde_json::json!({ "parent_id": chain[13] }),
+    )
+    .await;
+    assert_eq!(buried.status(), StatusCode::OK);
+    assert_eq!(json_body(buried).await["parent_id"], chain[13].as_str());
+    // A rename alone leaves the folder where it is; `null` brings it home.
+    let renamed = json_body(
+        patch(
+            &owner_token,
+            &rock_id,
+            serde_json::json!({ "name": "Rock & Roll" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        (renamed["name"].as_str(), renamed["parent_id"].as_str()),
+        (Some("Rock & Roll"), Some(chain[13].as_str()))
+    );
+    let home = json_body(
+        patch(
+            &owner_token,
+            &rock_id,
+            serde_json::json!({ "parent_id": null }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(home["parent_id"], serde_json::Value::Null);
+    assert_eq!(home["track_count"], 1);
+    // Back among the root's children, its name must not clash there either.
+    assert_eq!(
+        patch(&owner_token, &rock_id, serde_json::json!({ "name": "a/b" }))
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        patch(
+            &listener_token,
+            &rock_id,
+            serde_json::json!({ "name": "Mine" })
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A delete takes the sub-folders with it and unfiles what they held.
+    assert_eq!(
+        send(
+            Method::DELETE,
+            format!("/api/v2/folders/{rock_id}"),
+            &listener_token,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    let removed = send(
+        Method::DELETE,
+        format!("/api/v2/folders/{rock_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert_eq!(json_body(removed).await["unfiled"], 2);
+    let after = tree().await;
+    assert_eq!(after["unfiled_track_count"], 5);
+    assert!(
+        count_of(&after, "Indie").is_some(),
+        "the root's own Indie stays"
+    );
+    assert_eq!(
+        after["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|folder| folder["name"] == "Indie")
+            .count(),
+        1
+    );
+    assert_eq!(
+        send(
+            Method::DELETE,
+            format!("/api/v2/folders/{rock_id}"),
+            &owner_token,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // The folder cap, filled in SQL to one short and then reached.
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_folder WHERE library_id = ?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO library_folder \
+           (id, library_id, parent_id, name, name_key, created_by, created_at, updated_at) \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
+         SELECT lower(hex(randomblob(16))), ?, NULL, 'Bulk ' || i, 'bulk ' || i, ?, 0, 0 FROM n",
+    )
+    .bind(4_999 - held)
+    .bind(library.to_string())
+    .bind(owner.to_string())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        create(&owner_token, "The last", None).await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        create(&owner_token, "One too many", None).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    // Another library keeps its own count.
+    assert_eq!(
+        send(
+            Method::POST,
+            format!("/api/v2/libraries/{elsewhere}/folders"),
+            &owner_token,
+            Some(serde_json::json!({ "name": "Still room" })),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+}

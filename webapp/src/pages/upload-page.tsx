@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -5,10 +6,12 @@ import {
   commitUpload,
   getUploadSession,
   negotiateUploads,
+  placeTracks,
   putUploadChunk,
   type UploadDecision,
   type UploadSessionState,
 } from "../api";
+import { filedTreeQuery } from "../api/queries";
 import { PageHeader } from "../components/page-shell";
 import type { HashRequest, HashResponse } from "../lib/hash-worker";
 import {
@@ -40,6 +43,13 @@ type Item = {
    * picker happens to point when its turn comes.
    */
   libraryId: string;
+  /**
+   * The filed folder to put the track in once received, captured like the
+   * library: received first and filed second (RFC-012 decision 7).
+   */
+  folderId?: string;
+  /** Received, but the filing after it failed: the track is unfiled. */
+  unfiled?: boolean;
   status: Status;
   /** Of the current step, from 0 to 1. */
   progress: number;
@@ -204,9 +214,18 @@ function failureReason(cause: unknown): TranslationKey {
  * session it left open instead of starting over. One at a time is also what the
  * per-account session limit expects.
  */
-export function UploadPage() {
+export function UploadPage({ folder }: { folder?: string } = {}) {
   const { t } = useI18n();
   const { active } = useLibraryScope();
+  // The folder is named only if it is one of the active library's: a link
+  // kept across a change of library must not file into the other one.
+  const { data: tree } = useQuery({
+    ...filedTreeQuery(active?.id ?? ""),
+    enabled: active !== null && folder !== undefined,
+  });
+  const into = folder
+    ? tree?.folders.find((entry) => entry.id === folder)
+    : undefined;
   const [items, setItems] = useState<Item[]>([]);
   const pending = useRef<Item[]>([]);
   const running = useRef(false);
@@ -229,7 +248,7 @@ export function UploadPage() {
   }
 
   async function transfer(item: Item) {
-    const { key, file, libraryId } = item;
+    const { key, file, libraryId, folderId } = item;
     const fraction = (bytes: number) =>
       file.size === 0 ? 1 : bytes / file.size;
     if (!isUploadable(file.name)) {
@@ -280,8 +299,18 @@ export function UploadPage() {
         () => cancelled.current,
       );
       update(key, { status: "committing", progress: 1 });
-      await commitUpload(session.session_id);
-      update(key, { status: "done", progress: 1 });
+      const committed = await commitUpload(session.session_id);
+      // The file is in. Filing it is a second, separate write: if it fails,
+      // the track stays received and unfiled, and the line says so.
+      let unfiled = false;
+      if (folderId) {
+        try {
+          await placeTracks(libraryId, [committed.track_id], folderId);
+        } catch {
+          unfiled = true;
+        }
+      }
+      update(key, { status: "done", progress: 1, unfiled });
     } catch (cause) {
       if (cause instanceof CancelledUpload) return;
       update(key, { status: "failed", reason: failureReason(cause) });
@@ -315,6 +344,7 @@ export function UploadPage() {
         key: keys.current++,
         file,
         libraryId: active.id,
+        folderId: into?.id,
         status: "waiting",
         progress: 0,
       }),
@@ -330,6 +360,7 @@ export function UploadPage() {
         reason: t(item.reason ?? "upload.reason.error"),
       });
     }
+    if (item.status === "done" && item.unfiled) return t("upload.doneUnfiled");
     return t(STATUS_TEXT[item.status]);
   }
 
@@ -367,6 +398,11 @@ export function UploadPage() {
         title={t("upload.title", { library: active.name })}
       />
       <p className="muted upload-detail">{t("upload.detail")}</p>
+      {into ? (
+        <p className="notice upload-into">
+          {t("upload.into", { folder: into.name })}
+        </p>
+      ) : null}
       <label className="upload-pick">
         <span>{t("upload.pick")}</span>
         <input type="file" multiple accept={ACCEPT} onChange={pick} />

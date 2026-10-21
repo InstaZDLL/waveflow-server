@@ -1,16 +1,20 @@
 # RFC-012 — The library browser: folders as a view, filing as metadata
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#298](https://github.com/InstaZDLL/waveflow-server/pull/298) (the
+- **Implemented by**: every step of "The order of the work" below, in that
+  order, after this RFC itself ([#297](https://github.com/InstaZDLL/waveflow-server/pull/297)):
+  [#298](https://github.com/InstaZDLL/waveflow-server/pull/298) (the
   context menu and Properties, with `relative_path` on the track),
   [#299](https://github.com/InstaZDLL/waveflow-server/pull/299) (download,
   `?download=1` on the stream ticket),
   [#300](https://github.com/InstaZDLL/waveflow-server/pull/300) (uploaded
   lyrics: `track_lyrics_upload`, the TTML parser, the order, and the lyrics
-  download) and the pull request adding the disk tree (`GET
-  /libraries/{id}/tree` and the Folders page). The *Status* field above never
-  flips in this project; this line is the one that says what is running.
+  download), [#301](https://github.com/InstaZDLL/waveflow-server/pull/301) (the
+  disk tree, `GET /libraries/{id}/tree`, and the Folders page) and the pull
+  request adding the filed tree (`library_folder`, `track_placement`, their
+  routes, "Move to folder…", drag and drop, and uploads into a folder). The
+  *Status* field above never flips in this project; this line is the one that
+  says what is running.
 - **Date**: 2026-10-21
 - **Revised**: 2026-10-21, after review on #297: the **Received** folder's
   contract, the depth check on a move, the folder cap that bounds the tree's
@@ -318,11 +322,11 @@ library or a track the caller may not see.
 | Route | What |
 | --- | --- |
 | `GET /libraries/{id}/tree?path=` | One level of the disk tree: sub-folders with their track counts, and the tracks directly in `path` (empty for the root; `.waveflow-managed` for **Received**). Paged, like every listing. |
-| `GET /libraries/{id}/folders` | The whole filed tree, without tracks, as one flat list of `id`, `parent_id`, `name` and the count of tracks filed directly in each. Not paged: bounded by the 5,000-folder cap of decision 2, which is what lets a client draw the tree from one answer. |
+| `GET /libraries/{id}/folders` | The whole filed tree, without tracks, as one flat list of `id`, `parent_id`, `name` and the count of tracks filed directly in each, under `folders`, beside `unfiled_track_count` for the root's unfiled entry. Not paged: bounded by the 5,000-folder cap of decision 2, which is what lets a client draw the tree from one answer. |
 | `POST /libraries/{id}/folders` | Create: `name`, `parent_id`. |
 | `PATCH /folders/{id}` | Rename, or move under another `parent_id` (or to the root); `422` past the depth cap for the whole sub-tree, or on a cycle. |
 | `DELETE /folders/{id}` | Delete with its sub-folders; returns the number of tracks unfiled. |
-| `GET /folders/{id}/tracks` | The tracks filed directly in a folder. Paged. `unfiled` stands for the root's unfiled entry. |
+| `GET /libraries/{id}/folders/{folder}/tracks` | The tracks filed directly in a folder. Paged. `unfiled` in place of a folder id stands for the root's unfiled entry, which is why the library is in the path: unfiled names no folder to find it by. |
 | `PUT /libraries/{id}/placements` | File up to 500 tracks into one folder, or unfile them (`folder_id: null`). **All or nothing**: the folder and every track are checked before anything is written, in one transaction under the writer gate; any track the caller may not see, or outside the library, answers `404`, a folder outside it `404`, more than 500 `422`, and no placement changes. |
 | `PUT /tracks/{id}/lyrics/{format}` | Upload `lrc`, `txt` or `ttml`. |
 | `DELETE /tracks/{id}/lyrics/{format}` | Remove an upload. |

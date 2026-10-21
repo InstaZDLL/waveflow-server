@@ -6,6 +6,7 @@ import {
   artistTopSongs,
   canvasUrl,
   DISK_TREE_PAGE,
+  FOLDER_TRACKS_PAGE,
   getAlbum,
   getArtist,
   getDiskTree,
@@ -20,6 +21,8 @@ import {
   listArtists,
   listBookmarks,
   listFavorites,
+  listFolders,
+  listFolderTracks,
   listGenreSongs,
   listGenres,
   listHistory,
@@ -225,6 +228,38 @@ export const diskTreeQuery = (libraryId: string, path: string) =>
       lastParam + DISK_TREE_PAGE < last.folder_total + last.track_total
         ? lastParam + DISK_TREE_PAGE
         : undefined,
+  });
+
+/**
+ * A library's whole filed tree: bounded by the server's folder cap, so it
+ * is held whole rather than paged.
+ */
+export const filedTreeQuery = (libraryId: string) =>
+  queryOptions({
+    queryKey: ["filed-tree", libraryId],
+    queryFn: () => listFolders(libraryId),
+  });
+
+/**
+ * The tracks filed in one folder, or the unfiled ones, a page at a time. A
+ * short page is the end.
+ */
+export const folderTracksQuery = (libraryId: string, folder: string) =>
+  infiniteQueryOptions({
+    queryKey: ["folder-tracks", libraryId, folder],
+    queryFn: ({ pageParam, signal }) =>
+      listFolderTracks(
+        libraryId,
+        folder,
+        pageParam,
+        FOLDER_TRACKS_PAGE,
+        signal,
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.length < FOLDER_TRACKS_PAGE
+        ? undefined
+        : lastParam + FOLDER_TRACKS_PAGE,
   });
 
 export const lyricsQuery = (trackId: string) =>
