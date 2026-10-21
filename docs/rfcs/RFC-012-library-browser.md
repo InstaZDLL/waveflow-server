@@ -9,7 +9,9 @@
   listing, and one order for the lyrics, all made explicit. Then the root's
   depth, the cap under concurrency, all-or-nothing placements, empty sheets
   skipped, and lyrics downloads that are never rendered. Last, listeners'
-  access to the disk tree, settled in decision 3 rather than left open.
+  access to the disk tree, settled in decision 3 rather than left open. And
+  where Properties reads its lyrics from, and how the lyrics route projects
+  the order.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md),
@@ -189,11 +191,16 @@ folder…**. Properties shows, read-only:
   sample rate, bit depth, channels, size, duration, the content hash, and the
   date it was added;
 - the tags as read, and any override beside them, each marked as such;
-- ReplayGain, BPM, key, ISRC, the MusicBrainz ids;
+- ReplayGain, BPM, ISRC, the MusicBrainz recording id;
 - which lyrics the track has and where each came from (decision 6).
 
-All of it is already in `SongItem` except the path. No new analysis is run to
-fill the panel.
+Two reads feed it, and the panel merges them. **`SongItem` carries every
+field above that is not about lyrics**, the path added through `GET
+/tracks/{id}` (decision 1), and the corrections come beside it from `GET
+/tracks/{id}/overrides`. **The lyrics, and the source of each sheet, come from
+the lyrics projection** of decision 6 — the same answer, in the same order,
+that the lyrics route gives every client — and not from `SongItem`, which
+carries none. No new analysis is run to fill the panel.
 
 The menu is reachable without a mouse: the context-menu key and Shift+F10 on a
 focused row, and a long press on touch. A menu reachable only by right click
@@ -251,6 +258,14 @@ corrections live beside the file (RFC-008 decision 5).
   upload times, so two readers of the same track always agree. It is applied
   identically wherever one sheet is chosen: the lyrics served to clients,
   Properties, and the default download.
+- **The lyrics route projects that order.** `GET /api/v2/tracks/{id}/lyrics`
+  (RFC-002) keeps its `LyricsList` shape and keeps listing every sheet the
+  track has, uploaded ones included, **sorted by the order above with empty
+  sources left out**, so its first entry is always the selected sheet. A
+  client that shows one sheet shows the first, and Properties reads the list
+  as it comes. Each entry says where it came from, so the panel can name the
+  source. The default download serves that first sheet; `?format=` is the
+  only way to ask for another, and only for an upload.
 - **The original bytes are kept**, decoded to UTF-8 through
   `waveflow_core::text_encoding` (#296), so the download gives back what was
   uploaded and not a re-serialisation of it. The size cap is the sidecar's,
@@ -316,6 +331,9 @@ reaches the same rules (CLAUDE.md, "One set of domain services").
 - **The Subsonic façade: nothing.** `getIndexes` and `getMusicDirectory` stay
   tag-based. Exposing either tree through them would change wire behaviour the
   frozen v2.0-beta contract promises clients that were validated against it.
+  For the same reason `getLyrics` and `getLyricsBySongId` keep answering the
+  scanned sheets as they do today; serving uploaded lyrics there is a change
+  to that contract, for its next version, not part of this document.
 - **The sync contract and the event stream (RFC-003, RFC-007): nothing, for
   now.** Filing is not a user-data change the desktop mirrors, and RFC-007's
   event kinds are a contract the desktop reads. A desktop that wants the filed
