@@ -1127,6 +1127,33 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
     assert_eq!(track("Prélude")["artist_id"], artist_id);
     assert_eq!(track("Rivière Noire")["artist_id"], artist_id);
 
+    // One track carries where its file sits, relative to the library, as the
+    // library's own listing spells it; the album's song rows do not, so a
+    // listing is not a path per row nobody browsing albums asked for.
+    let prelude = track("Prélude");
+    let single = get(
+        format!("/api/v2/tracks/{}", prelude["id"].as_str().unwrap()),
+        owner_token.clone(),
+    )
+    .await;
+    assert_eq!(single.status(), StatusCode::OK);
+    let single = json_body(single).await;
+    assert_eq!(single["title"], "Prélude");
+    assert_eq!(single["relative_path"], prelude["relative_path"]);
+    let path = single["relative_path"].as_str().unwrap();
+    assert!(!path.is_empty() && !path.contains('\\'), "{path}");
+    assert!(
+        !std::path::Path::new(path).is_absolute(),
+        "the library root never leaves the server: {path}"
+    );
+    let album_songs = get(format!("/api/v2/albums/{album_id}"), owner_token.clone()).await;
+    let album_songs = json_body(album_songs).await;
+    assert!(album_songs["songs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|song| song.get("relative_path").is_none()));
+
     // Search-as-you-type: the trailing term matches as a prefix. This exact
     // case was reported from the Android client — "echo" returned songs,
     // albums and artists while "ech" returned nothing, because the native

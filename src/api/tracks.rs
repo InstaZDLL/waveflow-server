@@ -69,12 +69,12 @@ pub async fn get_track_overrides(
         .map_err(service_error)
 }
 
-#[utoipa::path(get, path = "/api/v2/tracks/{track_id}", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::SongItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::services::TrackDetail), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn get_track(
     State(state): State<AppState>,
     Path(track_id): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<crate::services::SongItem>, ApiError> {
+) -> Result<Json<crate::services::TrackDetail>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
@@ -83,7 +83,12 @@ pub async fn get_track(
         .map_err(service_error)?
         .into_iter()
         .next()
-        .map(Json)
+        .map(|song| {
+            Json(crate::services::TrackDetail {
+                relative_path: song.relative_path.clone(),
+                song,
+            })
+        })
         .ok_or(ApiError::NotFound)
 }
 

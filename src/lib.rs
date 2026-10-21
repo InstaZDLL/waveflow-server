@@ -245,6 +245,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::GenreItem,
         services::LibraryMember,
         services::SongItem,
+        services::TrackDetail,
         services::TrackOverrides,
         services::TrackOverrideValues,
         services::TrackSourceTags,

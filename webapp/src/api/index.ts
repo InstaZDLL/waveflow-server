@@ -138,6 +138,7 @@ export type {
   TrackCorrectionPatch,
   TrackOverrides,
   TrackOverrideValues,
+  TrackProperties,
   TrackSourceTags,
 } from "./tracks";
 export {
@@ -145,6 +146,7 @@ export {
   getLyrics,
   getTrackCredits,
   getTrackOverrides,
+  getTrackProperties,
 } from "./tracks";
 export type {
   CommittedUpload,

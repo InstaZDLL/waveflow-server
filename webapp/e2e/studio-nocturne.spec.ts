@@ -1375,6 +1375,101 @@ test("puts the songs playback action beside the sort and names its scope", async
   await expect(page.locator(".player-track strong")).toHaveText("Army of Me");
 });
 
+/**
+ * The right click on a track, and the properties it opens (RFC-012 decision 4).
+ *
+ * Driven from the keyboard first, because a menu reachable only by a right
+ * click is one the accessibility gate is right to fail: Shift+F10 on the
+ * focused row, arrows to Properties, Enter. The panel shows where the file
+ * sits in its library — the one field only `GET /tracks/{id}` sends — and a
+ * corrected tag beside what the file said. Escape gives focus back to the row
+ * the menu was opened from, through the menu that no longer exists.
+ */
+test("opens a track's properties from its context menu", async ({ page }) => {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9", (route) =>
+    route.fulfill({
+      json: {
+        ...correctable.song,
+        relative_path: "Björk/Post/09 Army Of Me.flac",
+        full_hash: "a".repeat(64),
+        created_at: Date.UTC(2026, 8, 15, 12, 0),
+        album_artist: "Björk",
+        comment: "Remastered\nBonus edition",
+        musicbrainz_id: null,
+        isrc: ["GBAAA9500009"],
+        bpm: 92,
+        replay_gain_track_gain: -6.5,
+        replay_gain_track_peak: 0.98,
+        replay_gain_album_gain: null,
+        replay_gain_album_peak: null,
+      },
+    }),
+  );
+  await page.goto("/songs");
+  const row = page.locator(".songs tbody tr").first();
+  const title = row.locator("button.song-title");
+  await title.focus();
+
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for Army Of Me" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Play",
+    "Add to queue",
+    "Properties",
+    "Edit tags",
+  ]);
+  await expect(menu.getByRole("menuitem", { name: "Play" })).toBeFocused();
+  // Where focus is shows on its own, not only as a faint tint.
+  await expect(menu.getByRole("menuitem", { name: "Play" })).toHaveCSS(
+    "outline-style",
+    "solid",
+  );
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: "Properties" })).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  const panel = page.getByRole("dialog", { name: "Army Of Me" });
+  await expect(panel).toBeVisible();
+  await expect(menu).toHaveCount(0);
+  await expect(panel).toContainText("Björk/Post/09 Army Of Me.flac");
+  await expect(panel).toContainText("a".repeat(64));
+  await expect(panel).toContainText("957 kbps");
+  await expect(panel).toContainText("44.1 kHz");
+  await expect(panel).toContainText("-6.5 dB, peak 0.98");
+  // The comment is a correction; the file carried none.
+  await expect(panel).toContainText("Corrected — the file says —");
+  await expectNoWcagViolations(page);
+
+  // A click in the panel's own padding lands on the dialog element, as a
+  // click on the backdrop does; only the second may close it.
+  await panel.click({ position: { x: 6, y: 6 } });
+  await expect(panel).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(title).toBeFocused();
+
+  // The backdrop, outside the panel's box, does close it.
+  await page.keyboard.press("Shift+F10");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeVisible();
+  await page.mouse.click(2, 2);
+  await expect(panel).toHaveCount(0);
+
+  // The pointer reaches the same menu, and a click away closes it.
+  await row.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await page.mouse.click(5, 5);
+  await expect(menu).toHaveCount(0);
+});
+
 test("gives random playback one clear primary action", async ({ page }) => {
   await page.route("**/api/v2/songs/random?*", (route) =>
     route.fulfill({ json: [track] }),
