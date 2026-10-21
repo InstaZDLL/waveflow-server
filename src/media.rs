@@ -91,6 +91,22 @@ pub struct StreamQuery {
     pub offset_ms: u64,
 }
 
+/// `?download=1` on a stream ticket (RFC-012 decision 5).
+///
+/// Its own extractor rather than a field on [`StreamQuery`], which the
+/// Subsonic façade and the bearer route share and which has no business
+/// learning a header choice only the ticket route makes.
+#[derive(Debug, Default, Deserialize)]
+pub struct DownloadQuery {
+    download: Option<String>,
+}
+
+impl DownloadQuery {
+    fn asked(&self) -> bool {
+        matches!(self.download.as_deref(), Some("1" | "true"))
+    }
+}
+
 #[derive(Debug)]
 pub enum MediaError {
     Unauthorized,
@@ -1190,13 +1206,15 @@ pub async fn create_stream_ticket(
         ("ticket" = String, Path),
         ("format" = Option<String>, Query, description = "raw, mp3 or opus"),
         ("bitrate" = Option<u32>, Query),
-        ("offset_ms" = Option<u64>, Query)
+        ("offset_ms" = Option<u64>, Query),
+        ("download" = Option<String>, Query, description = "1: the original, as an attachment named after the file (RFC-012)")
     ),
     responses(
         (status = 200, description = "Original or live transcoded audio"),
         (status = 206, description = "Original or completed cached transcode range"),
         (status = 404),
         (status = 416),
+        (status = 422, description = "A download asked for together with a transcode or an offset"),
         (status = 429)
     )
 )]
@@ -1204,6 +1222,7 @@ pub async fn stream_with_ticket(
     State(state): State<AppState>,
     AxumPath(ticket): AxumPath<String>,
     Query(query): Query<StreamQuery>,
+    Query(download): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Result<Response, MediaError> {
     // An invalid, forged or expired ticket is indistinguishable from an unknown
@@ -1226,8 +1245,117 @@ pub async fn stream_with_ticket(
     let range = headers
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok());
-    state.media.serve(user_id, track, query, range).await
+    if !download.asked() {
+        return state.media.serve(user_id, track, query, range).await;
+    }
+    // A download is the file. A transcode, a bit rate or an offset would make
+    // it something else under the file's own name, so asking for one with it
+    // is refused rather than quietly ignored.
+    if query.format != OutputFormat::Raw || query.bitrate.is_some() || query.offset_ms != 0 {
+        return Err(MediaError::InvalidRequest);
+    }
+    let name = download_name(&state, user_id, &track).await;
+    let mut response = state.media.serve(user_id, track, query, range).await?;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_DISPOSITION, attachment(&name));
+    Ok(response)
 }
+
+/// The name a downloaded file is saved under.
+///
+/// A scanned track's own basename, which is what its owner called it. A track
+/// received through RFC-008 is named by its hash on disk, so it is saved as
+/// `Artist - Title.ext` from its tags instead — the hash is truthful and of no
+/// use to anyone who opens their downloads folder.
+async fn download_name(state: &AppState, user_id: Uuid, track: &StreamTrack) -> String {
+    let path = Path::new(&track.relative_path);
+    let basename = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("track")
+        .to_owned();
+    let received = track
+        .relative_path
+        .split('/')
+        .next()
+        .is_some_and(|first| first == crate::services::MANAGED_DIR);
+    if !received {
+        return basename;
+    }
+    let extension = path.extension().and_then(OsStr::to_str).unwrap_or("");
+    let song = state
+        .services
+        .songs_by_ids(user_id, &[track.id])
+        .await
+        .ok()
+        .and_then(|songs| songs.into_iter().next());
+    let Some(song) = song else {
+        return basename;
+    };
+    let stem = match song
+        .artist
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    {
+        Some(artist) => format!("{artist} - {}", song.title.trim()),
+        None => song.title.trim().to_owned(),
+    };
+    if stem.is_empty() {
+        return basename;
+    }
+    if extension.is_empty() {
+        stem
+    } else {
+        format!("{stem}.{extension}")
+    }
+}
+
+/// `attachment` with the name in both forms RFC 6266 gives it.
+///
+/// `filename` is an ASCII fallback, every character a browser could misread
+/// in a quoted string — a quote, a backslash, a control, anything outside
+/// ASCII — replaced by `_`, and a separator too, so no browser builds a path
+/// from it. `filename*` carries the real name, percent-encoded UTF-8, and
+/// every current browser prefers it.
+fn attachment(name: &str) -> HeaderValue {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let fallback: String = cleaned
+        .chars()
+        .map(|c| match c {
+            ' '..='~' if c != '"' && c != '\\' => c,
+            _ => '_',
+        })
+        .collect();
+    let encoded = percent_encoding::utf8_percent_encode(&cleaned, ATTR_CHAR).to_string();
+    HeaderValue::from_str(&format!(
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("attachment"))
+}
+
+/// Everything but RFC 5987's `attr-char` is percent-encoded in `filename*`.
+const ATTR_CHAR: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'!')
+    .remove(b'#')
+    .remove(b'$')
+    .remove(b'&')
+    .remove(b'+')
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'^')
+    .remove(b'_')
+    .remove(b'`')
+    .remove(b'|')
+    .remove(b'~');
 
 #[utoipa::path(
     get,
@@ -1661,9 +1789,34 @@ mod tests {
     use tokio::sync::{Mutex, Semaphore};
 
     use super::{
-        cache_key, parse_range, prune_cache, secure_track_path, starts_at_the_first_byte,
-        MediaInner, MediaService, OutputFormat,
+        attachment, cache_key, parse_range, prune_cache, secure_track_path,
+        starts_at_the_first_byte, MediaInner, MediaService, OutputFormat,
     };
+
+    /// A download's name in both forms, whatever it holds.
+    ///
+    /// The fallback is what an old browser builds a path from, so a quote, a
+    /// backslash, a separator or anything outside ASCII must not survive in
+    /// it; `filename*` must carry the real name, accents and all.
+    #[test]
+    fn a_download_name_is_safe_in_both_forms() {
+        let header = attachment("Björk - Hyperballad \"live\" 1/2\\3.flac");
+        let header = header.to_str().unwrap();
+        assert_eq!(
+            header,
+            "attachment; filename=\"Bj_rk - Hyperballad _live_ 1_2_3.flac\"; \
+             filename*=UTF-8''Bj%C3%B6rk%20-%20Hyperballad%20%22live%22%201_2_3.flac"
+        );
+        // A control character is no part of a name.
+        let header = attachment("a\nb.flac");
+        assert!(
+            header
+                .to_str()
+                .unwrap()
+                .starts_with("attachment; filename=\"a_b.flac\""),
+            "{header:?}"
+        );
+    }
 
     #[test]
     fn ranges_are_bounded_and_validated() {

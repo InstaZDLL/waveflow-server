@@ -8,8 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
-import type { Song } from "../api";
+import { type Song, streamUrl } from "../api";
+import { downloadUrl, saveFrom } from "../lib/download";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
@@ -157,24 +159,43 @@ export function useTrackMenu() {
     onTouchCancel: cancelPress,
   });
 
+  // A download that could not start says so: the menu that offered it is
+  // gone, and a click that does nothing reads as a click that was missed.
+  const [downloadFailed, setDownloadFailed] = useState(false);
+  useEffect(() => {
+    if (!downloadFailed) return;
+    const timer = window.setTimeout(() => setDownloadFailed(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, [downloadFailed]);
+
   function close() {
     const returnTo = opened?.returnTo;
     setOpened(null);
     returnTo?.focus();
   }
 
+  // The menu and the alert are fixed to the viewport, and `fixed` is only that
+  // when no ancestor makes itself their containing block: a page block rising
+  // into place carries a transform while it moves, and a fixed child of it is
+  // placed inside the block instead — the alert landed under the page header.
+  // A portal to the body takes them out of every ancestor that could. The
+  // properties dialog needs none: `showModal` puts it in the top layer.
   const menu = (
     <>
-      {opened ? (
-        <TrackMenu
-          opened={opened}
-          onClose={close}
-          onProperties={(song) => {
-            setProperties({ song, returnTo: opened.returnTo });
-            setOpened(null);
-          }}
-        />
-      ) : null}
+      {opened
+        ? createPortal(
+            <TrackMenu
+              opened={opened}
+              onClose={close}
+              onDownloadFailed={() => setDownloadFailed(true)}
+              onProperties={(song) => {
+                setProperties({ song, returnTo: opened.returnTo });
+                setOpened(null);
+              }}
+            />,
+            document.body,
+          )
+        : null}
       {properties ? (
         <TrackProperties
           song={properties.song}
@@ -185,20 +206,46 @@ export function useTrackMenu() {
           }}
         />
       ) : null}
+      {downloadFailed
+        ? createPortal(
+            <DownloadFailed onDismiss={() => setDownloadFailed(false)} />,
+            document.body,
+          )
+        : null}
     </>
   );
 
   return { rowProps, menu };
 }
 
+/** Fixed above the player, where it is seen whatever the table's length. */
+function DownloadFailed({ onDismiss }: { onDismiss: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="track-menu-alert" role="alert">
+      <span>{t("trackMenu.downloadFailed")}</span>
+      <button
+        type="button"
+        className="track-menu-alert-dismiss"
+        aria-label={t("trackMenu.dismiss")}
+        onClick={onDismiss}
+      >
+        <Icon name="close" size={16} />
+      </button>
+    </div>
+  );
+}
+
 function TrackMenu({
   opened,
   onClose,
   onProperties,
+  onDownloadFailed,
 }: {
   opened: Opened;
   onClose: () => void;
   onProperties: (song: Song) => void;
+  onDownloadFailed: () => void;
 }) {
   const { t } = useI18n();
   const player = usePlayer();
@@ -299,6 +346,17 @@ function TrackMenu({
       icon: "queue",
       label: t("trackMenu.queue"),
       run: () => player.enqueue([song]),
+    },
+    {
+      key: "download",
+      icon: "download",
+      label: t("trackMenu.download"),
+      // The original, through a ticket: the browser cannot send the
+      // session on a navigation, and the ticket re-checks access.
+      run: () =>
+        void streamUrl(song.id)
+          .then(({ url }) => saveFrom(downloadUrl(url)))
+          .catch(onDownloadFailed),
     },
     {
       key: "properties",

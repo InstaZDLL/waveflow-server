@@ -1375,6 +1375,8 @@ mod songs;
 mod sync;
 mod track_metadata;
 mod uploads;
+/// Where received files land in a library, for the download route's naming.
+pub(crate) use uploads::MANAGED_DIR;
 
 /// Crate-visible only: the adapter builds the browser-less journey's address
 /// from it, and nothing outside this binary has a use for it.
