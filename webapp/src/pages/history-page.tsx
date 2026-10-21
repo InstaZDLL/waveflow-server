@@ -23,6 +23,7 @@ export function HistoryPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.history")}
         detail={t("history.detail", { count: value.length })}
       >

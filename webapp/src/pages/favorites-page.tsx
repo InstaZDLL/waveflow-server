@@ -11,6 +11,7 @@ export function FavoritesPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.favourites")}
         detail={t("favourites.detail", { count: value.length })}
       />

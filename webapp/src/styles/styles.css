@@ -358,39 +358,6 @@ h3 {
 }
 
 /**
- * The cross-fade the browser draws between two screens.
- *
- * 140ms rather than the 250ms a view transition takes by default: long
- * enough to be seen, short enough that nobody waits on it. **No latency is
- * added** — the new screen is already built, and this animates the swap.
- *
- * The group is named alongside the two halves, and not only for tidiness:
- * its animation is what gates the end of the transition, so the whole thing
- * is dismantled when every animation on it finishes. Setting the duration on
- * `old` and `new` alone left the visible cross-fade over at 140ms and the
- * page held as a snapshot for the remaining 110.
- *
- * The reduced motion block is the second line of defence: `main.tsx` does not
- * start a transition at all when the setting is on, and this catches a reader
- * who turns it on without reloading. No `!important` — author styles already
- * beat the user agent, and `animation: none` clears the name, which a more
- * specific rule setting only a duration cannot restore.
- */
-::view-transition-group(root),
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 140ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none;
-  }
-}
-
-/**
  * What the file is, under the track's names on the playing screen.
  *
  * Five discrete steps rather than a filled proportion: the bands are a
@@ -1339,7 +1306,6 @@ button.danger {
   color: var(--accent);
 }
 
-.queue-title,
 .resource-url {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1813,12 +1779,10 @@ button.danger {
     flex-direction: column;
   }
 
-  .queue-list li,
   .resource-list li {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .queue-list li .muted:first-of-type,
   .resource-list li > div {
     grid-column: 1 / -1;
   }
@@ -2107,6 +2071,14 @@ button.danger {
   object-fit: cover;
 }
 
+/* An image has its own size to start from; the stand-in for a missing cover
+   has none, because its letter is positioned out of flow. With `width: auto`
+   in a centred column it shrank to its border — two pixels — and a borderless
+   theme took even those away. */
+.immersive-cover.cover-fallback {
+  width: min(78vw, 60vh);
+}
+
 .immersive-detail {
   display: grid;
   justify-items: center;
@@ -2138,19 +2110,6 @@ button.danger {
   position: absolute;
   top: clamp(0.6rem, 2vw, 1.4rem);
   right: clamp(0.6rem, 2vw, 1.4rem);
-}
-
-.bookmark-list li {
-  gap: var(--space-4);
-}
-
-.bookmark-list .link {
-  display: grid;
-  min-width: 0;
-}
-
-.bookmark-list .link small {
-  font-size: var(--text-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {

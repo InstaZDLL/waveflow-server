@@ -249,8 +249,15 @@ export function RadioPage() {
 
   return (
     <section>
-      <PageHeader title={t("nav.radio")} detail={t("radio.detail")} />
-      <form className="stacked-form" onSubmit={(event) => void submit(event)}>
+      <PageHeader
+        kicker={t("nav.group.listen")}
+        title={t("nav.radio")}
+        detail={t("radio.detail")}
+      />
+      <form
+        className="stacked-form radio-form"
+        onSubmit={(event) => void submit(event)}
+      >
         <label>
           {t("radio.name")}
           <input

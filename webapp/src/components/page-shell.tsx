@@ -108,10 +108,13 @@ export function Loading({ error }: { error: unknown }) {
 }
 
 export function PageHeader({
+  kicker,
   title,
   detail,
   children,
 }: {
+  /** The rail section the page belongs to, set over the title. */
+  kicker?: string;
   title: string;
   /** Omitted while the count it would state is not known yet. */
   detail?: string;
@@ -120,6 +123,7 @@ export function PageHeader({
   return (
     <header className="page-header">
       <div className="page-heading">
+        {kicker ? <span className="page-kicker">{kicker}</span> : null}
         <h2>{title}</h2>
         {detail ? <p className="muted">{detail}</p> : null}
       </div>

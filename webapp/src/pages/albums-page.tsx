@@ -79,7 +79,9 @@ export function AlbumsPage() {
         {/* No detail line: the count it would carry is exactly what is still
             missing, and `Loading` already says whether this is a wait or a
             failure. */}
-        <PageHeader title={t("nav.albums")}>{controls}</PageHeader>
+        <PageHeader kicker={t("nav.group.library")} title={t("nav.albums")}>
+          {controls}
+        </PageHeader>
         <Loading error={error} />
       </section>
     );
@@ -87,6 +89,7 @@ export function AlbumsPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.albums")}
         detail={
           needle

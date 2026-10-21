@@ -336,7 +336,7 @@ export function UploadPage() {
   if (!active) {
     return (
       <section className="upload-page">
-        <PageHeader title={t("nav.upload")} />
+        <PageHeader kicker={t("nav.group.account")} title={t("nav.upload")} />
         <p className="notice">{t("upload.noLibrary")}</p>
       </section>
     );
@@ -349,7 +349,10 @@ export function UploadPage() {
     const mayWrite = active.role === "owner" || active.role === "manager";
     return (
       <section className="upload-page">
-        <PageHeader title={t("upload.title", { library: active.name })} />
+        <PageHeader
+          kicker={t("nav.group.account")}
+          title={t("upload.title", { library: active.name })}
+        />
         <p className="notice">
           {t(mayWrite ? "upload.closed" : "upload.notAllowed")}
         </p>
@@ -359,7 +362,10 @@ export function UploadPage() {
 
   return (
     <section className="upload-page">
-      <PageHeader title={t("upload.title", { library: active.name })} />
+      <PageHeader
+        kicker={t("nav.group.account")}
+        title={t("upload.title", { library: active.name })}
+      />
       <p className="muted upload-detail">{t("upload.detail")}</p>
       <label className="upload-pick">
         <span>{t("upload.pick")}</span>

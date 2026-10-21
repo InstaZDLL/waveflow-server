@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import type { SongSort } from "../api";
 import { songsQuery } from "../api/queries";
+import { Icon } from "../components/icons";
 import { Loading, PageHeader } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
 import { usePlayer } from "../player/player";
@@ -58,26 +59,42 @@ export function SongsPage() {
   const songs = useMemo(() => data?.pages.flat() ?? [], [data]);
 
   const controls = (
-    <label className="control">
-      <span>{t("browse.sort")}</span>
-      <select
-        value={sort}
-        aria-label={t("browse.sort")}
-        onChange={(event) => setSort(event.target.value as SongSort)}
-      >
-        {SONG_SORTS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {t(option.labelKey)}
-          </option>
-        ))}
-      </select>
-    </label>
+    <>
+      <label className="control">
+        <span>{t("browse.sort")}</span>
+        <select
+          value={sort}
+          aria-label={t("browse.sort")}
+          onChange={(event) => setSort(event.target.value as SongSort)}
+        >
+          {SONG_SORTS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.labelKey)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {songs.length ? (
+        <button
+          className="action-primary"
+          type="button"
+          onClick={() => player.play(songs, 0)}
+        >
+          <Icon name="play" size={17} />
+          {hasNextPage
+            ? t("songs.playLoaded", { count: songs.length })
+            : t("songs.playAll", { count: songs.length })}
+        </button>
+      ) : null}
+    </>
   );
 
   if (!data) {
     return (
       <section>
-        <PageHeader title={t("nav.songs")}>{controls}</PageHeader>
+        <PageHeader kicker={t("nav.group.library")} title={t("nav.songs")}>
+          {controls}
+        </PageHeader>
         <Loading error={error} />
       </section>
     );
@@ -89,6 +106,7 @@ export function SongsPage() {
           the route sends no total, and inventing one would mean a second
           `COUNT(*)` over the same filter on every request. */}
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.songs")}
         detail={
           hasNextPage
@@ -98,15 +116,6 @@ export function SongsPage() {
       >
         {controls}
       </PageHeader>
-      <div className="actions">
-        <button
-          type="button"
-          onClick={() => player.play(songs, 0)}
-          disabled={!songs.length}
-        >
-          {t("playlists.play")}
-        </button>
-      </div>
       {songs.length ? (
         <SongTable songs={songs} />
       ) : (

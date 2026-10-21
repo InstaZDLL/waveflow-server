@@ -66,7 +66,11 @@ export function SharesPage() {
 
   return (
     <section>
-      <PageHeader title={t("nav.shares")} detail={t("shares.detail")} />
+      <PageHeader
+        kicker={t("nav.group.account")}
+        title={t("nav.shares")}
+        detail={t("shares.detail")}
+      />
       <form
         className="inline-form"
         onSubmit={(event) => void shareQueue(event)}

@@ -26,6 +26,7 @@ export function GenresPage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.library")}
         title={t("nav.genres")}
         detail={
           needle

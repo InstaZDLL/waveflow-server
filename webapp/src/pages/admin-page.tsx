@@ -158,7 +158,7 @@ function NowPlayingPanel() {
   const { data: entries } = useQuery(nowPlayingQuery());
 
   return (
-    <article className="admin-panel">
+    <article className="admin-panel now-playing-panel">
       <h3>{t("admin.nowPlaying")}</h3>
       {entries?.length ? (
         <ul className="list resource-list">
@@ -515,8 +515,12 @@ export function AdminPage() {
   }
 
   return (
-    <section>
-      <PageHeader title={t("admin.title")} detail={t("admin.detail")} />
+    <section className="admin-page">
+      <PageHeader
+        kicker={t("nav.group.account")}
+        title={t("admin.title")}
+        detail={t("admin.detail")}
+      />
       {notice ? <p className="notice">{notice}</p> : null}
       {adminError ? <p className="error">{adminError}</p> : null}
       {watchedScan ? (

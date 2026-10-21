@@ -1,4 +1,8 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  QueryClientProvider,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
@@ -9,7 +13,14 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { type RefObject, StrictMode, useEffect, useRef } from "react";
+import {
+  type MouseEvent,
+  type RefObject,
+  StrictMode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -18,7 +29,24 @@ import {
   forgetOnSessionChange,
   logout,
 } from "./api";
+import {
+  administrationQuery,
+  albumsQuery,
+  artistsQuery,
+  favoriteTracksQuery,
+  genresQuery,
+  historyTracksQuery,
+  ownApiTokensQuery,
+  ownSubsonicCredentialQuery,
+  playlistsQuery,
+  radioStationsQuery,
+  scrobbleRowsQuery,
+  sharesQuery,
+  songsQuery,
+  uncertainScrobblesQuery,
+} from "./api/queries";
 import { createQueryClient } from "./api/query-client";
+import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
@@ -56,6 +84,31 @@ import {
 } from "./state/library-scope";
 import { PreferencesProvider } from "./state/preferences";
 import "./styles/styles.css";
+import "./styles/refresh.css";
+// The Fluid Editorial faces. Declared for every theme and fetched only where a
+// rule names them, which is the dark themes alone.
+import "@fontsource-variable/dm-sans/opsz.css";
+import "@fontsource/playfair-display/400-italic.css";
+import "./styles/fluid.css";
+
+/**
+ * The rail's sections, in the order it shows them.
+ *
+ * `pinned` is the four places reached for most, drawn as tiles by the dark
+ * themes; the others carry a label. A light theme keeps its plain list, so the
+ * grouping changes its order and nothing else.
+ */
+const NAVIGATION_GROUPS = ["pinned", "library", "listen", "account"] as const;
+type NavigationGroup = (typeof NAVIGATION_GROUPS)[number];
+
+const GROUP_LABELS: Record<
+  Exclude<NavigationGroup, "pinned">,
+  TranslationKey
+> = {
+  library: "nav.group.library",
+  listen: "nav.group.listen",
+  account: "nav.group.account",
+};
 
 const navigation: Array<{
   to:
@@ -82,39 +135,167 @@ const navigation: Array<{
   /** Shown only where the active library takes files from this account. */
   upload?: boolean;
   primary?: boolean;
+  /** The rail section it is filed under. */
+  group: NavigationGroup;
 }> = [
-  { to: "/", labelKey: "nav.albums", icon: "albums", primary: true },
-  { to: "/artists", labelKey: "nav.artists", icon: "artists" },
-  { to: "/songs", labelKey: "nav.songs", icon: "songs" },
-  { to: "/genres", labelKey: "nav.genres", icon: "genres" },
-  { to: "/search", labelKey: "nav.search", icon: "search", primary: true },
-  { to: "/playing", labelKey: "nav.playing", icon: "lyrics", primary: true },
-  { to: "/random", labelKey: "nav.random", icon: "random" },
-  { to: "/history", labelKey: "nav.history", icon: "history" },
+  {
+    to: "/",
+    labelKey: "nav.albums",
+    icon: "albums",
+    primary: true,
+    group: "pinned",
+  },
+  { to: "/artists", labelKey: "nav.artists", icon: "artists", group: "pinned" },
+  { to: "/songs", labelKey: "nav.songs", icon: "songs", group: "pinned" },
+  { to: "/genres", labelKey: "nav.genres", icon: "genres", group: "library" },
+  {
+    to: "/search",
+    labelKey: "nav.search",
+    icon: "search",
+    primary: true,
+    group: "pinned",
+  },
+  {
+    to: "/playing",
+    labelKey: "nav.playing",
+    icon: "lyrics",
+    primary: true,
+    group: "listen",
+  },
+  { to: "/random", labelKey: "nav.random", icon: "random", group: "listen" },
+  {
+    to: "/history",
+    labelKey: "nav.history",
+    icon: "history",
+    group: "library",
+  },
   {
     to: "/favourites",
     labelKey: "nav.favourites",
     icon: "heart",
     primary: true,
+    group: "library",
   },
   {
     to: "/playlists",
     labelKey: "nav.playlists",
     icon: "playlists",
     primary: true,
+    group: "library",
   },
-  { to: "/queue", labelKey: "nav.queue", icon: "queue", primary: true },
-  { to: "/shares", labelKey: "nav.shares", icon: "shares" },
-  { to: "/radio", labelKey: "nav.radio", icon: "radio" },
-  { to: "/settings", labelKey: "nav.settings", icon: "admin" },
+  {
+    to: "/queue",
+    labelKey: "nav.queue",
+    icon: "queue",
+    primary: true,
+    group: "listen",
+  },
+  { to: "/shares", labelKey: "nav.shares", icon: "shares", group: "account" },
+  { to: "/radio", labelKey: "nav.radio", icon: "radio", group: "listen" },
+  {
+    to: "/settings",
+    labelKey: "nav.settings",
+    icon: "admin",
+    group: "account",
+  },
   {
     to: "/settings/scrobbling",
     labelKey: "nav.scrobbling",
     icon: "scrobbling",
+    group: "account",
   },
-  { to: "/upload", labelKey: "nav.upload", icon: "upload", upload: true },
-  { to: "/admin", labelKey: "nav.admin", icon: "admin", admin: true },
+  {
+    to: "/upload",
+    labelKey: "nav.upload",
+    icon: "upload",
+    upload: true,
+    group: "account",
+  },
+  {
+    to: "/admin",
+    labelKey: "nav.admin",
+    icon: "admin",
+    admin: true,
+    group: "account",
+  },
 ];
+
+type NavigationTarget = (typeof navigation)[number]["to"];
+
+/**
+ * How long a tab switch holds the current screen while the next one loads.
+ *
+ * Long enough that an ordinary answer arrives first and the switch shows no
+ * skeleton; short enough that a server slow to answer leaves the visitor on
+ * the screen they asked for, with its wait, rather than on the old one.
+ */
+const TAB_WAIT_MS = 1500;
+
+/** Have the destination's first answer ready before replacing the current tab. */
+async function prepareTab(
+  to: NavigationTarget,
+  scope: string | undefined,
+  client: QueryClient,
+): Promise<void> {
+  switch (to) {
+    case "/":
+      await client.ensureQueryData(albumsQuery("alphabeticalByName", scope));
+      break;
+    case "/artists":
+      await client.ensureQueryData(artistsQuery(scope));
+      break;
+    case "/songs":
+      await client.ensureInfiniteQueryData(
+        songsQuery("alphabeticalByName", scope),
+      );
+      break;
+    case "/genres":
+      await client.ensureQueryData(genresQuery(scope));
+      break;
+    case "/history":
+      await client.ensureQueryData(historyTracksQuery(50));
+      break;
+    case "/favourites":
+      await client.ensureQueryData(favoriteTracksQuery());
+      break;
+    case "/playlists":
+      await client.ensureQueryData(playlistsQuery());
+      break;
+    case "/shares":
+      await client.ensureQueryData(sharesQuery());
+      break;
+    case "/radio":
+      await client.ensureQueryData(radioStationsQuery());
+      break;
+    case "/settings":
+      await Promise.all([
+        client.ensureQueryData(ownApiTokensQuery()),
+        client.ensureQueryData(ownSubsonicCredentialQuery()),
+      ]);
+      break;
+    case "/settings/scrobbling":
+      await Promise.all([
+        client.ensureQueryData(scrobbleRowsQuery()),
+        client.ensureQueryData(uncertainScrobblesQuery()),
+      ]);
+      break;
+    case "/admin":
+      await client.ensureQueryData(administrationQuery());
+      break;
+    // These screens draw their frame immediately or read state already held
+    // by the player. They have no page-wide answer to wait for.
+    case "/search":
+    case "/playing":
+    case "/queue":
+    case "/upload":
+      break;
+    // A fresh draw on every ask, held for no time at all: a draw made here
+    // is thrown away before the page mounts, and the page then draws again.
+    // Waiting for it would double the wait for nothing.
+    case "/random":
+      break;
+  }
+}
 
 function Brand() {
   const { t } = useI18n();
@@ -148,6 +329,10 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   const user = currentUser();
   const { active } = useLibraryScope();
   const { t } = useI18n();
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const [pendingTab, setPendingTab] = useState<NavigationTarget | null>(null);
+  const navigationAttempt = useRef(0);
   const visible = navigation.filter((item) =>
     permitted(item, user?.role, active),
   );
@@ -158,22 +343,88 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   // it. Promoting one would have made the others more invisible by contrast.
   const overflow = mobile ? visible.filter((item) => !item.primary) : [];
   const sheet = useRef<HTMLDialogElement>(null);
+
+  function openTab(event: MouseEvent<HTMLAnchorElement>, to: NavigationTarget) {
+    // Leave modified and middle clicks to the link, so opening a new tab keeps
+    // the browser's normal behaviour. Only an ordinary in-app tab switch waits.
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      event.defaultPrevented
+    ) {
+      return;
+    }
+    if (window.location.pathname === to) {
+      // A second click on the current tab cancels a destination still loading.
+      // With nothing loading it is an ordinary link: it takes the tab back to
+      // its plain address, `/playing?view=lyrics` to `/playing`.
+      if (pendingTab === null) return;
+      event.preventDefault();
+      navigationAttempt.current += 1;
+      setPendingTab(null);
+      return;
+    }
+    event.preventDefault();
+    const attempt = ++navigationAttempt.current;
+    const origin = window.location.pathname + window.location.search;
+    setPendingTab(to);
+    void (async () => {
+      try {
+        // Waited for, but not for ever: past the deadline the destination
+        // shows its own wait, which says more than a busy tab does.
+        await Promise.race([
+          prepareTab(to, active?.id, client),
+          new Promise((resolve) => setTimeout(resolve, TAB_WAIT_MS)),
+        ]);
+      } catch {
+        // The destination owns its error state. Navigate to it even when its
+        // first request fails, rather than leaving the old tab stuck as busy.
+      }
+      if (attempt !== navigationAttempt.current) return;
+      setPendingTab(null);
+      // The visitor moved on while this loaded — a link in the page, Back —
+      // and that move is the later decision. Arriving now would undo it.
+      if (window.location.pathname + window.location.search !== origin) return;
+      await navigate({ to });
+    })();
+  }
+
+  const entry = (item: (typeof navigation)[number]) => (
+    <Link
+      key={item.to}
+      to={item.to}
+      onClick={(event) => openTab(event, item.to)}
+      aria-busy={pendingTab === item.to}
+      aria-label={mobile ? t(item.labelKey) : undefined}
+      activeOptions={{
+        exact: item.to === "/" || item.to === "/settings",
+      }}
+    >
+      <Icon name={item.icon} />
+      <span>{t(item.labelKey)}</span>
+    </Link>
+  );
+
   return (
     <>
       <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
-        {visible
-          .filter((item) => !mobile || item.primary)
-          .map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              aria-label={mobile ? t(item.labelKey) : undefined}
-              activeOptions={{ exact: item.to === "/" }}
-            >
-              <Icon name={item.icon} />
-              <span>{t(item.labelKey)}</span>
-            </Link>
-          ))}
+        {mobile
+          ? visible.filter((item) => item.primary).map(entry)
+          : NAVIGATION_GROUPS.map((group) => {
+              const entries = visible.filter((item) => item.group === group);
+              if (entries.length === 0) return null;
+              return (
+                <div className="nav-group" data-group={group} key={group}>
+                  {group === "pinned" ? null : (
+                    <span className="nav-label">{t(GROUP_LABELS[group])}</span>
+                  )}
+                  {entries.map(entry)}
+                </div>
+              );
+            })}
         {overflow.length > 0 ? (
           <button
             type="button"
@@ -192,7 +443,12 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           would read a zero-sized child as sitting on the first one, and could
           not see a bar that had wrapped. */}
       {overflow.length > 0 ? (
-        <MoreSheet sheet={sheet} entries={overflow} />
+        <MoreSheet
+          sheet={sheet}
+          entries={overflow}
+          pendingTab={pendingTab}
+          onNavigate={openTab}
+        />
       ) : null}
     </>
   );
@@ -213,9 +469,16 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 function MoreSheet({
   sheet,
   entries,
+  pendingTab,
+  onNavigate,
 }: {
   sheet: RefObject<HTMLDialogElement | null>;
   entries: typeof navigation;
+  pendingTab: NavigationTarget | null;
+  onNavigate: (
+    event: MouseEvent<HTMLAnchorElement>,
+    to: NavigationTarget,
+  ) => void;
 }) {
   const { t } = useI18n();
 
@@ -257,10 +520,24 @@ function MoreSheet({
             <Link
               key={item.to}
               to={item.to}
+              aria-busy={pendingTab === item.to}
               // Closed on the way out, not on arrival: the sheet would
               // otherwise stay open over the page it just navigated to.
-              onClick={() => sheet.current?.close()}
-              activeOptions={{ exact: item.to === "/" }}
+              onClick={(event) => {
+                onNavigate(event, item.to);
+                if (
+                  event.button === 0 &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.shiftKey &&
+                  !event.altKey
+                ) {
+                  sheet.current?.close();
+                }
+              }}
+              activeOptions={{
+                exact: item.to === "/" || item.to === "/settings",
+              }}
             >
               <Icon name={item.icon} />
               <span>{t(item.labelKey)}</span>
@@ -324,6 +601,7 @@ function Shell() {
   return (
     <LibraryScopeProvider>
       <PlayerProvider>
+        <CoverLight />
         <a className="skip-link" href="#main-content">
           {t("nav.skip")}
         </a>
@@ -602,42 +880,8 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-/**
- * A navigation that is drawn rather than instantaneous.
- *
- * The complaint the session recorded was that pages "load too fast to be
- * real", and the cause is the absence of a drawn transition rather than the
- * speed. `defaultViewTransition` hands that to the browser, which holds a
- * snapshot of the screen being left and cross-fades it into the one arriving
- * — **an actual cross-fade**, where fading the new screen in over nothing is
- * only half of one.
- *
- * It replaced a hand-written version of the same idea, and the comparison is
- * the argument: that one animated the incoming frame in a layout effect,
- * which meant deciding whether to key the frame on the path (it remounted the
- * screen, and a screen that mounts twice asks the server twice), whether the
- * effect ran before the paint (after it, the screen flashed at full opacity
- * first), and how to hold the outgoing view at all (it could not — the router
- * had already unmounted it). None of those questions exist here.
- *
- * `startViewTransition` is absent in older browsers; `router-core` checks for
- * it and navigates plainly when it is missing. The duration lives in
- * `styles.css`, where a `::view-transition` pseudo-element can be reached.
- *
- * **Reduced motion switches it off rather than animating it to nothing.** A
- * transition started and then neutralised in CSS has to win a cascade against
- * the user agent on a pseudo-element that exists only while it runs; not
- * starting one has nothing to win. Read once, at startup, so a reader who
- * changes the setting mid-session sees it after a reload — which is why the
- * media query in `styles.css` stays as well.
- *
- * The first load is untouched: a view transition is a thing between two
- * screens, and there is only one.
- */
 const router = createRouter({
   routeTree,
-  defaultViewTransition: !window.matchMedia("(prefers-reduced-motion: reduce)")
-    .matches,
 });
 
 declare module "@tanstack/react-router" {

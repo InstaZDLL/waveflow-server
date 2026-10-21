@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import {
+  type CSSProperties,
   createContext,
   type ReactNode,
   useCallback,
@@ -921,8 +922,25 @@ export function PlayerBar() {
           />
         </button>
       </div>
-      <div className="player-progress">
+      {/* `--played` is the share already heard. The dark themes draw that part
+          of the line as the mark's wave and leave the rest straight, beneath a
+          range input that keeps every interaction. */}
+      <div
+        className="player-progress"
+        style={
+          {
+            "--played":
+              progress.duration > 0
+                ? Math.min(
+                    1,
+                    (scrubbing ?? progress.position) / progress.duration,
+                  )
+                : 0,
+          } as CSSProperties
+        }
+      >
         <span>{formatDuration((scrubbing ?? progress.position) * 1000)}</span>
+        <span className="progress-wave" aria-hidden="true" />
         <input
           type="range"
           min={0}

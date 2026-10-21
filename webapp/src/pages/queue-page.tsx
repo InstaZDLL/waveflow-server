@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { formatDuration } from "../api";
+import { Artwork } from "../components/artwork";
 import { EmptyState, PageHeader } from "../components/page-shell";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
@@ -19,6 +20,7 @@ export function QueuePage() {
   return (
     <section>
       <PageHeader
+        kicker={t("nav.group.listen")}
         title={t("nav.queue")}
         detail={t("queue.detail", { count: player.queue.length })}
       />
@@ -40,19 +42,27 @@ export function QueuePage() {
               >
                 <button
                   type="button"
-                  className="link queue-title"
+                  className="queue-track"
                   onClick={() => player.play(player.queue, position)}
                 >
-                  {song.title}
+                  <Artwork
+                    artworkId={song.artwork_hash}
+                    title={song.title}
+                    className="queue-cover"
+                  />
+                  <span className="queue-copy">
+                    <strong className="queue-song-title">{song.title}</strong>
+                    <small className="queue-artist muted">
+                      {song.artist ?? t("common.unknownArtist")}
+                    </small>
+                  </span>
                 </button>
-                <span className="muted">
-                  {song.artist ?? t("common.unknownArtist")}
-                </span>
-                <span className="muted">
+                <span className="queue-duration muted">
                   {formatDuration(song.duration_ms)}
                 </span>
                 <button
                   type="button"
+                  className="queue-remove"
                   onClick={() => player.remove(position)}
                   aria-label={`${t("queue.remove")}: ${song.title}`}
                 >

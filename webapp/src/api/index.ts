@@ -39,6 +39,7 @@ export {
   getArtist,
   getTrack,
   listAlbums,
+  listArtistAlbums,
   listArtists,
   listGenreSongs,
   listGenres,

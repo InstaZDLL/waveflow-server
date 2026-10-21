@@ -48,7 +48,11 @@ export function SearchPage() {
 
   return (
     <section>
-      <PageHeader title={t("nav.search")} detail={t("search.detail")} />
+      <PageHeader
+        kicker={t("nav.group.library")}
+        title={t("nav.search")}
+        detail={t("search.detail")}
+      />
       {/* Said only where it is a fact worth saying. This screen used to warn
           that it covered every library, because it did; it is scoped like the
           others now, and an account with one library is not choosing. */}
