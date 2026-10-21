@@ -148,9 +148,12 @@ pub fn parse_ttml(content: &str) -> Option<ParsedUpload> {
             root.children()
                 .filter(|node| node.is_element() && node.tag_name().name() == "body"),
         )
-        .find_map(|node| node.attribute(("http://www.w3.org/XML/1998/namespace", "lang")))
-        .map(str::trim)
-        .filter(|lang| !lang.is_empty())
+        // An empty one says nothing, and the body's, nested inside it, wins.
+        .find_map(|node| {
+            node.attribute(("http://www.w3.org/XML/1998/namespace", "lang"))
+                .map(str::trim)
+                .filter(|lang| !lang.is_empty())
+        })
         .unwrap_or(UNKNOWN_LANG)
         .to_owned();
     // Outermost paragraphs only, found without walking into one: a `<p>`
@@ -403,6 +406,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body.lang, "ko");
+        let blank_root = parse_ttml(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang=" ">
+                <body xml:lang="ko"><div><p begin="1s">hi</p></div></body></tt>"#,
+        )
+        .unwrap();
+        assert_eq!(blank_root.lang, "ko");
     }
 
     #[test]
