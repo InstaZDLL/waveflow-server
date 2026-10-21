@@ -6,7 +6,9 @@
 - **Date**: 2026-10-21
 - **Revised**: 2026-10-21, after review on #297: the **Received** folder's
   contract, the depth check on a move, the folder cap that bounds the tree's
-  listing, and one order for the lyrics, all made explicit.
+  listing, and one order for the lyrics, all made explicit. Then the root's
+  depth, the cap under concurrency, all-or-nothing placements, empty sheets
+  skipped, and lyrics downloads that are never rendered.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md),
@@ -122,18 +124,27 @@ entirely visible there before anyone has sorted anything.
 - A name is 1 to 120 characters after trimming, holds no control characters,
   and is unique among its siblings, case-insensitively. It holds `/` if its
   author wants it to: no path is ever built from it.
-- Depth is capped at 16, a root folder being at depth 1. A create is refused
-  with `422` when its parent is already at 16.
+- Depth is capped at 16. The root — `parent_id: null` — is at depth 0, so a
+  folder at the root is at depth 1, and a create is refused with `422` when
+  its parent is already at 16.
 - **A move is checked for the whole sub-tree it carries**, before anything is
-  written: the new parent's depth plus the height of the moved folder's
-  sub-tree must stay within 16, or the move is refused with `422`. Checking
+  written: the new parent's depth (0 for the root) plus the height of the
+  moved folder's sub-tree, the folder itself counting 1, must stay within 16,
+  or the move is refused with `422`. Checking
   only the moved folder would let a move bury its deepest descendant below the
   cap. A move that would make a folder its own ancestor is refused with `422`
   too, and neither refusal is repaired.
 - A library holds at most **5,000** filed folders. A create past that answers
   `422`. The cap is what makes the whole tree one bounded answer (see the
   surface below): at most 5,000 entries of an id, a parent id, a name of at
-  most 120 characters and a count — under a megabyte in the worst case.
+  most 120 characters and a count. It bounds the number of entries, not a
+  byte size, and promises none.
+- **The cap holds under concurrency.** A create counts the library's folders
+  and inserts in one transaction, under the process-wide writer gate every
+  mutation already takes (CLAUDE.md, "SQLite discipline"), so two creates
+  racing at 4,999 cannot both pass: the second sees the first and answers
+  `422`. The depth checks and the sibling-name uniqueness are made in that
+  same transaction, for the same reason.
 - Deleting a folder **files nothing elsewhere and deletes nothing on disk**.
   Its sub-folders go with it, and every track in it or under it becomes
   unfiled. The response says how many tracks were unfiled, so the client can
@@ -210,6 +221,12 @@ corrections live beside the file (RFC-008 decision 5).
 
 - **One upload per track and format.** Uploading again replaces it. Deleting
   it falls back to what the scanner found.
+- **Only a sheet with something in it counts.** An upload with no usable
+  content is refused at upload with `422`: a `.txt` empty after trimming, an
+  `.lrc` with no line, a `.ttml` from which no line parses. And the selection
+  below skips any source that is empty for whatever reason — a scanned row
+  the constraints let through, an upload stored by an earlier version — and
+  goes on down the order, so an empty sheet never hides a real one.
 - **Precedence** is one fixed order, the same everywhere a single sheet is
   chosen — the lyrics the clients read, Properties, and the download below:
   1. an uploaded `.ttml`;
@@ -224,7 +241,9 @@ corrections live beside the file (RFC-008 decision 5).
   uploads, TTML ranks first because it carries strictly more — line timings
   and, kept in the original, word timings — so an owner who uploads both has
   given the richer one last word. The order depends on formats only, never on
-  upload times, so two readers of the same track always agree.
+  upload times, so two readers of the same track always agree. It is applied
+  identically wherever one sheet is chosen: the lyrics served to clients,
+  Properties, and the default download.
 - **The original bytes are kept**, decoded to UTF-8 through
   `waveflow_core::text_encoding` (#296), so the download gives back what was
   uploaded and not a re-serialisation of it. The size cap is the sidecar's,
@@ -241,6 +260,13 @@ corrections live beside the file (RFC-008 decision 5).
   the scanner found, `.lrc` when they are synced and `.txt` when they are
   not. `?format=lrc|txt|ttml` asks for one upload by name instead, and
   answers `404` when the track has no upload in that format.
+- **A download is never rendered.** It answers `Content-Type:
+  application/octet-stream`, `Content-Disposition: attachment` with the
+  file's name, and `X-Content-Type-Options: nosniff`, whatever the format.
+  An uploaded `.ttml` is XML its uploader wrote; served inline under an XML
+  or HTML type it would be a document the browser runs in the server's
+  origin. The selection and the bytes are unchanged; only how the browser is
+  told to treat them is fixed.
 
 ## Decision 7 — uploading from the browser is RFC-008, unchanged
 
@@ -267,7 +293,7 @@ library or a track the caller may not see.
 | `PATCH /folders/{id}` | Rename, or move under another `parent_id` (or to the root); `422` past the depth cap for the whole sub-tree, or on a cycle. |
 | `DELETE /folders/{id}` | Delete with its sub-folders; returns the number of tracks unfiled. |
 | `GET /folders/{id}/tracks` | The tracks filed directly in a folder. Paged. `unfiled` stands for the root's unfiled entry. |
-| `PUT /libraries/{id}/placements` | File up to 500 tracks into one folder, or unfile them (`folder_id: null`). |
+| `PUT /libraries/{id}/placements` | File up to 500 tracks into one folder, or unfile them (`folder_id: null`). **All or nothing**: the folder and every track are checked before anything is written, in one transaction under the writer gate; any track the caller may not see, or outside the library, answers `404`, a folder outside it `404`, more than 500 `422`, and no placement changes. |
 | `PUT /tracks/{id}/lyrics/{format}` | Upload `lrc`, `txt` or `ttml`. |
 | `DELETE /tracks/{id}/lyrics/{format}` | Remove an upload. |
 | `GET /tracks/{id}/lyrics/file?format=` | Download the sheet decision 6's order selects, or with `format`, one upload by name. |
