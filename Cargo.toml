@@ -39,6 +39,10 @@ encoding_rs = "0.8.42"
 futures-util = "0.3"
 hex = "0.4"
 lofty = "0.25"
+# TTML lyrics uploads (RFC-012 decision 6). Already in the lock file through
+# the artwork renderer; named here because the server now parses XML itself.
+# Its default options refuse a DTD, which is what keeps entities out.
+roxmltree = "0.21"
 libc = "0.2"
 md-5 = "0.11"
 # Already in the tree through `url`; declared because `playlist_file` reads

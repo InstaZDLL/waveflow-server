@@ -131,8 +131,10 @@ export { createShare, deleteShare, listShares } from "./shares";
 export type { StreamUrl } from "./stream";
 export { streamUrl } from "./stream";
 export type {
+  LyricsFormat,
   LyricsLine,
   LyricsList,
+  LyricsSource,
   SongCredits,
   StructuredLyrics,
   TrackCorrectionPatch,
@@ -143,10 +145,13 @@ export type {
 } from "./tracks";
 export {
   correctTrack,
+  deleteLyricsUpload,
+  fetchLyricsFile,
   getLyrics,
   getTrackCredits,
   getTrackOverrides,
   getTrackProperties,
+  uploadLyrics,
 } from "./tracks";
 export type {
   CommittedUpload,

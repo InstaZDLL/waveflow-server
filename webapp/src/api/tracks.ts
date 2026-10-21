@@ -1,5 +1,5 @@
 import type { Song } from "./catalog";
-import { call } from "./client";
+import { call, request } from "./client";
 
 /**
  * A track with the credits the catalogue answers for it. The server sends these
@@ -103,7 +103,23 @@ export type StructuredLyrics = {
   lang: string;
   synced: boolean;
   line: LyricsLine[];
+  /**
+   * Where the sheet came from (RFC-012 decision 6). Sent by the native route
+   * only, which lists every sheet in the order a reader should choose by.
+   */
+  source?: LyricsSource;
 };
+
+export type LyricsSource =
+  | "upload_ttml"
+  | "upload_lrc"
+  | "upload_txt"
+  | "sidecar_lrc"
+  | "sidecar_text"
+  | "embedded";
+
+/** The formats a sheet can be uploaded in. */
+export type LyricsFormat = "lrc" | "txt" | "ttml";
 
 /**
  * What `GET /api/v2/tracks/{id}/lyrics` answers.
@@ -121,3 +137,46 @@ export type LyricsList = {
 
 export const getLyrics = (trackId: string) =>
   call<LyricsList>(`/api/v2/tracks/${trackId}/lyrics`);
+
+/**
+ * Upload a sheet as the bytes it is, in whatever encoding it was saved; the
+ * server decodes it. Answers the track's lyrics as they now read.
+ */
+export const uploadLyrics = (
+  trackId: string,
+  format: LyricsFormat,
+  file: Blob,
+) =>
+  call<LyricsList>(`/api/v2/tracks/${trackId}/lyrics/${format}`, {
+    method: "PUT",
+    body: file,
+    headers: { "content-type": "application/octet-stream" },
+  });
+
+export const deleteLyricsUpload = async (
+  trackId: string,
+  format: LyricsFormat,
+): Promise<void> => {
+  await request(`/api/v2/tracks/${trackId}/lyrics/${format}`, {
+    method: "DELETE",
+  });
+};
+
+/**
+ * The track's lyrics as a file: the sheet the server puts first, or one upload
+ * by name. Fetched with the session, since a navigation could not carry it,
+ * and named by the server's `Content-Disposition`.
+ */
+export async function fetchLyricsFile(
+  trackId: string,
+  format?: LyricsFormat,
+): Promise<{ blob: Blob; name: string | null }> {
+  const query = format ? `?format=${format}` : "";
+  const response = await request(
+    `/api/v2/tracks/${trackId}/lyrics/file${query}`,
+  );
+  return {
+    blob: await response.blob(),
+    name: response.headers.get("content-disposition"),
+  };
+}

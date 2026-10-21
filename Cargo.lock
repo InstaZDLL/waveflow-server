@@ -3660,6 +3660,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.10.3",
  "reqwest",
+ "roxmltree",
  "rust-embed",
  "serde",
  "serde_json",

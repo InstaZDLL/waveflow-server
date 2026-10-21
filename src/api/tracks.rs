@@ -99,12 +99,105 @@ pub async fn get_track_lyrics(
     headers: HeaderMap,
 ) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
+    // The native answer: uploads included, in RFC-012's order, each sheet
+    // naming its source. The Subsonic façade reads `lyrics` instead.
     state
         .services
-        .lyrics(user.id, track_id)
+        .track_lyrics(user.id, track_id)
         .await
         .map(Json)
         .map_err(service_error)
+}
+
+fn lyrics_format(value: &str) -> Result<crate::lyrics::UploadFormat, ApiError> {
+    crate::lyrics::UploadFormat::parse(value).ok_or(ApiError::NotFound)
+}
+
+/// Uploads a lyrics sheet to a track (RFC-012 decision 6).
+///
+/// The body is the file, as it was saved: `lrc`, `txt` or `ttml`, at most a
+/// mebibyte, in any encoding `waveflow_core::text_encoding` reads. Uploading
+/// again in the same format replaces it. A sheet with nothing usable in it is
+/// refused with `422`. Owners and managers only; anyone else gets the `404` a
+/// track they could not see would give.
+#[utoipa::path(put, path = "/api/v2/tracks/{track_id}/lyrics/{format}", tag = "catalog", params(("track_id" = Uuid, Path), ("format" = String, Path, description = "lrc, txt or ttml")), request_body(content = Vec<u8>, content_type = "application/octet-stream"), responses((status = 200, body = crate::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 413), (status = 422, body = ErrorResponse)))]
+pub async fn put_track_lyrics(
+    State(state): State<AppState>,
+    Path((track_id, format)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    let format = lyrics_format(&format)?;
+    state
+        .services
+        .upload_lyrics(user.id, track_id, format, &body)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Removes an uploaded sheet; the track falls back to what the scanner found.
+#[utoipa::path(delete, path = "/api/v2/tracks/{track_id}/lyrics/{format}", tag = "catalog", params(("track_id" = Uuid, Path), ("format" = String, Path, description = "lrc, txt or ttml")), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn delete_track_lyrics(
+    State(state): State<AppState>,
+    Path((track_id, format)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    let format = lyrics_format(&format)?;
+    state
+        .services
+        .delete_lyrics_upload(user.id, track_id, format)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(service_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LyricsFileQuery {
+    pub format: Option<String>,
+}
+
+/// A track's lyrics as a file to save.
+///
+/// The sheet the lyrics route puts first, or with `format`, one upload by
+/// name. Never rendered: `application/octet-stream`, an attachment, and
+/// `nosniff`, whatever the format — an uploaded `.ttml` is XML somebody else
+/// wrote, and inline under an XML type it would be a document running in this
+/// server's origin.
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}/lyrics/file", tag = "catalog", params(("track_id" = Uuid, Path), ("format" = Option<String>, Query, description = "lrc, txt or ttml: one upload by name")), responses((status = 200, content_type = "application/octet-stream"), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn get_track_lyrics_file(
+    State(state): State<AppState>,
+    Path(track_id): Path<Uuid>,
+    Query(query): Query<LyricsFileQuery>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    let format = query.format.as_deref().map(lyrics_format).transpose()?;
+    let file = state
+        .services
+        .lyrics_file(user.id, track_id, format)
+        .await
+        .map_err(service_error)?;
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                crate::media::attachment(&file.name),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        file.content,
+    )
+        .into_response())
 }
 
 /// Corrects some of a track's tags, leaving the rest as they are.
