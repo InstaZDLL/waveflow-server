@@ -75,7 +75,7 @@ utoipa-scalar = { version = "0.4", features = ["axum"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "9b50f3de288d62b0ff9f867ab7bda504b255cc5c", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df0031bef8ba44062e03337807592b3d51102", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"
