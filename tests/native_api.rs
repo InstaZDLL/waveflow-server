@@ -4387,13 +4387,18 @@ async fn the_disk_tree_lists_one_level_of_the_indexed_paths_to_members_only() {
         .create_scan_job(library_id, Some(owner), "manual")
         .await
         .unwrap();
-    let files: [(&str, &str, Option<&str>); 10] = [
+    let files: [(&str, &str, Option<&str>); 11] = [
         (
             "Björk/Post/02 Hyperballad.flac",
             "Hyperballad",
             Some("Björk"),
         ),
         ("Björk/Post/01 Army Of Me.flac", "Army Of Me", Some("Björk")),
+        (
+            "Björk/Post/03 Possibly Maybe.flac",
+            "Possibly Maybe",
+            Some("Björk"),
+        ),
         ("Björk/Post/Bonus/01 Extra.flac", "Extra", Some("Björk")),
         ("Björk/Homogenic/01 Hunter.flac", "Hunter", Some("Björk")),
         ("Björk-B/Side.flac", "Side", Some("Other")),
@@ -4425,6 +4430,15 @@ async fn the_disk_tree_lists_one_level_of_the_indexed_paths_to_members_only() {
         .execute(state.db.pool())
         .await
         .unwrap();
+    // Nor is it counted in a folder that still has others: `Post` keeps two
+    // tracks, and the counts, totals and pages below say two, never three.
+    sqlx::query(
+        "UPDATE track SET is_available = 0 \
+         WHERE relative_path = 'Björk/Post/03 Possibly Maybe.flac'",
+    )
+    .execute(state.db.pool())
+    .await
+    .unwrap();
 
     let router = waveflow_server::app(&config, state.clone());
     let owner_token = login_token(&router, "tree-owner", &password).await;

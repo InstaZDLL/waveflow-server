@@ -75,7 +75,9 @@ export function FoldersPage({ path }: { path: string }) {
           onClick={() => player.play(songs, 0)}
         >
           <Icon name="play" size={17} />
-          {t("songs.playAll", { count: songs.length })}
+          {hasNextPage
+            ? t("songs.playLoaded", { count: songs.length })
+            : t("songs.playAll", { count: songs.length })}
         </button>
       ) : null}
       {mayUploadTo(active) ? (
