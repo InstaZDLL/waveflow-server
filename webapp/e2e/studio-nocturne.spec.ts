@@ -4122,11 +4122,11 @@ test("gives the words a view of their own, with timings where there are any", as
       exact: true,
     }),
   ).toBeVisible();
-  // A count rather than visibility: a blank line's button holds a lone space,
-  // so it draws no box, and visibility would fail for that and not the name.
+  // Visible, not merely present: a blank line held a collapsible space, so its
+  // button had no height — reachable by the keyboard and drawn nowhere.
   await expect(
     view.getByRole("button", { name: "Jump to 0:20", exact: true }),
-  ).toHaveCount(1);
+  ).toBeVisible();
   await expect(
     view.getByText("This sheet carries timings — press a line to jump to it."),
   ).toBeVisible();
