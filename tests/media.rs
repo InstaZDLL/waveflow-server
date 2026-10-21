@@ -712,6 +712,59 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
         .unwrap();
     assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
 
+    // Playing sends no attachment header; that is a download's alone.
+    assert!(played.headers().get("content-disposition").is_none());
+    let played_length = played.headers()["content-length"].clone();
+
+    // `?download=1` is the same file, saved under the file's own name
+    // (RFC-012 decision 5) — no other route, no other read.
+    let basename = tracks[0]["relative_path"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    let downloaded = router
+        .clone()
+        .oneshot(
+            Request::get(format!("{url}?download=1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(downloaded.status(), StatusCode::OK);
+    assert_eq!(downloaded.headers()["content-length"], played_length);
+    let disposition = downloaded.headers()["content-disposition"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        disposition.starts_with("attachment; filename=\"")
+            && disposition.contains(&format!("filename*=UTF-8''{basename}")),
+        "{disposition}"
+    );
+
+    // A download is the file: asked for with a transcode, an offset or a bit
+    // rate, it is refused rather than handed over under the file's name.
+    for refused in [
+        format!("{url}?download=1&format=mp3"),
+        format!("{url}?download=1&offset_ms=1000"),
+        format!("{url}?download=1&bitrate=128"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(Request::get(&refused).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{refused}"
+        );
+    }
+
     // An expired ticket is refused even though it is otherwise well formed.
     let expired = waveflow_server::stream_ticket::mint(
         &secret_box,

@@ -1,8 +1,12 @@
 # RFC-012 — The library browser: folders as a view, filing as metadata
 
 - **Status**: Proposed
-- **Implemented by**: not started. The *Status* field above never flips in this
-  project; this line is the one that will say what is running.
+- **Implemented by**: in progress, in the order of "The order of the work"
+  below: [#298](https://github.com/InstaZDLL/waveflow-server/pull/298) (the
+  context menu and Properties, with `relative_path` on the track) and the pull
+  request adding download (`?download=1` on the stream ticket). The *Status*
+  field above never flips in this project; this line is the one that says what
+  is running.
 - **Date**: 2026-10-21
 - **Revised**: 2026-10-21, after review on #297: the **Received** folder's
   contract, the depth check on a move, the folder cap that bounds the tree's

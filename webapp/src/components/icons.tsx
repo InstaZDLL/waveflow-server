@@ -29,9 +29,18 @@ export type IconName =
   | "close"
   | "upload"
   | "radio"
-  | "info";
+  | "info"
+  | "download";
 
 const paths: Record<IconName, ReactNode> = {
+  // An arrow out of the library onto a tray: the file, saved.
+  download: (
+    <>
+      <path d="M12 4v11" />
+      <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+      <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+    </>
+  ),
   // A circled i: what a track is, read and not changed.
   info: (
     <>

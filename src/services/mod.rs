@@ -1374,7 +1374,7 @@ mod shares;
 mod songs;
 mod sync;
 mod track_metadata;
-mod uploads;
+pub(crate) mod uploads;
 
 /// Crate-visible only: the adapter builds the browser-less journey's address
 /// from it, and nothing outside this binary has a use for it.

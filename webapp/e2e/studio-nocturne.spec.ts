@@ -1419,6 +1419,7 @@ test("opens a track's properties from its context menu", async ({ page }) => {
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Play",
     "Add to queue",
+    "Download",
     "Properties",
     "Edit tags",
   ]);
@@ -1428,6 +1429,7 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "outline-style",
     "solid",
   );
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitem", { name: "Properties" })).toBeFocused();
@@ -1458,6 +1460,7 @@ test("opens a track's properties from its context menu", async ({ page }) => {
   await page.keyboard.press("Shift+F10");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(panel).toBeVisible();
   await page.mouse.click(2, 2);
@@ -1468,6 +1471,90 @@ test("opens a track's properties from its context menu", async ({ page }) => {
   await expect(menu).toBeVisible();
   await page.mouse.click(5, 5);
   await expect(menu).toHaveCount(0);
+
+  // The wheel closes it even turned over the menu, which does not scroll:
+  // the page beneath would move and leave the menu off its row. Dispatched
+  // on the entry itself, because a real wheel in a headless browser brings
+  // side effects of its own that close the menu either way.
+  await row.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await menu
+    .getByRole("menuitem", { name: "Play" })
+    .dispatchEvent("wheel", { deltaY: 120, bubbles: true });
+  await expect(menu).toHaveCount(0);
+});
+
+/**
+ * Download is the stream ticket with `?download=1` (RFC-012 decision 5).
+ *
+ * The browser cannot send the session on a navigation, so the menu mints a
+ * ticket and saves from it through a link with `download` and no value,
+ * which leaves the file's name to the server's `Content-Disposition`. That
+ * header is asserted server-side, against a real file; what is asserted here
+ * is the link the page builds. Chromium hands a `download` link straight to
+ * its download manager, past every route a test could install, so the link
+ * is caught as it is clicked rather than on the wire.
+ */
+test("downloads a track from its context menu", async ({ page }) => {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9/stream-ticket", (route) =>
+    route.fulfill({
+      json: { url: "/api/v2/stream/ticket-9", expires_at: Date.now() + 60_000 },
+    }),
+  );
+  await page.goto("/songs");
+  await page.evaluate(() => {
+    const seen = window as unknown as {
+      __saved: Array<{ href: string | null; download: string }>;
+    };
+    seen.__saved = [];
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      seen.__saved.push({
+        href: this.getAttribute("href"),
+        download: this.getAttribute("download") ?? "absent",
+      });
+    };
+  });
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for Army Of Me" });
+  await menu.getByRole("menuitem", { name: "Download" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __saved: unknown[] }).__saved,
+      ),
+    )
+    .toEqual([{ href: "/api/v2/stream/ticket-9?download=1", download: "" }]);
+  // Nothing is left in the document once the link has been followed.
+  await expect(page.locator("a[download]")).toHaveCount(0);
+
+  // A ticket that cannot be minted says so, rather than a click doing
+  // nothing; and saves nothing.
+  await page.route("**/api/v2/tracks/song-9/stream-ticket", (route) =>
+    route.fulfill({ status: 503, body: "" }),
+  );
+  await page.keyboard.press("Shift+F10");
+  await menu.getByRole("menuitem", { name: "Download" }).click();
+  const failed = page
+    .getByRole("alert")
+    .filter({ hasText: "The download could not start" });
+  await expect(failed).toHaveText("The download could not start. Try again.");
+  await failed.getByRole("button", { name: "Dismiss" }).click();
+  await expect(failed).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __saved: unknown[] }).__saved.length,
+    ),
+  ).toBe(1);
 });
 
 test("gives random playback one clear primary action", async ({ page }) => {
