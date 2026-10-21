@@ -383,7 +383,7 @@
 /* The player bar runs under the rail's foot now, so the rail ends above it. */
 @media (width > 820px) {
   :where(:root.dark) .sidebar {
-    padding-bottom: calc(4.75rem + var(--space-4));
+    padding-bottom: calc(5.75rem + var(--space-4));
   }
 }
 
@@ -731,6 +731,12 @@
   border-bottom-color: rgb(255 255 255 / 5%);
 }
 
+/* Rows with room inside them: the open one is a tone with the accent's edge,
+   and a cover pressed against that edge read as cut off. */
+:where(:root.dark) :is(.queue-list li, .bookmark-list li) {
+  padding-inline: var(--space-3);
+}
+
 :where(:root.dark) .queue-list li.active {
   background: var(--fe-tone-2);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -738,6 +744,14 @@
 
 :where(:root.dark) :is(.queue-cover, .bookmark-cover) {
   border-radius: var(--fe-radius-tile);
+}
+
+/* The row's own button is the row, not a ghost pill inside it: hovered, it
+   took the pill's tone and full radius and drew a second card in the first. */
+:where(:root.dark) :is(.queue-track, .bookmark-track),
+:where(:root.dark) :is(.queue-track, .bookmark-track):hover {
+  border-radius: 0;
+  background: transparent;
 }
 
 :where(:root.dark) .view-switcher {
@@ -954,9 +968,9 @@
     grid-template-columns: minmax(0, 1fr) minmax(18rem, 38rem) minmax(0, 1fr);
     grid-template-rows: auto auto;
     column-gap: var(--space-6);
-    row-gap: 0;
-    min-height: 4.25rem;
-    padding: var(--space-2) var(--space-6);
+    row-gap: var(--space-1);
+    min-height: 5.25rem;
+    padding: var(--space-3) var(--space-6);
     border-radius: 0;
     box-shadow: inset 0 1px 0 var(--fe-hairline);
   }
@@ -967,17 +981,24 @@
     grid-area: 1 / 1 / 3 / 2;
     align-self: center;
     justify-self: start;
-    width: 3.25rem;
+    width: 3.75rem;
   }
 
   :where(:root.dark) .player-cover {
-    width: 3.25rem;
+    width: 3.75rem;
   }
 
+  /* Set beside the cover by a margin, not a padding: a padded box still
+     covers the cover it sits over, and took every click aimed at the middle
+     of it — only the strip above the names reached the album link. */
   :where(:root.dark) .player-track {
     grid-area: 1 / 1 / 3 / 2;
     align-self: center;
-    padding-left: calc(3.25rem + var(--space-3));
+    margin-left: calc(3.75rem + var(--space-3));
+  }
+
+  :where(:root.dark) .player-track strong {
+    font-size: var(--fe-body);
   }
 
   :where(:root.dark) .player-controls {
@@ -985,8 +1006,8 @@
   }
 
   :where(:root.dark) .player-controls button.primary {
-    width: 2.5rem;
-    min-height: 2.5rem;
+    width: 2.75rem;
+    min-height: 2.75rem;
   }
 
   :where(:root.dark) .player-controls button.primary:hover {
