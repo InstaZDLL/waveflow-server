@@ -507,6 +507,35 @@ let refuseCanvasWith: number | null = null;
  */
 let canvasStreamGate: Promise<void> = Promise.resolve();
 
+/**
+ * Audit the page against WCAG A and AA, once it has stopped moving.
+ *
+ * The dark theme raises each block of a page into view, fading it in over
+ * 640 ms. axe reads the colours as they are at the instant it looks, so an
+ * audit that caught a block halfway measured its text at a fraction of its
+ * opacity and reported a contrast the finished page does not have — on the
+ * genre test, five runs in eight. Every finite animation is let finish first;
+ * an infinite one, the pulse of a loading skeleton, would never settle, and is
+ * left running.
+ */
+async function expectNoWcagViolations(page: Page) {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter(
+          (animation) =>
+            animation.effect?.getComputedTiming().endTime !== Infinity,
+        )
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+}
+
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
     {
@@ -1326,10 +1355,7 @@ test("offers a keyboard skip link and a localized not-found route", async ({
 test("has no automated WCAG A or AA violations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 test("keeps the light appearance readable", async ({ page }) => {
@@ -1339,10 +1365,7 @@ test("keeps the light appearance readable", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -1568,10 +1591,7 @@ test("rates a track and stays free of WCAG A or AA violations", async ({
   await expect(cocoon.getByRole("radio", { name: "4 stars" })).toBeChecked();
   expect(rated).toEqual(["PUT /api/v2/ratings/track/song-2"]);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -1593,20 +1613,14 @@ test("browses into a genre and keeps WCAG A and AA clean", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Genres" })).toBeVisible();
   await expect(page.getByText("412 tracks · 31 albums")).toBeVisible();
 
-  let results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   await page.getByRole("link", { name: "Art Pop" }).click();
   await expect(page.getByRole("heading", { name: "Art Pop" })).toBeVisible();
   await expect(page.locator(".songs tbody tr")).toHaveCount(2);
   expect(asked).toEqual(["Art Pop"]);
 
-  results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -1654,10 +1668,7 @@ test("previews an .m3u import, shows what it cannot place, then imports", async 
     ),
   ).toBeVisible();
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // Cancelling writes nothing, and asks nothing more.
   await page.getByRole("button", { name: "Cancel" }).click();
@@ -1773,10 +1784,7 @@ test("an artist page shows this account's most played, and no heading without a 
   // And the albums are still what the page is.
   await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // Nothing played: the section is absent, not empty.
   artistPlayed = [];
@@ -1855,10 +1863,7 @@ test("an artist page shows what the server learned, and where each part came fro
   await expect(page.getByText("Looking this artist up")).toHaveCount(0);
   expect(artistAsks).toBe(2);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /** `none` is an answer: nothing is shown, and nothing is asked again. */
@@ -2361,10 +2366,7 @@ test("corrects a track's tags and sends only what changed", async ({
     page.getByRole("button", { name: /^Restore the file.s value: Artists$/ }),
   ).toHaveCount(0);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -2439,10 +2441,7 @@ test("uploads a file in fragments, resuming from the server's account", async ({
   expect(uploadChunks.flatMap(({ bytes: sent }) => sent)).toEqual([...bytes]);
   expect(uploadCommits).toEqual(["upload-1"]);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -2570,10 +2569,7 @@ test("places, replaces and removes a track's canvas", async ({ page }) => {
     "/api/v2/canvas-stream/ticket-song-9",
   );
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   await page.getByRole("button", { name: "Remove the canvas" }).click();
   await expect(page.getByText("Canvas removed.")).toBeVisible();
@@ -2766,10 +2762,7 @@ test("plays a track's canvas over its cover, and steps aside for it", async ({
   await expect(video).toHaveJSProperty("muted", true);
   await expect(video).toHaveJSProperty("loop", true);
   await expect(stage.locator(".cover")).toBeVisible();
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(video).toHaveCount(0);
@@ -2821,10 +2814,7 @@ test("offers each instance by name, and says why one cannot be linked", async ({
     page.getByRole("button", { name: "Connect to Last.fm" }),
   ).toHaveCount(0);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 });
 
 /**
@@ -3102,10 +3092,7 @@ test("opens the rest of the client from the mobile bar", async ({
   // for would satisfy every line above.
   await expect(sheet.getByRole("link")).toHaveCount(11);
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // Escape is the keyboard's way out, and it is the element's own rather than
   // anything written here — which is why the sheet is a <dialog>.
@@ -4131,10 +4118,7 @@ test("gives the words a view of their own, with timings where there are any", as
     view.getByText("This sheet carries timings — press a line to jump to it."),
   ).toBeVisible();
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // **The switcher says where it is, once.** All three entries point at one
   // path, and the router counts a link carrying no search as matching every
@@ -4277,10 +4261,7 @@ test("opens the immersive view, and Back leaves the view and not the screen", as
     await expect(immersive.getByRole("button", { name })).toBeVisible();
   }
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // **Escape, which is the platform's and not ours.** `<dialog>` answers it,
   // and the navigation hangs off the close rather than off the key, so the
@@ -4440,10 +4421,7 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
     page.getByRole("button", { name: "Add station" }),
   ).toBeDisabled();
 
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+  await expectNoWcagViolations(page);
 
   // Editing loads the station into the same form, and says what saving means:
   // the page address is cleared because the form sends every field.
