@@ -4086,6 +4086,8 @@ test("gives the words a view of their own, with timings where there are any", as
         { start: 0, value: "the lamps come on along the quay" },
         { start: 5_000, value: "and the water keeps the light" },
         { start: 12_500, value: "the lamps come on along the quay" },
+        // An instrumental break: timed, and with no words to name it by.
+        { start: 20_000, value: "" },
       ],
     },
   ]);
@@ -4103,16 +4105,28 @@ test("gives the words a view of their own, with timings where there are any", as
   // The head is at zero, so the first line is the one being sung — and a
   // refrain repeated word for word does not take the mark with it.
   const lines = view.getByRole("listitem");
-  await expect(lines).toHaveCount(3);
+  await expect(lines).toHaveCount(4);
   await expect(lines.nth(0)).toHaveAttribute("aria-current", "true");
   await expect(lines.nth(2)).not.toHaveAttribute("aria-current", "true");
 
-  // **Every line is a button, and its name is the time rather than the
-  // words.** A screen reader announcing "press to jump to the lamps come on
-  // along the quay" reads the line twice and says nothing about what pressing
-  // does.
-  await expect(view.getByRole("button")).toHaveCount(3);
-  await expect(view.getByRole("button", { name: "Jump to 0:05" })).toBeVisible();
+  // **Every line is a button, named by its words and then the time.** The
+  // words because the name must contain what is on screen — voice control
+  // finds a control by what it shows — and the time because the words alone
+  // say nothing about what pressing does. A blank line has no words to
+  // repeat, so it keeps the time alone rather than a name that opens on a
+  // comma.
+  await expect(view.getByRole("button")).toHaveCount(4);
+  await expect(
+    view.getByRole("button", {
+      name: "and the water keeps the light, jump to 0:05",
+      exact: true,
+    }),
+  ).toBeVisible();
+  // A count rather than visibility: a blank line's button holds a lone space,
+  // so it draws no box, and visibility would fail for that and not the name.
+  await expect(
+    view.getByRole("button", { name: "Jump to 0:20", exact: true }),
+  ).toHaveCount(1);
   await expect(
     view.getByText("This sheet carries timings — press a line to jump to it."),
   ).toBeVisible();

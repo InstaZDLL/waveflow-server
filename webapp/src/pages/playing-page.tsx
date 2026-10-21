@@ -268,12 +268,19 @@ function LyricsView({ song }: { song: Song }) {
                   type="button"
                   className="link"
                   onClick={() => player.seek(at / 1000)}
-                  // The time, not the words: a screen reader announcing
-                  // "press to jump to the lamps come on along the quay" reads
-                  // the line twice and says nothing about what pressing does.
-                  aria-label={t("lyrics.seekTo", {
-                    when: formatDuration(at),
-                  })}
+                  // The words first, then what pressing does. The name must
+                  // contain the text on screen (WCAG 2.5.3), or someone saying
+                  // "click the lamps come on" to voice control reaches
+                  // nothing; the time after it is what a bare line leaves
+                  // unsaid. A blank line has no words to repeat.
+                  aria-label={
+                    line.value
+                      ? t("lyrics.seekLine", {
+                          line: line.value,
+                          when: formatDuration(at),
+                        })
+                      : t("lyrics.seekTo", { when: formatDuration(at) })
+                  }
                 >
                   {line.value || " "}
                 </button>
