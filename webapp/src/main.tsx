@@ -297,13 +297,21 @@ async function prepareTab(
   }
 }
 
+/**
+ * The name has to contain the words on screen, in order (WCAG 2.5.3, which
+ * axe checks as `label-content-name-mismatch`): someone who says "click
+ * WaveFlow server" to voice control must land on this link. The space between
+ * the two pieces is load-bearing for the same reason — axe reads the visible
+ * text by joining the children with nothing, so without it the label is the
+ * one word "WaveFlowserver", which no name contains. The flex row drops the
+ * space from the layout, so it changes nothing that is drawn.
+ */
 function Brand() {
   const { t } = useI18n();
   return (
     <Link className="brand" to="/" aria-label={t("nav.home")}>
       <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
-      <span>WaveFlow</span>
-      <small>{t("nav.server")}</small>
+      <span>WaveFlow</span> <small>{t("nav.server")}</small>
     </Link>
   );
 }
