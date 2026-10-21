@@ -2860,3 +2860,92 @@ button.danger {
   color: var(--danger);
   font-size: var(--text-xs);
 }
+
+/* The disk tree (RFC-012). The trail first, each crumb a link back up; the
+   folder being looked at says so through `aria-current`. */
+.folder-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.folder-crumbs li + li::before {
+  margin-right: var(--space-1);
+  color: var(--muted);
+  content: "/";
+}
+
+.folder-crumbs li a {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.folder-crumbs li a:hover,
+.folder-crumbs li a[aria-current="page"] {
+  color: var(--text);
+}
+
+.folder-note {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.folder-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.folder-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--panel-strong);
+}
+
+.folder-row svg {
+  grid-row: span 2;
+  color: var(--accent);
+}
+
+.folder-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A link that leaves for the upload screen, drawn as the buttons beside it. */
+.folder-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.55rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.55rem;
+  background: var(--panel-strong);
+}
+
+.folder-upload:hover {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+}

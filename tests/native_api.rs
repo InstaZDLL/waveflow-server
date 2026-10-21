@@ -4340,3 +4340,251 @@ async fn uploaded_lyrics_lead_the_order_download_as_they_came_and_stay_off_subso
     .unwrap();
     assert_eq!(stored, 0);
 }
+
+/// The disk tree (RFC-012 decision 1), through the router: one level at a
+/// time, derived from the indexed paths, open to every member and to nobody
+/// else.
+///
+/// The paths carry a non-ASCII segment because SQLite's `substr` counts
+/// characters, and a neighbour that shares the folder's name as a prefix
+/// (`Björk-B`) because the range that selects "beneath" must stop at the
+/// separator. Passwords are drawn at run time, for CodeQL.
+#[tokio::test]
+async fn the_disk_tree_lists_one_level_of_the_indexed_paths_to_members_only() {
+    let (_temp, config, state) = test_app().await;
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let mut accounts = Vec::new();
+    for name in ["tree-owner", "tree-listener", "tree-stranger"] {
+        accounts.push(
+            state
+                .db
+                .create_account(name, &hash, AccountRole::User, now_ms())
+                .await
+                .unwrap(),
+        );
+    }
+    let (owner, listener) = (accounts[0], accounts[1]);
+    let root = std::fs::canonicalize(&config.data_dir).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "Tree", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(
+            owner,
+            library_id,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    let files: [(&str, &str, Option<&str>); 11] = [
+        (
+            "Björk/Post/02 Hyperballad.flac",
+            "Hyperballad",
+            Some("Björk"),
+        ),
+        ("Björk/Post/01 Army Of Me.flac", "Army Of Me", Some("Björk")),
+        (
+            "Björk/Post/03 Possibly Maybe.flac",
+            "Possibly Maybe",
+            Some("Björk"),
+        ),
+        ("Björk/Post/Bonus/01 Extra.flac", "Extra", Some("Björk")),
+        ("Björk/Homogenic/01 Hunter.flac", "Hunter", Some("Björk")),
+        ("Björk-B/Side.flac", "Side", Some("Other")),
+        ("Loose.flac", "Loose", None),
+        (".waveflow-managed/3f.flac", "Zebra", Some("zed")),
+        (".waveflow-managed/1a.flac", "Nameless", None),
+        (".waveflow-managed/2b.flac", "Waterloo", Some("ABBA")),
+        ("Gone/Missing.flac", "Missing", Some("Ghost")),
+    ];
+    state
+        .db
+        .start_scan_job(scan_id, files.len() as i64, false)
+        .await
+        .unwrap();
+    for (index, (path, title, artist)) in files.iter().enumerate() {
+        let mut input = browse_input(20_000 + index, title, "Album", "x", None, None);
+        input.relative_path = (*path).to_owned();
+        input.artist = artist.map(str::to_owned);
+        input.album_artist = artist.map(str::to_owned);
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+    // A track whose file is gone holds no folder open.
+    sqlx::query("UPDATE track SET is_available = 0 WHERE relative_path = 'Gone/Missing.flac'")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    // Nor is it counted in a folder that still has others: `Post` keeps two
+    // tracks, and the counts, totals and pages below say two, never three.
+    sqlx::query(
+        "UPDATE track SET is_available = 0 \
+         WHERE relative_path = 'Björk/Post/03 Possibly Maybe.flac'",
+    )
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+
+    let router = waveflow_server::app(&config, state.clone());
+    let owner_token = login_token(&router, "tree-owner", &password).await;
+    let listener_token = login_token(&router, "tree-listener", &password).await;
+    let stranger_token = login_token(&router, "tree-stranger", &password).await;
+    let tree = |token: &str, query: &str| {
+        let router = router.clone();
+        let token = token.to_owned();
+        let uri = format!("/api/v2/libraries/{library_id}/tree{query}");
+        async move {
+            router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let path = |path: &str| {
+        format!(
+            "?path={}",
+            percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC)
+        )
+    };
+    let folders = |listing: &serde_json::Value| -> Vec<(String, String, i64, i64)> {
+        listing["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|folder| {
+                (
+                    folder["name"].as_str().unwrap().to_owned(),
+                    folder["path"].as_str().unwrap().to_owned(),
+                    folder["track_count"].as_i64().unwrap(),
+                    folder["nested_track_count"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let titles = |listing: &serde_json::Value| -> Vec<String> {
+        listing["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|track| track["song"]["title"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let folder = |name: &str, path: &str, direct: i64, nested: i64| {
+        (name.to_owned(), path.to_owned(), direct, nested)
+    };
+
+    // The root: the received folder under its real path, the artist folder
+    // counting what is beneath it, the neighbour apart, and no `Gone`.
+    let top = json_body(tree(&owner_token, "").await).await;
+    assert_eq!(top["path"], "");
+    assert_eq!(
+        folders(&top),
+        [
+            folder(".waveflow-managed", ".waveflow-managed", 3, 3),
+            folder("Björk", "Björk", 0, 4),
+            folder("Björk-B", "Björk-B", 1, 1),
+        ]
+    );
+    assert_eq!(
+        (top["folder_total"].as_i64(), top["track_total"].as_i64()),
+        (Some(3), Some(1))
+    );
+    assert_eq!(titles(&top), ["Loose"]);
+    // A listener reads the same tree; the answer is the owner's, to the byte.
+    let heard = json_body(tree(&listener_token, "").await).await;
+    assert_eq!(heard, top);
+
+    let artist = json_body(tree(&owner_token, &path("Björk")).await).await;
+    assert_eq!(
+        folders(&artist),
+        [
+            folder("Homogenic", "Björk/Homogenic", 1, 1),
+            folder("Post", "Björk/Post", 2, 3),
+        ]
+    );
+    assert_eq!(artist["track_total"], 0);
+
+    // A folder's tracks sort by file name, and carry it; the song itself
+    // keeps the shape every other listing gives it, path left out.
+    let album = json_body(tree(&owner_token, &path("Björk/Post")).await).await;
+    assert_eq!(folders(&album), [folder("Bonus", "Björk/Post/Bonus", 1, 1)]);
+    assert_eq!(titles(&album), ["Army Of Me", "Hyperballad"]);
+    assert_eq!(album["tracks"][0]["name"], "01 Army Of Me.flac");
+    assert!(omits(&album["tracks"][0]["song"], "relative_path"));
+
+    // One page runs over the folders, then the tracks.
+    let pages = [
+        ("&limit=1", vec!["Bonus"], vec![]),
+        ("&offset=1&limit=1", vec![], vec!["Army Of Me"]),
+        ("&offset=2&limit=5", vec![], vec!["Hyperballad"]),
+    ];
+    for (window, expected_folders, expected_tracks) in pages {
+        let page =
+            json_body(tree(&owner_token, &format!("{}{window}", path("Björk/Post"))).await).await;
+        let names: Vec<String> = folders(&page).into_iter().map(|folder| folder.0).collect();
+        assert_eq!(names, expected_folders, "{window}");
+        assert_eq!(titles(&page), expected_tracks, "{window}");
+        assert_eq!(
+            (page["folder_total"].as_i64(), page["track_total"].as_i64()),
+            (Some(1), Some(2)),
+            "{window}"
+        );
+    }
+
+    // Received: hashes for names, so artist then title, a missing artist last.
+    let received = json_body(tree(&owner_token, &path(".waveflow-managed")).await).await;
+    assert!(folders(&received).is_empty());
+    assert_eq!(titles(&received), ["Waterloo", "Zebra", "Nameless"]);
+
+    // Nothing through it for a stranger, and nothing for a folder no
+    // available track runs through.
+    for (token, query) in [
+        (&stranger_token, String::new()),
+        (&stranger_token, path("Björk")),
+        (&owner_token, path("Gone")),
+        (&owner_token, path("Nowhere")),
+        (&owner_token, path("Björk/Post/01 Army Of Me.flac")),
+    ] {
+        assert_eq!(
+            tree(token, &query).await.status(),
+            StatusCode::NOT_FOUND,
+            "{query}"
+        );
+    }
+    // One spelling per folder, and a page that means something.
+    for query in [
+        path("Björk/"),
+        path("/Björk"),
+        path("Björk//Post"),
+        path("../Björk"),
+        "?limit=0".to_owned(),
+        "?limit=501".to_owned(),
+        "?offset=-1".to_owned(),
+    ] {
+        assert_eq!(
+            tree(&owner_token, &query).await.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{query}"
+        );
+    }
+}

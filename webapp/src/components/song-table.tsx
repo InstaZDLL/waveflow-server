@@ -62,10 +62,16 @@ export function SongTable({
   songs,
   numbering = "position",
   variant = "default",
+  captions,
 }: {
   songs: Song[];
   numbering?: "track" | "position";
   variant?: "default" | "album";
+  /**
+   * What each row says under its title, in place of the album: the file's
+   * name, where the screen is about files.
+   */
+  captions?: string[];
 }) {
   const player = usePlayer();
   const { t } = useI18n();
@@ -186,7 +192,8 @@ export function SongTable({
                     <span>
                       {song.title}
                       <small>
-                        {variant === "album" ? song.artist : song.album}
+                        {captions?.[position] ??
+                          (variant === "album" ? song.artist : song.album)}
                       </small>
                     </span>
                   </button>

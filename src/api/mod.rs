@@ -113,6 +113,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/scans/{scan_id}", get(scan_status))
         .route("/api/v2/scans/{scan_id}/events", get(scan_events))
         .route("/api/v2/libraries/{library_id}/tracks", get(list_tracks))
+        .route("/api/v2/libraries/{library_id}/tree", get(library_tree))
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
         .route(
             "/api/v2/libraries/{library_id}/events/ack",
