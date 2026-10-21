@@ -83,6 +83,13 @@ export function useTrackMenu() {
     onContextMenu: (event: MouseEvent<HTMLElement>) => {
       event.preventDefault();
       cancelPress();
+      // Android opens the menu from a long press itself, through this event,
+      // before the timer below fires: the lift that follows is the same tap
+      // to swallow. The next touch disarms it, so it cannot eat a later one.
+      const native = event.nativeEvent as globalThis.MouseEvent & {
+        pointerType?: string;
+      };
+      if (native.pointerType === "touch") swallowClick.current = true;
       // A keyboard-raised `contextmenu` carries no pointer position; the menu
       // then opens beside the row instead of in the window's corner.
       if (event.clientX === 0 && event.clientY === 0) {
