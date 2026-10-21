@@ -23,8 +23,12 @@ export type PlaylistImport = {
   /** The playlist as created; `null` for a dry run. */
   playlist: Playlist | null;
   name: string;
-  /** How the server read the bytes: `.m3u` is frequently not UTF-8. */
-  encoding: "utf-8" | "windows-1252";
+  /**
+   * How the server read the bytes: `.m3u` is frequently not UTF-8. The
+   * encoding's WHATWG name in lower case — `utf-8`, `utf-16le`,
+   * `windows-1252`, `shift_jis`, `gbk`… — so an open set, not a union.
+   */
+  encoding: string;
   /** Targets the file named, placed or not. */
   entries: number;
   resolved: number;

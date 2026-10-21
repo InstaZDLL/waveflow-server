@@ -165,10 +165,10 @@ export function PlaylistImportPanel({
               entries: preview.report.entries,
             })}
           </p>
-          {/* Said only when it is worth saying. A file read as Windows-1252
-              was not UTF-8, and a wrong guess there mangles accented titles —
-              so the reader is told which guess was made rather than left to
-              wonder why a name looks odd. */}
+          {/* Said only when it is worth saying. A file read as anything but
+              UTF-8 had its encoding named by a byte-order mark or guessed, and
+              a wrong guess mangles every title — so the reader is told which
+              one was used rather than left to wonder why a name looks odd. */}
           {preview.report.encoding !== "utf-8" ? (
             <p className="muted">
               {t("import.encoding", { encoding: preview.report.encoding })}

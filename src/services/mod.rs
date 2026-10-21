@@ -1067,8 +1067,11 @@ pub struct PlaylistImport {
     pub playlist: Option<PlaylistItem>,
     /// The name used, from the request or from the file's own `#PLAYLIST`.
     pub name: String,
-    /// How the bytes were read as text. A file that announced itself as UTF-8
-    /// and came back `windows-1252` has been read, not mangled in silence.
+    /// How the bytes were read as text, by the encoding's WHATWG name in lower
+    /// case: `utf-8`, `utf-16le`, `windows-1252`, `shift_jis`, `gbk`… A file
+    /// that announced itself as UTF-8 and came back anything else has been
+    /// read, not mangled in silence.
+    #[schema(value_type = String, example = "utf-8")]
     pub encoding: TextEncoding,
     /// Targets the file named, resolved or not.
     pub entries: usize,

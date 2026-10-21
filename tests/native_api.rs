@@ -3629,6 +3629,29 @@ async fn an_m3u_import_places_what_it_can_and_reports_the_rest() {
         "and the name did not become an entry of its own"
     );
 
+    // **A UTF-16 file is read by its byte-order mark.** Notepad's "Unicode"
+    // and some players' exports write it. Read as Windows-1252, every other
+    // character came back a NUL and nothing in the file resolved.
+    let mut utf16 = vec![0xFF, 0xFE];
+    utf16.extend(
+        "#EXTM3U\r\n#EXTINF:300,Björk - Hidden Place\r\nBjörk/Vespertine/01 Hidden Place.flac\r\n"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes),
+    );
+    let (status, wide) = import(
+        "/api/v2/playlists/import?name=Wide&dry_run=true".into(),
+        utf16,
+        token.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{wide}");
+    assert_eq!(wide["entries"], 1);
+    assert_eq!(wide["resolved"], 1, "the path it names is found: {wide}");
+    assert_eq!(
+        wide["encoding"], "utf-16le",
+        "and the mark named the encoding"
+    );
+
     // A file nothing names is refused rather than stored namelessly.
     let (status, _body) = import(
         "/api/v2/playlists/import".into(),

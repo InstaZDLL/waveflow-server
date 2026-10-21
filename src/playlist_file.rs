@@ -11,24 +11,36 @@
 //! `#EXTINF` metadata is kept because it is the only thing left to match on
 //! when a path resolves to nothing.
 
-use serde::Serialize;
-use utoipa::ToSchema;
+use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
+use encoding_rs::Encoding;
+use serde::{Serialize, Serializer};
 
 /// How the bytes were read as text.
 ///
 /// Reported rather than assumed, because the guess can be wrong and a wrong
-/// guess mangles every accented title. A caller that sees `Windows1252` on a
-/// file it believed was UTF-8 has been told something.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum TextEncoding {
-    // Named rather than derived, both of them: kebab-case puts no hyphen before
-    // a digit, so the derive spelled these "utf8" and "windows1252" and no
-    // encoding is called either.
-    #[serde(rename = "utf-8")]
-    Utf8,
-    #[serde(rename = "windows-1252")]
-    Windows1252,
+/// guess mangles every title. A caller that sees `shift_jis` on a file it
+/// believed was UTF-8 has been told something.
+///
+/// On the wire, the encoding's WHATWG name in lower case: `utf-8`,
+/// `utf-16le`, `windows-1252`, `shift_jis`, `gbk`, `big5`, `euc-kr` and so on.
+/// The two this answered before it read anything but UTF-8 and Windows-1252
+/// are spelled as they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextEncoding(&'static Encoding);
+
+impl TextEncoding {
+    pub const UTF_8: Self = Self(encoding_rs::UTF_8);
+
+    /// The name a report gives, `utf-8` rather than encoding_rs's `UTF-8`.
+    pub fn name(self) -> String {
+        self.0.name().to_ascii_lowercase()
+    }
+}
+
+impl Serialize for TextEncoding {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.name())
+    }
 }
 
 /// One line of the file that names something to play.
@@ -122,44 +134,39 @@ pub fn parse(bytes: &[u8]) -> PlaylistFile {
     }
 }
 
-/// UTF-8 if it is UTF-8, Windows-1252 otherwise.
+/// The text, read by `waveflow_core::text_encoding`, and the encoding it was
+/// read as.
 ///
 /// `.m3u8` is UTF-8 by definition and `.m3u` frequently is not, but the
 /// extension is a claim and the bytes are evidence, so the bytes decide. The
-/// order is what makes the fallback safe: valid UTF-8 is never reinterpreted,
-/// and accented text in Windows-1252 is not valid UTF-8, so it cannot be
-/// mistaken the other way round either.
-///
-/// Windows-1252 rather than Latin-1 because the files that are not UTF-8 were
-/// written by Windows players: the two agree from `0xA0` up, and below it
-/// Latin-1 has control codes where Windows-1252 has the typographic
-/// punctuation that actually appears in track titles.
+/// core decoder is the one the desktop reads the same files with: a
+/// byte-order mark names the encoding, valid UTF-8 is UTF-8, and anything
+/// else has its encoding guessed. A fixed fallback, Windows-1252 as this was
+/// until the core had a decoder, read a CJK playlist into Latin nonsense and
+/// a UTF-16 one into NULs.
 fn decode(bytes: &[u8]) -> (String, TextEncoding) {
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    match std::str::from_utf8(bytes) {
-        Ok(text) => (text.to_owned(), TextEncoding::Utf8),
-        Err(_) => (
-            bytes.iter().map(|byte| windows_1252_char(*byte)).collect(),
-            TextEncoding::Windows1252,
-        ),
-    }
+    let text = waveflow_core::text_encoding::decode(bytes).into_owned();
+    (text, TextEncoding(encoding_read_as(bytes)))
 }
 
-/// The thirty-two code points Windows-1252 puts where Latin-1 keeps C1
-/// control codes. Everything else in the range is Latin-1, which is the
-/// identity mapping onto Unicode.
-fn windows_1252_char(byte: u8) -> char {
-    const HIGH: [char; 32] = [
-        '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}',
-        '\u{2021}', '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}',
-        '\u{017D}', '\u{008F}', '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}',
-        '\u{2022}', '\u{2013}', '\u{2014}', '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}',
-        '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
-    ];
-    match byte {
-        0x80..=0x9F => HIGH[(byte - 0x80) as usize],
-        other => char::from(other),
+/// The encoding `waveflow_core::text_encoding::decode` reads `bytes` as.
+///
+/// The core answers the text and not its encoding, so the encoding is worked
+/// out again here by the same steps in the same order, with the detector set
+/// up the same way. Duplicated rather than trusted: a core that changed its
+/// guess would have a report name one encoding while the text was read as
+/// another, which is what `the_encoding_named_is_the_one_the_core_read`
+/// catches on the next bump.
+fn encoding_read_as(bytes: &[u8]) -> &'static Encoding {
+    if let Some((encoding, _)) = Encoding::for_bom(bytes) {
+        return encoding;
     }
+    if std::str::from_utf8(bytes).is_ok() {
+        return encoding_rs::UTF_8;
+    }
+    let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
+    detector.feed(bytes, true);
+    detector.guess(None, Utf8Detection::Deny)
 }
 
 /// `#EXTINF:duration,display text`.
@@ -246,7 +253,7 @@ mod tests {
     #[test]
     fn a_plain_file_is_one_target_per_line() {
         let file = parse(b"Artist/Album/01.flac\nArtist/Album/02.flac\n");
-        assert_eq!(file.encoding, TextEncoding::Utf8);
+        assert_eq!(file.encoding, TextEncoding::UTF_8);
         assert_eq!(file.name, None);
         assert_eq!(
             targets(&file),
@@ -291,7 +298,7 @@ mod tests {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(b"#EXTM3U\r\nArtist/Album/01.flac\r\n");
         let file = parse(&bytes);
-        assert_eq!(file.encoding, TextEncoding::Utf8);
+        assert_eq!(file.encoding, TextEncoding::UTF_8);
         assert_eq!(targets(&file), ["Artist/Album/01.flac"]);
     }
 
@@ -303,7 +310,7 @@ mod tests {
         bytes.push(0xF6);
         bytes.extend_from_slice(b"rk/Vespertine/01.flac\n");
         let file = parse(&bytes);
-        assert_eq!(file.encoding, TextEncoding::Windows1252);
+        assert_eq!(file.encoding.name(), "windows-1252");
         assert_eq!(targets(&file), ["Björk/Vespertine/01.flac"]);
 
         // And the thirty-two code points that tell Windows-1252 from Latin-1:
@@ -316,6 +323,100 @@ mod tests {
             file.entries[0].title.as_deref(),
             Some("L\u{2019}artiste - Song")
         );
+    }
+
+    /// What Notepad saves as "Unicode", and what some players export: UTF-16
+    /// little-endian behind its byte-order mark. Read as Windows-1252, every
+    /// other character was a NUL and no path matched anything.
+    #[test]
+    fn a_utf16_file_is_read_by_its_byte_order_mark() {
+        let text = "#EXTM3U\r\n#EXTINF:245,Björk - Hidden Place\r\nBjörk/Vespertine/01.flac\r\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        let file = parse(&bytes);
+        assert_eq!(serde_json::to_value(file.encoding).unwrap(), "utf-16le");
+        assert_eq!(targets(&file), ["Björk/Vespertine/01.flac"]);
+        assert_eq!(
+            file.entries[0].artist_and_title(),
+            Some(("Björk", "Hidden Place"))
+        );
+    }
+
+    /// A playlist written on a Japanese Windows, in Shift_JIS. The Windows-1252
+    /// fallback read it without failing, which was worse: every name came back
+    /// as Latin nonsense that matched no path and no title.
+    #[test]
+    fn a_file_in_an_east_asian_code_page_is_read_in_it() {
+        let text = "#EXTM3U\r\n#PLAYLIST:夏の夜に聴きたい歌\r\n\
+                    #EXTINF:245,宇多田ヒカル - 花束を君に\r\n\
+                    宇多田ヒカル/ファントーム/01 花束を君に.flac\r\n\
+                    #EXTINF:301,椎名林檎 - 丸の内サディスティック\r\n\
+                    椎名林檎/無罪モラトリアム/03 丸の内サディスティック.flac\r\n";
+        let (bytes, _, unmappable) = encoding_rs::SHIFT_JIS.encode(text);
+        assert!(!unmappable, "Shift_JIS holds the sample");
+        assert!(std::str::from_utf8(&bytes).is_err());
+        let file = parse(&bytes);
+        assert_eq!(serde_json::to_value(file.encoding).unwrap(), "shift_jis");
+        assert_eq!(file.name.as_deref(), Some("夏の夜に聴きたい歌"));
+        assert_eq!(
+            targets(&file),
+            [
+                "宇多田ヒカル/ファントーム/01 花束を君に.flac",
+                "椎名林檎/無罪モラトリアム/03 丸の内サディスティック.flac",
+            ]
+        );
+        assert_eq!(
+            file.entries[1].artist_and_title(),
+            Some(("椎名林檎", "丸の内サディスティック"))
+        );
+    }
+
+    /// The report names the encoding the core read, not a second guess that
+    /// happens to agree today: decoding each sample with the named encoding
+    /// gives back the core's text exactly.
+    #[test]
+    fn the_encoding_named_is_the_one_the_core_read() {
+        let samples: [(&str, &'static Encoding); 6] = [
+            (
+                "#EXTINF:1,Björk - Cocoon\nBjörk/Vespertine/02.flac\n",
+                encoding_rs::WINDOWS_1252,
+            ),
+            (
+                "#EXTINF:1,宇多田ヒカル - 花束を君に\n宇多田ヒカル/01 花束を君に.flac\n",
+                encoding_rs::SHIFT_JIS,
+            ),
+            (
+                "#EXTINF:1,王菲 - 红豆\n王菲/唱游/03 红豆.flac\n",
+                encoding_rs::GB18030,
+            ),
+            (
+                "#EXTINF:1,周杰倫 - 晴天\n周杰倫/葉惠美/01 晴天.flac\n",
+                encoding_rs::BIG5,
+            ),
+            (
+                "#EXTINF:1,아이유 - 밤편지\n아이유/팔레트/01 밤편지.flac\n",
+                encoding_rs::EUC_KR,
+            ),
+            (
+                "#EXTINF:1,Björk - Cocoon\nBjörk/Vespertine/02.flac\n",
+                encoding_rs::UTF_8,
+            ),
+        ];
+        for (text, encoding) in samples {
+            let (bytes, _, unmappable) = encoding.encode(text);
+            assert!(!unmappable, "{} holds the sample", encoding.name());
+            let named = encoding_read_as(&bytes);
+            assert_eq!(
+                named.decode_without_bom_handling(&bytes).0,
+                waveflow_core::text_encoding::decode(&bytes),
+                "{} was named {}",
+                encoding.name(),
+                named.name()
+            );
+        }
+        let mut marked = vec![0xFE, 0xFF];
+        marked.extend("Björk/01.flac".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(encoding_read_as(&marked), encoding_rs::UTF_16BE);
     }
 
     #[test]
