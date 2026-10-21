@@ -149,12 +149,21 @@ pub fn parse_ttml(content: &str) -> Option<ParsedUpload> {
         .filter(|lang| !lang.is_empty())
         .unwrap_or(UNKNOWN_LANG)
         .to_owned();
+    // Outermost paragraphs only, found without walking into one: a `<p>`
+    // nested in a `<p>` is not TTML, and reading each paragraph's whole
+    // subtree would copy the text once per level of nesting — quadratic in a
+    // document the size cap alone does not bound. Each text node is read once.
+    let mut paragraphs = Vec::new();
+    let mut pending: Vec<_> = root.children().rev().collect();
+    while let Some(node) = pending.pop() {
+        if node.is_element() && node.tag_name().name() == "p" {
+            paragraphs.push(node);
+        } else {
+            pending.extend(node.children().rev());
+        }
+    }
     let mut lines = Vec::new();
-    for (order, paragraph) in root
-        .descendants()
-        .filter(|node| node.is_element() && node.tag_name().name() == "p")
-        .enumerate()
-    {
+    for (order, paragraph) in paragraphs.into_iter().enumerate() {
         let Some(start) = paragraph.attribute("begin").and_then(ttml_time) else {
             continue;
         };
@@ -355,6 +364,30 @@ fn parse_timestamp(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paragraph_nested_in_a_paragraph_reads_once() {
+        let parsed = parse_ttml(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+                <p begin="1s">outer <p begin="2s">inner <p begin="3s">deepest</p></p></p>
+                <p begin="4s">next</p>
+            </div></body></tt>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.lines,
+            vec![
+                LyricsLine {
+                    start: Some(1000),
+                    value: "outer inner deepest".into(),
+                },
+                LyricsLine {
+                    start: Some(4000),
+                    value: "next".into(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn parses_and_orders_lrc_timestamps() {
