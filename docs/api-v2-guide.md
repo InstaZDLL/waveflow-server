@@ -745,7 +745,9 @@ BE); otherwise the server reads UTF-8 when the bytes are UTF-8 and recognises
 the encoding from the bytes when they are not — GB18030, Big5, Shift_JIS,
 EUC-KR, Windows-1252 and the like — and **says which it used** in the response,
 as the encoding's WHATWG name in lower case (`utf-8`, `utf-16le`, `shift_jis`,
-`windows-1252`…).
+`windows-1252`…). A GB18030 file is reported as `gbk`: the detector never
+names GB18030, and the GBK decoder is the GB18030 one, so the text is read in
+full under either name.
 
 ```bash
 # What it would do, without doing it
