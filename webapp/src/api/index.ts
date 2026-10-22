@@ -83,22 +83,16 @@ export {
   updateFolder,
 } from "./folders";
 export type {
-  DiskFolder,
-  DiskListing,
-  DiskTrack,
   Library,
   LibraryMember,
   ScanJob,
 } from "./libraries";
 export {
   addLibrary,
-  DISK_TREE_PAGE,
   drainEventStream,
-  getDiskTree,
   getScan,
   listLibraries,
   listLibraryMembers,
-  RECEIVED_FOLDER,
   removeLibraryMember,
   setLibraryMember,
   startScan,

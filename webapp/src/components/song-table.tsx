@@ -68,17 +68,11 @@ export function SongTable({
   songs,
   numbering = "position",
   variant = "default",
-  captions,
   draggableRows = false,
 }: {
   songs: Song[];
   numbering?: "track" | "position";
   variant?: "default" | "album";
-  /**
-   * What each row says under its title, in place of the album: the file's
-   * name, where the screen is about files.
-   */
-  captions?: string[];
   /**
    * Rows may be dragged onto a filed folder. Only where filing is offered:
    * a row that drags anywhere else is a gesture that does nothing.
@@ -217,8 +211,7 @@ export function SongTable({
                     <span>
                       {song.title}
                       <small>
-                        {captions?.[position] ??
-                          (variant === "album" ? song.artist : song.album)}
+                        {variant === "album" ? song.artist : song.album}
                       </small>
                     </span>
                   </button>

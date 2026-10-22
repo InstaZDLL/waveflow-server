@@ -383,7 +383,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     <PageBack
       fallback={(navigate) =>
         folder
-          ? navigate({ to: "/folders", search: { view: "filed", folder } })
+          ? navigate({ to: "/folders", search: { folder } })
           : navigate({ to: "/" })
       }
     />
