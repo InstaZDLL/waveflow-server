@@ -5298,3 +5298,34 @@ test("goes back from the upload screen to the folder it was opened for", async (
   await back.click();
   await expect(page).toHaveURL(/\/$/);
 });
+
+/**
+ * A form opened for one folder stays with it. The page stays mounted while
+ * only the folder in the address changes; carried along, a rename would rename
+ * the folder navigated to with the old one's name, and a "new folder" opened
+ * at the root would create one from Unfiled.
+ */
+test("closes a folder's form when another folder is opened", async ({ page }) => {
+  const state = await serveFiledFolders(page, []);
+  state.folders.push(
+    { id: "folder-1", parent_id: null, name: "Rock" },
+    { id: "folder-2", parent_id: "folder-1", name: "Indie" },
+  );
+
+  await page.goto("/folders?folder=folder-1");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await expect(page.getByLabel("New name")).toHaveValue("Rock");
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }).click();
+  await expect(page.getByRole("heading", { name: "Indie" })).toBeVisible();
+  await expect(page.getByLabel("New name")).toHaveCount(0);
+  await page.getByRole("button", { name: "Rename" }).click();
+  await expect(page.getByLabel("New name")).toHaveValue("Indie");
+
+  await page.goto("/folders");
+  await page.getByRole("button", { name: "New folder" }).click();
+  await expect(page.getByLabel("Folder name")).toBeVisible();
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Unfiled/ }).click();
+  await expect(page.getByRole("heading", { name: "Unfiled" })).toBeVisible();
+  await expect(page.getByLabel("Folder name")).toHaveCount(0);
+  expect(state.writes).toEqual([]);
+});

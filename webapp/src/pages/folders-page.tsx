@@ -33,7 +33,12 @@ import {
 /** What a dragged folder card carries: its id. */
 const FOLDER_DRAG_TYPE = "application/x-waveflow-folder";
 
-type Notice = { tone: "status" | "error"; text: string } | null;
+/**
+ * What a write said, and the folder it is said in. The router keeps this page
+ * mounted when only `?folder=` changes, so state that belongs to one folder
+ * names it, and another folder does not show it.
+ */
+type Notice = { tone: "status" | "error"; text: string; folder: string } | null;
 
 /**
  * The library as its owner and managers sort it (RFC-012 decision 2): folders
@@ -78,7 +83,15 @@ export function FoldersPage({ folder }: { folder: string }) {
   );
   const morePages = listsTracks && tracks.hasNextPage;
   const [notice, setNotice] = useState<Notice>(null);
-  const [form, setForm] = useState<"create" | "rename" | null>(null);
+  // Open for one folder only: carried to another, a rename would rename the
+  // folder navigated to with the old one's name, and a create opened at the
+  // root would create from Unfiled.
+  const [form, setForm] = useState<{
+    mode: "create" | "rename";
+    folder: string;
+  } | null>(null);
+  const formMode = form?.folder === folder ? form.mode : null;
+  const shown = notice?.folder === folder ? notice : null;
   const [moving, setMoving] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
@@ -106,17 +119,19 @@ export function FoldersPage({ folder }: { folder: string }) {
   async function attempt(
     write: () => Promise<string>,
     refused?: (error: ApiError) => string | null,
+    /** Where a success is said: here, unless the write leaves this folder. */
+    then = folder,
   ) {
     setNotice(null);
     try {
       const said = await write();
       await refresh();
-      setNotice({ tone: "status", text: said });
+      setNotice({ tone: "status", text: said, folder: then });
       return true;
     } catch (error) {
       const text =
         (error instanceof ApiError && refused?.(error)) || t("filed.failed");
-      setNotice({ tone: "error", text });
+      setNotice({ tone: "error", text, folder });
       return false;
     }
   }
@@ -164,17 +179,20 @@ export function FoldersPage({ folder }: { folder: string }) {
         setDropTarget((current) => (current === key ? null : current)),
       onDrop: (event: DragEvent) => {
         setDropTarget(null);
+        // Accepted on the way over, so it is the page's to handle: a refused
+        // move — onto itself or beneath — is dropped in silence rather than
+        // left to the browser, which would open the dragged name as a link.
+        if (!accepts(event)) return;
+        event.preventDefault();
         const rows = event.dataTransfer.getData(TRACK_DRAG_TYPE);
         const dragged = event.dataTransfer.getData(FOLDER_DRAG_TYPE);
         if (rows) {
-          event.preventDefault();
           fileInto(target, JSON.parse(rows) as string[]);
         } else if (
           dragged &&
           target &&
           !isWithin(folders, target.id, dragged)
         ) {
-          event.preventDefault();
           moveFolder(dragged, target.id);
         }
       },
@@ -185,7 +203,7 @@ export function FoldersPage({ folder }: { folder: string }) {
     event.preventDefault();
     const name = String(new FormData(event.currentTarget).get("name") ?? "");
     const done = await attempt(async () => {
-      if (form === "rename" && here) {
+      if (formMode === "rename" && here) {
         const renamed = await updateFolder(here.id, { name });
         return t("filed.renamed", { name: renamed.name });
       }
@@ -203,10 +221,14 @@ export function FoldersPage({ folder }: { folder: string }) {
     if (!here || !window.confirm(t("filed.confirmDelete", { name: here.name })))
       return;
     const parent = here.parent_id;
-    const done = await attempt(async () => {
-      const { unfiled } = await deleteFolder(here.id);
-      return t("filed.deleted", { count: unfiled });
-    });
+    const done = await attempt(
+      async () => {
+        const { unfiled } = await deleteFolder(here.id);
+        return t("filed.deleted", { count: unfiled });
+      },
+      undefined,
+      parent ?? "",
+    );
     if (done) {
       await navigate({
         to: "/folders",
@@ -237,7 +259,9 @@ export function FoldersPage({ folder }: { folder: string }) {
       {may && folder !== UNFILED && !missing ? (
         <button
           type="button"
-          onClick={() => setForm(form === "create" ? null : "create")}
+          onClick={() =>
+            setForm(formMode === "create" ? null : { mode: "create", folder })
+          }
         >
           {t("filed.newFolder")}
         </button>
@@ -246,7 +270,9 @@ export function FoldersPage({ folder }: { folder: string }) {
         <>
           <button
             type="button"
-            onClick={() => setForm(form === "rename" ? null : "rename")}
+            onClick={() =>
+              setForm(formMode === "rename" ? null : { mode: "rename", folder })
+            }
           >
             {t("filed.rename")}
           </button>
@@ -369,34 +395,34 @@ export function FoldersPage({ folder }: { folder: string }) {
           {t(may ? "filed.unfiledNote" : "filed.unfiledNoteReader")}
         </p>
       ) : null}
-      {notice ? (
+      {shown ? (
         <p
-          className={notice.tone === "error" ? "error" : "muted folder-notice"}
-          role={notice.tone === "error" ? "alert" : "status"}
+          className={shown.tone === "error" ? "error" : "muted folder-notice"}
+          role={shown.tone === "error" ? "alert" : "status"}
         >
-          {notice.text}
+          {shown.text}
         </p>
       ) : null}
-      {form ? (
+      {formMode ? (
         <form
           className="folder-form"
           onSubmit={(event) => void submitName(event)}
         >
           <label className="folder-form-field">
             <span>
-              {t(form === "rename" ? "filed.renameLabel" : "filed.name")}
+              {t(formMode === "rename" ? "filed.renameLabel" : "filed.name")}
             </span>
             <input
               name="name"
               required
               maxLength={120}
-              defaultValue={form === "rename" ? here?.name : ""}
+              defaultValue={formMode === "rename" ? here?.name : ""}
               // biome-ignore lint/a11y/noAutofocus: the form opens on request, to be typed into
               autoFocus
             />
           </label>
           <button type="submit" className="action-primary">
-            {t(form === "rename" ? "filed.save" : "filed.create")}
+            {t(formMode === "rename" ? "filed.save" : "filed.create")}
           </button>
           <button type="button" onClick={() => setForm(null)}>
             {t("filed.cancel")}
@@ -468,6 +494,7 @@ export function FoldersPage({ folder }: { folder: string }) {
             setNotice({
               tone: "status",
               text: t("filed.folderMoved", { name: here.name }),
+              folder,
             });
           }}
           onClose={() => setMoving(false)}
