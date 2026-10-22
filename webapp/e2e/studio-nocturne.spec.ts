@@ -5044,22 +5044,35 @@ test("files tracks into folders from the menu and by dragging", async ({
     body: { track_ids: ["song-1"], folder_id: "folder-1" },
   });
 
-  // By dragging: a row onto the Rock card beside the unfiled tracks. A drag is
-  // a mouse gesture; the phone has the menu above, already proven.
-  if (testInfo.project.name === "desktop") {
-    await rows
-      .filter({ hasText: "Cocoon" })
-      .dragTo(page.getByRole("list", { name: "File into" }).getByRole("link", { name: /Rock/ }));
-    await expect(page.getByRole("status")).toHaveText("1 track filed in Rock.");
-    await expect(rows).toHaveCount(1);
-  } else {
-    state.placed.set("song-2", "folder-1");
-  }
+  // Unfiled lists tracks and says how to file them; no folder card sits
+  // there, where it would read as a folder inside "Unfiled".
+  await expect(page.getByRole("list", { name: "Folders" })).toHaveCount(0);
+  await expect(
+    page.getByText("To file one, open its menu", { exact: false }),
+  ).toBeVisible();
 
-  // Inside the folder: both, renamed, then deleted, and they come back unfiled.
+  // Inside the folder: a second track, a sub-folder, and a drag onto it. A
+  // drag is a mouse gesture; the phone files from the menu, already proven.
+  state.placed.set("song-2", "folder-1");
   await page.goto("/folders?folder=folder-1");
   await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
   await expect(rows).toHaveCount(2);
+  await expect(page.getByText("Folders that exist only in WaveFlow", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "New folder" }).click();
+  await page.getByLabel("Folder name").fill("Indie");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("status")).toHaveText("“Indie” created.");
+  if (testInfo.project.name === "desktop") {
+    await rows
+      .filter({ hasText: "Cocoon" })
+      .dragTo(page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }));
+    await expect(page.getByRole("status")).toHaveText("1 track filed in Indie.");
+    await expect(rows).toHaveCount(1);
+  } else {
+    state.placed.set("song-2", "folder-2");
+  }
+
+  // Renamed, then deleted with its sub-folder: both tracks come back unfiled.
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByLabel("New name").fill("Rock & Roll");
   await page.getByRole("button", { name: "Save" }).click();
@@ -5086,8 +5099,8 @@ test("shows a listener the filed tree with nothing to change", async ({ page }) 
   for (const name of ["New folder", "Rename", "Delete", "Move…"]) {
     await expect(page.getByRole("button", { name })).toHaveCount(0);
   }
-  // No destinations beside the unfiled tracks, and no drag on the rows.
-  await expect(page.getByRole("list", { name: "File into" })).toHaveCount(0);
+  // A reader is told what Unfiled is, not how to file, and rows do not drag.
+  await expect(page.getByText("Tracks that are in no folder yet.", { exact: true })).toBeVisible();
   await expect(page.locator(".songs tbody tr").first()).not.toHaveAttribute("draggable", "true");
   await page.locator(".songs tbody tr button.song-title").first().focus();
   await page.keyboard.press("Shift+F10");

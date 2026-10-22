@@ -87,8 +87,8 @@ export function FoldersPage({ folder }: { folder: string }) {
   const trail = isReal ? folderTrail(folders, folder) : [];
   const here = trail.at(-1);
   const missing = isReal && tree.data !== undefined && !here;
-  // A folder's sub-folders; at the root and beside the unfiled tracks, the
-  // root's own folders — there, the places an unfiled track can be dropped.
+  // A folder's sub-folders, or at the root the root's own folders. Not drawn
+  // beside the unfiled tracks: cards there read as folders inside "Unfiled".
   const children = folders.filter(
     (entry) => entry.parent_id === (isReal ? folder : null),
   );
@@ -360,7 +360,15 @@ export function FoldersPage({ folder }: { folder: string }) {
     <section>
       {header}
       {crumbs}
-      <p className="muted folder-note">{t("filed.note")}</p>
+      {/* What the page is, said once where it starts, and what Unfiled is,
+          said where it is open. Inside a folder the folder speaks for itself. */}
+      {folder === "" ? (
+        <p className="muted folder-note">{t("filed.note")}</p>
+      ) : folder === UNFILED ? (
+        <p className="muted folder-note">
+          {t(may ? "filed.unfiledNote" : "filed.unfiledNoteReader")}
+        </p>
+      ) : null}
       {notice ? (
         <p
           className={notice.tone === "error" ? "error" : "muted folder-notice"}
@@ -401,13 +409,8 @@ export function FoldersPage({ folder }: { folder: string }) {
         <Loading error={tree.error} />
       ) : (
         <>
-          {(folder !== UNFILED || may) && (children.length || folder === "") ? (
-            <ul
-              className="folder-list"
-              aria-label={t(
-                folder === UNFILED ? "filed.fileInto" : "folders.subfolders",
-              )}
-            >
+          {folder !== UNFILED && (children.length || folder === "") ? (
+            <ul className="folder-list" aria-label={t("folders.subfolders")}>
               {children.map((entry) =>
                 card(entry, entry.name, entry.track_count, entry.id),
               )}

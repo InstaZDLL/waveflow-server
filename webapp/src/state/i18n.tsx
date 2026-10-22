@@ -487,7 +487,9 @@ const en = {
   "filed.empty": "Nothing is filed here yet.",
   "filed.allFiled": "Every track is filed.",
   "filed.uploadHere": "Upload here",
-  "filed.fileInto": "File into",
+  "filed.unfiledNote":
+    "Tracks that are in no folder yet. To file one, open its menu and choose “Move to folder…”.",
+  "filed.unfiledNoteReader": "Tracks that are in no folder yet.",
   "trackMenu.move": "Move to folder…",
   "upload.into": "Received files go into the folder {folder}.",
   "upload.doneUnfiled": "Added to the library, but not filed",
@@ -1172,7 +1174,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "filed.empty": "Rien n’est encore classé ici.",
   "filed.allFiled": "Toutes les pistes sont classées.",
   "filed.uploadHere": "Envoyer ici",
-  "filed.fileInto": "Classer dans",
+  "filed.unfiledNote":
+    "Les pistes qui ne sont encore dans aucun dossier. Pour en classer une, ouvrez son menu et choisissez « Déplacer vers un dossier… ».",
+  "filed.unfiledNoteReader":
+    "Les pistes qui ne sont encore dans aucun dossier.",
   "trackMenu.move": "Déplacer vers un dossier…",
   "upload.into": "Les fichiers reçus vont dans le dossier {folder}.",
   "upload.doneUnfiled": "Ajouté à la bibliothèque, mais pas classé",
