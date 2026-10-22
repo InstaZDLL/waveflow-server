@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -24,7 +24,7 @@ import {
 } from "../lib/track-corrections";
 import { type TranslationKey, useI18n } from "../state/i18n";
 import { CanvasPanel } from "./canvas-panel";
-import { Icon } from "./icons";
+import { PageBack } from "./page-back";
 import { Loading, PageHeader } from "./page-shell";
 
 const LABELS: Record<CorrectionField, TranslationKey> = {
@@ -64,28 +64,12 @@ export function TrackEditorPage({ trackId }: { trackId: string }) {
 
 /**
  * Back to wherever the editor was opened from — a song row, an album, the
- * track menu. Opened from a typed address there is no "where", and the songs
- * list is the nearest place that holds the track. Drawn while the track loads
- * and when it fails to, so the way out never waits on the answer.
+ * track menu — or to the songs list, the nearest place that holds the track.
+ * Drawn while the track loads and when it fails to, so the way out never
+ * waits on the answer.
  */
 function BackButton() {
-  const { t } = useI18n();
-  const router = useRouter();
-  const navigate = useNavigate();
-  return (
-    <button
-      type="button"
-      className="page-back"
-      onClick={() =>
-        router.history.canGoBack()
-          ? router.history.back()
-          : void navigate({ to: "/songs" })
-      }
-    >
-      <Icon name="back" size={18} />
-      {t("common.back")}
-    </button>
-  );
+  return <PageBack fallback={(navigate) => navigate({ to: "/songs" })} />;
 }
 
 function CorrectionForm({ initial }: { initial: Loaded }) {

@@ -5384,3 +5384,31 @@ test("goes back from the tag editor to where it was opened", async ({
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(/\/songs$/);
 });
+
+/**
+ * The upload screen goes back where the upload was started. Reached by a
+ * full load, with nothing behind it, it goes to the folder it files into —
+ * or home, when it files into none.
+ */
+test("goes back from the upload screen to the folder it was opened for", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  const state = await serveFiledFolders(page, []);
+  state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
+  const back = page.getByRole("button", { name: "Back", exact: true });
+
+  await page.goto("/folders?view=filed&folder=folder-1");
+  await page.getByRole("link", { name: "Upload here" }).click();
+  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await back.click();
+  await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
+
+  await page.goto("/upload?folder=folder-1");
+  await back.click();
+  await expect(page).toHaveURL(/\/folders\?view=filed&folder=folder-1$/);
+
+  await page.goto("/upload");
+  await back.click();
+  await expect(page).toHaveURL(/\/$/);
+});
