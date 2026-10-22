@@ -23,6 +23,7 @@ export function FolderPicker({
   rootLabel,
   current,
   exclude,
+  nested = true,
   onPick,
   onClose,
 }: {
@@ -35,6 +36,12 @@ export function FolderPicker({
    */
   current?: string | null;
   exclude?: string;
+  /**
+   * Whether the folders sit beneath the root entry. True for moving a folder,
+   * where "Top level" holds them; false for filing a track, where "Unfiled"
+   * is one more choice beside them, not their parent.
+   */
+  nested?: boolean;
   /** Rejects to keep the dialog open and say the move failed. */
   onPick: (folderId: string | null) => Promise<void>;
   onClose: () => void;
@@ -128,7 +135,7 @@ export function FolderPicker({
         <ul className="folder-pick-list" aria-label={t("filed.destinations")}>
           {entry(null, rootLabel, 0)}
           {outline.map(({ folder, depth }) =>
-            entry(folder.id, folder.name, depth + 1),
+            entry(folder.id, folder.name, depth + (nested ? 1 : 0)),
           )}
         </ul>
       )}

@@ -224,6 +224,7 @@ export function useTrackMenu() {
           libraryId={moving.song.library_id}
           title={t("filed.moveTrack", { title: moving.song.title })}
           rootLabel={t("filed.unfiled")}
+          nested={false}
           onPick={async (folderId) => {
             await placeTracks(
               moving.song.library_id,

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -24,6 +24,7 @@ import {
 } from "../lib/track-corrections";
 import { type TranslationKey, useI18n } from "../state/i18n";
 import { CanvasPanel } from "./canvas-panel";
+import { Icon } from "./icons";
 import { Loading, PageHeader } from "./page-shell";
 
 const LABELS: Record<CorrectionField, TranslationKey> = {
@@ -50,8 +51,41 @@ type Loaded = { song: SongCredits; tracked: TrackOverrides };
  */
 export function TrackEditorPage({ trackId }: { trackId: string }) {
   const { data: value, error } = useQuery(trackEditQuery(trackId));
-  if (!value) return <Loading error={error} />;
+  if (!value) {
+    return (
+      <section className="correction-page">
+        <BackButton />
+        <Loading error={error} />
+      </section>
+    );
+  }
   return <CorrectionForm key={trackId} initial={value} />;
+}
+
+/**
+ * Back to wherever the editor was opened from — a song row, an album, the
+ * track menu. Opened from a typed address there is no "where", and the songs
+ * list is the nearest place that holds the track. Drawn while the track loads
+ * and when it fails to, so the way out never waits on the answer.
+ */
+function BackButton() {
+  const { t } = useI18n();
+  const router = useRouter();
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      className="page-back"
+      onClick={() =>
+        router.history.canGoBack()
+          ? router.history.back()
+          : void navigate({ to: "/songs" })
+      }
+    >
+      <Icon name="back" size={18} />
+      {t("common.back")}
+    </button>
+  );
 }
 
 function CorrectionForm({ initial }: { initial: Loaded }) {
@@ -149,6 +183,7 @@ function CorrectionForm({ initial }: { initial: Loaded }) {
 
   return (
     <section className="correction-page">
+      <BackButton />
       <PageHeader
         kicker={t("nav.group.library")}
         title={t("correction.edit")}
