@@ -3434,7 +3434,7 @@ test("opens the rest of the client from the mobile bar", async ({
   await expect(sheet).toBeVisible();
   // The twelve the bar cannot hold — including the two this account is
   // entitled to as an administrator of a library that takes files. `Radio`
-  // joined them with #217, and `Folders` with RFC-012's disk tree; this count
+  // joined them with #217, and `Folders` with RFC-012's filed folders; this count
   // is what said so: a new entry in the sidebar reaches the sheet, and the
   // sheet is pinned.
   for (const name of [
@@ -4888,128 +4888,6 @@ test("closes the form while a station is saving, and leaves listening alone", as
 });
 
 /**
- * The disk tree (RFC-012 decision 1): one folder at a time, the folder in the
- * address, a trail back up, the received folder under its own name, and the
- * file names under each title. Read-only: no control here moves anything.
- */
-test("walks a library's folders on disk and back up the trail", async ({
-  page,
-}) => {
-  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
-  const folder = (name: string, path: string, direct: number, nested: number) => ({
-    name,
-    path,
-    track_count: direct,
-    nested_track_count: nested,
-  });
-  const listings: Record<string, unknown> = {
-    "": {
-      path: "",
-      folder_total: 2,
-      track_total: 0,
-      folders: [
-        folder(".waveflow-managed", ".waveflow-managed", 1, 1),
-        folder("Björk", "Björk", 0, 2),
-      ],
-      tracks: [],
-    },
-    Björk: {
-      path: "Björk",
-      folder_total: 1,
-      track_total: 0,
-      folders: [folder("Vespertine", "Björk/Vespertine", 2, 2)],
-      tracks: [],
-    },
-    "Björk/Vespertine": {
-      path: "Björk/Vespertine",
-      folder_total: 0,
-      track_total: 2,
-      folders: [],
-      tracks: [
-        { name: "01 Hidden Place.flac", song: song(1, "Hidden Place", 0, false) },
-        { name: "02 Cocoon.flac", song: song(2, "Cocoon", 0, false) },
-      ],
-    },
-    ".waveflow-managed": {
-      path: ".waveflow-managed",
-      folder_total: 0,
-      track_total: 1,
-      folders: [],
-      tracks: [{ name: "9ad0f9e.flac", song: song(3, "Pagan Poetry", 0, false) }],
-    },
-  };
-  const asked: string[] = [];
-  await page.route("**/api/v2/libraries/library-1/tree?*", (route) => {
-    const path = new URL(route.request().url()).searchParams.get("path") ?? "";
-    asked.push(path);
-    const listing = listings[path];
-    return listing
-      ? route.fulfill({ json: listing })
-      : route.fulfill({ status: 404, json: { error: "not_found" } });
-  });
-
-  await page.goto("/folders");
-  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
-  await expect(page.getByText("Nothing here moves a file.", { exact: false })).toBeVisible();
-  const folders = page.getByRole("list", { name: "Folders" });
-  // The received folder by its label, and an artist folder by what is beneath.
-  await expect(folders.getByRole("link", { name: /Received/ })).toBeVisible();
-  await expect(folders.getByRole("link", { name: /Björk/ })).toContainText("2 tracks");
-  await expect(page.getByRole("link", { name: "Upload music" })).toHaveAttribute(
-    "href",
-    "/upload",
-  );
-
-  await folders.getByRole("link", { name: /Björk/ }).click();
-  await expect(page).toHaveURL(/path=Bj%C3%B6rk$/);
-  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Vespertine/ }).click();
-  await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
-  const trail = page.getByRole("navigation", { name: "Folder path" });
-  await expect(trail.getByRole("link")).toHaveText(["Ma musique", "Björk", "Vespertine"]);
-  await expect(trail.getByRole("link", { name: "Vespertine" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  // The file's name stands under each title.
-  const rows = page.locator(".songs tbody tr");
-  await expect(rows).toHaveCount(2);
-  await expect(rows.first()).toContainText("Hidden Place");
-  await expect(rows.first()).toContainText("01 Hidden Place.flac");
-  await expectNoWcagViolations(page);
-
-  // Back up the trail to the root, then into the received files.
-  await trail.getByRole("link", { name: "Ma musique" }).click();
-  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
-  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Received/ }).click();
-  await expect(page.getByRole("heading", { name: "Received" })).toBeVisible();
-  await expect(page.locator(".songs tbody tr")).toContainText("9ad0f9e.flac");
-  expect([...new Set(asked)]).toEqual(["", "Björk", "Björk/Vespertine", ".waveflow-managed"]);
-});
-
-/** A listener walks the same tree and is offered no upload. */
-test("offers a listener the folders without the upload", async ({ page }) => {
-  libraries = [
-    { ...library("library-1", "Ma musique"), role: "listener", accepts_uploads: true },
-  ];
-  await page.route("**/api/v2/libraries/library-1/tree?*", (route) =>
-    route.fulfill({
-      json: {
-        path: "",
-        folder_total: 1,
-        track_total: 0,
-        folders: [{ name: "Björk", path: "Björk", track_count: 0, nested_track_count: 2 }],
-        tracks: [],
-      },
-    }),
-  );
-  await page.goto("/folders");
-  await expect(
-    page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Björk/ }),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Upload music" })).toHaveCount(0);
-});
-
-/**
  * A stand-in for the filed-folder routes (RFC-012 decision 2), with state: the
  * screen re-reads after every write, and the point is that it shows what the
  * write did. Names collide case-insensitively, as on the server.
@@ -5128,13 +5006,8 @@ test("files tracks into folders from the menu and by dragging", async ({
   ];
   const state = await serveFiledFolders(page, songs);
 
-  await page.goto("/folders?view=filed");
-  await expect(page.getByRole("heading", { name: "Filed" })).toBeVisible();
-  await expect(
-    page.getByRole("navigation", { name: "Folder views" }).getByRole("link", {
-      name: "Filed",
-    }),
-  ).toHaveAttribute("aria-current", "page");
+  await page.goto("/folders");
+  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   const cards = page.getByRole("list", { name: "Folders" });
   await expect(cards.getByRole("link", { name: /Unfiled/ })).toContainText("3 tracks");
 
@@ -5171,29 +5044,42 @@ test("files tracks into folders from the menu and by dragging", async ({
     body: { track_ids: ["song-1"], folder_id: "folder-1" },
   });
 
-  // By dragging: a row onto the Rock card beside the unfiled tracks. A drag is
-  // a mouse gesture; the phone has the menu above, already proven.
+  // Unfiled lists tracks and says how to file them; no folder card sits
+  // there, where it would read as a folder inside "Unfiled".
+  await expect(page.getByRole("list", { name: "Folders" })).toHaveCount(0);
+  await expect(
+    page.getByText("To file one, open its menu", { exact: false }),
+  ).toBeVisible();
+
+  // Inside the folder: a second track, a sub-folder, and a drag onto it. A
+  // drag is a mouse gesture; the phone files from the menu, already proven.
+  state.placed.set("song-2", "folder-1");
+  await page.goto("/folders?folder=folder-1");
+  await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByText("Folders that exist only in WaveFlow", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "New folder" }).click();
+  await page.getByLabel("Folder name").fill("Indie");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("status")).toHaveText("“Indie” created.");
   if (testInfo.project.name === "desktop") {
     await rows
       .filter({ hasText: "Cocoon" })
-      .dragTo(page.getByRole("list", { name: "File into" }).getByRole("link", { name: /Rock/ }));
-    await expect(page.getByRole("status")).toHaveText("1 track filed in Rock.");
+      .dragTo(page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }));
+    await expect(page.getByRole("status")).toHaveText("1 track filed in Indie.");
     await expect(rows).toHaveCount(1);
   } else {
-    state.placed.set("song-2", "folder-1");
+    state.placed.set("song-2", "folder-2");
   }
 
-  // Inside the folder: both, renamed, then deleted, and they come back unfiled.
-  await page.goto("/folders?view=filed&folder=folder-1");
-  await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
-  await expect(rows).toHaveCount(2);
+  // Renamed, then deleted with its sub-folder: both tracks come back unfiled.
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByLabel("New name").fill("Rock & Roll");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("heading", { name: "Rock & Roll" })).toBeVisible();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("heading", { name: "Filed" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText(
     "Folder deleted: 2 tracks are unfiled.",
   );
@@ -5208,13 +5094,13 @@ test("shows a listener the filed tree with nothing to change", async ({ page }) 
   const state = await serveFiledFolders(page, songs);
   state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
 
-  await page.goto("/folders?view=filed&folder=unfiled");
+  await page.goto("/folders?folder=unfiled");
   await expect(page.locator(".songs tbody tr")).toHaveCount(1);
   for (const name of ["New folder", "Rename", "Delete", "Move…"]) {
     await expect(page.getByRole("button", { name })).toHaveCount(0);
   }
-  // No destinations beside the unfiled tracks, and no drag on the rows.
-  await expect(page.getByRole("list", { name: "File into" })).toHaveCount(0);
+  // A reader is told what Unfiled is, not how to file, and rows do not drag.
+  await expect(page.getByText("Tracks that are in no folder yet.", { exact: true })).toBeVisible();
   await expect(page.locator(".songs tbody tr").first()).not.toHaveAttribute("draggable", "true");
   await page.locator(".songs tbody tr button.song-title").first().focus();
   await page.keyboard.press("Shift+F10");
@@ -5313,15 +5199,15 @@ test("offers no tracks at the root after visiting the unfiled ones", async ({
   page,
 }) => {
   await serveFiledFolders(page, [song(1, "Hidden Place", 0, false)]);
-  await page.goto("/folders?view=filed&folder=unfiled");
+  await page.goto("/folders?folder=unfiled");
   await expect(page.locator(".songs tbody tr")).toHaveCount(1);
   const controls = page.locator(".page-controls");
   await expect(controls.getByRole("button", { name: /Play/ })).toBeVisible();
   await page
     .getByRole("navigation", { name: "Folder path" })
-    .getByRole("link", { name: "Filed", exact: true })
+    .getByRole("link", { name: "Folders", exact: true })
     .click();
-  await expect(page.getByRole("heading", { name: "Filed" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   await expect(controls.getByRole("button", { name: /Play/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
@@ -5383,4 +5269,63 @@ test("goes back from the tag editor to where it was opened", async ({
   await page.goto("/tracks/song-9/edit");
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(/\/songs$/);
+});
+
+/**
+ * The upload screen goes back where the upload was started. Reached by a
+ * full load, with nothing behind it, it goes to the folder it files into —
+ * or home, when it files into none.
+ */
+test("goes back from the upload screen to the folder it was opened for", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  const state = await serveFiledFolders(page, []);
+  state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
+  const back = page.getByRole("button", { name: "Back", exact: true });
+
+  await page.goto("/folders?folder=folder-1");
+  await page.getByRole("link", { name: "Upload here" }).click();
+  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await back.click();
+  await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
+
+  await page.goto("/upload?folder=folder-1");
+  await back.click();
+  await expect(page).toHaveURL(/\/folders\?folder=folder-1$/);
+
+  await page.goto("/upload");
+  await back.click();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+/**
+ * A form opened for one folder stays with it. The page stays mounted while
+ * only the folder in the address changes; carried along, a rename would rename
+ * the folder navigated to with the old one's name, and a "new folder" opened
+ * at the root would create one from Unfiled.
+ */
+test("closes a folder's form when another folder is opened", async ({ page }) => {
+  const state = await serveFiledFolders(page, []);
+  state.folders.push(
+    { id: "folder-1", parent_id: null, name: "Rock" },
+    { id: "folder-2", parent_id: "folder-1", name: "Indie" },
+  );
+
+  await page.goto("/folders?folder=folder-1");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await expect(page.getByLabel("New name")).toHaveValue("Rock");
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }).click();
+  await expect(page.getByRole("heading", { name: "Indie" })).toBeVisible();
+  await expect(page.getByLabel("New name")).toHaveCount(0);
+  await page.getByRole("button", { name: "Rename" }).click();
+  await expect(page.getByLabel("New name")).toHaveValue("Indie");
+
+  await page.goto("/folders");
+  await page.getByRole("button", { name: "New folder" }).click();
+  await expect(page.getByLabel("Folder name")).toBeVisible();
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Unfiled/ }).click();
+  await expect(page.getByRole("heading", { name: "Unfiled" })).toBeVisible();
+  await expect(page.getByLabel("Folder name")).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });

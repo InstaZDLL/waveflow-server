@@ -5,11 +5,9 @@ import {
   type ArtistDetail,
   artistTopSongs,
   canvasUrl,
-  DISK_TREE_PAGE,
   FOLDER_TRACKS_PAGE,
   getAlbum,
   getArtist,
-  getDiskTree,
   getLyrics,
   getTrack,
   getTrackCredits,
@@ -211,23 +209,6 @@ export const trackPropertiesQuery = (trackId: string) =>
       ]);
       return { track, tracked };
     },
-  });
-
-/**
- * One folder of a library's disk tree, a page at a time: folders first, then
- * tracks, as the route pages them. Unlike the songs listing this one knows
- * its length, so the last page is the one that reaches the totals.
- */
-export const diskTreeQuery = (libraryId: string, path: string) =>
-  infiniteQueryOptions({
-    queryKey: ["disk-tree", libraryId, path],
-    queryFn: ({ pageParam, signal }) =>
-      getDiskTree(libraryId, path, pageParam, DISK_TREE_PAGE, signal),
-    initialPageParam: 0,
-    getNextPageParam: (last, _pages, lastParam) =>
-      lastParam + DISK_TREE_PAGE < last.folder_total + last.track_total
-        ? lastParam + DISK_TREE_PAGE
-        : undefined,
   });
 
 /**

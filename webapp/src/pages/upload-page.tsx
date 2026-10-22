@@ -12,6 +12,7 @@ import {
   type UploadSessionState,
 } from "../api";
 import { filedTreeQuery } from "../api/queries";
+import { PageBack } from "../components/page-back";
 import { PageHeader } from "../components/page-shell";
 import type { HashRequest, HashResponse } from "../lib/hash-worker";
 import {
@@ -376,9 +377,22 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     return t(STATUS_TEXT[item.status]);
   }
 
+  // Back to where the upload was started: the folder it files into, or the
+  // home screen when it was reached from nowhere in particular.
+  const back = (
+    <PageBack
+      fallback={(navigate) =>
+        folder
+          ? navigate({ to: "/folders", search: { folder } })
+          : navigate({ to: "/" })
+      }
+    />
+  );
+
   if (!active) {
     return (
       <section className="upload-page">
+        {back}
         <PageHeader kicker={t("nav.group.account")} title={t("nav.upload")} />
         <p className="notice">{t("upload.noLibrary")}</p>
       </section>
@@ -392,6 +406,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     const mayWrite = active.role === "owner" || active.role === "manager";
     return (
       <section className="upload-page">
+        {back}
         <PageHeader
           kicker={t("nav.group.account")}
           title={t("upload.title", { library: active.name })}
@@ -405,6 +420,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
 
   return (
     <section className="upload-page">
+      {back}
       <PageHeader
         kicker={t("nav.group.account")}
         title={t("upload.title", { library: active.name })}
