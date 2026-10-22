@@ -23,7 +23,9 @@
   skipped, and lyrics downloads that are never rendered. Last, listeners'
   access to the disk tree, settled in decision 3 rather than left open. And
   where Properties reads its lyrics from, and how the lyrics route projects
-  the order.
+  the order. Then, 2026-10-22, after use: the web client draws the filed
+  tree only, and the disk tree stays an API (see "What the web client
+  draws" under decision 1).
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
   [RFC-007](RFC-007-library-event-stream.md),
@@ -113,6 +115,21 @@ it. It is added to the track's answer under the existing tenancy: a caller who
 may read the track may read where it lives in the library. The **root** of the
 library — the absolute path on the server — is never returned, to anyone. A
 path is always relative to its library.
+
+### What the web client draws
+
+The two trees shipped side by side (#301, #302), and the owner read them
+together on the first day. A file uploaded into the folder **Test** showed
+in **Test** under *Filed* and in **Received** under *On disk*: true twice,
+and read as the file manager contradicting itself. Two trees whose titles say
+which one can be changed did not stop a person from asking where the file
+*is*, and each answered differently.
+
+So the web client draws **the filed tree only**. A track has one place on
+its Folders page: its folder, or **Unfiled**. The disk tree stays what this
+decision defines — `GET /libraries/{id}/tree`, read-only, open to members —
+for any client that wants to show where files lie, and its contract does not
+change. A client that draws both should not put them on one screen.
 
 ## Decision 2 — a filed folder is a place, not a collection
 

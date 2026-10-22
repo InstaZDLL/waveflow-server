@@ -862,24 +862,14 @@ const adminRoute = createRoute({
 const foldersRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/folders",
-  // Every key optional, so a link names only what it changes: the rail links
-  // to the disk root, a crumb names its path, a filed card its folder.
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { view?: "disk" | "filed"; path?: string; folder?: string } => ({
-    view: search.view === "filed" ? "filed" : undefined,
-    path: typeof search.path === "string" ? search.path : undefined,
+  // The folder: absent or empty for the root, `unfiled` for the tracks filed
+  // nowhere, otherwise a folder id. Optional, so the rail links to the root.
+  validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
     folder: typeof search.folder === "string" ? search.folder : undefined,
   }),
   component: function FoldersRoute() {
-    const { view, path, folder } = foldersRoute.useSearch();
-    return (
-      <FoldersPage
-        view={view ?? "disk"}
-        path={path ?? ""}
-        folder={folder ?? ""}
-      />
-    );
+    const { folder } = foldersRoute.useSearch();
+    return <FoldersPage folder={folder ?? ""} />;
   },
 });
 

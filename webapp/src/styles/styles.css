@@ -2861,7 +2861,7 @@ button.danger {
   font-size: var(--text-xs);
 }
 
-/* The disk tree (RFC-012). The trail first, each crumb a link back up; the
+/* The folders page (RFC-012). The trail first, each crumb a link back up; the
    folder being looked at says so through `aria-current`. */
 .folder-crumbs ol {
   display: flex;
@@ -2952,10 +2952,6 @@ button.danger {
 
 /* The filed tree (RFC-012 decision 2). A folder a drag hovers over says it
    will take the drop. */
-.folder-views {
-  margin: 0 0 var(--space-3);
-}
-
 .folder-row.drop-target {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
