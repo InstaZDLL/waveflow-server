@@ -197,9 +197,10 @@ CREATE TABLE artist_image_search (
     searched_at INTEGER NOT NULL,
     -- An hour from the moment the search completed; NULL while it fetches.
     expires_at INTEGER,
-    -- Set when every candidate's preview is stored. 0 means a request is
-    -- fetching for it now: a failed search is deleted, and boot deletes any
-    -- left at 0. It is what makes a second search by the account answer 429.
+    -- Set when every candidate's preview is stored. 0 means a task is
+    -- fetching for it now: a failed search is deleted, a search past its
+    -- fetch deadline is swept, and boot deletes any left at 0. It is what
+    -- makes a second search by the account answer 429.
     complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1))
 ) STRICT;
 
@@ -238,17 +239,29 @@ CREATE TABLE artist_image_candidate (
   and so does one offered for another artist: a search belongs to the artist,
   so a search made in one library is never found from another.
 - **A search that does not finish is not left half-done.** `complete = 0`
-  means one thing only: a request is fetching for it right now. So:
+  means one thing only: a task is fetching for it right now. So:
+  - **the fetching is not the request's.** The route records the search and
+    hands the fetching to a task of its own, then waits for it. A client that
+    closes the tab or loses the network drops the request — and axum drops
+    the handler with it, mid-await, running none of its remaining code — but
+    not the task, which goes on to complete the search or delete it. The next
+    picker that asks the same query finds it complete;
   - a search whose Deezer query or any preview fetch fails is **deleted** by
-    the request that made it, before that request answers its error. Its
-    candidates go by cascade, and the previews already stored become
-    unreferenced artwork for the sweep;
+    that task. Its candidates go by cascade, and the previews already stored
+    become unreferenced artwork for the sweep;
+  - **a deadline backs the task up.** A fetch cannot run forever: it is at most
+    one search and twenty previews, each bounded by
+    `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS` and spaced by the provider's pace.
+    Twice that worst case, counted from `searched_at`, is the search's fetch
+    deadline. Past it, an incomplete search no longer counts for the `429`, and
+    the sweep deletes it. A task that is still running cannot be past it, so
+    this removes only what a panic or a bug left behind — never a search that
+    is actually fetching;
   - at **boot**, every search with `complete = 0` is deleted: nothing can be
-    fetching for it across a restart, and leaving it would answer `429` to its
-    account for the rest of the hour;
+    fetching for it across a restart;
   - the `429` of one search at a time therefore only ever reflects a search
-    that is really in flight, and the next search after a failure starts at
-    once.
+    that is really in flight, and the next search after a failure or an
+    abandoned page starts at once.
 
 ### The pick and the sweep never interleave
 
@@ -269,10 +282,11 @@ in **one transaction** each.
   so a preview a choice already names is never taken by the second step.
 - **The sweep never touches a search that is still fetching.** An incomplete
   search has no `expires_at` to pass, so the sweep cannot delete it from under
-  the request writing its candidates. It has exactly two ways out, both named
-  above: its own request completes it or deletes it, or boot deletes it. The
-  previews an incomplete search has stored so far are named by its candidates,
-  so the sweep keeps them too until one of those happens.
+  the task writing its candidates. Its ways out are the ones named above: its
+  task completes it or deletes it, the sweep deletes it once past its fetch
+  deadline — which no running task can be — or boot deletes it. The previews
+  an incomplete search has stored so far are named by its candidates, so the
+  sweep keeps them too until one of those happens.
 - If anything ever slipped through, the foreign key from
   `artist_image_choice.artwork_hash` to `artwork` fails the insert rather than
   storing a dangling hash; the route answers `422`, as for an expired search,
