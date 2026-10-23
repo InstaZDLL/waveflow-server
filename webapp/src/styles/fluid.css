@@ -1187,6 +1187,9 @@
   background: var(--accent);
   opacity: 1;
   mask: var(--fe-wave) repeat-x left center / 1.25rem 0.625rem;
+  /* The light theme cuts its bars into a jagged line with a clip-path; on the
+     wave it cut the wave itself, and the motif read as broken. */
+  clip-path: none;
 }
 
 /* ── Phones ──────────────────────────────────────────────────── */
