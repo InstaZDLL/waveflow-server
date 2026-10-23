@@ -375,8 +375,15 @@ export function FoldersPage({ folder }: { folder: string }) {
         }
         {...dropProps(target)}
       >
-        <Icon name="folder" size={20} />
-        <span>{label}</span>
+        {/* To sort is WaveFlow's list, not one of the owner's folders: a tray
+            rather than a folder, and a badge that says it keeps itself. */}
+        <Icon name={target ? "folder" : "inbox"} size={20} />
+        <span>
+          {label}
+          {target ? null : (
+            <small className="folder-badge">{t("filed.automatic")}</small>
+          )}
+        </span>
         <small className="muted">{t("common.tracks", { count })}</small>
       </Link>
     </li>

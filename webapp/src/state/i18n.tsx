@@ -447,7 +447,8 @@ const en = {
   "folders.where": "Folder path",
   "folders.subfolders": "Folders",
   "folders.noLibrary": "No library is available to this account.",
-  "filed.unfiled": "Unfiled",
+  "filed.unfiled": "To sort",
+  "filed.automatic": "Automatic",
   "filed.topLevel": "Top level",
   "filed.here": "Here now",
   "filed.destinations": "Folders to choose from",
@@ -467,12 +468,12 @@ const en = {
   "filed.move": "Move…",
   "filed.delete": "Delete",
   "filed.confirmDelete":
-    "Delete “{name}” and its sub-folders? Their tracks become unfiled; no file is touched.",
+    "Delete “{name}” and its sub-folders? Their tracks go back to To sort; no file is touched.",
   "filed.created": "“{name}” created.",
   "filed.renamed": "Renamed to “{name}”.",
   "filed.deleted": {
-    one: "Folder deleted: {count} track is unfiled.",
-    other: "Folder deleted: {count} tracks are unfiled.",
+    one: "Folder deleted: {count} track is back in To sort.",
+    other: "Folder deleted: {count} tracks are back in To sort.",
   },
   "filed.filed": {
     one: "{count} track filed in {folder}.",
@@ -488,13 +489,14 @@ const en = {
   "filed.allFiled": "Every track is filed.",
   "filed.uploadHere": "Upload here",
   "filed.unfiledNote":
-    "Tracks that are in no folder yet. To file one, open its menu and choose “Move to folder…”.",
-  "filed.unfiledNoteReader": "Tracks that are in no folder yet.",
+    "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed, and it cannot be renamed or deleted. To file a track, open its menu and choose “Move to folder…”.",
+  "filed.unfiledNoteReader":
+    "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed.",
   "trackMenu.move": "Move to folder…",
   "upload.into": "Received files go into the folder {folder}.",
-  "upload.doneUnfiled": "Added to the library, but not filed",
+  "upload.doneUnfiled": "Added to the library, in To sort",
   "upload.folderMissing":
-    "The folder this upload was opened for cannot be found: received files will stay unfiled.",
+    "The folder this upload was opened for cannot be found: received files will go to To sort.",
   "upload.folderUnchecked":
     "The folder this upload was opened for could not be checked, so no file is taken yet.",
   "upload.checkAgain": "Check again",
@@ -1134,7 +1136,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "folders.where": "Chemin du dossier",
   "folders.subfolders": "Dossiers",
   "folders.noLibrary": "Aucune bibliothèque n’est accessible à ce compte.",
-  "filed.unfiled": "Non classés",
+  "filed.unfiled": "À ranger",
+  "filed.automatic": "Automatique",
   "filed.topLevel": "Premier niveau",
   "filed.here": "Ici actuellement",
   "filed.destinations": "Dossiers au choix",
@@ -1154,12 +1157,12 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "filed.move": "Déplacer…",
   "filed.delete": "Supprimer",
   "filed.confirmDelete":
-    "Supprimer « {name} » et ses sous-dossiers ? Leurs pistes redeviennent non classées ; aucun fichier n’est touché.",
+    "Supprimer « {name} » et ses sous-dossiers ? Leurs pistes reviennent dans À ranger ; aucun fichier n’est touché.",
   "filed.created": "« {name} » créé.",
   "filed.renamed": "Renommé en « {name} ».",
   "filed.deleted": {
-    one: "Dossier supprimé : {count} piste n’est plus classée.",
-    other: "Dossier supprimé : {count} pistes ne sont plus classées.",
+    one: "Dossier supprimé : {count} piste revient dans À ranger.",
+    other: "Dossier supprimé : {count} pistes reviennent dans À ranger.",
   },
   "filed.filed": {
     one: "{count} piste classée dans {folder}.",
@@ -1175,14 +1178,14 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "filed.allFiled": "Toutes les pistes sont classées.",
   "filed.uploadHere": "Envoyer ici",
   "filed.unfiledNote":
-    "Les pistes qui ne sont encore dans aucun dossier. Pour en classer une, ouvrez son menu et choisissez « Déplacer vers un dossier… ».",
+    "Toutes les pistes qui ne sont encore dans aucun dossier. WaveFlow tient cette liste lui-même : une piste en sort dès qu’elle est rangée, et elle ne peut être ni renommée ni supprimée. Pour ranger une piste, ouvrez son menu et choisissez « Déplacer vers un dossier… ».",
   "filed.unfiledNoteReader":
-    "Les pistes qui ne sont encore dans aucun dossier.",
+    "Toutes les pistes qui ne sont encore dans aucun dossier. WaveFlow tient cette liste lui-même : une piste en sort dès qu’elle est rangée.",
   "trackMenu.move": "Déplacer vers un dossier…",
   "upload.into": "Les fichiers reçus vont dans le dossier {folder}.",
-  "upload.doneUnfiled": "Ajouté à la bibliothèque, mais pas classé",
+  "upload.doneUnfiled": "Ajouté à la bibliothèque, dans À ranger",
   "upload.folderMissing":
-    "Le dossier pour lequel cet envoi a été ouvert est introuvable : les fichiers reçus resteront non classés.",
+    "Le dossier pour lequel cet envoi a été ouvert est introuvable : les fichiers reçus iront dans À ranger.",
   "upload.folderUnchecked":
     "Le dossier pour lequel cet envoi a été ouvert n’a pas pu être vérifié : aucun fichier n’est pris pour l’instant.",
   "upload.checkAgain": "Vérifier à nouveau",

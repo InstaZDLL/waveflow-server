@@ -32,9 +32,17 @@ export type IconName =
   | "info"
   | "download"
   | "folder"
-  | "back";
+  | "back"
+  | "inbox";
 
 const paths: Record<IconName, ReactNode> = {
+  // A tray: what has arrived and is waiting to be put away.
+  inbox: (
+    <>
+      <path d="M4 13h4l1.5 2.5h5L16 13h4" />
+      <path d="M6 5h12l3 8v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5z" />
+    </>
+  ),
   // An arrow pointing left: back to where the visitor came from.
   back: (
     <>

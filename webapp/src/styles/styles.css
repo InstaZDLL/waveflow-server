@@ -3055,3 +3055,14 @@ button.danger {
   background: var(--panel-soft);
   color: var(--text);
 }
+
+/* A list WaveFlow keeps itself, not a folder anyone made. */
+.folder-badge {
+  margin-inline-start: var(--space-2);
+  padding: 0.1rem var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  vertical-align: middle;
+}
