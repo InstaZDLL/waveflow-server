@@ -5009,7 +5009,9 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.goto("/folders");
   await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   const cards = page.getByRole("list", { name: "Folders" });
-  await expect(cards.getByRole("link", { name: /Unfiled/ })).toContainText("3 tracks");
+  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
+  // WaveFlow's list, not a folder of the owner's, and it says so.
+  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("Automatic");
 
   // A folder, and a second one refused for a name already taken.
   await page.getByRole("button", { name: "New folder" }).click();
@@ -5025,8 +5027,8 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.getByRole("button", { name: "Cancel" }).click();
 
   // From the menu: the unfiled tracks, the first one filed into Rock.
-  await cards.getByRole("link", { name: /Unfiled/ }).click();
-  await expect(page.getByRole("heading", { name: "Unfiled" })).toBeVisible();
+  await cards.getByRole("link", { name: /To sort/ }).click();
+  await expect(page.getByRole("heading", { name: "To sort" })).toBeVisible();
   const rows = page.locator(".songs tbody tr");
   await expect(rows).toHaveCount(3);
   await rows.first().locator("button.song-title").focus();
@@ -5048,7 +5050,7 @@ test("files tracks into folders from the menu and by dragging", async ({
   // there, where it would read as a folder inside "Unfiled".
   await expect(page.getByRole("list", { name: "Folders" })).toHaveCount(0);
   await expect(
-    page.getByText("To file one, open its menu", { exact: false }),
+    page.getByText("To file a track, open its menu", { exact: false }),
   ).toBeVisible();
 
   // Inside the folder: a second track, a sub-folder, and a drag onto it. A
@@ -5081,9 +5083,9 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText(
-    "Folder deleted: 2 tracks are unfiled.",
+    "Folder deleted: 2 tracks are back in To sort.",
   );
-  await expect(cards.getByRole("link", { name: /Unfiled/ })).toContainText("3 tracks");
+  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
   await expectNoWcagViolations(page);
 });
 
@@ -5100,7 +5102,7 @@ test("shows a listener the filed tree with nothing to change", async ({ page }) 
     await expect(page.getByRole("button", { name })).toHaveCount(0);
   }
   // A reader is told what Unfiled is, not how to file, and rows do not drag.
-  await expect(page.getByText("Tracks that are in no folder yet.", { exact: true })).toBeVisible();
+  await expect(page.getByText("WaveFlow keeps this list itself", { exact: false })).toBeVisible();
   await expect(page.locator(".songs tbody tr").first()).not.toHaveAttribute("draggable", "true");
   await page.locator(".songs tbody tr button.song-title").first().focus();
   await page.keyboard.press("Shift+F10");
@@ -5158,7 +5160,7 @@ test("keeps a received track when filing it fails, and says so", async ({
     mimeType: "audio/flac",
     buffer: Buffer.from(Array.from({ length: 20 }, (_, i) => i)),
   });
-  await expect(page.getByText("Added to the library, but not filed")).toBeVisible();
+  await expect(page.getByText("Added to the library, in To sort")).toBeVisible();
   expect(uploadCommits).toEqual(["upload-1"]);
 });
 
@@ -5187,7 +5189,7 @@ test("waits for the folder before taking files, and says when it is gone", async
   }
   await expect(page.getByLabel("Choose audio files")).toBeEnabled();
   await expect(page.getByRole("status")).toHaveText(
-    "The folder this upload was opened for cannot be found: received files will stay unfiled.",
+    "The folder this upload was opened for cannot be found: received files will go to To sort.",
   );
 });
 
@@ -5324,8 +5326,8 @@ test("closes a folder's form when another folder is opened", async ({ page }) =>
   await page.goto("/folders");
   await page.getByRole("button", { name: "New folder" }).click();
   await expect(page.getByLabel("Folder name")).toBeVisible();
-  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Unfiled/ }).click();
-  await expect(page.getByRole("heading", { name: "Unfiled" })).toBeVisible();
+  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /To sort/ }).click();
+  await expect(page.getByRole("heading", { name: "To sort" })).toBeVisible();
   await expect(page.getByLabel("Folder name")).toHaveCount(0);
   expect(state.writes).toEqual([]);
 });
