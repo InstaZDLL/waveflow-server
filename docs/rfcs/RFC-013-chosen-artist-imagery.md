@@ -249,14 +249,20 @@ CREATE TABLE artist_image_candidate (
   - a search whose Deezer query or any preview fetch fails is **deleted** by
     that task. Its candidates go by cascade, and the previews already stored
     become unreferenced artwork for the sweep;
-  - **a deadline backs the task up.** A fetch cannot run forever: it is at most
-    one search and twenty previews, each bounded by
-    `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS` and spaced by the provider's pace.
-    Twice that worst case, counted from `searched_at`, is the search's fetch
-    deadline. Past it, an incomplete search no longer counts for the `429`, and
-    the sweep deletes it. A task that is still running cannot be past it, so
-    this removes only what a panic or a bug left behind — never a search that
-    is actually fetching;
+  - **a deadline the task itself obeys.** Every search gets a fetch deadline,
+    `searched_at` plus five minutes, and its task runs under that deadline as
+    a whole — waiting for the provider's pace, which it shares with enrichment
+    and cannot predict, the requests, and the writes alike
+    (`tokio::time::timeout_at`). A task that reaches the deadline stops and
+    deletes its search as a failed one. Its last write, completing the search,
+    happens under the writer gate and checks the deadline inside that
+    transaction: past it, nothing is completed, and the search is deleted
+    instead. So no task ever runs, or writes, beyond its deadline;
+  - **past the deadline, the search is fair game.** An incomplete search past
+    its deadline no longer counts for the `429`, and the sweep — which takes
+    the same writer gate — deletes it. Since its task has stopped by then, this
+    removes only what a panic or a bug left behind, never a search still
+    fetching;
   - at **boot**, every search with `complete = 0` is deleted: nothing can be
     fetching for it across a restart;
   - the `429` of one search at a time therefore only ever reflects a search
