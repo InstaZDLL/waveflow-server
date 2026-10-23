@@ -9,6 +9,7 @@ import {
 
 const artist = (state?: ArtistEnrichment["state"]): ArtistDetail => ({
   id: "artist-1",
+  library_id: "library-1",
   name: "Björk",
   album_count: 0,
   artwork_hash: null,

@@ -1,4 +1,4 @@
-import { call, collect, scoped } from "./client";
+import { call, collect, request, scoped } from "./client";
 
 export type Album = {
   id: string;
@@ -84,10 +84,25 @@ export type ArtistEnrichment = {
   similar: { artists: Artist[]; source: EnrichmentSource } | null;
 };
 
+/** Which of an artist's two hand-chosen images (RFC-013). */
+export type ArtistImageKind = "portrait" | "banner";
+
+/** Where a chosen image came from, and when it was chosen. */
+export type ImageChoice = {
+  source: "upload" | "deezer";
+  set_at: number;
+};
+
 export type ArtistDetail = Artist & {
+  /** The library the artist belongs to: whose owners may choose its images. */
+  library_id: string;
   albums: Album[];
   /** Always present on the native page; optional so an older server parses. */
   enrichment?: ArtistEnrichment;
+  /** The banner chosen by hand, absent when none was. */
+  banner_hash?: string;
+  /** What was chosen by hand, kind by kind; absent when nothing was. */
+  image_choice?: { portrait?: ImageChoice; banner?: ImageChoice };
 };
 
 export type SearchResult = {
@@ -188,6 +203,31 @@ export const listArtists = (libraryId?: string) =>
 
 export const getArtist = (id: string) =>
   call<ArtistDetail>(`/api/v2/artists/${id}`);
+
+/**
+ * Chooses an artist's portrait or banner from an image file (RFC-013): sent as
+ * its own bytes, recognised by the server from them. Answers the artist page.
+ */
+export const setArtistImage = (
+  artistId: string,
+  kind: ArtistImageKind,
+  file: Blob,
+) =>
+  call<ArtistDetail>(`/api/v2/artists/${artistId}/image/${kind}`, {
+    method: "PUT",
+    body: file,
+    headers: { "content-type": "application/octet-stream" },
+  });
+
+/** Goes back to the automatic image: the fetched portrait, or no banner. */
+export const removeArtistImage = async (
+  artistId: string,
+  kind: ArtistImageKind,
+): Promise<void> => {
+  await request(`/api/v2/artists/${artistId}/image/${kind}`, {
+    method: "DELETE",
+  });
+};
 
 /**
  * The albums credited to an artist, without the artist's page.

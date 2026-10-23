@@ -5331,3 +5331,133 @@ test("closes a folder's form when another folder is opened", async ({ page }) =>
   await expect(page.getByLabel("Folder name")).toHaveCount(0);
   expect(state.writes).toEqual([]);
 });
+
+/**
+ * A stand-in for the artist routes of RFC-013 with state: the page re-reads
+ * after every write, and what it shows must be what the write did.
+ */
+async function serveArtistImages(page: Page) {
+  const state = {
+    portrait: null as string | null,
+    banner: null as string | null,
+    writes: [] as Array<{ method: string; kind: string; bytes: number }>,
+    refuseNext: false,
+  };
+  const detail = () => ({
+    ...artistDetail,
+    library_id: "library-1",
+    artwork_hash: state.portrait ?? "f".repeat(64),
+    ...(state.banner ? { banner_hash: state.banner } : {}),
+    ...(state.portrait || state.banner
+      ? {
+          image_choice: {
+            ...(state.portrait ? { portrait: { source: "upload", set_at: 1 } } : {}),
+            ...(state.banner ? { banner: { source: "upload", set_at: 1 } } : {}),
+          },
+        }
+      : {}),
+  });
+  await page.route("**/api/v2/artists/artist-1", (route) =>
+    route.fulfill({ json: detail() }),
+  );
+  await page.route("**/api/v2/artists/artist-1/image/*", async (route) => {
+    const request = route.request();
+    const kind = new URL(request.url()).pathname.split("/").at(-1) ?? "";
+    const bytes = request.postDataBuffer()?.length ?? 0;
+    state.writes.push({ method: request.method(), kind, bytes });
+    if (request.method() === "DELETE") {
+      if (kind === "portrait") state.portrait = null;
+      else state.banner = null;
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+    if (state.refuseNext) {
+      state.refuseNext = false;
+      await route.fulfill({ status: 422, json: { error: "validation" } });
+      return;
+    }
+    const hash = (kind === "portrait" ? "b" : "c").repeat(64);
+    if (kind === "portrait") state.portrait = hash;
+    else state.banner = hash;
+    await route.fulfill({ json: detail() });
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("**/api/v2/artwork/*", (route) =>
+    route.fulfill({ contentType: "image/png", body: png }),
+  );
+  return { state, png };
+}
+
+/**
+ * Choosing an artist's banner and portrait by hand (RFC-013 step 3): the file
+ * goes as its own bytes, the header draws the banner behind it, a chosen
+ * portrait says so, and each can go back to automatic.
+ */
+test("changes an artist's banner and portrait from the artist page", async ({
+  page,
+}) => {
+  const { state, png } = await serveArtistImages(page);
+  await page.goto("/artists/artist-1");
+  const hero = page.locator(".artist-hero");
+  await expect(hero.getByRole("button", { name: "Change portrait" })).toBeVisible();
+  await expect(hero.getByRole("button", { name: "Change banner" })).toBeVisible();
+  await expect(hero.getByRole("button", { name: "No banner" })).toHaveCount(0);
+  // With no banner, the portrait is the backdrop, blurred.
+  await expect(hero.locator(".artist-hero-ambient")).toBeAttached();
+
+  await hero.getByLabel("Change banner").setInputFiles({
+    name: "banner.png",
+    mimeType: "image/png",
+    buffer: png,
+  });
+  await expect(hero.getByRole("status")).toHaveText("Banner changed.");
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expect(hero.locator(".artist-hero-ambient")).toHaveCount(0);
+  expect(state.writes).toEqual([{ method: "PUT", kind: "banner", bytes: png.length }]);
+  await expectNoWcagViolations(page);
+
+  await hero.getByLabel("Change portrait").setInputFiles({
+    name: "portrait.png",
+    mimeType: "image/png",
+    buffer: png,
+  });
+  await expect(hero.getByRole("status")).toHaveText("Portrait changed.");
+  await expect(hero.getByText("Portrait chosen by hand")).toBeVisible();
+
+  // A file the server refuses is said, and nothing on screen changes.
+  state.refuseNext = true;
+  await hero.getByLabel("Change portrait").setInputFiles({
+    name: "notes.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("not an image"),
+  });
+  await expect(hero.getByRole("alert")).toHaveText("Choose a JPEG, PNG or WebP image.");
+
+  // Back to automatic: no banner, and the fetched portrait again.
+  await hero.getByRole("button", { name: "No banner" }).click();
+  await expect(hero.getByRole("status")).toHaveText("Banner removed.");
+  await expect(hero.locator("img.artist-banner")).toHaveCount(0);
+  await hero.getByRole("button", { name: "Automatic portrait" }).click();
+  await expect(hero.getByRole("status")).toHaveText("Back to the automatic portrait.");
+  await expect(hero.getByText("Portrait chosen by hand")).toHaveCount(0);
+  expect(state.writes.slice(-2)).toEqual([
+    { method: "DELETE", kind: "banner", bytes: 0 },
+    { method: "DELETE", kind: "portrait", bytes: 0 },
+  ]);
+});
+
+/** A listener sees the chosen banner and is offered nothing to change. */
+test("shows a listener the artist's banner with nothing to change", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  const { state } = await serveArtistImages(page);
+  state.banner = "c".repeat(64);
+  await page.goto("/artists/artist-1");
+  const hero = page.locator(".artist-hero");
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expect(hero.getByRole("button", { name: /Change/ })).toHaveCount(0);
+});
