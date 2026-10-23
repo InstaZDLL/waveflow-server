@@ -51,11 +51,14 @@ impl DomainServices {
         .map(album_from_row)
         .collect::<Result<Vec<_>, _>>()?;
         attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
+        let (banner_hash, image_choice) = self.artist_image_choices(artist_id).await?;
         Ok(ArtistDetail {
             artist: summary.artist,
             album_count: summary.album_count,
             albums,
             enrichment: None,
+            banner_hash,
+            image_choice,
         })
     }
 

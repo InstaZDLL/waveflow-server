@@ -208,8 +208,10 @@ impl DomainServices {
         Ok(swept)
     }
 
-    /// Drops every `artwork` row no artist, album or track names, and says how
-    /// many went.
+    /// Drops every `artwork` row no artist, album, track or hand-chosen
+    /// artist image (RFC-013) names, and says how many went. The choice
+    /// table's key has no `ON DELETE`: forgetting it here would fail the
+    /// sweep rather than strand a choice.
     ///
     /// Three columns rather than the canvas store's one link table, and all
     /// three are `ON DELETE SET NULL` — which is the reason this is needed at
@@ -223,7 +225,8 @@ impl DomainServices {
             "DELETE FROM artwork WHERE \
                NOT EXISTS (SELECT 1 FROM artist WHERE artist.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM album WHERE album.artwork_hash = artwork.hash) \
-               AND NOT EXISTS (SELECT 1 FROM track WHERE track.artwork_hash = artwork.hash)",
+               AND NOT EXISTS (SELECT 1 FROM track WHERE track.artwork_hash = artwork.hash) \
+               AND NOT EXISTS (SELECT 1 FROM artist_image_choice c WHERE c.artwork_hash = artwork.hash)",
         )
         .execute(self.db.pool())
         .await?

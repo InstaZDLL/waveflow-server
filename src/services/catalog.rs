@@ -232,11 +232,15 @@ impl DomainServices {
                SELECT 1 FROM track t JOIN library_member m ON m.library_id=t.library_id WHERE t.artwork_hash=a.hash AND m.user_id=? \
                UNION SELECT 1 FROM album al JOIN library_member m ON m.library_id=al.library_id WHERE al.artwork_hash=a.hash AND m.user_id=? \
                UNION SELECT 1 FROM artist ar JOIN library_member m ON m.library_id=ar.library_id WHERE ar.artwork_hash=a.hash AND m.user_id=? \
+               UNION SELECT 1 FROM artist_image_choice c JOIN artist ar ON ar.id=c.artist_id JOIN library_member m ON m.library_id=ar.library_id WHERE c.artwork_hash=a.hash AND m.user_id=? \
              ) UNION ALL SELECT a.hash, a.format FROM track t JOIN library_member m ON m.library_id=t.library_id JOIN artwork a ON a.hash=t.artwork_hash WHERE t.id=? AND m.user_id=? \
              UNION ALL SELECT a.hash, a.format FROM album al JOIN library_member m ON m.library_id=al.library_id JOIN artwork a ON a.hash=al.artwork_hash WHERE al.id=? AND m.user_id=? \
-             UNION ALL SELECT a.hash, a.format FROM artist ar JOIN library_member m ON m.library_id=ar.library_id JOIN artwork a ON a.hash=ar.artwork_hash WHERE ar.id=? AND m.user_id=? LIMIT 1",
+             UNION ALL SELECT a.hash, a.format FROM artist ar JOIN library_member m ON m.library_id=ar.library_id JOIN artwork a ON a.hash=COALESCE((SELECT c.artwork_hash FROM artist_image_choice c WHERE c.artist_id=ar.id AND c.kind='portrait'), ar.artwork_hash) WHERE ar.id=? AND m.user_id=? LIMIT 1",
         )
-        .bind(id).bind(user_id.to_string()).bind(user_id.to_string()).bind(user_id.to_string())
+        // A chosen image (RFC-013) is served to the members of the library
+        // whose artist names it, and an artist's id resolves to its effective
+        // portrait, the chosen one first.
+        .bind(id).bind(user_id.to_string()).bind(user_id.to_string()).bind(user_id.to_string()).bind(user_id.to_string())
         .bind(id).bind(user_id.to_string()).bind(id).bind(user_id.to_string()).bind(id).bind(user_id.to_string())
         .fetch_optional(self.db.pool()).await?;
         row.map(|row| Ok::<_, sqlx::Error>((row.try_get("hash")?, row.try_get("format")?)))
