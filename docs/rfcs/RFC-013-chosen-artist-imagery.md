@@ -5,8 +5,9 @@
   below: [#308](https://github.com/InstaZDLL/waveflow-server/pull/308) (this
   RFC), [#309](https://github.com/InstaZDLL/waveflow-server/pull/309)
   (serving the choice: `artist_image_choice`, the effective portrait,
-  `banner_hash`, the upload and removal routes) and the pull request drawing
-  it in the web client (the banner behind the artist header, and "Change
+  `banner_hash`, the upload and removal routes) and
+  [#310](https://github.com/InstaZDLL/waveflow-server/pull/310) (drawing it in
+  the web client: the banner behind the artist header, and "Change
   portrait" / "Change banner" for owners and managers). The
   *Status* field above never flips in this project; this line is the one that
   says what is running.
