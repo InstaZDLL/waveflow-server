@@ -3,8 +3,9 @@
 - **Status**: Proposed
 - **Implemented by**: in progress, in the order of "The order of the work"
   below: [#308](https://github.com/InstaZDLL/waveflow-server/pull/308) (this
-  RFC) and the pull request serving the choice (`artist_image_choice`, the
-  effective portrait, `banner_hash`, the upload and removal routes). The
+  RFC) and [#309](https://github.com/InstaZDLL/waveflow-server/pull/309)
+  (serving the choice: `artist_image_choice`, the effective portrait,
+  `banner_hash`, the upload and removal routes). The
   *Status* field above never flips in this project; this line is the one that
   says what is running.
 - **Date**: 2026-10-23
