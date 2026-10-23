@@ -8,10 +8,12 @@ import {
   enrichmentRetryDelay,
 } from "../api/queries";
 import { AlbumGrid } from "../components/album-grid";
+import { ArtistImageControls } from "../components/artist-image-controls";
 import { Artwork } from "../components/artwork";
 import { Loading } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
 import { useI18n } from "../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 
 /** A provider as a reader knows it, rather than as the setting spells it. */
 const PROVIDER_NAMES: Record<string, string> = {
@@ -96,6 +98,7 @@ function ArtistEnrichmentSection({
 export function ArtistPage({ artistId }: { artistId: string }) {
   const { t, locale } = useI18n();
   const client = useQueryClient();
+  const { libraries } = useLibraryScope();
   const query = artistQuery(artistId);
   const { data: value, error } = useQuery(query);
   /**
@@ -112,6 +115,14 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   // The artist row carries the portrait once the server has linked it; the
   // enrichment names it as soon as it is cached, which may be a visit sooner.
   const portrait = value.artwork_hash ?? image?.artwork_hash ?? null;
+  // The banner chosen by hand (RFC-013), or else the portrait, blurred, as the
+  // desktop draws it: a header that carries the artist even with no banner.
+  const banner = value.banner_hash ?? null;
+  const backdrop = banner ?? portrait;
+  // Offered where the server would take it: owners and managers.
+  const mayChoose = mayCorrectTracks(
+    libraries.find((library) => library.id === value.library_id),
+  );
   // Counted exactly as `artistQuery` counts, so the note goes when the asking
   // does.
   const asked = client.getQueryState(query.queryKey);
@@ -122,7 +133,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     ) !== false;
   return (
     <section>
-      <header className="artist-hero">
+      <header
+        className={`artist-hero${backdrop ? " has-backdrop" : ""}${banner ? " has-banner" : ""}`}
+      >
+        {backdrop ? (
+          <Artwork
+            artworkId={backdrop}
+            title={value.name}
+            className={banner ? "artist-banner" : "artist-hero-ambient"}
+          />
+        ) : null}
         <Artwork
           artworkId={portrait}
           title={value.name}
@@ -134,7 +154,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <p className="muted">
             {t("artists.libraryCount", { count: value.album_count })}
           </p>
-          {image && image.artwork_hash === portrait ? (
+          {value.image_choice?.portrait ? (
+            <p className="muted artist-source">{t("artistImage.chosen")}</p>
+          ) : image && image.artwork_hash === portrait ? (
             <p className="muted artist-source">
               {t("artists.portraitSource", {
                 provider:
@@ -147,6 +169,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             </p>
           ) : null}
         </div>
+        {mayChoose ? <ArtistImageControls artist={value} /> : null}
       </header>
       <ArtistEnrichmentSection enrichment={value.enrichment} asking={asking} />
       {/* Shown only once there is a history to show. An artist nobody has

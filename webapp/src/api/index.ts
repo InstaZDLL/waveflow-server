@@ -26,6 +26,7 @@ export type {
   Artist,
   ArtistDetail,
   ArtistEnrichment,
+  ArtistImageKind,
   EnrichmentSource,
   Genre,
   SearchResult,
@@ -45,8 +46,10 @@ export {
   listGenres,
   listRandomSongs,
   listSongs,
+  removeArtistImage,
   SONG_PAGE,
   search,
+  setArtistImage,
 } from "./catalog";
 export type { SessionUser, WebSession } from "./client";
 export {
