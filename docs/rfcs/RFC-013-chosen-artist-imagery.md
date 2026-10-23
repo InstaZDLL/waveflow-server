@@ -196,8 +196,9 @@ CREATE TABLE artist_image_search (
     searched_by TEXT NOT NULL,
     searched_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    -- Set when every candidate's preview is stored. A search still fetching
-    -- is the one that makes a second search by the same account answer 429.
+    -- Set when every candidate's preview is stored. 0 means a request is
+    -- fetching for it now: a failed search is deleted, and boot deletes any
+    -- left at 0. It is what makes a second search by the account answer 429.
     complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1))
 ) STRICT;
 
@@ -233,6 +234,18 @@ CREATE TABLE artist_image_candidate (
   this decides nothing visible. An id no live search offered answers `422`,
   and so does one offered for another artist: a search belongs to the artist,
   so a search made in one library is never found from another.
+- **A search that does not finish is not left half-done.** `complete = 0`
+  means one thing only: a request is fetching for it right now. So:
+  - a search whose Deezer query or any preview fetch fails is **deleted** by
+    the request that made it, before that request answers its error. Its
+    candidates go by cascade, and the previews already stored become
+    unreferenced artwork for the sweep;
+  - at **boot**, every search with `complete = 0` is deleted: nothing can be
+    fetching for it across a restart, and leaving it would answer `429` to its
+    account for the rest of the hour;
+  - the `429` of one search at a time therefore only ever reflects a search
+    that is really in flight, and the next search after a failure starts at
+    once.
 
 ### The pick and the sweep never interleave
 
@@ -260,6 +273,14 @@ Candidates are offered only where `deezer` is among
 `WAVEFLOW_METADATA_PROVIDERS`. An instance that never opted into Deezer makes
 no request to it because someone opened a picker: the operator's switch is the
 only switch.
+
+**The switch is read at every call, not at the search.** An operator who
+removes `deezer` and restarts closes both routes at once: the candidates route
+and the pick answer `404`, even for a search that is still live. A search
+made under the old setting does not outlive the operator's decision by up to
+an hour; its rows simply expire and are swept like any other. A portrait
+already chosen from Deezer stays: it is the library's image now, stored on the
+server, and no request to Deezer is needed to show it.
 
 ## Decision 5 — a way back
 
@@ -296,7 +317,7 @@ caller may not see, and for a write by someone who may not make it.
 | --- | --- |
 | `GET /artists/{id}` | Gains `banner_hash` (absent when none), and `image_choice` per kind (`source`, `set_at`) so a client can say "chosen by hand" instead of "from Deezer". `artwork_hash` becomes the effective portrait. |
 | `PUT /artists/{id}/image/{kind}` | `kind` is `portrait` or `banner`. The body is the image's bytes. `200` with the artist; `413` past 10 MiB; `422` for bytes that are not JPEG, PNG or WebP. |
-| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, offered by a live search of this artist; that candidate's preview becomes the portrait, never fetched again. `422` for an id no live search offered; `404` where Deezer is not configured. |
+| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, offered by a live search of this artist; that candidate's preview becomes the portrait, never fetched again. `422` for an id no live search offered; `404` where Deezer is not configured now, a live search notwithstanding. |
 | `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as a search for an hour; the same query answered from it while it lives. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured. |
 | `DELETE /artists/{id}/image/{kind}` | Back to automatic. `204`; `404` when nothing was chosen. |
 
