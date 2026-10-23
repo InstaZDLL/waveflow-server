@@ -110,6 +110,23 @@ pub struct Portrait {
     pub bytes: Vec<u8>,
 }
 
+impl Portrait {
+    /// An image someone sent (RFC-013 decision 4), checked as a fetched one is:
+    /// JPEG, PNG or WebP from the bytes, within [`MAX_IMAGE_BYTES`]. `None`
+    /// for anything else — a name or a declared type is never asked.
+    pub fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
+        if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+            return None;
+        }
+        let format = sniff(&bytes)?;
+        Some(Self {
+            hash: blake3::hash(&bytes).to_hex().to_string(),
+            format,
+            bytes,
+        })
+    }
+}
+
 /// Why a portrait was not fetched. Carries nothing from the URL or the answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {

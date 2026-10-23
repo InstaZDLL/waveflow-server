@@ -191,7 +191,13 @@ macro_rules! artist_select {
     };
     (@columns $extra:expr) => {
         concat!(
-            "SELECT ar.id, ar.library_id, ar.name, ar.artwork_hash, ar.musicbrainz_id, \
+            // The effective portrait (RFC-013 decision 3): a hand-chosen one
+            // first, then whatever the files or a provider gave the artist.
+            "SELECT ar.id, ar.library_id, ar.name, \
+                    COALESCE((SELECT c.artwork_hash FROM artist_image_choice c \
+                               WHERE c.artist_id=ar.id AND c.kind='portrait'), \
+                             ar.artwork_hash) AS artwork_hash, \
+                    ar.musicbrainz_id, \
                     ar.sort_name, us.starred_at, ur.rating AS user_rating, \
                     (SELECT group_concat(role) FROM \
                        (SELECT ars.role FROM artist_role_stats ars \
@@ -966,6 +972,38 @@ pub struct ArtistDetail {
     /// the prefill decision 6 refuses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enrichment: Option<ArtistEnrichment>,
+    /// The banner chosen for this artist by hand (RFC-013 decision 3), absent
+    /// when none was. There is no automatic banner: a client without one
+    /// draws what it drew before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub banner_hash: Option<String>,
+    /// What was chosen by hand, kind by kind, so a client can say "chosen"
+    /// rather than "from Deezer". Absent when nothing was.
+    #[serde(skip_serializing_if = "ImageChoices::is_empty")]
+    pub image_choice: ImageChoices,
+}
+
+/// The hand-chosen images of one artist (RFC-013).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct ImageChoices {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portrait: Option<ImageChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub banner: Option<ImageChoice>,
+}
+
+impl ImageChoices {
+    pub fn is_empty(&self) -> bool {
+        self.portrait.is_none() && self.banner.is_none()
+    }
+}
+
+/// Where a chosen image came from and when.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ImageChoice {
+    /// `upload` or `deezer`.
+    pub source: String,
+    pub set_at: i64,
 }
 
 /// What enrichment holds about one artist, merged across providers in the
@@ -1355,6 +1393,7 @@ impl From<crate::sync::SyncError> for ServiceError {
 mod admin;
 mod albums;
 mod artist_enrichment;
+mod artist_images;
 mod artists;
 mod artwork;
 mod bookmarks;
@@ -1379,6 +1418,7 @@ mod sync;
 mod track_metadata;
 pub(crate) mod uploads;
 
+pub use artist_images::ArtistImageKind;
 /// Crate-visible only: the adapter builds the browser-less journey's address
 /// from it, and nothing outside this binary has a use for it.
 pub(crate) use lastfm::LASTFM_AUTHORIZE_URL;

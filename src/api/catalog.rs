@@ -347,3 +347,46 @@ pub async fn list_songs_by_genre(
         .map(Json)
         .map_err(service_error)
 }
+
+/// Chooses an artist's `portrait` or `banner` from an image's bytes
+/// (RFC-013): JPEG, PNG or WebP, at most 10 MiB, recognised from the bytes.
+/// Owners and managers; anyone else gets the same `404` as a stranger.
+#[utoipa::path(put, path = "/api/v2/artists/{artist_id}/image/{kind}", tag = "catalog", params(("artist_id" = Uuid, Path), ("kind" = String, Path, description = "portrait or banner")), request_body(content = Vec<u8>, content_type = "application/octet-stream"), responses((status = 200, body = crate::services::ArtistDetail), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 413, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn put_artist_image(
+    State(state): State<AppState>,
+    Path((artist_id, kind)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<crate::services::ArtistDetail>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    let kind = crate::services::ArtistImageKind::parse(&kind).ok_or(ApiError::NotFound)?;
+    state
+        .services
+        .choose_artist_image(user.id, artist_id, kind, body.to_vec())
+        .await
+        .map_err(service_error)?;
+    state
+        .services
+        .artist_page(user.id, artist_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Goes back to the automatic image: the portrait the files or a provider
+/// gave, or no banner. `404` when nothing was chosen.
+#[utoipa::path(delete, path = "/api/v2/artists/{artist_id}/image/{kind}", tag = "catalog", params(("artist_id" = Uuid, Path), ("kind" = String, Path, description = "portrait or banner")), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn delete_artist_image(
+    State(state): State<AppState>,
+    Path((artist_id, kind)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    let kind = crate::services::ArtistImageKind::parse(&kind).ok_or(ApiError::NotFound)?;
+    state
+        .services
+        .remove_artist_image(user.id, artist_id, kind)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(service_error)
+}

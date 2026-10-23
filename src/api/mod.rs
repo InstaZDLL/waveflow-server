@@ -181,6 +181,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/artists", get(list_artists))
         .route("/api/v2/artists/{artist_id}", get(get_artist))
         .route(
+            "/api/v2/artists/{artist_id}/image/{kind}",
+            put(put_artist_image).delete(delete_artist_image).layer(
+                axum::extract::DefaultBodyLimit::max(crate::portrait::MAX_IMAGE_BYTES),
+            ),
+        )
+        .route(
             "/api/v2/artists/{artist_id}/top-songs",
             get(list_artist_top_songs),
         )
