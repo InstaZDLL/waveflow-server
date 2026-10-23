@@ -195,7 +195,8 @@ CREATE TABLE artist_image_search (
     query_key TEXT NOT NULL,
     searched_by TEXT NOT NULL,
     searched_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
+    -- An hour from the moment the search completed; NULL while it fetches.
+    expires_at INTEGER,
     -- Set when every candidate's preview is stored. 0 means a request is
     -- fetching for it now: a failed search is deleted, and boot deletes any
     -- left at 0. It is what makes a second search by the account answer 429.
@@ -218,9 +219,11 @@ CREATE TABLE artist_image_candidate (
 - **A search is the artist's, so it is the library's**: the artist row is per
   library, and any owner or manager of that library may pick from it, not only
   the person who searched.
-- **It lives one hour.** Long enough to look through twenty faces and choose;
-  short enough that the tables hold what is on someone's screen and not a
-  history of searches.
+- **It lives one hour from the moment it completes.** Long enough to look
+  through twenty faces and choose; short enough that the tables hold what is
+  on someone's screen and not a history of searches. The hour starts when the
+  last preview is stored, so however long the fetching took, it never eats
+  into the time to choose.
 - **A repeated search is answered from it.** The same `query_key` for the same
   artist, while a complete search for it is alive, returns that search's
   candidates in their order — id, name, fans, preview — and asks Deezer
@@ -264,6 +267,12 @@ in **one transaction** each.
 - The sweep, under the gate, deletes expired searches (their candidates go by
   cascade) and then unreferenced artwork, in that order and in one transaction,
   so a preview a choice already names is never taken by the second step.
+- **The sweep never touches a search that is still fetching.** An incomplete
+  search has no `expires_at` to pass, so the sweep cannot delete it from under
+  the request writing its candidates. It has exactly two ways out, both named
+  above: its own request completes it or deletes it, or boot deletes it. The
+  previews an incomplete search has stored so far are named by its candidates,
+  so the sweep keeps them too until one of those happens.
 - If anything ever slipped through, the foreign key from
   `artist_image_choice.artwork_hash` to `artwork` fails the insert rather than
   storing a dangling hash; the route answers `422`, as for an expired search,
