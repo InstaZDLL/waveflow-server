@@ -84,8 +84,9 @@ favourites already do. That is stated here rather than discovered.
 **The artwork store keeps what a choice names.** The sweep in
 `src/services/artwork.rs` deletes an `artwork` row no artist, album or track
 references. It learns a fourth reference — `artist_image_choice` — or it would
-delete a chosen image on its next pass. This is the line most likely to be
-forgotten, so it is in this document.
+delete a chosen image on its next pass, and a fifth, the unexpired Deezer
+offers of decision 4. This is the line most likely to be forgotten, so it is in
+this document.
 
 ## Decision 3 — what every reader shows
 
@@ -151,12 +152,67 @@ So the server does the looking:
   id, a name, a fan count — **without picture URLs**;
 - each candidate's picture is fetched by the server through `src/portrait.rs`'s
   narrow fetcher (https, host allowlist, public addresses only, pinned
-  resolution, 10 MiB) into the artwork store, and the candidate carries its
-  `artwork_hash`. The client shows previews from the server, never from Deezer.
-  Previews nobody chooses are swept like any unreferenced artwork;
+  resolution, 10 MiB) into the artwork store, at Deezer's small picture size,
+  and the candidate carries its `artwork_hash`. The client shows previews from
+  the server, never from Deezer;
 - choosing one writes the choice with `source = 'deezer'` from a candidate the
   server fetched. The client sends a Deezer id; it never sends a URL, so no
   user input ever names a target the server dereferences — #217's line holds.
+
+### Who may search, and how much
+
+A search costs the server a request to Deezer and up to twenty image fetches
+and writes, so it is not open to whoever may read the page:
+
+- **Owners and managers only**, the same `may_write_metadata` gate as the
+  choice it serves; anyone else gets the `404` of decision 1. A listener has no
+  picker to open, so this refuses nothing a client offers.
+- **Deezer's pace is RFC-011's.** Every request to Deezer — the search and each
+  preview — keeps the per-provider pace RFC-011 decision 3 sets
+  (`WAVEFLOW_METADATA_RATE_PER_SEC`) and `src/enrichment.rs` enforces, shared
+  with enrichment. A picker cannot make the server ask Deezer faster than
+  the operator allowed, however often it is opened.
+- **One search at a time per account.** A second search while the first is
+  still fetching answers `429`; the client waits for the first.
+- **A repeated search is answered from what the server holds.** The same
+  query for the same artist within an offer's life (below) returns the offer
+  already stored and fetches nothing.
+
+### What the server remembers between the offer and the pick
+
+The pick names a Deezer id and nothing else, so the server has to remember
+what it offered, or it could neither refuse an id it never offered nor find
+the preview to store. That memory is a table of its own:
+
+```sql
+CREATE TABLE artist_image_offer (
+    artist_id TEXT NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    deezer_id INTEGER NOT NULL,
+    query TEXT NOT NULL,
+    artwork_hash TEXT NOT NULL REFERENCES artwork(hash),
+    offered_by TEXT NOT NULL,
+    offered_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (artist_id, deezer_id)
+) STRICT;
+```
+
+- **An offer is the artist's, so it is the library's**: the artist row is per
+  library, and any owner or manager of that library may pick from it, not only
+  the person who searched.
+- **It lives one hour.** Long enough to look through twenty faces and choose;
+  short enough that the table holds what is on someone's screen and not a
+  history of searches.
+- **The pick checks it.** `PUT …/image/portrait/deezer` accepts a Deezer id
+  only if an unexpired offer for that artist holds it, and stores the offer's
+  `artwork_hash` as the choice — the image the owner saw, fetched once, not
+  fetched again. An id with no live offer answers `422`, and so does one for
+  another artist: the key is the artist, so an offer made in one library is
+  never found from another.
+- **The sweep respects it.** A preview named by an unexpired offer is kept; an
+  expired offer is deleted by the same pass, and its preview then goes the way
+  of any image nothing names — unless it was chosen, in which case the choice
+  already holds it.
 
 Candidates are offered only where `deezer` is among
 `WAVEFLOW_METADATA_PROVIDERS`. An instance that never opted into Deezer makes
@@ -198,8 +254,8 @@ caller may not see, and for a write by someone who may not make it.
 | --- | --- |
 | `GET /artists/{id}` | Gains `banner_hash` (absent when none), and `image_choice` per kind (`source`, `set_at`) so a client can say "chosen by hand" instead of "from Deezer". `artwork_hash` becomes the effective portrait. |
 | `PUT /artists/{id}/image/{kind}` | `kind` is `portrait` or `banner`. The body is the image's bytes. `200` with the artist; `413` past 10 MiB; `422` for bytes that are not JPEG, PNG or WebP. |
-| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, one of the candidates. `422` for an id the candidates did not offer; `404` where Deezer is not configured. |
-| `GET /artists/{id}/image/candidates?q=` | Up to 20 Deezer artists, each with a server-held preview `artwork_hash`. `404` where Deezer is not configured. |
+| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, from an unexpired offer for this artist; the offer's preview becomes the portrait, fetched again never. `422` for an id with no live offer; `404` where Deezer is not configured. |
+| `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as an offer for an hour. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured. |
 | `DELETE /artists/{id}/image/{kind}` | Back to automatic. `204`; `404` when nothing was chosen. |
 
 Every write goes through `DomainServices` (CLAUDE.md, "One set of domain
@@ -216,7 +272,8 @@ services"), so the desktop can reach the same rules when it chooses to.
   local pickers keep writing its local profile. Pushing them to the server, or
   showing a server artist's chosen banner, is the desktop's own change, made
   against the routes above.
-- **Migrations**: one new dated file, `artist_image_choice`. None edits an
+- **Migrations**: one new dated file with `artist_image_choice`, and one with
+  `artist_image_offer` in step 4. None edits an
   applied one.
 
 ## The order of the work
@@ -231,8 +288,10 @@ Each step is its own pull request, shippable without the next:
 3. **The web client**: a banner behind the artist page's header (the chosen
    one, or the portrait blurred), and, for owners and managers, "Change
    portrait" and "Change banner" with a file and "Use the automatic one".
-4. **Deezer candidates**: the candidates route with server-held previews, the
-   pick route, and the "Search Deezer" tab of the portrait picker.
+4. **Deezer candidates**: `artist_image_offer` and its place in the sweep, the
+   candidates route with server-held previews and its limits, the pick route
+   checked against the offer, and the "Search Deezer" tab of the portrait
+   picker.
 
 ## What is still open
 
