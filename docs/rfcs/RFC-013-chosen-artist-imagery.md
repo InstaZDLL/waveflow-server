@@ -84,8 +84,8 @@ favourites already do. That is stated here rather than discovered.
 **The artwork store keeps what a choice names.** The sweep in
 `src/services/artwork.rs` deletes an `artwork` row no artist, album or track
 references. It learns a fourth reference — `artist_image_choice` — or it would
-delete a chosen image on its next pass, and a fifth, the unexpired Deezer
-offers of decision 4. This is the line most likely to be forgotten, so it is in
+delete a chosen image on its next pass, and a fifth, the candidates of a live
+Deezer search (decision 4). This is the line most likely to be forgotten, so it is in
 this document.
 
 ## Decision 3 — what every reader shows
@@ -175,44 +175,86 @@ and writes, so it is not open to whoever may read the page:
 - **One search at a time per account.** A second search while the first is
   still fetching answers `429`; the client waits for the first.
 - **A repeated search is answered from what the server holds.** The same
-  query for the same artist within an offer's life (below) returns the offer
+  query for the same artist within a search's life (below) returns the search
   already stored and fetches nothing.
 
 ### What the server remembers between the offer and the pick
 
 The pick names a Deezer id and nothing else, so the server has to remember
 what it offered, or it could neither refuse an id it never offered nor find
-the preview to store. That memory is a table of its own:
+the preview to store. It remembers a **search** and its **candidates**, in two
+tables, so that a repeated search can be answered whole and two searches may
+offer the same Deezer artist:
 
 ```sql
-CREATE TABLE artist_image_offer (
+CREATE TABLE artist_image_search (
+    id TEXT PRIMARY KEY,
     artist_id TEXT NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
-    deezer_id INTEGER NOT NULL,
-    query TEXT NOT NULL,
-    artwork_hash TEXT NOT NULL REFERENCES artwork(hash),
-    offered_by TEXT NOT NULL,
-    offered_at INTEGER NOT NULL,
+    -- The query as typed, trimmed and case-folded: "Björk " and "björk" are
+    -- one search.
+    query_key TEXT NOT NULL,
+    searched_by TEXT NOT NULL,
+    searched_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    PRIMARY KEY (artist_id, deezer_id)
+    -- Set when every candidate's preview is stored. A search still fetching
+    -- is the one that makes a second search by the same account answer 429.
+    complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1))
+) STRICT;
+
+CREATE TABLE artist_image_candidate (
+    search_id TEXT NOT NULL REFERENCES artist_image_search(id) ON DELETE CASCADE,
+    -- Deezer's order, so the answer reads as the search did.
+    position INTEGER NOT NULL,
+    deezer_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    fans INTEGER,
+    artwork_hash TEXT NOT NULL REFERENCES artwork(hash),
+    PRIMARY KEY (search_id, position),
+    UNIQUE (search_id, deezer_id)
 ) STRICT;
 ```
 
-- **An offer is the artist's, so it is the library's**: the artist row is per
+- **A search is the artist's, so it is the library's**: the artist row is per
   library, and any owner or manager of that library may pick from it, not only
   the person who searched.
 - **It lives one hour.** Long enough to look through twenty faces and choose;
-  short enough that the table holds what is on someone's screen and not a
+  short enough that the tables hold what is on someone's screen and not a
   history of searches.
+- **A repeated search is answered from it.** The same `query_key` for the same
+  artist, while a complete search for it is alive, returns that search's
+  candidates in their order — id, name, fans, preview — and asks Deezer
+  nothing. A different query makes a search of its own, even where the two
+  return the same artist.
 - **The pick checks it.** `PUT …/image/portrait/deezer` accepts a Deezer id
-  only if an unexpired offer for that artist holds it, and stores the offer's
+  only if a live search of that artist offered it, and stores that candidate's
   `artwork_hash` as the choice — the image the owner saw, fetched once, not
-  fetched again. An id with no live offer answers `422`, and so does one for
-  another artist: the key is the artist, so an offer made in one library is
-  never found from another.
-- **The sweep respects it.** A preview named by an unexpired offer is kept; an
-  expired offer is deleted by the same pass, and its preview then goes the way
-  of any image nothing names — unless it was chosen, in which case the choice
-  already holds it.
+  fetched again. When several live searches offered it, the most recent one's
+  candidate is used; their previews are the same picture at the same size, so
+  this decides nothing visible. An id no live search offered answers `422`,
+  and so does one offered for another artist: a search belongs to the artist,
+  so a search made in one library is never found from another.
+
+### The pick and the sweep never interleave
+
+The sweep deletes expired searches and then any `artwork` row nothing names;
+the pick reads a live candidate and then writes a choice that names its
+preview. Run side by side, the sweep could delete a preview between the pick's
+read and its write. They cannot, for the reason every write here is safe: both
+take the process-wide **writer gate** (CLAUDE.md, "SQLite discipline") and run
+in **one transaction** each.
+
+- The pick, under the gate and inside its transaction, reads the candidate with
+  `expires_at` compared to the transaction's own clock reading, and inserts the
+  choice. The sweep cannot run in between, and it deletes only searches whose
+  `expires_at` has already passed — so a search live when the pick read it was
+  not swept while the pick ran.
+- The sweep, under the gate, deletes expired searches (their candidates go by
+  cascade) and then unreferenced artwork, in that order and in one transaction,
+  so a preview a choice already names is never taken by the second step.
+- If anything ever slipped through, the foreign key from
+  `artist_image_choice.artwork_hash` to `artwork` fails the insert rather than
+  storing a dangling hash; the route answers `422`, as for an expired search,
+  and the owner searches again.
 
 Candidates are offered only where `deezer` is among
 `WAVEFLOW_METADATA_PROVIDERS`. An instance that never opted into Deezer makes
@@ -254,8 +296,8 @@ caller may not see, and for a write by someone who may not make it.
 | --- | --- |
 | `GET /artists/{id}` | Gains `banner_hash` (absent when none), and `image_choice` per kind (`source`, `set_at`) so a client can say "chosen by hand" instead of "from Deezer". `artwork_hash` becomes the effective portrait. |
 | `PUT /artists/{id}/image/{kind}` | `kind` is `portrait` or `banner`. The body is the image's bytes. `200` with the artist; `413` past 10 MiB; `422` for bytes that are not JPEG, PNG or WebP. |
-| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, from an unexpired offer for this artist; the offer's preview becomes the portrait, fetched again never. `422` for an id with no live offer; `404` where Deezer is not configured. |
-| `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as an offer for an hour. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured. |
+| `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, offered by a live search of this artist; that candidate's preview becomes the portrait, never fetched again. `422` for an id no live search offered; `404` where Deezer is not configured. |
+| `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as a search for an hour; the same query answered from it while it lives. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured. |
 | `DELETE /artists/{id}/image/{kind}` | Back to automatic. `204`; `404` when nothing was chosen. |
 
 Every write goes through `DomainServices` (CLAUDE.md, "One set of domain
@@ -273,7 +315,7 @@ services"), so the desktop can reach the same rules when it chooses to.
   showing a server artist's chosen banner, is the desktop's own change, made
   against the routes above.
 - **Migrations**: one new dated file with `artist_image_choice`, and one with
-  `artist_image_offer` in step 4. None edits an
+  `artist_image_search` and `artist_image_candidate` in step 4. None edits an
   applied one.
 
 ## The order of the work
@@ -288,10 +330,10 @@ Each step is its own pull request, shippable without the next:
 3. **The web client**: a banner behind the artist page's header (the chosen
    one, or the portrait blurred), and, for owners and managers, "Change
    portrait" and "Change banner" with a file and "Use the automatic one".
-4. **Deezer candidates**: `artist_image_offer` and its place in the sweep, the
-   candidates route with server-held previews and its limits, the pick route
-   checked against the offer, and the "Search Deezer" tab of the portrait
-   picker.
+4. **Deezer candidates**: the search and candidate tables and their place in
+   the sweep, the candidates route with server-held previews and its limits,
+   the pick route checked against a live search, and the "Search Deezer" tab
+   of the portrait picker.
 
 ## What is still open
 
