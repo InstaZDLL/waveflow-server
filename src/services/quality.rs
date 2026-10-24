@@ -278,6 +278,14 @@ const PAGE: i64 = 64;
 /// How many rows one write carries.
 const BATCH: usize = 16;
 
+/// The longest one file may take, whatever it says about itself. The deadline
+/// is a minute plus the track's duration, and the duration is read from the
+/// file's own header: without this ceiling, a file claiming ten hours that
+/// hangs FFmpeg would hold a slot of the analysis for ten hours. Thirty minutes
+/// is a three-hour file decoded at six times real time, a hundred times slower
+/// than measured here.
+const MAX_DEADLINE: Duration = Duration::from_secs(30 * 60);
+
 impl DomainServices {
     /// Places the FFmpeg this process measures with, and deletes every
     /// measurement another generation or another FFmpeg made (decision 5).
@@ -410,8 +418,9 @@ impl DomainServices {
         )
         .await
         .ok()?;
-        let deadline = Duration::from_secs(60)
-            + Duration::from_millis(u64::try_from(pending.duration_ms).unwrap_or(0));
+        let deadline = (Duration::from_secs(60)
+            + Duration::from_millis(u64::try_from(pending.duration_ms).unwrap_or(0)))
+        .min(MAX_DEADLINE);
         let measurement =
             quality::measure(&self.ffprobe_path, &self.ffmpeg_path, &path, deadline).await;
         Some(Measured {

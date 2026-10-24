@@ -341,7 +341,9 @@ a library's backlog, and the analysis is never urgent.
 
 **How long one file may take.** A deadline of 60 seconds plus the track's own
 duration, which asks the decoder for real time where it ran 650 times faster
-here, so only a stuck process meets it. After it, the process is killed
+here, so only a stuck process meets it, and never more than 30 minutes: the
+duration is what the file's header claims, and a crafted file claiming ten
+hours that hangs FFmpeg must not hold a slot for ten hours. After it, the process is killed
 (`kill_on_drop`) and the file recorded `unreadable` for this content. A file
 that cannot be read is not retried on every wake, which would loop forever on
 one bad file; it is retried when its content changes or the detector's
