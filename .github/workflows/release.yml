@@ -170,6 +170,16 @@ jobs:
     needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # The run's own group is per tag, but `beta` and `latest` are shared by
+    # every tag: two releases publishing at once could interleave their
+    # writes and leave the floating tag on one version in GHCR and another on
+    # Docker Hub. Only this job writes tags, so only this job is serialized;
+    # the builds still run side by side. GitHub keeps one waiting job per
+    # group, so a third release arriving meanwhile cancels the second one's
+    # publish — visibly, and a dispatch of that tag publishes it again.
+    concurrency:
+      group: release-floating-tags
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
