@@ -6,6 +6,10 @@
   RFC). The *Status* field above never flips in this project; this line is the
   one that says what is running.
 - **Date**: 2026-10-24
+- **Revised**: 2026-10-24, after review on #315. A split's provenance is a
+  relation (`track_participant_source`) rather than one column, because one
+  part can come from several credits. Sort forms are paired before the
+  fragments are deduplicated. And an undo finds its rows by `credit_key`.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (identity, the
   frozen Subsonic contract), [RFC-003](RFC-003-waveflow-sync-v2.md) (the user
@@ -231,12 +235,46 @@ transaction, under the writer gate. No file is read:
    A part the track already credits in the same role and sub-role is not
    credited twice, and positions are renumbered so they stay contiguous. The
    relation's `UNIQUE (track_id, role, position)` requires this.
-2. Each new row records the credit it came from, in a new nullable column,
-   **`track_participant.credit`**. A row whose name is its own credit leaves
-   it `NULL`, and every row written before this RFC is in that case.
-3. The joined row's sort form, if any, is cut by decision 2's rule and paired
-   position by position with the parts, or not at all, as `paired_sorts`
-   already does for a joined tag.
+2. Each row the split touches records where it came from, in a new table.
+   One participant row can come from several credits: `ARTISTS = ["A, B",
+   "A, C"]` with both split gives one `A` that two decisions produced, and an
+   `A` credited on its own as well as inside `A, B` is a third case. So the
+   provenance is a relation, not a column:
+
+   ```sql
+   CREATE TABLE track_participant_source (
+       track_id TEXT NOT NULL,
+       artist_id TEXT NOT NULL,
+       library_id TEXT NOT NULL,
+       role TEXT NOT NULL,
+       sub_role TEXT NOT NULL DEFAULT '',
+       -- The decision's key, or the part's own key when the track also
+       -- credits that part in its own right.
+       credit_key TEXT NOT NULL,
+       -- The credit as this track's tags spelled it, and its sort form, so an
+       -- undo restores this track's spelling rather than another track's.
+       credit TEXT NOT NULL,
+       credit_sort TEXT,
+       PRIMARY KEY (track_id, artist_id, role, sub_role, credit_key),
+       FOREIGN KEY (track_id, artist_id, role, sub_role)
+           REFERENCES track_participant(track_id, artist_id, role, sub_role)
+           ON DELETE CASCADE
+   ) STRICT;
+   ```
+
+   A participant row with no source row was never touched by a split, and
+   every row written before this RFC is in that case. A row that a split
+   touched and that the track also credits on its own carries a source row
+   under its own key, so an undo can tell it apart from a part that exists
+   only because of the split.
+3. The joined credit's sort form, if any, is cut by decision 2's rule and
+   paired with the fragments **before** they are deduplicated, position by
+   position, or not at all when the counts differ, as `paired_sorts` does for
+   a joined tag. The pairs are then deduplicated on the name's canonical form,
+   keeping the first. `A, B, B, C` with the sort form `a, b, b, c` therefore
+   gives three parts that keep their three sort forms. Pairing after the
+   deduplication would compare three names with four sort forms and drop all
+   of them. `paired_sorts` itself, which serves the first step, is unchanged.
 4. `album.album_artist_id` is repointed to the first part wherever it named
    the joined artist.
 5. Then the two end-of-scan derivations run for the library, as they do after
@@ -254,7 +292,7 @@ step of decision 1 to the credits it derives, reading the library's decisions
 scan runs is therefore either before a batch, which then applies it, or after
 it, in which case the rewrite above finds the rows that batch wrote. Nothing
 falls between the two. A file that changes, and a full rescan, write the parts
-again, which the desktop does not do.
+again, with their source rows, which the desktop does not do.
 
 A scan's skip path does not rewrite credits, so an unchanged file keeps what
 the rewrite gave it. That is the same result, reached by doing nothing.
@@ -290,14 +328,26 @@ is a contract about shape, as RFC-013 decision 3 already relied on.
 
 Removing a decision restores the state without it:
 
-- **Removing a split** collapses, on every track, the participant rows whose
-  `credit` names it back into one row naming the joined artist. That row is
-  upserted again under its derived id, at the position of the first part, with
-  no sort form until a scan next reads one of those files: the joined sort
-  tag was cut into the parts' and is not kept whole. Then the same derivations, search-index rewrite and
-  events as decision 5 follow. A part that was also credited in its own right
-  on that track keeps that credit, because only rows whose `credit` names the
-  split are collapsed.
+- **Removing a split** finds its rows by the decision's **`credit_key`**, never
+  by comparing spellings. A file retagged from `A, B` to `a, b` after the
+  decision still falls under it, because the key folds case, and the undo
+  still finds that file's rows. On every track, in one transaction under the
+  writer gate:
+  1. the source rows under that key are deleted;
+  2. a participant row the split touched that has no source row left existed
+     only because of the split, and is deleted. A row whose only remaining
+     source is its own key is credited in its own right: it stays, and that
+     source row goes, since the row is no longer touched by any split. A row
+     with another decision's key left, such as the `A` that `A, C` also
+     produced, stays exactly as it is;
+  3. one row naming the joined artist is upserted again under its derived id,
+     where the first of its parts stood, with the spelling and the sort form
+     this track's source rows recorded. Positions are renumbered as in
+     decision 5.
+
+  Then the same derivations, search-index rewrite and events as decision 5
+  follow. The result is the catalogue a scan without the decision would have
+  written, and the tests check exactly that.
 - **Removing a keep** changes no row. The credit simply becomes a candidate
   again and returns to the list.
 
@@ -405,10 +455,10 @@ services"), so the desktop can reach the same rules when it chooses to.
 - **The desktop app** (`InstaZDLL/WaveFlow`): nothing in this repository. Its
   own list keeps writing its own profile. Reading a server library's decisions,
   or sending one, is the desktop's own change, made against the routes above.
-- **Migrations**: one new dated file with `artist_credit_decision` and the
-  `track_participant.credit` column. Both start empty and `NULL`, which is
-  the correct state for a catalogue nobody has decided anything about, so the
-  upgrade schedules no rescan. None edits an applied migration.
+- **Migrations**: one new dated file with `artist_credit_decision` and
+  `track_participant_source`. Both start empty, which is the correct state for
+  a catalogue nobody has decided anything about, so the upgrade schedules no
+  rescan. None edits an applied migration.
 
 ## The order of the work
 
@@ -418,9 +468,16 @@ Each step is its own pull request, shippable without the next:
 2. **Decisions, served**: the migration, the second step in the apply, the
    rewrite and its undo, the moves of favourites and ratings through the
    journal, the library events, `GET …/attention/credits` and the three
-   decision routes. Tests: a split and a rescan agree, an album id survives a
-   split, a decision taken during a scan is not lost, and an undo restores the
-   rows.
+   decision routes. Tests:
+   - a split and a rescan agree;
+   - an album id survives a split;
+   - a decision taken during a scan is not lost;
+   - an undo restores the rows a scan without the decision writes;
+   - `ARTISTS = ["A, B", "A, C"]` with both split, then one undone, keeps `A`
+     and `C` and restores `A, B` alone;
+   - `A, B, B, C` keeps a sort form on each of its three parts;
+   - a file retagged from `A, B` to `a, b` after the split is still undone,
+     with its own spelling.
 3. **The page, for credits**: a "Needs attention" page in the web client's
    "More" menu, shown to members who own or manage at least one library, with
    the library scope the Folders and Upload pages already use. It lists the credits to
