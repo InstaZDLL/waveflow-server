@@ -617,19 +617,52 @@ fn file_stamp(path: &Path) -> Option<(i64, i64)> {
 /// long as the sidecar's size and time stay put — a permission fixed later
 /// moves neither. With no signature the file is read on every scan until the
 /// sidecar can be.
+///
+/// Read without following links, and a sidecar that is not a regular file — a
+/// link, a FIFO, a folder — counts as absent, since `read_sidecar` would not
+/// read it either. Only a regular file is opened, and never in a way that can
+/// block.
 fn sidecar_signature(path: &Path) -> Option<String> {
     let mut parts = Vec::with_capacity(2);
     for extension in ["lrc", "txt"] {
         let sidecar = path.with_extension(extension);
-        match file_stamp(&sidecar) {
-            Some((size, modified_at)) => {
-                fs::File::open(&sidecar).ok()?;
-                parts.push(format!("{extension}:{size}:{modified_at}"));
+        match fs::symlink_metadata(&sidecar) {
+            Ok(metadata) if metadata.is_file() => {
+                sidecar_options().open(&sidecar).ok()?;
+                let modified_at = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                    .map(|value| value.as_millis() as i64)
+                    .unwrap_or(0);
+                parts.push(format!("{extension}:{}:{modified_at}", metadata.len()));
             }
-            None => parts.push(format!("{extension}:-")),
+            _ => parts.push(format!("{extension}:-")),
         }
     }
     Some(parts.join("|"))
+}
+
+/// How a sidecar is opened, for reading it and for checking that it can be:
+/// never through a link, and without blocking on a special file swapped in
+/// after it was looked at.
+fn sidecar_options() -> fs::OpenOptions {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself so descriptor metadata can reject a
+        // symlink instead of validating one path and reading its later target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options
 }
 
 /// What the walk found: the audio files, in path order, and the folders it
@@ -1195,22 +1228,7 @@ fn push_lyrics(found: &mut Vec<LyricsInput>, source: &'static str, content: &str
 }
 
 fn read_sidecar(path: &Path) -> Option<String> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Open the reparse point itself so descriptor metadata can reject a
-        // symlink instead of validating one path and reading its later target.
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let file = options.open(path).ok()?;
+    let file = sidecar_options().open(path).ok()?;
     let metadata = file.metadata().ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_LYRICS_BYTES
     {

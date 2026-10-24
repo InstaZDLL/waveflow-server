@@ -1410,3 +1410,37 @@ async fn a_sidecar_that_cannot_be_opened_is_read_again_once_it_can() {
     assert_eq!(again.updated, 1);
     assert!(sidecar_signature(&state).await.is_some());
 }
+
+/// A sidecar that is a FIFO with no writer does not hang the scan: the
+/// signature never opens anything but a regular file, and the read never
+/// blocks. `scan_once` gives up after two seconds, so a hang fails here.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fifo_beside_an_audio_file_does_not_hang_the_scan() {
+    let (_temp, state, owner, library, _root) = incremental_library("incremental-fifo", |music| {
+        write_test_wav(&music.join("Song.wav"));
+        let fifo = std::ffi::CString::new(
+            music
+                .join("Song.lrc")
+                .to_str()
+                .expect("a UTF-8 temporary path"),
+        )
+        .unwrap();
+        // SAFETY: a valid, NUL-terminated path and an ordinary mode.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) }, 0);
+    })
+    .await;
+    let first = job(
+        &state,
+        owner,
+        scan_once(&state, owner, library.clone()).await,
+    )
+    .await;
+    assert_eq!(first.added, 1);
+    assert_eq!(
+        sidecar_signature(&state).await.as_deref(),
+        Some("lrc:-|txt:-")
+    );
+    let second = job(&state, owner, scan_once(&state, owner, library).await).await;
+    assert_eq!(second.skipped, 1);
+}
