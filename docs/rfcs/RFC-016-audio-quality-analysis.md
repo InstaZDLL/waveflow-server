@@ -353,12 +353,21 @@ A measurement is **of a content, by a version**. It is current when its
 `full_hash` equals the track's and its `version` equals the analyser's.
 Anything else is `pending`, and the next wake measures it.
 
-- **A changed file** gets a new `full_hash` from the scanner, which keeps the
-  track's id: the old measurement stops being current at once, and the page
-  shows `pending` rather than a verdict about bytes that are gone. This is
-  how a fake replaced by its real rip loses its verdict.
-- **A moved file** keeps its hash, and its measurement stays current. A
-  rescan of an unchanged library re-measures nothing.
+- **A changed file at the same path** keeps its track id, since the scanner
+  matches by path first, and gets a new `full_hash`: the old measurement stops
+  being current at once, and the page shows `pending` rather than a verdict
+  about bytes that are gone. This is how a fake replaced in place by its real
+  rip loses its verdict.
+- **A moved file** keeps its track id when the scanner relocates it, by its
+  unchanged hash or, for a file both moved and re-encoded, by a relocation
+  hint that names exactly one missing track. With an unchanged hash its
+  measurement stays current; with a new one it is `pending`, as above. A rescan
+  of an unchanged library re-measures nothing.
+- **A file the scanner cannot relocate** becomes a new track with a new id.
+  Nothing is carried over to it: it starts `pending` and is measured on its
+  own. The old row's measurement stays with the old row, which is unavailable
+  and lists nowhere, and goes with it when the row is deleted. No measurement
+  is ever matched to a track other than the one whose content it measured.
 - **A detector change** bumps `QUALITY_VERSION`, the server's own generation
   of what it stores: the ported wall search, the bit depth and the spectrum's
   bands. It starts at 1, and the port following a new `BANDWIDTH_VERSION` is
@@ -482,7 +491,9 @@ account signed in to the same browser. The revalidation costs an access
 check and no FFmpeg. It is bounded per account by one, and across the server
 by `WAVEFLOW_QUALITY_PARALLELISM` plus one, so a reader can still have one
 drawn while the background analysis runs; beyond that the route answers
-`429` with `Retry-After`. It has a 30-second deadline. Unlike the analysis,
+`429` with `Retry-After`. Access is checked before the bound, so an account
+that may not read the track gets `404` and never learns from a `429` that
+something is there. It has a 30-second deadline. Unlike the analysis,
 it is on the answering path, because a picture someone clicked for is the
 answer; that is why it is bounded and never computed for anyone who did not
 ask. It is drawn for any file, lossy ones included, because a reader may want
