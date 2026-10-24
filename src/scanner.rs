@@ -344,6 +344,11 @@ impl ScanManager {
             self.tick(&progress).await?;
         }
 
+        let walked = Walked {
+            discovered: &discovered,
+            unreadable: &unreadable,
+            incomplete,
+        };
         while let Some(batch) = scanned.next().await {
             let mut applies = Vec::new();
             let mut seen = Vec::new();
@@ -361,7 +366,9 @@ impl ScanManager {
                         continue;
                     }
                     Ok(Scanned::Read(result, signature)) => {
-                        if let Ok(relative) = &relative {
+                        // Only a read that succeeded records what it read: a
+                        // failed one must be tried again, sidecars included.
+                        if let (Ok(relative), Ok(_)) = (&relative, result.as_ref()) {
                             signatures.push((relative.clone(), signature));
                         }
                         Ok(*result)
@@ -415,7 +422,7 @@ impl ScanManager {
                                 self.db
                                     .relocation_candidates(library.id, &input.full_hash)
                                     .await?,
-                                &discovered,
+                                &walked,
                                 &claimed_relocations,
                             );
                             if missing.is_empty() {
@@ -435,7 +442,7 @@ impl ScanManager {
                                             ),
                                         )
                                         .await?,
-                                    &discovered,
+                                    &walked,
                                     &claimed_relocations,
                                 );
                             }
@@ -677,22 +684,47 @@ fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
     })
 }
 
+/// What one walk saw, as relocation needs it: the files it found, and what
+/// it could not look at.
+struct Walked<'a> {
+    discovered: &'a HashSet<String>,
+    unreadable: &'a [String],
+    incomplete: bool,
+}
+
+impl Walked<'_> {
+    /// Whether the walk can say this track's file is gone: it was not found,
+    /// and it does not sit under a folder the walk could not read.
+    fn saw_missing(&self, relative_path: &str) -> bool {
+        !self.incomplete
+            && !self.discovered.contains(relative_path)
+            && !self.unreadable.iter().any(|folder| {
+                relative_path == folder
+                    || relative_path
+                        .strip_prefix(folder.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+    }
+}
+
 /// The candidates a scan may still claim.
 ///
 /// A track whose file this walk found is not missing, whatever a hash or a hint
 /// says about it, and one already claimed by an earlier file in this batch is
-/// spoken for. What survives is what genuinely disappeared — and a relocation
-/// is only recorded when exactly one thing did, because moving a favourite onto
-/// the wrong row is worse than not moving it at all.
+/// spoken for. Nor is one under a folder the walk could not read, or any at all
+/// when the walk could not say what it missed (RFC-018 decision 3): its file
+/// may be right where it was. What survives is what genuinely disappeared — and
+/// a relocation is only recorded when exactly one thing did, because moving a
+/// favourite onto the wrong row is worse than not moving it at all.
 fn unclaimed(
     candidates: Vec<crate::catalog::ExistingTrack>,
-    discovered: &HashSet<String>,
+    walked: &Walked<'_>,
     claimed: &HashSet<Uuid>,
 ) -> Vec<crate::catalog::ExistingTrack> {
     candidates
         .into_iter()
         .filter(|candidate| {
-            !discovered.contains(&candidate.relative_path) && !claimed.contains(&candidate.id)
+            walked.saw_missing(&candidate.relative_path) && !claimed.contains(&candidate.id)
         })
         .collect()
 }
@@ -1200,7 +1232,31 @@ fn lyrics_hash(entries: &[LyricsInput]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extended_tags, read_sidecar, MAX_LYRICS_BYTES};
+    use super::{extended_tags, read_sidecar, Walked, MAX_LYRICS_BYTES};
+
+    /// A track under a folder the walk could not read is not missing, so no
+    /// file elsewhere may claim it; nor may any track when the walk could not
+    /// name what it missed.
+    #[test]
+    fn a_track_the_walk_could_not_see_is_not_missing() {
+        let discovered = std::collections::HashSet::from(["Found/One.wav".to_owned()]);
+        let unreadable = vec!["Locked".to_owned()];
+        let walked = Walked {
+            discovered: &discovered,
+            unreadable: &unreadable,
+            incomplete: false,
+        };
+        assert!(!walked.saw_missing("Found/One.wav"));
+        assert!(!walked.saw_missing("Locked/Two.wav"));
+        assert!(!walked.saw_missing("Locked"));
+        assert!(walked.saw_missing("Lockedness/Three.wav"));
+        assert!(walked.saw_missing("Gone/Four.wav"));
+        let incomplete = Walked {
+            incomplete: true,
+            ..walked
+        };
+        assert!(!incomplete.saw_missing("Gone/Four.wav"));
+    }
     use lofty::{
         prelude::ItemKey,
         tag::{Tag, TagType},
