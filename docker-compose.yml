@@ -1,6 +1,8 @@
 # Pulls the published image. To run your own build instead, uncomment `build`
 # below — with it present Compose builds from this checkout rather than pulling,
 # which is what a contributor wants and what an operator does not.
+# The same image is on Docker Hub as `docker.io/instazdll/waveflow-server`, with
+# the same tags and digest, for a host that pulls from there instead.
 services:
   waveflow:
     image: ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
