@@ -67,6 +67,7 @@ import { LoginPage } from "./pages/login-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { PlayingPage } from "./pages/playing-page";
 import { PlaylistsPage } from "./pages/playlists-page";
+import { isQualityVerdict, QualityPage } from "./pages/quality-page";
 import { QueuePage } from "./pages/queue-page";
 import { RadioPage } from "./pages/radio-page";
 import { RandomPage } from "./pages/random-page";
@@ -119,6 +120,7 @@ const navigation: Array<{
     | "/songs"
     | "/folders"
     | "/attention"
+    | "/quality"
     | "/genres"
     | "/search"
     | "/favourites"
@@ -165,6 +167,12 @@ const navigation: Array<{
     labelKey: "nav.attention",
     icon: "info",
     curate: true,
+    group: "library",
+  },
+  {
+    to: "/quality",
+    labelKey: "nav.quality",
+    icon: "quality",
     group: "library",
   },
   {
@@ -312,6 +320,7 @@ async function prepareTab(
     case "/folders":
     // Its lists are asked for once the page knows the active library.
     case "/attention":
+    case "/quality":
       break;
     // A fresh draw on every ask, held for no time at all: a draw made here
     // is thrown away before the page mounts, and the page then draws again.
@@ -904,6 +913,20 @@ const attentionRoute = createRoute({
   },
 });
 
+// The verdict filter is a search parameter, so a filtered list can be linked
+// to, as the lists of "Needs attention" can.
+const qualityRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/quality",
+  validateSearch: (search: Record<string, unknown>) => ({
+    verdict: isQualityVerdict(search.verdict) ? search.verdict : undefined,
+  }),
+  component: function QualityRoute() {
+    const { verdict } = qualityRoute.useSearch();
+    return <QualityPage verdict={verdict} />;
+  },
+});
+
 const uploadRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/upload",
@@ -934,6 +957,7 @@ const routeTree = rootRoute.addChildren([
     songsRoute,
     foldersRoute,
     attentionRoute,
+    qualityRoute,
     artistsRoute,
     artistRoute,
     genresRoute,

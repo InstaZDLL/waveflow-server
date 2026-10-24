@@ -3451,3 +3451,130 @@ button.danger {
     justify-content: flex-start;
   }
 }
+
+/* The quality page (RFC-016). The verdicts read as the lists of "Needs
+   attention" do, one card per verdict in a wrapping grid, an empty one
+   greyed; the verdict itself is a pill whose colour says how much it accuses
+   the file of, and the words say the rest. */
+.quality-help {
+  max-width: 62ch;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.quality-verdicts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.quality-format {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.quality-verdict {
+  display: inline-block;
+  padding: 0.1rem var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.quality-verdict.finding {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.quality-verdict.mild {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.quality-verdict.neutral {
+  color: var(--muted);
+}
+
+.quality-highs {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quality-analyse {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+}
+
+.quality-analyse-notice {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.quality-explain {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.quality-spectrum {
+  margin: var(--space-3) 0;
+}
+
+.quality-spectrum svg {
+  display: block;
+  width: 100%;
+  height: 9rem;
+  overflow: visible;
+}
+
+.quality-spectrum figcaption {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.quality-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-wall {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-gridline line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-gridline text {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.quality-spectrogram {
+  margin: var(--space-3) 0 0;
+}
+
+.quality-spectrogram img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+.quality-spectrogram-action {
+  margin-top: var(--space-3);
+}

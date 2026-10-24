@@ -17,7 +17,8 @@ export type AttentionCategory =
   | "compilation_no_album_artist"
   | "duplicate_track_number"
   | "track_number_gap"
-  | "probable_duplicate";
+  | "probable_duplicate"
+  | "probable_fake_lossless";
 
 /** A track category: every category but the credits. */
 export type TrackCategory = Exclude<AttentionCategory, "split_credits">;

@@ -3432,10 +3432,11 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The thirteen the bar cannot hold — including the three this account is
+  // The fourteen the bar cannot hold — including the three this account is
   // entitled to as an administrator and owner of a library that takes files.
   // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
-  // `Needs attention` with RFC-015; this count is what said so: a new entry in
+  // `Needs attention` with RFC-015 and `Quality` with RFC-016; this count is
+  // what said so: a new entry in
   // the sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
@@ -3443,6 +3444,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Genres",
     "Folders",
     "Needs attention",
+    "Quality",
     "Settings",
     "Random",
     "Recently played",
@@ -3456,7 +3458,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(13);
+  await expect(sheet.getByRole("link")).toHaveCount(14);
 
   await expectNoWcagViolations(page);
 
@@ -3495,6 +3497,8 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Shares" })).toBeVisible();
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
+  // Every member reads the quality of the files (RFC-016).
+  await expect(sheet.getByRole("link", { name: "Quality" })).toBeVisible();
   // Nothing on it is a listener's to decide (RFC-015).
   await expect(
     sheet.getByRole("link", { name: "Needs attention" }),
@@ -6182,3 +6186,208 @@ for (const theme of [
     await expectNoWcagViolations(page);
   });
 }
+
+/**
+ * The quality page (RFC-016), as the server answers it: the counts per
+ * verdict, the files worst first, one file's measurement with its averaged
+ * spectrum, and a spectrogram drawn when asked. Held here so a test can watch
+ * what the page asks for and writes.
+ */
+async function serveQuality(page: Page) {
+  const fake = {
+    ...song(31, "Made From An MP3", 0, false),
+    bit_depth: 24,
+    bitrate: 812,
+    quality: {
+      verdict: "lossy_source",
+      cutoff_hz: 16_390,
+      wall_db: 41.2,
+      nyquist_hz: 22_050,
+      effective_bits: 24,
+      analyzed_at: 1_700_000_000_000,
+    },
+  };
+  const genuine = {
+    ...song(32, "Straight From The Desk", 0, false),
+    quality: {
+      verdict: "consistent",
+      cutoff_hz: null,
+      wall_db: 4.1,
+      nyquist_hz: 22_050,
+      effective_bits: 16,
+      analyzed_at: 1_700_000_000_000,
+    },
+  };
+  const state = {
+    asked: [] as string[],
+    writes: [] as string[],
+    spectrograms: 0,
+  };
+  const base = "**/api/v2/libraries/library-1";
+  await page.route(`${base}/quality`, (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        lossless: 3,
+        measured: 2,
+        verdicts: [
+          { verdict: "lossy_source", count: 1 },
+          { verdict: "upsampled", count: 0 },
+          { verdict: "padded", count: 0 },
+          { verdict: "unreadable", count: 0 },
+          { verdict: "silent", count: 0 },
+          { verdict: "pending", count: 1 },
+          { verdict: "consistent", count: 1 },
+          { verdict: "lossy", count: 4 },
+          { verdict: "not_measured", count: 0 },
+        ],
+      },
+    }),
+  );
+  await page.route(`${base}/quality/tracks?*`, (route) => {
+    const url = new URL(route.request().url());
+    state.asked.push(url.search);
+    const verdict = url.searchParams.get("verdict");
+    const all = [fake, genuine];
+    return route.fulfill({
+      json: verdict
+        ? all.filter((item) => item.quality.verdict === verdict)
+        : all,
+    });
+  });
+  await page.route(`${base}/quality/analysis`, async (route) => {
+    state.writes.push(route.request().method());
+    await route.fulfill({ status: 202, body: "" });
+  });
+  await page.route("**/api/v2/tracks/song-31/quality", (route) =>
+    route.fulfill({
+      json: {
+        ...fake.quality,
+        // Level to 16 kHz, then a wall: what LAME leaves at 128 kbps.
+        spectrum: Array.from({ length: 256 }, (_, band) =>
+          band < 190 ? -20 - band / 20 : -95,
+        ),
+      },
+    }),
+  );
+  await page.route("**/api/v2/tracks/song-31", (route) =>
+    route.fulfill({
+      json: {
+        ...fake,
+        relative_path: "Fakes/Made From An MP3.flac",
+        full_hash: "b".repeat(64),
+        created_at: 1_700_000_000_000,
+      },
+    }),
+  );
+  // No correction: the catch-all would answer with a track, which the panel
+  // would read as one.
+  await page.route("**/api/v2/tracks/song-31/overrides", (route) =>
+    route.fulfill({ status: 404, json: { error: "not found" } }),
+  );
+  await page.route("**/api/v2/tracks/song-31/spectrogram", async (route) => {
+    state.spectrograms += 1;
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "content-type": "image/png",
+        "cache-control": "private, no-cache",
+      },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4m8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+  });
+  return state;
+}
+
+test("lists a library's files by what their audio says, worst first", async ({
+  page,
+}) => {
+  const state = await serveQuality(page);
+  await page.goto("/quality");
+  await expect(page.getByRole("heading", { name: "Quality" })).toBeVisible();
+  await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
+
+  const verdicts = page.getByRole("list", { name: "Verdicts" });
+  await expect(
+    verdicts.getByRole("link", { name: /Probably from a lossy file/ }),
+  ).toContainText("1");
+  const rows = page.locator(".quality-table tbody tr");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("Made From An MP3");
+  await expect(rows.first()).toContainText("16.4 kHz");
+  await expect(rows.first()).toContainText("Probably from a lossy file");
+  await expect(rows.nth(1)).toContainText("Full band");
+  await expect(rows.nth(1)).toContainText("No sign of a lossy source");
+  await expectNoWcagViolations(page);
+
+  // A verdict filters through the server, and is written in the address.
+  await verdicts
+    .getByRole("link", { name: /Probably from a lossy file/ })
+    .click();
+  await expect(page).toHaveURL(/verdict=lossy_source/);
+  await expect(rows).toHaveCount(1);
+  expect(
+    state.asked.some((search) => search.includes("verdict=lossy_source")),
+  ).toBe(true);
+
+  // A file opens on its real quality: the verdict, the numbers behind it, the
+  // spectrum it was judged on, and no spectrogram until somebody asks.
+  await page
+    .getByRole("button", { name: /^Made From An MP3/ })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Real quality" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("img", {
+      name: "Averaged spectrum: the highs stop at 16.4 kHz.",
+    }),
+  ).toBeVisible();
+  expect(state.spectrograms).toBe(0);
+  await dialog.getByRole("button", { name: "Show the spectrogram" }).click();
+  await expect(
+    dialog.getByRole("img", { name: /Spectrogram of Made From An MP3/ }),
+  ).toBeVisible();
+  expect(state.spectrograms).toBe(1);
+  await expectNoWcagViolations(page);
+});
+
+test("asks for the whole library to be analysed again on the second click", async ({
+  page,
+}) => {
+  const state = await serveQuality(page);
+  await page.goto("/quality");
+  await page.getByRole("button", { name: "Analyse again" }).click();
+  expect(state.writes).toEqual([]);
+  await page
+    .getByRole("button", { name: "Confirm: analyse the whole library again" })
+    .click();
+  await expect(
+    page.getByText("The library will be analysed again in the background."),
+  ).toBeVisible();
+  expect(state.writes).toEqual(["POST"]);
+});
+
+test("shows a listener the quality, and nothing to ask for", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  await serveQuality(page);
+  await page.goto("/quality");
+  await expect(page.locator(".quality-table tbody tr")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "Analyse again" }),
+  ).toHaveCount(0);
+});
+
+test("keeps the quality page readable in the light", async ({ page }) => {
+  await serveQuality(page);
+  await chooseLightTheme(page);
+  await page.goto("/quality");
+  await expect(page.locator(".quality-table tbody tr")).toHaveCount(2);
+  await expectNoWcagViolations(page);
+});
