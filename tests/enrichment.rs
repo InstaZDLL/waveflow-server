@@ -2315,6 +2315,13 @@ async fn a_chosen_banner_wins_and_the_fanart_comes_back_when_it_goes() {
     assert_ne!(page.banner_hash.as_deref(), Some(fanart.as_str()));
     assert!(page.banner_hash.is_some());
     assert!(page.enrichment.unwrap().banner.is_none());
+    // The same rule from the other entry point, the one getArtistInfo reads.
+    let enrichment = state
+        .services
+        .artist_enrichment(owner, bjork, 20)
+        .await
+        .unwrap();
+    assert!(enrichment.banner.is_none());
 
     state
         .services

@@ -5473,12 +5473,17 @@ test("credits TheAudioDB for an automatic banner and nobody for a chosen one", a
 }) => {
   await serveArtistImages(page);
   let chosen = false;
+  // Cached but not yet linked on the artist row: the enrichment alone names
+  // it, as it can on the visit after an artist is re-identified.
+  let linked = false;
   await page.route("**/api/v2/artists/artist-1", (route) =>
     route.fulfill({
       json: {
         ...artistDetail,
         library_id: "library-1",
-        banner_hash: (chosen ? "b" : "c").repeat(64),
+        ...(chosen || linked
+          ? { banner_hash: (chosen ? "b" : "c").repeat(64) }
+          : {}),
         ...(chosen
           ? { image_choice: { banner: { source: "upload", set_at: 1 } } }
           : {}),
@@ -5503,6 +5508,11 @@ test("credits TheAudioDB for an automatic banner and nobody for a chosen one", a
 
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expect(hero.getByText(/^Banner from TheAudioDB, /)).toBeVisible();
+
+  linked = true;
+  await page.reload();
   await expect(hero.locator("img.artist-banner")).toBeVisible();
   await expect(hero.getByText(/^Banner from TheAudioDB, /)).toBeVisible();
   await expectNoWcagViolations(page);

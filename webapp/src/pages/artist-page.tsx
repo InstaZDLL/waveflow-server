@@ -119,8 +119,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   // The banner chosen by hand (RFC-013) or TheAudioDB's fanart (RFC-014), or
   // else the portrait, blurred, as the desktop draws it: a header that carries
   // the artist even with no banner.
-  const banner = value.banner_hash ?? null;
+  // The enrichment names an automatic banner as soon as it is cached, which
+  // may be a visit before the artist row is linked again — as the portrait.
   const bannerSource = value.enrichment?.banner ?? null;
+  const banner = value.banner_hash ?? bannerSource?.artwork_hash ?? null;
   const backdrop = banner ?? portrait;
   // Offered where the server would take it: owners and managers.
   const mayChoose = mayCorrectTracks(

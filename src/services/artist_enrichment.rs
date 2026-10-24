@@ -28,13 +28,10 @@ impl DomainServices {
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
         let mut detail = self.artist(user_id, artist_id).await?;
-        let mut enrichment = self
-            .enrichment_of(user_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
-            .await?;
-        if detail.image_choice.banner.is_some() {
-            enrichment.banner = None;
-        }
-        detail.enrichment = Some(enrichment);
+        detail.enrichment = Some(
+            self.enrichment_of(user_id, artist_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
+                .await?,
+        );
         Ok(detail)
     }
 
@@ -46,7 +43,7 @@ impl DomainServices {
         similar_limit: usize,
     ) -> Result<ArtistEnrichment, ServiceError> {
         let summary = self.artist_summary(user_id, artist_id).await?;
-        self.enrichment_of(user_id, &summary.artist.name, similar_limit)
+        self.enrichment_of(user_id, artist_id, &summary.artist.name, similar_limit)
             .await
     }
 
@@ -54,6 +51,7 @@ impl DomainServices {
     async fn enrichment_of(
         &self,
         user_id: Uuid,
+        artist_id: Uuid,
         name: &str,
         similar_limit: usize,
     ) -> Result<ArtistEnrichment, ServiceError> {
@@ -74,7 +72,20 @@ impl DomainServices {
             .await?;
         let bio = merged_bio(&rows);
         let image = merged_image(&rows);
-        let banner = merged_banner(&rows);
+        // Credited only while it is the banner shown (RFC-014 decision 4): a
+        // banner chosen by hand came from no provider, whichever entry point
+        // asks.
+        let chosen_banner: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM artist_image_choice              WHERE artist_id=? AND kind='banner')",
+        )
+        .bind(artist_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        let banner = if chosen_banner {
+            None
+        } else {
+            merged_banner(&rows)
+        };
         // Only a fresh row is an answer. An expired one has just had its
         // refresh scheduled, and an expired miss is not "nobody knows" but
         // "being asked again" — `pending`, as decision 11 defines it. Stale
