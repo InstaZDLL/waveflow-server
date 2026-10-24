@@ -16,6 +16,7 @@ pub mod outbound;
 pub mod pid;
 pub mod playlist_file;
 pub mod portrait;
+pub mod quality;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
@@ -154,6 +155,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::list_credit_decisions,
         api::create_credit_decision,
         api::delete_credit_decision,
+        api::quality_summary,
+        api::quality_tracks,
+        api::request_quality_analysis,
+        api::track_quality,
+        api::track_spectrogram,
         api::get_track,
         api::update_track,
         api::get_track_lyrics,
@@ -331,6 +337,12 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::CreditFragment,
         services::CreditDecisionKind,
         services::CreditDecisionRecord,
+        services::QualitySummary,
+        services::QualityVerdict,
+        services::QualityVerdictCount,
+        services::QualityTrack,
+        services::TrackQuality,
+        services::TrackQualityDetail,
         api::CreditDecisionRequest,
         services::FolderPatch,
         services::FolderRemoved,
@@ -740,6 +752,15 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         &config.metadata,
         config.artwork_dir.clone(),
     )?);
+    // Before anything reads `track_quality`: a measurement another analyser or
+    // another FFmpeg made is deleted here, so every read can call a row current
+    // on its content hash alone (RFC-016 decision 5).
+    services
+        .use_quality_decoder(quality::Decoder {
+            digest: media.ffmpeg_digest().to_owned(),
+            webp: quality::probe_webp(&config.ffmpeg_path).await,
+        })
+        .await?;
     Ok(AppState {
         db,
         auth,

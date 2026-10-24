@@ -53,6 +53,9 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
         }
     }
     state.scanner.spawn_background(config.scan_interval);
+    // At boot, then whenever a scan finishes or a library is asked to be
+    // analysed again; one core at most by default, and off at zero (RFC-016).
+    state.services.spawn_quality_analyzer();
     // Abandoned transfers hold the operator's disk, and nothing else would
     // reclaim it until somebody offered another file.
     state.services.spawn_upload_sweeper();

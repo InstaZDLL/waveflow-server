@@ -15,7 +15,7 @@ use lofty::{
     file::TaggedFileExt,
     prelude::{Accessor, AudioFile, ItemKey},
 };
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, watch, Mutex};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -85,6 +85,19 @@ pub struct ScanManager {
     parallelism: usize,
     events: Arc<DashMap<Uuid, broadcast::Sender<ScanProgress>>>,
     library_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
+    /// How many scan jobs are running, of any library. The quality analysis
+    /// (RFC-016 decision 4) starts no file while this is above zero, and wakes
+    /// when it falls back to it.
+    in_flight: Arc<watch::Sender<usize>>,
+}
+
+/// One scan counted as running, for as long as this lives.
+pub struct ScanInFlight(Arc<watch::Sender<usize>>);
+
+impl Drop for ScanInFlight {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count = count.saturating_sub(1));
+    }
 }
 
 impl ScanManager {
@@ -119,7 +132,20 @@ impl ScanManager {
             parallelism: parallelism.max(1),
             events: Arc::new(DashMap::new()),
             library_locks: Arc::new(DashMap::new()),
+            in_flight: Arc::new(watch::Sender::new(0)),
         }
+    }
+
+    /// Counts a scan as running until the guard is dropped. Every job takes
+    /// one for its whole run, success or failure.
+    pub fn begin_scan(&self) -> ScanInFlight {
+        self.in_flight.send_modify(|count| *count += 1);
+        ScanInFlight(Arc::clone(&self.in_flight))
+    }
+
+    /// How many scans are running, and a way to wait for that to change.
+    pub fn scans_in_flight(&self) -> watch::Receiver<usize> {
+        self.in_flight.subscribe()
     }
 
     pub async fn trigger(
@@ -146,7 +172,9 @@ impl ScanManager {
         let (sender, _) = broadcast::channel(128);
         self.events.insert(scan_id, sender);
         let manager = self.clone();
+        let running = self.begin_scan();
         tokio::spawn(async move {
+            let _running = running;
             if let Err(error) = manager.run(scan_id, library).await {
                 tracing::error!(%scan_id, error = %error, "library scan failed");
                 let message = error.to_string();

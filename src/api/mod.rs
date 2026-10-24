@@ -35,6 +35,7 @@ mod oauth;
 mod playback;
 mod playlists;
 mod probes;
+mod quality;
 mod radio;
 mod scrobbling;
 mod setup;
@@ -60,6 +61,7 @@ pub use oauth::*;
 pub use playback::*;
 pub use playlists::*;
 pub use probes::*;
+pub use quality::*;
 pub use radio::*;
 pub use scrobbling::*;
 pub use setup::*;
@@ -155,6 +157,23 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/libraries/{library_id}/credit-decisions/{decision_id}",
             delete(delete_credit_decision),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/quality",
+            get(quality_summary),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/quality/tracks",
+            get(quality_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/quality/analysis",
+            post(request_quality_analysis),
+        )
+        .route("/api/v2/tracks/{track_id}/quality", get(track_quality))
+        .route(
+            "/api/v2/tracks/{track_id}/spectrogram",
+            get(track_spectrogram),
         )
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
         .route(

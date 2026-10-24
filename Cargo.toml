@@ -49,6 +49,7 @@ md-5 = "0.11"
 # percent escapes out of playlist entries and a transitive dependency is not a
 # promise.
 percent-encoding = "2"
+realfft = "3"
 rand = "0.10"
 # The feature set is `waveflow-core`'s, deliberately, minus `blocking` which
 # nothing here needs. That crate already pulls reqwest over rustls into this
@@ -89,6 +90,7 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df003
 
 [dev-dependencies]
 http-body-util = "0.1"
+realfft = "3"
 tempfile = "3"
 tokio-tungstenite = "0.30"
 
@@ -172,3 +174,7 @@ path = "tests/enrichment.rs"
 [[test]]
 name = "credits"
 path = "tests/credits.rs"
+
+[[test]]
+name = "quality"
+path = "tests/quality.rs"
