@@ -696,7 +696,7 @@ impl Config {
 
         let metadata = parse_metadata_settings()?;
         let trusted_proxies =
-            parse_trusted_proxies(&std::env::var("WAVEFLOW_TRUSTED_PROXIES").unwrap_or_default())?;
+            parse_proxy_addresses(&std::env::var("WAVEFLOW_TRUSTED_PROXIES").unwrap_or_default())?;
 
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
@@ -1092,7 +1092,7 @@ fn normalize_public_url(value: &str) -> anyhow::Result<String> {
 /// `WAVEFLOW_TRUSTED_PROXIES`: addresses or CIDR blocks. A bare address is its
 /// own block. A typo refuses to boot rather than trusting less, or more, than
 /// the operator wrote.
-fn parse_trusted_proxies(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
+fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
     list.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -1275,7 +1275,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 mod tests {
     use super::normalize_public_url;
     use super::parse_metadata_providers;
-    use super::parse_trusted_proxies;
+    use super::parse_proxy_addresses;
     use super::DEFAULT_DB_ACQUIRE_TIMEOUT_MS;
     use super::{parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
     use super::{validate_canvas, CanvasLimits};
@@ -1296,14 +1296,14 @@ mod tests {
     /// RFC-017 decision 2: addresses and blocks alike, and a typo refuses to boot.
     #[test]
     fn trusted_proxies_are_read_strictly() {
-        assert!(parse_trusted_proxies("").unwrap().is_empty());
-        let proxies = parse_trusted_proxies(" 10.0.0.0/8, 192.168.1.5 , ::1 ").unwrap();
+        assert!(parse_proxy_addresses("").unwrap().is_empty());
+        let proxies = parse_proxy_addresses(" 10.0.0.0/8, 192.168.1.5 , ::1 ").unwrap();
         assert_eq!(proxies.len(), 3);
         assert!(proxies[0].contains(&"10.1.2.3".parse::<std::net::IpAddr>().unwrap()));
         assert!(proxies[1].contains(&"192.168.1.5".parse::<std::net::IpAddr>().unwrap()));
         assert!(!proxies[1].contains(&"192.168.1.6".parse::<std::net::IpAddr>().unwrap()));
-        assert!(parse_trusted_proxies("10.0.0.0/33").is_err());
-        assert!(parse_trusted_proxies("proxy.local").is_err());
+        assert!(parse_proxy_addresses("10.0.0.0/33").is_err());
+        assert!(parse_proxy_addresses("proxy.local").is_err());
     }
 
     /// RFC-011 decision 3: empty is off, and every typo refuses to boot rather
