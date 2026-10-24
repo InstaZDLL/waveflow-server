@@ -1099,7 +1099,8 @@ fn normalize_public_url(value: &str) -> anyhow::Result<String> {
 
 /// `WAVEFLOW_TRUSTED_PROXIES`: addresses or CIDR blocks. A bare address is its
 /// own block. A typo refuses to boot rather than trusting less, or more, than
-/// the operator wrote.
+/// the operator wrote. A block written in IPv4-mapped form is read as the IPv4
+/// block it spells, which is how the limiter compares it.
 fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
     list.split(',')
         .map(str::trim)
@@ -1108,6 +1109,7 @@ fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
             entry
                 .parse::<ipnet::IpNet>()
                 .or_else(|_| entry.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
+                .map(crate::sign_in::trusted_network)
                 .map_err(|_| anyhow::anyhow!("invalid WAVEFLOW_TRUSTED_PROXIES entry {entry:?}"))
         })
         .collect()
@@ -1310,6 +1312,8 @@ mod tests {
         assert!(proxies[0].contains(&"10.1.2.3".parse::<std::net::IpAddr>().unwrap()));
         assert!(proxies[1].contains(&"192.168.1.5".parse::<std::net::IpAddr>().unwrap()));
         assert!(!proxies[1].contains(&"192.168.1.6".parse::<std::net::IpAddr>().unwrap()));
+        let mapped = parse_proxy_addresses("::ffff:10.0.0.5").unwrap();
+        assert!(mapped[0].contains(&"10.0.0.5".parse::<std::net::IpAddr>().unwrap()));
         assert!(parse_proxy_addresses("10.0.0.0/33").is_err());
         assert!(parse_proxy_addresses("proxy.local").is_err());
     }

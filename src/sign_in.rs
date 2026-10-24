@@ -120,23 +120,15 @@ pub fn canonical_account(username: &str) -> String {
 /// An IPv4-mapped IPv6 address is read as the IPv4 address it carries, the
 /// peer included: a dual-stack listener reports an IPv4 proxy as
 /// `::ffff:10.0.0.2`, which an IPv4 network in the list would not contain.
-/// An IPv4 address is trusted under either spelling, so a list that names the
-/// proxy in its mapped form still holds it.
+/// The list is compared family by family, so a mapped entry has to have been
+/// read as IPv4 too — [`trusted_network`] does that when the list is loaded.
 pub fn client_address(
     peer: Option<IpAddr>,
     headers: &HeaderMap,
     trusted: &[IpNet],
 ) -> Option<IpAddr> {
     let peer = unmapped(peer?);
-    let is_trusted = |address: &IpAddr| {
-        let mapped = match address {
-            IpAddr::V4(v4) => Some(IpAddr::V6(v4.to_ipv6_mapped())),
-            IpAddr::V6(_) => None,
-        };
-        trusted.iter().any(|net| {
-            net.contains(address) || mapped.as_ref().is_some_and(|mapped| net.contains(mapped))
-        })
-    };
+    let is_trusted = |address: &IpAddr| trusted.iter().any(|net| net.contains(address));
     if !is_trusted(&peer) {
         return Some(peer);
     }
@@ -164,6 +156,23 @@ pub fn client_address(
         }
     }
     Some(peer)
+}
+
+/// A trusted network as [`client_address`] compares it: an IPv4-mapped block,
+/// `::ffff:a.b.c.d/(96+n)`, becomes the IPv4 block `a.b.c.d/n` it spells.
+///
+/// Only a block inside the mapped range is rewritten. A wider IPv6 block, `::/0`
+/// say, stays IPv6 and holds no IPv4 client: trusting every IPv6 proxy is not
+/// a reason to trust every IPv4 one.
+pub fn trusted_network(net: IpNet) -> IpNet {
+    match net {
+        IpNet::V6(v6) if v6.prefix_len() >= 96 => v6
+            .network()
+            .to_ipv4_mapped()
+            .and_then(|v4| ipnet::Ipv4Net::new(v4, v6.prefix_len() - 96).ok())
+            .map_or(net, IpNet::V4),
+        _ => net,
+    }
 }
 
 /// An IPv4-mapped IPv6 address as the IPv4 address it carries; any other
@@ -555,14 +564,31 @@ mod tests {
             ),
             Some(ip("198.51.100.7"))
         );
-        // And a list naming the proxy in its mapped form holds it whichever
-        // way the socket reports it.
+        // A list naming the proxy in its mapped form holds it whichever way
+        // the socket reports it, once loaded.
+        let mapped = vec![trusted_network("::ffff:10.0.0.0/104".parse().unwrap())];
+        assert_eq!(mapped, nets(&["10.0.0.0/8"]));
         for peer in ["::ffff:10.0.0.2", "10.0.0.2"] {
             assert_eq!(
-                client_address(Some(ip(peer)), &headers, &nets(&["::ffff:10.0.0.0/104"])),
+                client_address(Some(ip(peer)), &headers, &mapped),
                 Some(ip("198.51.100.7"))
             );
         }
+        // But an IPv6 block wider than the mapped range trusts no IPv4 peer:
+        // were it trusted, the walk would hand back the hop before the
+        // malformed entry instead of the peer.
+        let wide = vec![trusted_network("::/0".parse().unwrap())];
+        let headers = forwarded(&["garbage, 198.51.100.7"]);
+        for peer in ["::ffff:10.0.0.2", "10.0.0.2"] {
+            assert_eq!(
+                client_address(Some(ip(peer)), &headers, &wide),
+                Some(ip("10.0.0.2"))
+            );
+        }
+        assert_eq!(
+            trusted_network("2001:db8::/96".parse().unwrap()),
+            "2001:db8::/96".parse::<IpNet>().unwrap()
+        );
     }
 
     #[test]
