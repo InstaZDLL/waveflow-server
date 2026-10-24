@@ -1,7 +1,8 @@
 # RFC-017 — Hardening sign-in: failed attempts, timing, and the cost of a guess
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in this
+- **Implemented by**: in progress: [#321](https://github.com/InstaZDLL/waveflow-server/pull/321)
+  (this RFC). The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
