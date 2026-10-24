@@ -831,6 +831,8 @@ pub fn app(config: &Config, state: AppState) -> Router {
     // thing in this server that four clients were replayed to establish.
     let compressible = Router::new()
         .merge(ordinary)
+        // A portrait search may take minutes; it keeps a timeout of its own.
+        .merge(api::search_router(state.clone()))
         // Anything no API route claimed is served by the embedded web client:
         // a built asset, or the shell for a client-side route. This is what
         // the layer is mostly for — the built client leaves raw at roughly

@@ -1355,6 +1355,10 @@ pub struct DomainServices {
     /// [`Self::use_enrichment`], like the scrobbling adapters and for the same
     /// reason: a test drives it against a provider of its own.
     enrichment: Arc<std::sync::RwLock<crate::enrichment::Enrichment>>,
+    /// How long a portrait search's task may run, in milliseconds (RFC-013):
+    /// [`ARTIST_IMAGE_SEARCH_DEADLINE`], except where a test shortens it
+    /// rather than wait five minutes.
+    image_search_deadline_ms: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1423,7 +1427,7 @@ mod sync;
 mod track_metadata;
 pub(crate) mod uploads;
 
-pub use artist_image_search::ArtistImageCandidate;
+pub use artist_image_search::{ArtistImageCandidate, ARTIST_IMAGE_SEARCH_DEADLINE};
 pub use artist_images::ArtistImageKind;
 /// Crate-visible only: the adapter builds the browser-less journey's address
 /// from it, and nothing outside this binary has a use for it.
@@ -1497,6 +1501,9 @@ impl DomainServices {
             lastfm_exchanges: Arc::new(dashmap::DashMap::new()),
             enrichment: Arc::new(std::sync::RwLock::new(
                 crate::enrichment::Enrichment::disabled(),
+            )),
+            image_search_deadline_ms: Arc::new(std::sync::atomic::AtomicU64::new(
+                u64::try_from(ARTIST_IMAGE_SEARCH_DEADLINE.as_millis()).unwrap_or(u64::MAX),
             )),
         }
     }

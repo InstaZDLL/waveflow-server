@@ -40,7 +40,7 @@ const SEARCH_LIFE_MS: i64 = 60 * 60 * 1000;
 
 /// How long a search's task may run, from the moment it was recorded: the
 /// pace it shares with enrichment, the requests and the writes alike.
-const FETCH_DEADLINE: Duration = Duration::from_secs(5 * 60);
+pub const ARTIST_IMAGE_SEARCH_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const FETCH_DEADLINE_MS: i64 = 5 * 60 * 1000;
 
 /// One Deezer artist offered as the portrait, with the preview the server
@@ -129,6 +129,25 @@ pub(super) async fn forget_spent_searches(
 }
 
 impl DomainServices {
+    /// Shortens how long a portrait search's task may run, so a test can see
+    /// it stop without waiting five minutes. Never shorter is the rule the
+    /// 429 and the sweep rely on: they count a search as stopped only past
+    /// [`ARTIST_IMAGE_SEARCH_DEADLINE`], which a shorter task never reaches.
+    pub fn shorten_image_search_deadline(&self, deadline: Duration) {
+        let deadline = deadline.min(ARTIST_IMAGE_SEARCH_DEADLINE);
+        self.image_search_deadline_ms.store(
+            u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    fn image_search_deadline(&self) -> Duration {
+        Duration::from_millis(
+            self.image_search_deadline_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
     fn enrichment_engine(&self) -> Enrichment {
         self.enrichment
             .read()
@@ -155,12 +174,13 @@ impl DomainServices {
             return Err(ServiceError::NotFound);
         }
         let (asked, key) = query_key(query).ok_or(ServiceError::Invalid)?;
-        let (search_id, searched_at, deadline) = {
+        let (search_id, deadline_ms, deadline) = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.pool().begin().await?;
             chooser_library(&mut tx, user_id, artist_id).await?;
             let now = now_ms();
-            let deadline = tokio::time::Instant::now() + FETCH_DEADLINE;
+            let task_deadline = self.image_search_deadline();
+            let deadline = tokio::time::Instant::now() + task_deadline;
             if let Some(search_id) = live_search(&mut tx, artist_id, &key, now).await? {
                 let candidates = candidates_of(&mut tx, &search_id).await?;
                 tx.commit().await?;
@@ -193,7 +213,9 @@ impl DomainServices {
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
-            (search_id, now, deadline)
+            let deadline_ms =
+                now.saturating_add(i64::try_from(task_deadline.as_millis()).unwrap_or(i64::MAX));
+            (search_id, deadline_ms, deadline)
         };
         // The fetching is not the request's: a client that goes away drops
         // this handler mid-await, and the task goes on to complete the search
@@ -201,7 +223,7 @@ impl DomainServices {
         let services = self.clone();
         tokio::spawn(async move {
             services
-                .fetch_search(engine, search_id, searched_at, deadline, asked)
+                .fetch_search(engine, search_id, deadline_ms, deadline, asked)
                 .await
         })
         .await
@@ -214,7 +236,7 @@ impl DomainServices {
         &self,
         engine: Enrichment,
         search_id: String,
-        searched_at: i64,
+        deadline_ms: i64,
         deadline: tokio::time::Instant,
         query: String,
     ) -> Result<Vec<ArtistImageCandidate>, ServiceError> {
@@ -223,7 +245,7 @@ impl DomainServices {
                 .deezer_candidates(&query, CANDIDATE_LIMIT)
                 .await
                 .map_err(|_| ServiceError::Unavailable)?;
-            self.complete_search(&search_id, searched_at, &candidates)
+            self.complete_search(&search_id, deadline_ms, &candidates)
                 .await
         })
         .await
@@ -240,13 +262,13 @@ impl DomainServices {
     async fn complete_search(
         &self,
         search_id: &str,
-        searched_at: i64,
+        deadline_ms: i64,
         candidates: &[DeezerCandidate],
     ) -> Result<Vec<ArtistImageCandidate>, ServiceError> {
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.pool().begin().await?;
         let now = now_ms();
-        if now > searched_at.saturating_add(FETCH_DEADLINE_MS) {
+        if now > deadline_ms {
             sqlx::query("DELETE FROM artist_image_search WHERE id=?")
                 .bind(search_id)
                 .execute(&mut *tx)

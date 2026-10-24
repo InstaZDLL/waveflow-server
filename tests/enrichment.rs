@@ -1851,22 +1851,24 @@ async fn a_failed_search_is_deleted_and_does_not_hold_the_account() {
 }
 
 /// The task runs under its deadline as a whole: a Deezer that never answers
-/// fails the search at its five minutes, not at a request timeout of a year,
-/// and the search is deleted. The paused clock also jumps to the pool's own
-/// timers while the database works, so the bound asserted is a day: far from
-/// the year, which is what tells the two apart.
+/// fails the search at the deadline, not at the request timeout, and the
+/// search is deleted. The deadline is cut to a second here and the request
+/// timeout set to a minute, so which of the two stopped it shows in the time
+/// the search took.
 #[tokio::test]
 async fn a_search_stops_at_its_deadline() {
     let (_temp, _config, state, gallery, owner, bjork) = picker(false, false).await;
     let patient = MetadataSettings {
-        request_timeout: Duration::from_secs(365 * 24 * 60 * 60),
+        request_timeout: Duration::from_secs(60),
         ..settings(vec![Provider::Deezer], &run_key())
     };
     state
         .services
         .use_enrichment(gallery_engine(&state, gallery.origin.as_str(), &patient));
-    tokio::time::pause();
-    let started = tokio::time::Instant::now();
+    state
+        .services
+        .shorten_image_search_deadline(Duration::from_secs(1));
+    let started = std::time::Instant::now();
     let stopped = state
         .services
         .artist_image_candidates(owner, bjork, "Björk")
@@ -1876,10 +1878,7 @@ async fn a_search_stops_at_its_deadline() {
         matches!(stopped, Err(ServiceError::Unavailable)),
         "{stopped:?}"
     );
-    assert!(
-        waited < Duration::from_secs(24 * 60 * 60),
-        "stopped after {waited:?}"
-    );
+    assert!(waited < Duration::from_secs(30), "stopped after {waited:?}");
     assert!(searches_held(&state).await.is_empty());
 }
 
@@ -2021,5 +2020,60 @@ async fn previews_keep_deezer_s_pace() {
         started.elapsed() >= Duration::from_secs(1),
         "twenty-two requests in {:?}",
         started.elapsed()
+    );
+}
+
+/// A search outlives the ordinary request timeout: the route keeps a timeout
+/// of its own past the search's deadline, so a slow Deezer answers the
+/// request with what the task found, not a 408 that sends the retry into a
+/// 429. The ordinary timeout is cut to a second here, and the search held for
+/// two. Passwords are drawn at run time, for CodeQL.
+#[tokio::test]
+async fn a_search_outlives_the_ordinary_request_timeout() {
+    let (_temp, config, state, gallery, owner, bjork) = picker(false, false).await;
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = waveflow_server::security::hash_password(&password).unwrap();
+    sqlx::query("UPDATE account SET username='slow-owner', password_hash=? WHERE id=?")
+        .bind(&hash)
+        .bind(owner.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    // Logged in under the ordinary timeout: hashing the password can take
+    // longer than a second on a loaded machine, and that is not what is tested.
+    let token = support::login_token(
+        &waveflow_server::app(&config, state.clone()),
+        "slow-owner",
+        &password,
+    )
+    .await;
+    let impatient = waveflow_server::Config {
+        request_timeout: Duration::from_secs(1),
+        ..config.clone()
+    };
+    let router = waveflow_server::app(&impatient, state.clone());
+
+    let search = {
+        let router = router.clone();
+        tokio::spawn(async move {
+            send(
+                &router,
+                axum::http::Method::GET,
+                format!("/api/v2/artists/{bjork}/image/candidates?q=Bj%C3%B6rk"),
+                &token,
+                None,
+            )
+            .await
+        })
+    };
+    until_searched(&gallery, 1).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    gallery.gate.add_permits(1_000);
+
+    let answered = search.await.unwrap();
+    assert_eq!(answered.status(), StatusCode::OK);
+    assert_eq!(
+        support::json_body(answered).await.as_array().unwrap().len(),
+        20
     );
 }

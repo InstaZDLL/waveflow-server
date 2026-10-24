@@ -91,8 +91,6 @@ waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df003
 http-body-util = "0.1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
-# The paused clock, for a deadline measured in minutes (RFC-013).
-tokio = { version = "1", features = ["test-util"] }
 
 [[test]]
 name = "migrations"
