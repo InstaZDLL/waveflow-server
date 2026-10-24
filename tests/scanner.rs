@@ -1371,3 +1371,42 @@ async fn an_unreadable_folder_holding_everything_is_still_counted() {
     );
     assert_eq!(second.unavailable, 0);
 }
+
+/// A sidecar the scan can list but not open is read past, without its lyrics,
+/// and no signature is recorded: once the permission is fixed — which moves
+/// neither its size nor its time — the next scan reads it. Unix only, for the
+/// permissions.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sidecar_that_cannot_be_opened_is_read_again_once_it_can() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Unlock(std::path::PathBuf);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o644));
+        }
+    }
+
+    let (_temp, state, owner, library, root) =
+        incremental_library("incremental-locked-lyrics", |music| {
+            write_test_wav(&music.join("Song.wav"));
+            std::fs::write(music.join("Song.lrc"), "[00:01.00]A line\n").unwrap();
+        })
+        .await;
+    let sidecar = root.join("Song.lrc");
+    std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unlock = Unlock(sidecar.clone());
+    if std::fs::File::open(&sidecar).is_ok() {
+        eprintln!("skipped: the sidecar stays readable to this user");
+        return;
+    }
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(sidecar_signature(&state).await, None);
+
+    drop(unlock);
+    let again = job(&state, owner, scan_once(&state, owner, library).await).await;
+    assert_eq!(again.skipped, 0, "the now-readable sidecar was never read");
+    assert_eq!(again.updated, 1);
+    assert!(sidecar_signature(&state).await.is_some());
+}

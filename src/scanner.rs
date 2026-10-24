@@ -368,7 +368,9 @@ impl ScanManager {
                     Ok(Scanned::Read(result, signature)) => {
                         // Only a read that succeeded records what it read: a
                         // failed one must be tried again, sidecars included.
-                        if let (Ok(relative), Ok(_)) = (&relative, result.as_ref()) {
+                        if let (Ok(relative), Ok(_), Some(signature)) =
+                            (&relative, result.as_ref(), signature)
+                        {
                             signatures.push((relative.clone(), signature));
                         }
                         Ok(*result)
@@ -561,7 +563,9 @@ enum Scanned {
     /// Unchanged since the last scan: skipped without being opened.
     Skipped(Uuid),
     /// Read, with the sidecar signature to record once it is applied.
-    Read(Box<Result<CatalogTrackInput, String>>, String),
+    /// `None` when a sidecar could not be opened: nothing is recorded, so the
+    /// file is read again until it can be.
+    Read(Box<Result<CatalogTrackInput, String>>, Option<String>),
 }
 
 /// The pre-check, then the read (RFC-018 decision 1).
@@ -582,7 +586,8 @@ fn scan_file(
             size == known.file_size && modified_at == known.modified_at
         }) && known.available
             && known.has_pid
-            && known.sidecar_signature.as_deref() == Some(signature.as_str());
+            && signature.is_some()
+            && known.sidecar_signature == signature;
         if unchanged {
             return Scanned::Skipped(known.id);
         }
@@ -606,17 +611,25 @@ fn file_stamp(path: &Path) -> Option<(i64, i64)> {
 /// modification time, absent ones as `-`:
 /// `lrc:<size>:<mtime_ms>|txt:<size>:<mtime_ms>`. Adding, editing or deleting
 /// either changes it; it is never empty.
-fn sidecar_signature(path: &Path) -> String {
-    ["lrc", "txt"]
-        .iter()
-        .map(
-            |extension| match file_stamp(&path.with_extension(extension)) {
-                Some((size, modified_at)) => format!("{extension}:{size}:{modified_at}"),
-                None => format!("{extension}:-"),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join("|")
+///
+/// `None` when a sidecar exists but cannot be opened. The read then goes ahead
+/// without its lyrics, and recording the signature would skip the file for as
+/// long as the sidecar's size and time stay put — a permission fixed later
+/// moves neither. With no signature the file is read on every scan until the
+/// sidecar can be.
+fn sidecar_signature(path: &Path) -> Option<String> {
+    let mut parts = Vec::with_capacity(2);
+    for extension in ["lrc", "txt"] {
+        let sidecar = path.with_extension(extension);
+        match file_stamp(&sidecar) {
+            Some((size, modified_at)) => {
+                fs::File::open(&sidecar).ok()?;
+                parts.push(format!("{extension}:{size}:{modified_at}"));
+            }
+            None => parts.push(format!("{extension}:-")),
+        }
+    }
+    Some(parts.join("|"))
 }
 
 /// What the walk found: the audio files, in path order, and the folders it
