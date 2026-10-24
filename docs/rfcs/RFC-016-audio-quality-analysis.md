@@ -37,12 +37,15 @@ dead at 20.6 and 20.8 kHz, where LAME cuts a 320 kbps MP3, and fourteen of the
 35 use 16 bits of their 24. The container cannot tell any of that. The audio
 can.
 
-Every lossy encoder low-passes before it encodes: LAME cuts a 128 kbps MP3
+Most lossy encoders low-pass before they encode: LAME cuts a 128 kbps MP3
 around 16–17 kHz and a 320 kbps one around 20 kHz, and Opus never codes past
 20 kHz. Decoding the result into FLAC keeps the cut. A recording made
 lossless has none: its spectrum fades into the noise floor, or runs on to its
 converter's own filter just under Nyquist. That cut is visible in the audio,
-and it is what this document measures.
+and it is what this document measures. Its reach is exactly that cut: an
+encoder that keeps the full band, as FFmpeg's AAC at 256 kbps and most Vorbis
+at q6 do, leaves nothing for it to find (decision 3, and "What is still
+open").
 
 ## What exists
 
@@ -185,8 +188,12 @@ The port is held to the original by two tests rather than by care:
   asserts the two cutoffs agree within one FFT bin, and that both find or both
   miss a wall.
 
-The core is GPL-3.0-only and the server AGPL-3.0-only; both are this
-project's, and GPLv3 section 13 allows the combination in any case.
+The core is GPL-3.0-only and the server AGPL-3.0-only. Both are this
+project's, by the same author, so the detector's code can be carried into
+the server and published under the server's licence, as the rest of the
+server is. Were they not, GPLv3 section 13 and its AGPLv3 counterpart are the
+terms that permit combining a GPLv3 work with an AGPLv3 one, each part keeping
+its own licence.
 
 ### Measured before it was proposed
 
@@ -252,8 +259,8 @@ In order, the first that applies:
 
 | Verdict | When | Shown as |
 | --- | --- | --- |
-| `lossy` | the format is not lossless and not DSD | "Lossy", the container's own grade |
-| `not_measured` | DSD, or a format neither list names | "Not measured" |
+| `lossy` | a known lossy format: `MP3`, `Vorbis`, `Opus`, `Speex`, or `AAC` with no bit depth (an ALAC file has one) | "Lossy", the container's own grade |
+| `not_measured` | any other format that `lossless_track_sql!` does not name: DSD, and any label the scanner may produce that neither list knows | "Not measured" |
 | `pending` | lossless, with no measurement of the current content at the current version | "Waiting for analysis" |
 | `unreadable` | FFmpeg failed or ran past its deadline on this content | "Could not be read" |
 | `silent` | no frame above −60 dBFS | "Silent" |
@@ -465,8 +472,14 @@ installs) and the common static builds are. The server asks FFmpeg's encoder
 list once at start, beside the version check it already makes, and falls back
 to JPEG, which every FFmpeg encodes, when libwebp is absent; the
 `Content-Type` says which. It is answered `200` with `Cache-Control: private,
-max-age=86400` and an `ETag` of the content hash and the picture's
-parameters, so a browser asks once per file. It is bounded per account by one, and across the server
+no-cache` and an `ETag` derived from the content hash and the picture's
+parameters. `no-cache` lets the browser keep the picture and makes it ask
+before every use: the server checks, as on any other request, that the
+calling account may read the track, and only then answers `304` to a
+matching `If-None-Match`. A picture kept for 24 hours without asking would
+outlive a membership removed in the meantime, and could be shown to the next
+account signed in to the same browser. The revalidation costs an access
+check and no FFmpeg. It is bounded per account by one, and across the server
 by `WAVEFLOW_QUALITY_PARALLELISM` plus one, so a reader can still have one
 drawn while the background analysis runs; beyond that the route answers
 `429` with `Retry-After`. It has a 30-second deadline. Unlike the analysis,
@@ -576,7 +589,8 @@ ever specified.
    their tests: a listener reads the quality and the spectrogram and cannot
    ask for an analysis; a non-member gets `404` on every route; the
    spectrogram answers an image of the type it names, and `429` past its
-   bound.
+   bound; a request carrying the `ETag` gets `304` from a member and `404`
+   from an account that is not one, or no longer is.
 4. **The page**: the Quality page, the track properties' "Real quality"
    section with the averaged spectrum and the spectrogram, and the category
    on "Needs attention".
