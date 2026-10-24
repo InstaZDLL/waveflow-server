@@ -19,6 +19,11 @@ pub struct AuthService {
     /// The limiter, gate and tally every password check goes through
     /// (RFC-017), Subsonic's included.
     guard: std::sync::Arc<SignInGuard>,
+    /// What an unknown or disabled account is verified against: a hash of a
+    /// password nobody knows, with the same parameters as every stored one.
+    /// Made here, at startup, so the first sign-in after a restart does not pay
+    /// for it — which would itself tell an unknown account from a real one.
+    dummy_hash: std::sync::Arc<str>,
 }
 
 /// Who is signing in, as far as the limiter is concerned: the surface, and the
@@ -97,6 +102,9 @@ impl AuthService {
             access_ttl_ms: duration_millis(config.access_token_ttl),
             refresh_ttl_ms: duration_millis(config.refresh_token_ttl),
             guard: SignInGuard::with_default_permits(),
+            dummy_hash: security::hash_password(&Uuid::new_v4().to_string())
+                .expect("hashing a random password cannot fail")
+                .into(),
         }
     }
 
@@ -160,12 +168,13 @@ impl AuthService {
         let encoded_hash = account
             .as_ref()
             .map(|account| account.password_hash.clone());
+        let dummy_hash = std::sync::Arc::clone(&self.dummy_hash);
         let password = password.to_owned();
         let valid = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             match encoded_hash {
                 Some(hash) => security::verify_password(&password, &hash),
-                None => security::verify_password(&password, dummy_hash()).map(|_| false),
+                None => security::verify_password(&password, &dummy_hash).map(|_| false),
             }
         })
         .await
@@ -384,17 +393,6 @@ impl AuthService {
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
-}
-
-/// What an unknown or disabled account is verified against: a hash of a
-/// password nobody knows, with the same parameters as every stored one, made
-/// once, on first use.
-fn dummy_hash() -> &'static str {
-    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    DUMMY.get_or_init(|| {
-        security::hash_password(&Uuid::new_v4().to_string())
-            .expect("hashing a random password cannot fail")
-    })
 }
 
 fn duration_millis(duration: std::time::Duration) -> i64 {
