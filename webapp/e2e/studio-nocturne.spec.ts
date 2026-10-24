@@ -6107,6 +6107,7 @@ for (const { theme, banner, portrait } of [
       localStorage.setItem("waveflow.theme", id);
     }, theme);
     await page.goto("/artists/artist-1");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     const hero = page.locator(".artist-hero");
     await expect(
       hero.locator(banner ? "img.artist-banner" : ".artist-hero-ambient"),
@@ -6124,6 +6125,8 @@ for (const { theme, banner, portrait } of [
     ] as const) {
       expect(await lowestContrast(page, text), name).toBeGreaterThanOrEqual(4.5);
     }
+    // An empty list would measure nothing and pass.
+    await expect(hero.locator(".artist-image-button").first()).toBeVisible();
     for (const button of await hero.locator(".artist-image-button").all()) {
       if (!(await button.isVisible())) continue;
       expect(
