@@ -116,12 +116,16 @@ pub fn canonical_account(username: &str) -> String {
 /// client. An entry that does not parse stops the walk at the last trusted hop
 /// reached, and a chain of nothing but trusted proxies resolves to the peer:
 /// neither ever yields an address the client wrote.
+///
+/// An IPv4-mapped IPv6 address is read as the IPv4 address it carries, the
+/// peer included: a dual-stack listener reports an IPv4 proxy as
+/// `::ffff:10.0.0.2`, which an IPv4 network in the list would not contain.
 pub fn client_address(
     peer: Option<IpAddr>,
     headers: &HeaderMap,
     trusted: &[IpNet],
 ) -> Option<IpAddr> {
-    let peer = peer?;
+    let peer = unmapped(peer?);
     let is_trusted = |address: &IpAddr| trusted.iter().any(|net| net.contains(address));
     if !is_trusted(&peer) {
         return Some(peer);
@@ -139,6 +143,7 @@ pub fn client_address(
         let Some(address) = std::str::from_utf8(entry)
             .ok()
             .and_then(|entry| entry.trim().parse::<IpAddr>().ok())
+            .map(unmapped)
         else {
             return Some(last_trusted);
         };
@@ -149,6 +154,15 @@ pub fn client_address(
         }
     }
     Some(peer)
+}
+
+/// An IPv4-mapped IPv6 address as the IPv4 address it carries; any other
+/// address as it is.
+fn unmapped(address: IpAddr) -> IpAddr {
+    match address {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, IpAddr::V4),
+        IpAddr::V4(_) => address,
+    }
 }
 
 /// The bucket a request is counted under: its peer, from axum's
@@ -514,6 +528,21 @@ mod tests {
         let headers = forwarded(&["1.1.1.1", "198.51.100.7, 10.0.0.3"]);
         assert_eq!(
             client_address(Some(ip("10.0.0.2")), &headers, &nets(&["10.0.0.0/8"])),
+            Some(ip("198.51.100.7"))
+        );
+    }
+
+    #[test]
+    fn a_mapped_ipv4_proxy_is_still_the_trusted_one() {
+        // A dual-stack listener reports the IPv4 proxy as mapped, and so may a
+        // proxy forwarding through another.
+        let headers = forwarded(&["1.1.1.1, 198.51.100.7, ::ffff:10.0.0.3"]);
+        assert_eq!(
+            client_address(
+                Some(ip("::ffff:10.0.0.2")),
+                &headers,
+                &nets(&["10.0.0.0/8"])
+            ),
             Some(ip("198.51.100.7"))
         );
     }

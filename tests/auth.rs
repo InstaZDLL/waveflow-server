@@ -1739,9 +1739,19 @@ async fn failed_sign_ins_are_limited_per_address_and_account() {
         native_sign_in(&app.router, "Guarded", &app.password, "198.51.100.7", None).await;
     assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(throttled.headers()["retry-after"], "60");
-    // The case the database ignores, the limiter ignores too.
+    // The case the database ignores, the limiter ignores too, and the spaces
+    // around the name.
     let throttled =
         native_sign_in(&app.router, "guarded", &app.password, "198.51.100.7", None).await;
+    assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
+    let throttled = native_sign_in(
+        &app.router,
+        " Guarded ",
+        &app.password,
+        "198.51.100.7",
+        None,
+    )
+    .await;
     assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
 
     let elsewhere =

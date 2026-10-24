@@ -144,7 +144,12 @@ impl AuthService {
 
         let Ok(reservation) = self
             .guard
-            .reserve(&client.address, &sign_in::canonical_account(username))
+            // Trimmed as the lookup trims it, or each spelling with spaces
+            // around it would open another window onto the same account.
+            .reserve(
+                &client.address,
+                &sign_in::canonical_account(username.trim()),
+            )
         else {
             self.guard.note(client.surface, Refusal::Throttled);
             return Err(AuthError::Throttled);
