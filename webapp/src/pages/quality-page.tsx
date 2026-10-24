@@ -17,7 +17,7 @@ import { containerName, kilohertz } from "../components/file-quality";
 import { Loading, PageHeader } from "../components/page-shell";
 import { VERDICT_LABEL } from "../components/quality-section";
 import { TrackProperties } from "../components/track-properties";
-import { verdictTone } from "../lib/quality";
+import { highsStop, verdictTone } from "../lib/quality";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 
@@ -218,13 +218,11 @@ function QualityList({
       .filter((fact): fact is string => fact !== null)
       .join(" · ");
   const highs = (song: QualityTrack) => {
-    const { verdict: found, cutoff_hz } = song.quality;
-    if (cutoff_hz !== null) {
-      return t("quality.khz", { value: kilo.format(cutoff_hz / 1000) });
-    }
-    return found === "consistent" || found === "padded" || found === "upsampled"
+    const found = highsStop(song.quality.verdict, song.quality.cutoff_hz);
+    if (found === null) return "—";
+    return found.kind === "fullBand"
       ? t("quality.fullBand")
-      : "—";
+      : t("quality.khz", { value: kilo.format(found.hz / 1000) });
   };
 
   return (

@@ -10,6 +10,7 @@ import {
 import { trackQualityQuery } from "../api/queries";
 import {
   frequencyX,
+  highsStop,
   spectrumGridlines,
   spectrumPath,
   verdictTone,
@@ -38,11 +39,7 @@ export function QualitySection({ song }: { song: Song }) {
   if (!data || !Object.hasOwn(VERDICT_LABEL, data.verdict)) return null;
   const kilohertz = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
-  const measured =
-    data.verdict !== "pending" &&
-    data.verdict !== "lossy" &&
-    data.verdict !== "not_measured" &&
-    data.verdict !== "unreadable";
+  const highs = highsStop(data.verdict, data.cutoff_hz);
 
   const rows: Array<{ label: string; value: ReactNode }> = [
     {
@@ -58,18 +55,17 @@ export function QualitySection({ song }: { song: Song }) {
     },
     {
       label: t("quality.highsStop"),
-      value: !measured
-        ? null
-        : data.cutoff_hz === null
-          ? t("quality.fullBand")
-          : t("quality.khz", {
-              value: kilohertz.format(data.cutoff_hz / 1000),
-            }),
+      value:
+        highs === null
+          ? null
+          : highs.kind === "fullBand"
+            ? t("quality.fullBand")
+            : t("quality.khz", { value: kilohertz.format(highs.hz / 1000) }),
     },
     {
       label: t("quality.wall"),
       value:
-        measured && data.cutoff_hz !== null && data.wall_db !== null
+        highs?.kind === "at" && data.wall_db !== null
           ? t("quality.db", { value: number.format(data.wall_db) })
           : null,
     },

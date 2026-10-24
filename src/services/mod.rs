@@ -1524,7 +1524,10 @@ impl DomainServices {
             image_search_deadline_ms: Arc::new(std::sync::atomic::AtomicU64::new(
                 u64::try_from(ARTIST_IMAGE_SEARCH_DEADLINE.as_millis()).unwrap_or(u64::MAX),
             )),
-            quality: quality::QualityRuntime::new(config.quality_parallelism),
+            quality: quality::QualityRuntime::new(
+                config.quality_parallelism,
+                config.request_timeout,
+            ),
         }
     }
 

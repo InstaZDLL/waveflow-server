@@ -224,6 +224,8 @@ pub(super) struct QualityRuntime(Arc<QualityInner>);
 
 struct QualityInner {
     parallelism: usize,
+    /// How long a spectrogram may take, kept under the request timeout.
+    spectrogram_deadline: Duration,
     /// Placed at boot by [`DomainServices::use_quality_decoder`]; nothing is
     /// measured before it is.
     decoder: RwLock<Option<quality::Decoder>>,
@@ -236,9 +238,10 @@ struct QualityInner {
 }
 
 impl QualityRuntime {
-    pub(super) fn new(parallelism: usize) -> Self {
+    pub(super) fn new(parallelism: usize, request_timeout: Duration) -> Self {
         Self(Arc::new(QualityInner {
             parallelism,
+            spectrogram_deadline: quality::spectrogram_deadline(request_timeout),
             decoder: RwLock::new(None),
             wake: Notify::new(),
             spectrograms: Arc::new(Semaphore::new(parallelism + 1)),
@@ -360,16 +363,23 @@ impl DomainServices {
                 break;
             };
             after = (last.created_at, last.track_id.clone());
-            let results: Vec<Vec<Option<Measured>>> = stream::iter(page)
+            // Each batch is written as soon as it is complete, so a restart
+            // loses at most one batch of work, and a batch that cannot be
+            // written costs that batch and not the pass: its files are still
+            // pending and the next pass asks for them again.
+            let mut batches = stream::iter(page)
                 .map(|pending| self.measure_one(pending))
                 .buffer_unordered(parallelism)
-                .chunks(BATCH)
-                .collect()
-                .await;
-            for batch in results {
+                .chunks(BATCH);
+            while let Some(batch) = batches.next().await {
                 let batch: Vec<Measured> = batch.into_iter().flatten().collect();
-                measured += batch.len();
-                self.write_measurements(&decoder, batch).await?;
+                let count = batch.len();
+                match self.write_measurements(&decoder, batch).await {
+                    Ok(()) => measured += count,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "a batch of quality measurements was not written");
+                    }
+                }
             }
         }
         Ok(measured)
@@ -697,9 +707,14 @@ impl DomainServices {
             crate::media::secure_track_path(std::path::Path::new(&root_path), &relative_path)
                 .await
                 .map_err(|_| ServiceError::Unavailable)?;
-        let picture = quality::spectrogram(&self.ffmpeg_path, &path, webp)
-            .await
-            .ok_or(ServiceError::Unavailable)?;
+        let picture = quality::spectrogram(
+            &self.ffmpeg_path,
+            &path,
+            webp,
+            self.quality.0.spectrogram_deadline,
+        )
+        .await
+        .ok_or(ServiceError::Unavailable)?;
         Ok(Spectrogram::Picture {
             etag,
             bytes: picture.bytes,

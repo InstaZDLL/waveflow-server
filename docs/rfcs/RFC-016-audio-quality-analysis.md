@@ -533,7 +533,9 @@ by `WAVEFLOW_QUALITY_PARALLELISM` plus one, so a reader can still have one
 drawn while the background analysis runs; beyond that the route answers
 `429` with `Retry-After`. Access is checked before the bound, so an account
 that may not read the track gets `404` and never learns from a `429` that
-something is there. It has a 30-second deadline. Unlike the analysis,
+something is there. It has a 20-second deadline, and less when the
+request timeout leaves less, so the route answers its own `503` before the
+router's timeout answers for it. Unlike the analysis,
 it is on the answering path, because a picture someone clicked for is the
 answer; that is why it is bounded and never computed for anyone who did not
 ask. It is drawn for any file, lossy ones included, because a reader may want

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   frequencyX,
+  highsStop,
   SPECTRUM_FLOOR_DB,
   spectrumGridlines,
   spectrumPath,
@@ -30,6 +31,27 @@ describe("the averaged spectrum", () => {
     expect(spectrumGridlines(22_050)).toEqual([16_000, 19_000, 20_000, 22_000]);
     expect(spectrumGridlines(20_000)).toEqual([16_000, 19_000]);
     expect(spectrumGridlines(16_000)).toEqual([]);
+  });
+});
+
+describe("where the highs stop", () => {
+  it("says a frequency when there is a wall", () => {
+    expect(highsStop("lossy_source", 16_400)).toEqual({
+      kind: "at",
+      hz: 16_400,
+    });
+  });
+
+  it("says the band is full only of a file that was measured", () => {
+    expect(highsStop("consistent", null)).toEqual({ kind: "fullBand" });
+    expect(highsStop("padded", null)).toEqual({ kind: "fullBand" });
+  });
+
+  it("says nothing of a silent file, nor of one not measured", () => {
+    expect(highsStop("silent", null)).toBeNull();
+    expect(highsStop("pending", null)).toBeNull();
+    expect(highsStop("unreadable", null)).toBeNull();
+    expect(highsStop("lossy", null)).toBeNull();
   });
 });
 

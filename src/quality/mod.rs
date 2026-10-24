@@ -36,8 +36,22 @@ pub const SPECTRUM_BANDS: usize = 256;
 /// How long ffprobe gets to name a file's rate and channels.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long a spectrogram may take to draw (decision 8).
-pub const SPECTROGRAM_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a spectrogram may take to draw (decision 8), at most. The route
+/// uses less when the request timeout leaves less: see
+/// [`spectrogram_deadline`].
+pub const SPECTROGRAM_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long a spectrogram may take under a request timeout of `request`.
+///
+/// The router's own timeout answers first otherwise, and the caller is told
+/// whatever that layer says rather than the `503` the route documents. Five
+/// seconds are left for the access check, the path guard and the answer, and
+/// one second is the least any picture is given.
+pub fn spectrogram_deadline(request: Duration) -> Duration {
+    request
+        .saturating_sub(Duration::from_secs(5))
+        .clamp(Duration::from_secs(1), SPECTROGRAM_TIMEOUT)
+}
 
 /// The picture's parameters, which are part of its `ETag`: a change here is a
 /// different picture of the same file.
@@ -339,8 +353,13 @@ pub struct Picture {
 }
 
 /// Draws a file's spectrogram: WebP when FFmpeg has libwebp, JPEG otherwise.
-/// `None` when FFmpeg fails or runs past [`SPECTROGRAM_TIMEOUT`].
-pub async fn spectrogram(ffmpeg: &Path, path: &Path, webp: bool) -> Option<Picture> {
+/// `None` when FFmpeg fails or runs past `deadline`.
+pub async fn spectrogram(
+    ffmpeg: &Path,
+    path: &Path,
+    webp: bool,
+    deadline: Duration,
+) -> Option<Picture> {
     let mut command = Command::new(ffmpeg);
     command
         .args([
@@ -362,7 +381,7 @@ pub async fn spectrogram(ffmpeg: &Path, path: &Path, webp: bool) -> Option<Pictu
         "image/jpeg"
     };
     let output = tokio::time::timeout(
-        SPECTROGRAM_TIMEOUT,
+        deadline,
         command
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -404,6 +423,22 @@ mod tests {
         assert_eq!(stored[0], 0);
         assert_eq!(stored[SPECTRUM_BANDS - 1], 120);
         assert_eq!(spectrum_db(&stored)[SPECTRUM_BANDS - 1], -60.0);
+    }
+
+    #[test]
+    fn a_spectrogram_gives_up_before_the_request_does() {
+        assert_eq!(
+            spectrogram_deadline(Duration::from_secs(30)),
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            spectrogram_deadline(Duration::from_secs(10)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            spectrogram_deadline(Duration::from_secs(2)),
+            Duration::from_secs(1)
+        );
     }
 
     #[test]

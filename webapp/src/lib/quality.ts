@@ -34,6 +34,25 @@ export function spectrumGridlines(nyquistHz: number): number[] {
   return [16_000, 19_000, 20_000, 22_000].filter((hz) => hz < nyquistHz);
 }
 
+/**
+ * Where a file's highs stop, as the page and the properties say it: at a
+ * frequency, across the whole band, or not at all. Only a measurement of
+ * sound says the band is full: a silent file has no spectrum, and a file not
+ * yet measured, unreadable or lossy has no measurement.
+ */
+export function highsStop(
+  verdict: QualityVerdict,
+  cutoffHz: number | null,
+): { kind: "at"; hz: number } | { kind: "fullBand" } | null {
+  if (cutoffHz !== null) return { kind: "at", hz: cutoffHz };
+  return verdict === "consistent" ||
+    verdict === "padded" ||
+    verdict === "upsampled" ||
+    verdict === "lossy_source"
+    ? { kind: "fullBand" }
+    : null;
+}
+
 /** The level the chart reaches down to, in dB under the loudest band. */
 export const SPECTRUM_FLOOR_DB = -120;
 
