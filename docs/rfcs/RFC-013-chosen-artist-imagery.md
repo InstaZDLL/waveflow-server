@@ -160,9 +160,12 @@ So the server does the looking:
   id, a name, a fan count — **without picture URLs**;
 - each candidate's picture is fetched by the server through `src/portrait.rs`'s
   narrow fetcher (https, host allowlist, public addresses only, pinned
-  resolution, 10 MiB) into the artwork store, at Deezer's small picture size,
-  and the candidate carries its `artwork_hash`. The client shows previews from
-  the server, never from Deezer;
+  resolution, 10 MiB) into the artwork store, at Deezer's big picture size
+  (500 pixels) — not the small one, since the preview is what a pick makes the
+  portrait — and the candidate carries its `artwork_hash`. A hit with no real
+  picture (Deezer's placeholder) is not offered, nor one whose picture the
+  fetcher refuses for what it is: there would be nothing to choose. The client
+  shows previews from the server, never from Deezer;
 - choosing one writes the choice with `source = 'deezer'` from a candidate the
   server fetched. The client sends a Deezer id; it never sends a URL, so no
   user input ever names a target the server dereferences — #217's line holds.
@@ -254,9 +257,10 @@ CREATE TABLE artist_image_candidate (
     the handler with it, mid-await, running none of its remaining code — but
     not the task, which goes on to complete the search or delete it. The next
     picker that asks the same query finds it complete;
-  - a search whose Deezer query or any preview fetch fails is **deleted** by
-    that task. Its candidates go by cascade, and the previews already stored
-    become unreferenced artwork for the sweep;
+  - a search whose Deezer query fails, or whose picture host cannot be
+    reached for any preview, is **deleted** by that task. Its candidates go by
+    cascade, and the previews already stored become unreferenced artwork for
+    the sweep;
   - **a deadline the task itself obeys.** Every search gets a fetch deadline,
     `searched_at` plus five minutes, and its task runs under that deadline as
     a whole — waiting for the provider's pace, which it shares with enrichment
@@ -299,8 +303,10 @@ in **one transaction** each.
   the task writing its candidates. Its ways out are the ones named above: its
   task completes it or deletes it, the sweep deletes it once past its fetch
   deadline — which no running task can be — or boot deletes it. The previews
-  an incomplete search has stored so far are named by its candidates, so the
-  sweep keeps them too until one of those happens.
+  an incomplete search has stored so far have no row yet: their rows and the
+  candidates naming them are written together, in the transaction that
+  completes the search. Until then the files are kept by the sweep's write
+  grace — an hour, against a fetch deadline of five minutes.
 - If anything ever slipped through, the foreign key from
   `artist_image_choice.artwork_hash` to `artwork` fails the insert rather than
   storing a dangling hash; the route answers `422`, as for an expired search,
@@ -355,7 +361,7 @@ caller may not see, and for a write by someone who may not make it.
 | `GET /artists/{id}` | Gains `banner_hash` (absent when none), and `image_choice` per kind (`source`, `set_at`) so a client can say "chosen by hand" instead of "from Deezer". `artwork_hash` becomes the effective portrait. |
 | `PUT /artists/{id}/image/{kind}` | `kind` is `portrait` or `banner`. The body is the image's bytes. `200` with the artist; `413` past 10 MiB; `422` for bytes that are not JPEG, PNG or WebP. |
 | `PUT /artists/{id}/image/portrait/deezer` | `{ "deezer_id": … }`, offered by a live search of this artist; that candidate's preview becomes the portrait, never fetched again. `422` for an id no live search offered; `404` where Deezer is not configured now, a live search notwithstanding. |
-| `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as a search for an hour; the same query answered from it while it lives. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured. |
+| `GET /artists/{id}/image/candidates?q=` | Owners and managers only. Up to 20 Deezer artists, each with a server-held preview `artwork_hash`, stored as a search for an hour; the same query answered from it while it lives. `429` while the same account's previous search is still fetching; `404` where Deezer is not configured; `422` for an empty query; `503` when Deezer or a picture host could not be reached. Each preview is served by `GET /artwork/{hash}` to the owners and managers of the artist's library. |
 | `DELETE /artists/{id}/image/{kind}` | Back to automatic. `204`; `404` when nothing was chosen. |
 
 Every write goes through `DomainServices` (CLAUDE.md, "One set of domain
@@ -365,7 +371,9 @@ services"), so the desktop can reach the same rules when it chooses to.
 
 - **RFC-011**: decision 11 gains a sentence naming this document as the one
   write path it does not cover.
-- **The artwork sweep** keeps hashes named by `artist_image_choice`.
+- **The artwork sweep** keeps hashes named by `artist_image_choice`, and from
+  step 4 those named by `artist_image_candidate`, once it has deleted the
+  spent searches in the same transaction.
 - **The Subsonic façade**: `coverArt` on an artist names the effective portrait.
   No element is added or removed.
 - **The desktop app** (`InstaZDLL/WaveFlow`): nothing in this repository. Its

@@ -161,6 +161,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::get_artist,
         api::put_artist_image,
         api::delete_artist_image,
+        api::list_artist_image_candidates,
+        api::put_artist_deezer_portrait,
         api::list_artist_top_songs,
         api::list_artist_albums,
         api::search_catalog,
@@ -312,6 +314,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::FiledFolder,
         services::ImageChoices,
         services::ImageChoice,
+        services::ArtistImageCandidate,
+        api::DeezerPortraitPick,
         services::FiledTree,
         services::FolderPatch,
         services::FolderRemoved,
@@ -710,6 +714,10 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // the background task already runs leaves a window, short and sufficient,
     // in which listens leave for yesterday's destination. RFC-010 decision 10.
     services.reconcile_scrobble_links().await?;
+    // A portrait search left fetching has no task across a restart; left at
+    // `complete = 0` it would hold its account's next search at 429 until its
+    // deadline passed (RFC-013 decision 4).
+    services.forget_unfinished_image_searches().await?;
     // Off unless the operator named a provider, and then it still makes no
     // request until somebody asks about an artist (RFC-011 decisions 3 and 6).
     services.use_enrichment(enrichment::Enrichment::new(

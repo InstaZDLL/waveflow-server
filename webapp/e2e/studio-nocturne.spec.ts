@@ -5460,4 +5460,86 @@ test("shows a listener the artist's banner with nothing to change", async ({
   const hero = page.locator(".artist-hero");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
   await expect(hero.getByRole("button", { name: /Change/ })).toHaveCount(0);
+  await expect(hero.getByRole("button", { name: "Search Deezer" })).toHaveCount(0);
+});
+
+/**
+ * Choosing the portrait from Deezer (RFC-013 step 4): the picker searches the
+ * artist's name as it opens, shows previews the server holds and nothing from
+ * Deezer itself, says what a refusal means, and a pick sends the Deezer id
+ * alone.
+ */
+test("chooses an artist's portrait from a Deezer search", async ({ page }) => {
+  const { state } = await serveArtistImages(page);
+  const searches: string[] = [];
+  const picks: unknown[] = [];
+  const thirdParty: string[] = [];
+  let refuseNext = false;
+  page.on("request", (request) => {
+    if (/deezer\.com|dzcdn\.net/.test(request.url())) thirdParty.push(request.url());
+  });
+  await page.route("**/api/v2/artists/artist-1/image/candidates?*", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q") ?? "";
+    searches.push(query);
+    if (refuseNext) {
+      refuseNext = false;
+      await route.fulfill({ status: 429, json: { code: "too_many_requests" } });
+      return;
+    }
+    await route.fulfill({
+      json:
+        query === "Nobody"
+          ? []
+          : [
+              { deezer_id: 76, name: "Björk", fans: 1500000, artwork_hash: "d".repeat(64) },
+              { deezer_id: 77, name: "Björk Tribute", fans: 1, artwork_hash: "e".repeat(64) },
+            ],
+    });
+  });
+  await page.route("**/api/v2/artists/artist-1/image/portrait/deezer", async (route) => {
+    picks.push(route.request().postDataJSON());
+    state.portrait = "d".repeat(64);
+    await route.fulfill({
+      json: {
+        ...artistDetail,
+        library_id: "library-1",
+        artwork_hash: state.portrait,
+        image_choice: { portrait: { source: "deezer", set_at: 1 } },
+      },
+    });
+  });
+
+  await page.goto("/artists/artist-1");
+  const hero = page.locator(".artist-hero");
+  await hero.getByRole("button", { name: "Search Deezer" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
+  await expect(picker).toBeVisible();
+  const results = picker.getByRole("list", { name: "Deezer artists" });
+  await expect(results.getByRole("button")).toHaveCount(2);
+  await expect(results.getByText("1 fan", { exact: true })).toBeVisible();
+  expect(searches).toEqual(["Björk"]);
+  await expectNoWcagViolations(page);
+
+  const query = picker.getByRole("searchbox", { name: "Artist name" });
+  await query.fill("Nobody");
+  await picker.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(picker.getByRole("status")).toHaveText(
+    "Deezer knows no artist by that name.",
+  );
+
+  refuseNext = true;
+  await query.fill("Bjork");
+  await picker.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(picker.getByRole("alert")).toHaveText(
+    "Your previous search is still running. Try again in a moment.",
+  );
+  await picker.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(results.getByRole("button")).toHaveCount(2);
+
+  await results.getByRole("button").first().click();
+  await expect(picker).toHaveCount(0);
+  await expect(hero.getByRole("status")).toHaveText("Portrait changed.");
+  expect(picks).toEqual([{ deezer_id: 76 }]);
+  expect(searches).toEqual(["Björk", "Nobody", "Bjork", "Bjork"]);
+  expect(thirdParty).toEqual([]);
 });

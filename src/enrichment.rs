@@ -28,7 +28,7 @@ use std::{
 
 use dashmap::DashMap;
 use waveflow_core::metadata::{
-    deezer::{DeezerClient, DeezerError},
+    deezer::{is_placeholder_artist_picture, DeezerArtistHit, DeezerClient, DeezerError},
     lastfm::LastfmClient,
     name_match::{normalize_name, select_by_name},
     LookupError,
@@ -138,6 +138,27 @@ pub(crate) struct StoredPortrait {
     pub(crate) hash: String,
     pub(crate) format: &'static str,
     pub(crate) byte_size: i64,
+}
+
+/// A Deezer artist offered as a portrait (RFC-013 decision 4), its preview
+/// already in the artwork store. The row naming the preview is the caller's to
+/// write, with whatever names it.
+#[derive(Debug)]
+pub(crate) struct DeezerCandidate {
+    pub(crate) deezer_id: i64,
+    pub(crate) name: String,
+    pub(crate) fans: Option<i64>,
+    pub(crate) preview: StoredPortrait,
+}
+
+/// Why a search for candidates gave none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CandidateSearchError {
+    /// Deezer is not among the operator's providers, or images are off.
+    NotConfigured,
+    /// Deezer, or a picture host it named, could not be reached, or a preview
+    /// could not be stored.
+    Unreached,
 }
 
 /// One neighbour in a provider's cached list.
@@ -323,6 +344,96 @@ impl Enrichment {
         self.engine
             .as_ref()
             .map_or(0, |engine| engine.sources.len())
+    }
+
+    /// Whether a portrait may be searched for on Deezer: the operator named
+    /// it and left images on. Asked at every call, never remembered by a
+    /// search (RFC-013 decision 4).
+    pub(crate) fn searches_deezer(&self) -> bool {
+        self.engine
+            .as_ref()
+            .is_some_and(|engine| engine.deezer().is_some())
+    }
+
+    /// Deezer's artists for `query`, in its order, at most `limit` of them,
+    /// each with its picture fetched and stored as a preview (RFC-013
+    /// decision 4).
+    ///
+    /// Every request — the search and each picture — keeps Deezer's pace,
+    /// the one enrichment keeps, so a picker cannot make the server ask
+    /// faster than the operator allowed. A hit with no real picture is not
+    /// offered, nor one whose picture the fetcher refuses for what it is:
+    /// there would be nothing to choose. A picture host that cannot be
+    /// reached fails the whole search, as the search itself failing does.
+    pub(crate) async fn deezer_candidates(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<DeezerCandidate>, CandidateSearchError> {
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or(CandidateSearchError::NotConfigured)?;
+        let (source, client, image_hosts) =
+            engine.deezer().ok_or(CandidateSearchError::NotConfigured)?;
+        source.pace.wait().await;
+        let hits = engine
+            .bounded(client.search_artist(query))
+            .await
+            .map_err(|verdict| {
+                tracing::warn!(
+                    provider = source.provider.as_str(),
+                    verdict = %verdict,
+                    "portrait candidates unreached"
+                );
+                CandidateSearchError::Unreached
+            })?;
+        let mut candidates: Vec<DeezerCandidate> = Vec::new();
+        for hit in hits {
+            if candidates.len() >= limit {
+                break;
+            }
+            if candidates.iter().any(|offered| offered.deezer_id == hit.id) {
+                continue;
+            }
+            let Some(picture) = preview_picture(&hit) else {
+                continue;
+            };
+            source.pace.wait().await;
+            let fetched = portrait::fetch(
+                &picture,
+                image_hosts,
+                engine.image_addresses,
+                engine.request_timeout,
+            )
+            .await;
+            let preview = match fetched {
+                Ok(preview) => preview,
+                Err(refusal) if refusal.is_answer() => continue,
+                Err(refusal) => {
+                    tracing::warn!(
+                        provider = source.provider.as_str(),
+                        verdict = %refusal,
+                        "portrait candidate preview unreached"
+                    );
+                    return Err(CandidateSearchError::Unreached);
+                }
+            };
+            portrait::store(&engine.artwork_dir, &preview)
+                .await
+                .map_err(|_| CandidateSearchError::Unreached)?;
+            candidates.push(DeezerCandidate {
+                deezer_id: hit.id,
+                name: hit.name,
+                fans: hit.nb_fan,
+                preview: StoredPortrait {
+                    hash: preview.hash,
+                    format: preview.format,
+                    byte_size: preview.bytes.len() as i64,
+                },
+            });
+        }
+        Ok(candidates)
     }
 
     /// What the cache holds about the artist called `name`, one row per
@@ -555,6 +666,17 @@ impl Engine {
         })
     }
 
+    /// The Deezer source, its client and the hosts its pictures come from.
+    fn deezer(&self) -> Option<(&Source, &DeezerClient, &[String])> {
+        self.sources.iter().find_map(|source| match &source.client {
+            Client::Deezer {
+                client,
+                image_hosts,
+            } => Some((source, client, image_hosts.as_slice())),
+            Client::LastFm { .. } => None,
+        })
+    }
+
     /// One request, under the request timeout; anything but an answer is a
     /// verdict.
     async fn bounded<T, E>(
@@ -686,6 +808,17 @@ impl Pace {
         };
         tokio::time::sleep_until(slot.into()).await;
     }
+}
+
+/// The picture a candidate is previewed at, and kept at if chosen: Deezer's
+/// big size, 500 pixels, since the preview is what becomes the portrait. The
+/// largest real one when that size is missing; none for Deezer's placeholder,
+/// which every size shares.
+fn preview_picture(hit: &DeezerArtistHit) -> Option<String> {
+    hit.picture_big
+        .clone()
+        .filter(|url| !is_placeholder_artist_picture(url))
+        .or_else(|| hit.best_picture())
 }
 
 fn duration_ms(duration: Duration) -> i64 {

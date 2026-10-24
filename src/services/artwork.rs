@@ -221,16 +221,24 @@ impl DomainServices {
     /// on; there is only asking.
     async fn forget_unreferenced_artwork(&self) -> Result<usize, ServiceError> {
         let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.pool().begin().await?;
+        // The spent portrait searches first (RFC-013), in the same
+        // transaction: their previews become unreferenced here, and a preview
+        // a choice already names is kept by the clause below.
+        super::artist_image_search::forget_spent_searches(&mut tx, crate::authentication::now_ms())
+            .await?;
         let removed = sqlx::query(
             "DELETE FROM artwork WHERE \
                NOT EXISTS (SELECT 1 FROM artist WHERE artist.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM album WHERE album.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM track WHERE track.artwork_hash = artwork.hash) \
-               AND NOT EXISTS (SELECT 1 FROM artist_image_choice c WHERE c.artwork_hash = artwork.hash)",
+               AND NOT EXISTS (SELECT 1 FROM artist_image_choice c WHERE c.artwork_hash = artwork.hash) \
+               AND NOT EXISTS (SELECT 1 FROM artist_image_candidate c WHERE c.artwork_hash = artwork.hash)",
         )
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+        tx.commit().await?;
         Ok(usize::try_from(removed).unwrap_or(usize::MAX))
     }
 }

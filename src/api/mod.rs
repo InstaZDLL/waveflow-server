@@ -187,6 +187,14 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v2/artists/{artist_id}/image/candidates",
+            get(list_artist_image_candidates),
+        )
+        .route(
+            "/api/v2/artists/{artist_id}/image/portrait/deezer",
+            put(put_artist_deezer_portrait),
+        )
+        .route(
             "/api/v2/artists/{artist_id}/top-songs",
             get(list_artist_top_songs),
         )
