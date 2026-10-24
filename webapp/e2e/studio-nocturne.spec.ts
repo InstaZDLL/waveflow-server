@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const session = {
   access_token: "e2e-access-token",
@@ -5892,3 +5892,293 @@ test("splits a joined artist from its page, after a confirming click", async ({
     page.getByRole("button", { name: "Split into 2 artists" }),
   ).toHaveCount(0);
 });
+
+/**
+ * The light themes on the 2.0 structure. fluid.css lays the same rail, heads
+ * and player bar over a light material, so every page the dark redesign
+ * recomposed is audited again in the light: the home page has its own test
+ * above, and these follow the pages and the dialogs added since.
+ */
+function chooseLightTheme(page: Page) {
+  return page.addInitScript(() => {
+    localStorage.setItem("waveflow.theme", "default");
+  });
+}
+
+test("keeps an album, the player bar and a track's properties readable in the light", async ({
+  page,
+}) => {
+  await chooseLightTheme(page);
+  await page.goto("/albums/album-2");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await expect(page.locator(".album-hero h2")).toHaveText("Vespertine");
+  await page.locator(".album-actions .album-play").click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expectNoWcagViolations(page);
+
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9", (route) =>
+    route.fulfill({
+      json: { ...correctable.song, relative_path: "Björk/Post/09 Army Of Me.flac" },
+    }),
+  );
+  await page.goto("/songs");
+  await page.locator(".songs tbody tr").first().locator("button.song-title").focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(page.getByRole("menu", { name: "Actions for Army Of Me" })).toBeVisible();
+  await expectNoWcagViolations(page);
+  await page.getByRole("menuitem", { name: "Properties" }).click();
+  await expect(page.getByRole("dialog", { name: "Army Of Me" })).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+test("keeps the artist hero and the Deezer picker readable in the light", async ({
+  page,
+}) => {
+  const { state } = await serveArtistImages(page);
+  await page.route("**/api/v2/artists/artist-1/image/candidates?*", (route) =>
+    route.fulfill({
+      json: [
+        { deezer_id: 76, name: "Björk", fans: 1500000, artwork_hash: "d".repeat(64) },
+      ],
+    }),
+  );
+  await chooseLightTheme(page);
+  await page.goto("/artists/artist-1");
+  const hero = page.locator(".artist-hero");
+  await expect(hero.locator(".artist-hero-ambient")).toBeAttached();
+  await expectNoWcagViolations(page);
+
+  // Opened from the hero, the picker sits inside it in the tree, and took
+  // the hero's light-on-dark ink: the fan count was white on white.
+  await hero.getByRole("button", { name: "Search Deezer" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
+  await expect(picker.getByText("1500000 fans")).toBeVisible();
+  await expectNoWcagViolations(page);
+  await picker.getByRole("button", { name: "Close" }).click();
+
+  state.banner = "c".repeat(64);
+  await page.reload();
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+test("keeps Needs attention readable in the light", async ({ page }) => {
+  await serveAttention(page);
+  await chooseLightTheme(page);
+  await page.goto("/attention");
+  await expect(page.getByText("Ashreveal, Ashish Swargiary").first()).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+test("keeps the folders and the folder picker readable in the light", async ({
+  page,
+}) => {
+  await serveFiledFolders(page, [song(1, "Hidden Place", 0, false)]);
+  await chooseLightTheme(page);
+  await page.goto("/folders");
+  const cards = page.getByRole("list", { name: "Folders" });
+  await expect(cards.getByRole("link", { name: /To sort/ })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await cards.getByRole("link", { name: /To sort/ }).click();
+  await page.locator(".songs tbody tr").first().locator("button.song-title").focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "Move to folder…" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Move “Hidden Place” to a folder" }),
+  ).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+test("keeps settings and the sign-in screen readable in the light", async ({
+  page,
+}) => {
+  await chooseLightTheme(page);
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.context().clearCookies();
+  await page.route("**/api/v2/**", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+/**
+ * The lowest contrast a text keeps over whatever is drawn behind it, pixel by
+ * pixel. axe cannot measure text over a picture and reports it as needing
+ * review, so the hero's legibility over a banner was never checked: the text
+ * is made transparent, the box it sits in is captured, and its colour is
+ * composited over every pixel of that capture. A pill is measured inside its
+ * rounded ends and its ring, which are not behind the text: the corners of
+ * its box show the picture it sits on.
+ */
+async function lowestContrast(page: Page, target: Locator, pill = false) {
+  const colour = await target.evaluate((element) => {
+    const { color } = getComputedStyle(element);
+    (element as HTMLElement).style.setProperty("color", "transparent", "important");
+    return color;
+  });
+  const box = await target.boundingBox();
+  if (!box) throw new Error("the text has no box to measure");
+  const inset = pill ? { x: box.height / 2, y: 3 } : { x: 0, y: 0 };
+  const shot = await page.screenshot({
+    animations: "disabled",
+    clip: {
+      x: box.x + inset.x,
+      y: box.y + inset.y,
+      width: box.width - inset.x * 2,
+      height: box.height - inset.y * 2,
+    },
+  });
+  await target.evaluate((element) =>
+    (element as HTMLElement).style.removeProperty("color"),
+  );
+  return page.evaluate(
+    async ({ png, colour }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${png}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("no 2D context");
+      context.drawImage(image, 0, 0);
+      const { data } = context.getImageData(0, 0, image.width, image.height);
+      const [r, g, b, a = 1] = (colour.match(/[\d.]+/g) ?? []).map(Number);
+      const channel = (value: number) => {
+        const s = value / 255;
+        return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      };
+      const luminance = (red: number, green: number, blue: number) =>
+        0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+      let lowest = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < data.length; index += 4) {
+        const [br, bg, bb] = [data[index], data[index + 1], data[index + 2]];
+        const ground = luminance(br, bg, bb);
+        const ink = luminance(
+          a * r + (1 - a) * br,
+          a * g + (1 - a) * bg,
+          a * b + (1 - a) * bb,
+        );
+        const ratio =
+          (Math.max(ground, ink) + 0.05) / (Math.min(ground, ink) + 0.05);
+        lowest = Math.min(lowest, ratio);
+      }
+      return lowest;
+    },
+    { png: shot.toString("base64"), colour },
+  );
+}
+
+/**
+ * The artist hero over the picture least kind to its text, in both
+ * materials: a white banner under the light text a banner always takes, and
+ * a portrait at the far end from the ink — white behind the dark theme's
+ * light text, black behind the light theme's dark ink. Small text holds AA's
+ * 4.5:1 and the title, large, its 3:1.
+ */
+for (const { theme, banner, portrait } of [
+  { theme: "default-dark", banner: true, portrait: "#ffffff" },
+  { theme: "default", banner: true, portrait: "#ffffff" },
+  { theme: "default-dark", banner: false, portrait: "#ffffff" },
+  { theme: "default", banner: false, portrait: "#000000" },
+]) {
+  test(`keeps the artist hero legible over a ${banner ? "white banner" : `${portrait} portrait`} in ${theme}`, async ({
+    page,
+  }) => {
+    const { state } = await serveArtistImages(page);
+    if (banner) state.banner = "c".repeat(64);
+    // A portrait chosen by hand, so the quiet "Automatic portrait" button is
+    // drawn too and measured with the others.
+    state.portrait = "d".repeat(64);
+    const fill = banner ? "#ffffff" : portrait;
+    await page.route("**/api/v2/artwork/*", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="${fill}"/></svg>`,
+      }),
+    );
+    await page.addInitScript((id) => {
+      localStorage.setItem("waveflow.theme", id);
+    }, theme);
+    await page.goto("/artists/artist-1");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const hero = page.locator(".artist-hero");
+    await expect(
+      hero.locator(banner ? "img.artist-banner" : ".artist-hero-ambient"),
+    ).toBeVisible();
+    await page.evaluate(() =>
+      Promise.all(
+        document.getAnimations().map((animation) => animation.finished.catch(() => undefined)),
+      ),
+    );
+
+    // Each text named by what it says, so that a line gone missing fails
+    // here instead of handing its place to the next one of the same class.
+    const name = hero.getByRole("heading", { name: "Björk", exact: true });
+    const kicker = hero.locator(".eyebrow");
+    const count = hero.getByText("2 albums in your library", { exact: true });
+    const source = hero.getByText("Portrait chosen by hand", { exact: true });
+    for (const text of [name, kicker, count, source]) {
+      await expect(text).toHaveCount(1);
+      await expect(text).toBeVisible();
+    }
+    // And no other source line beside it, left unmeasured.
+    await expect(hero.locator(".artist-source")).toHaveCount(1);
+    expect(await lowestContrast(page, name), "the name").toBeGreaterThanOrEqual(3);
+    for (const [label, text] of [
+      ["the kicker", kicker],
+      ["the count", count],
+      ["the source", source],
+    ] as const) {
+      expect(await lowestContrast(page, text), label).toBeGreaterThanOrEqual(4.5);
+    }
+    // Every button is measured; these two are required, the plain one and the
+    // quiet one, so the loop below cannot pass over an empty list.
+    for (const required of ["Change portrait", "Automatic portrait"]) {
+      const button = hero.getByRole("button", { name: required, exact: true });
+      await expect(button).toHaveCount(1);
+      await expect(button).toBeVisible();
+    }
+    for (const button of await hero.locator(".artist-image-button").all()) {
+      if (!(await button.isVisible())) continue;
+      expect(
+        await lowestContrast(page, button, true),
+        `the button “${await button.innerText()}”`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}
+
+/**
+ * The light presets share one material and differ by their ground's tint and
+ * their accent's 700 stop, which is also the colour of every link and every
+ * open item: each one is audited where the accent is spent most.
+ */
+for (const theme of [
+  "default",
+  "midnight-light",
+  "sunset-light",
+  "lavender-light",
+  "crimson-light",
+  "ocean-light",
+]) {
+  test(`keeps the ${theme} theme readable`, async ({ page }) => {
+    await serveAttention(page);
+    await page.addInitScript((id) => {
+      localStorage.setItem("waveflow.theme", id);
+    }, theme);
+    await page.goto("/attention");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await expect(page.getByText("Ashreveal, Ashish Swargiary").first()).toBeVisible();
+    await expectNoWcagViolations(page);
+  });
+}

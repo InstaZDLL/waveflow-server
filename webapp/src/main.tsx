@@ -88,8 +88,8 @@ import {
 import { PreferencesProvider } from "./state/preferences";
 import "./styles/styles.css";
 import "./styles/refresh.css";
-// The Fluid Editorial faces. Declared for every theme and fetched only where a
-// rule names them, which is the dark themes alone.
+// The Fluid Editorial faces, which every theme's rules now name: the
+// structure in fluid.css is shared, and only its material is per theme.
 import "@fontsource-variable/dm-sans/opsz.css";
 import "@fontsource/playfair-display/400-italic.css";
 import "./styles/fluid.css";
@@ -97,9 +97,8 @@ import "./styles/fluid.css";
 /**
  * The rail's sections, in the order it shows them.
  *
- * `pinned` is the four places reached for most, drawn as tiles by the dark
- * themes; the others carry a label. A light theme keeps its plain list, so the
- * grouping changes its order and nothing else.
+ * `pinned` is the four places reached for most, drawn as tiles two to a row;
+ * the others carry a label.
  */
 const NAVIGATION_GROUPS = ["pinned", "library", "listen", "account"] as const;
 type NavigationGroup = (typeof NAVIGATION_GROUPS)[number];

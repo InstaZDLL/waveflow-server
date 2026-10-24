@@ -8,9 +8,9 @@ import { usePlayer } from "../player/player";
  * Lights the page with the playing record's cover.
  *
  * Writes `--glow` and `--glow-deep` on the document root, where the page's
- * atmosphere and the player bar read them. Only the dark themes use them: the
- * Fluid Editorial direction is dark-only, and a light theme keeps the ground
- * it has.
+ * atmosphere and the player bar read them. Both materials do: the dark one at
+ * full strength, the light one washed into its paper (`--fe-glow` in
+ * fluid.css), since the colour is deepened for a dark page.
  *
  * Kept when playback stops — the guide's light is the playing *or last-played*
  * cover — and left alone when a cover cannot be sampled, so the page keeps the
