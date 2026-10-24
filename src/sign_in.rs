@@ -221,7 +221,6 @@ impl SignInGuard {
         if table
             .last_prune
             .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
-            || table.windows.len() >= MAX_WINDOWS
         {
             table.prune(now);
         }

@@ -1618,12 +1618,17 @@ async fn an_account_rotates_or_switches_off_its_own_subsonic_credential() {
 struct Guarded {
     router: axum::Router,
     password: String,
+    /// A wrong password, drawn at run time too.
+    wrong: String,
     subsonic_secret: String,
     api_key: String,
 }
 
 async fn guarded(trusted_proxies: &[&str]) -> (tempfile::TempDir, Guarded) {
     let (temp, config, mut state) = test_app().await;
+    // Enough permits for every concurrent guess the tests make, whatever the
+    // machine: the gate is the gate's tests' subject, not these.
+    state.auth = state.auth.clone().with_sign_in_permits(64);
     let password = Uuid::new_v4().to_string();
     let password_hash = security::hash_password(&password).unwrap();
     let now = now_ms();
@@ -1654,6 +1659,7 @@ async fn guarded(trusted_proxies: &[&str]) -> (tempfile::TempDir, Guarded) {
         Guarded {
             router,
             password,
+            wrong: Uuid::new_v4().to_string(),
             subsonic_secret,
             api_key,
         },
@@ -1725,7 +1731,8 @@ async fn subsonic_sign_in(router: &axum::Router, credentials: &str, peer: &str) 
 async fn failed_sign_ins_are_limited_per_address_and_account() {
     let (_temp, app) = guarded(&[]).await;
     for _ in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
-        let refused = native_sign_in(&app.router, "Guarded", "wrong", "198.51.100.7", None).await;
+        let refused =
+            native_sign_in(&app.router, "Guarded", &app.wrong, "198.51.100.7", None).await;
         assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
     }
     let throttled =
@@ -1768,7 +1775,7 @@ async fn failed_sign_ins_are_limited_per_address_and_account() {
 async fn concurrent_guesses_cannot_slip_past_the_limit() {
     let (_temp, app) = guarded(&[]).await;
     let guesses =
-        (0..40).map(|_| native_sign_in(&app.router, "Guarded", "wrong", "198.51.100.7", None));
+        (0..40).map(|_| native_sign_in(&app.router, "Guarded", &app.wrong, "198.51.100.7", None));
     let statuses: Vec<StatusCode> = futures_util::future::join_all(guesses)
         .await
         .into_iter()
@@ -1802,7 +1809,7 @@ async fn an_unknown_account_costs_a_verification() {
         let refused = native_sign_in(
             &app.router,
             "Guarded",
-            "wrong",
+            &app.wrong,
             &format!("192.0.2.{round}"),
             None,
         )
@@ -1813,7 +1820,7 @@ async fn an_unknown_account_costs_a_verification() {
         let refused = native_sign_in(
             &app.router,
             "nobody-by-that-name",
-            "wrong",
+            &app.wrong,
             &format!("192.0.2.{}", round + 10),
             None,
         )
@@ -1897,7 +1904,7 @@ async fn a_trusted_proxy_names_the_client_and_a_stranger_cannot() {
     for index in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
         let forwarded = format!("192.0.2.{index}, 198.51.100.7");
         assert_eq!(
-            sign_in("wrong".into(), "10.0.0.2", forwarded).await,
+            sign_in(app.wrong.clone(), "10.0.0.2", forwarded).await,
             StatusCode::UNAUTHORIZED
         );
     }
@@ -1917,7 +1924,12 @@ async fn a_trusted_proxy_names_the_client_and_a_stranger_cannot() {
 
     for index in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
         assert_eq!(
-            sign_in("wrong".into(), "192.0.2.200", format!("203.0.113.{index}")).await,
+            sign_in(
+                app.wrong.clone(),
+                "192.0.2.200",
+                format!("203.0.113.{index}")
+            )
+            .await,
             StatusCode::UNAUTHORIZED
         );
     }

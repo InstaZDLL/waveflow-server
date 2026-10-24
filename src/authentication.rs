@@ -100,6 +100,14 @@ impl AuthService {
         }
     }
 
+    /// The same service with a guard admitting `permits` verifications at once,
+    /// so a test's outcome does not depend on the machine's CPU count.
+    #[doc(hidden)]
+    pub fn with_sign_in_permits(mut self, permits: usize) -> Self {
+        self.guard = SignInGuard::new(permits);
+        self
+    }
+
     /// The guard, for the surfaces that check a password elsewhere.
     pub fn sign_in_guard(&self) -> &std::sync::Arc<SignInGuard> {
         &self.guard
@@ -384,7 +392,7 @@ pub fn now_ms() -> i64 {
 fn dummy_hash() -> &'static str {
     static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     DUMMY.get_or_init(|| {
-        security::hash_password(&security::generate_token("dummy_"))
+        security::hash_password(&Uuid::new_v4().to_string())
             .expect("hashing a random password cannot fail")
     })
 }
