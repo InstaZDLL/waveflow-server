@@ -1923,7 +1923,8 @@ impl Database {
         name_canonical: &str,
     ) -> Result<Vec<crate::enrichment::CachedArtist>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT provider, outcome, bio_summary, bio_full, image_hash, fetched_at, expires_at \
+            "SELECT provider, outcome, bio_summary, bio_full, image_hash, fanart_hash, \
+                    fetched_at, expires_at \
              FROM metadata_artist WHERE name_canonical = ?",
         )
         .bind(name_canonical)
@@ -1945,6 +1946,7 @@ impl Database {
                 bio_summary: row.try_get("bio_summary")?,
                 bio_full: row.try_get("bio_full")?,
                 image_hash: row.try_get("image_hash")?,
+                fanart_hash: row.try_get("fanart_hash")?,
                 fetched_at: row.try_get("fetched_at")?,
                 expires_at: row.try_get("expires_at")?,
             });
@@ -2012,6 +2014,37 @@ impl Database {
         tx.commit().await
     }
 
+    /// Links the banner `hash` to every artist called `name_canonical` that
+    /// does not show it yet — [`Self::link_artist_portrait`], for the fanart
+    /// of RFC-014.
+    pub(crate) async fn link_artist_fanart(
+        &self,
+        name_canonical: &str,
+        hash: &str,
+    ) -> Result<(), sqlx::Error> {
+        let unlinked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM artist \
+               WHERE canonical_name = ? AND fanart_hash IS NOT ?)",
+        )
+        .bind(name_canonical)
+        .bind(hash)
+        .fetch_one(&self.pool)
+        .await?;
+        if !unlinked {
+            return Ok(());
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool.begin().await?;
+        link_fanart_in(
+            &mut tx,
+            name_canonical,
+            Some(hash),
+            crate::authentication::now_ms(),
+        )
+        .await?;
+        tx.commit().await
+    }
+
     /// Records what a provider answered: its row, its whole neighbour list,
     /// and its portrait — the artwork row and every artist it belongs to —
     /// in one transaction.
@@ -2032,7 +2065,17 @@ impl Database {
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool.begin().await?;
-        if let Some(image) = &answer.image {
+        // What this provider's row named before, read before it is replaced:
+        // a refresh without the banner unlinks it (RFC-014 decision 3).
+        let previous_fanart: Option<String> = sqlx::query_scalar(
+            "SELECT fanart_hash FROM metadata_artist WHERE provider = ? AND name_canonical = ?",
+        )
+        .bind(provider.as_str())
+        .bind(name_canonical)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten();
+        for image in [&answer.image, &answer.fanart].into_iter().flatten() {
             sqlx::query(
                 "INSERT INTO artwork (hash, format, source, byte_size, created_at) \
                  VALUES (?, ?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING",
@@ -2048,11 +2091,12 @@ impl Database {
         sqlx::query(
             "INSERT INTO metadata_artist \
                 (provider, name_canonical, outcome, bio_summary, bio_full, image_hash, \
-                 fetched_at, expires_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+                 fanart_hash, fetched_at, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (provider, name_canonical) DO UPDATE SET \
                 outcome = excluded.outcome, bio_summary = excluded.bio_summary, \
                 bio_full = excluded.bio_full, image_hash = excluded.image_hash, \
+                fanart_hash = excluded.fanart_hash, \
                 fetched_at = excluded.fetched_at, expires_at = excluded.expires_at",
         )
         .bind(provider.as_str())
@@ -2061,12 +2105,24 @@ impl Database {
         .bind(answer.bio_summary.as_deref())
         .bind(answer.bio_full.as_deref())
         .bind(answer.image.as_ref().map(|image| image.hash.as_str()))
+        .bind(answer.fanart.as_ref().map(|fanart| fanart.hash.as_str()))
         .bind(fetched_at)
         .bind(expires_at)
         .execute(&mut *tx)
         .await?;
         if let Some(image) = &answer.image {
             link_portrait_in(&mut tx, name_canonical, &image.hash, fetched_at).await?;
+        }
+        match (&answer.fanart, previous_fanart) {
+            (Some(fanart), _) => {
+                link_fanart_in(&mut tx, name_canonical, Some(&fanart.hash), fetched_at).await?;
+            }
+            // A miss, or a hit that no longer carries the fanart: the rows
+            // still showing the one this provider named go back to none.
+            (None, Some(previous)) => {
+                unlink_fanart_in(&mut tx, name_canonical, &previous, fetched_at).await?;
+            }
+            (None, None) => {}
         }
         sqlx::query(
             "DELETE FROM metadata_artist_similar WHERE provider = ? AND name_canonical = ?",
@@ -2127,6 +2183,90 @@ async fn link_portrait_in(
     .bind(hash)
     .fetch_all(&mut **tx)
     .await?;
+    for row in moved {
+        let id: String = row.try_get("id")?;
+        let library_id: String = row.try_get("library_id")?;
+        let parse =
+            |value: &str| Uuid::parse_str(value).map_err(|error| sqlx::Error::Decode(error.into()));
+        crate::catalog::record_library_event(
+            tx,
+            crate::catalog::LibraryChange {
+                library_id: parse(&library_id)?,
+                entity_type: "artist",
+                entity_id: parse(&id)?,
+                action: "upsert",
+                payload: serde_json::json!({}),
+                changed_at: now,
+                origin_device_id: None,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Points every artist called `name_canonical` at the banner `hash`
+/// (RFC-014 decision 3), as [`link_portrait_in`] does the portrait: only rows
+/// that move, one artist event each, and only while the artwork row exists and
+/// a cache row still names it.
+async fn link_fanart_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name_canonical: &str,
+    hash: Option<&str>,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let Some(hash) = hash else {
+        return Ok(());
+    };
+    let moved = sqlx::query(
+        "UPDATE artist SET fanart_hash = ?, updated_at = ? \
+         WHERE canonical_name = ? AND fanart_hash IS NOT ? \
+           AND EXISTS (SELECT 1 FROM artwork WHERE artwork.hash = ?) \
+           AND EXISTS (SELECT 1 FROM metadata_artist \
+                       WHERE name_canonical = ? AND fanart_hash = ?) \
+         RETURNING id, library_id",
+    )
+    .bind(hash)
+    .bind(now)
+    .bind(name_canonical)
+    .bind(hash)
+    .bind(hash)
+    .bind(name_canonical)
+    .bind(hash)
+    .fetch_all(&mut **tx)
+    .await?;
+    record_artist_moves(tx, moved, now).await
+}
+
+/// Takes the banner `previous` off every artist called `name_canonical` that
+/// still shows it: the provider no longer offers it (RFC-014 decision 3). Only
+/// that hash — a row already showing a newer one is not this refresh's to
+/// clear.
+async fn unlink_fanart_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name_canonical: &str,
+    previous: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let moved = sqlx::query(
+        "UPDATE artist SET fanart_hash = NULL, updated_at = ? \
+         WHERE canonical_name = ? AND fanart_hash = ? \
+         RETURNING id, library_id",
+    )
+    .bind(now)
+    .bind(name_canonical)
+    .bind(previous)
+    .fetch_all(&mut **tx)
+    .await?;
+    record_artist_moves(tx, moved, now).await
+}
+
+/// One artist event per moved row, in the row's own library.
+async fn record_artist_moves(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    moved: Vec<sqlx::sqlite::SqliteRow>,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     for row in moved {
         let id: String = row.try_get("id")?;
         let library_id: String = row.try_get("library_id")?;

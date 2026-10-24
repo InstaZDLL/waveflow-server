@@ -31,6 +31,7 @@ use waveflow_core::metadata::{
     deezer::{is_placeholder_artist_picture, DeezerArtistHit, DeezerClient, DeezerError},
     lastfm::LastfmClient,
     name_match::{normalize_name, select_by_name},
+    theaudiodb::TheAudioDbClient,
     LookupError,
 };
 
@@ -50,6 +51,19 @@ const DEEZER_BASE_URL: &str = "https://api.deezer.com";
 /// The hosts Deezer serves its pictures from (decision 8). A picture URL
 /// naming any other host is dropped without being contacted.
 const DEEZER_IMAGE_HOSTS: [&str; 2] = ["e-cdns-images.dzcdn.net", "cdn-images.dzcdn.net"];
+
+/// TheAudioDB's API root, a constant like the others (RFC-014 decision 1). The
+/// operator's key travels in the path, so this URL is never logged either.
+const THEAUDIODB_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
+
+/// The hosts TheAudioDB serves its fanart from (RFC-014 decision 2). A fanart
+/// URL naming any other host is dropped without being contacted.
+const THEAUDIODB_IMAGE_HOSTS: [&str; 2] = ["r2.theaudiodb.com", "www.theaudiodb.com"];
+
+/// TheAudioDB's own ceiling, whatever the shared rate says: thirty requests a
+/// minute on its free tier (RFC-014 decision 5). The pace is the slower of this
+/// and the operator's.
+const THEAUDIODB_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How many neighbours are asked for and kept. Subsonic's `getArtistInfo`
 /// defaults to twenty; asking for more leaves room for the ones a caller cannot
@@ -73,6 +87,9 @@ pub enum Provider {
     /// Portraits only: Deezer has no biography, and its related artists are
     /// not asked for.
     Deezer,
+    /// Banners only (RFC-014): TheAudioDB's fanart. Its biographies wait on a
+    /// language this server does not know.
+    TheAudioDb,
 }
 
 impl Provider {
@@ -80,6 +97,7 @@ impl Provider {
         match value {
             "lastfm" => Some(Self::LastFm),
             "deezer" => Some(Self::Deezer),
+            "theaudiodb" => Some(Self::TheAudioDb),
             _ => None,
         }
     }
@@ -89,6 +107,7 @@ impl Provider {
         match self {
             Self::LastFm => "lastfm",
             Self::Deezer => "deezer",
+            Self::TheAudioDb => "theaudiodb",
         }
     }
 }
@@ -128,6 +147,8 @@ pub struct CachedArtist {
     /// The portrait this provider supplied, in the artwork store. Cleared by
     /// the database when the sweeper takes the artwork row.
     pub image_hash: Option<String>,
+    /// The banner this provider supplied (RFC-014), cleared the same way.
+    pub fanart_hash: Option<String>,
     pub fetched_at: i64,
     pub expires_at: i64,
 }
@@ -176,6 +197,8 @@ pub(crate) struct ArtistAnswer {
     pub(crate) bio_full: Option<String>,
     pub(crate) similar: Vec<CachedSimilar>,
     pub(crate) image: Option<StoredPortrait>,
+    /// The banner, from TheAudioDB's fanart (RFC-014).
+    pub(crate) fanart: Option<StoredPortrait>,
 }
 
 impl ArtistAnswer {
@@ -185,6 +208,7 @@ impl ArtistAnswer {
             || self.bio_full.is_some()
             || !self.similar.is_empty()
             || self.image.is_some()
+            || self.fanart.is_some()
         {
             Outcome::Hit
         } else {
@@ -202,6 +226,9 @@ pub struct Endpoints {
     pub deezer: String,
     /// The hosts a Deezer picture may be fetched from.
     pub deezer_image_hosts: Vec<String>,
+    pub theaudiodb: String,
+    /// The hosts a TheAudioDB fanart may be fetched from.
+    pub theaudiodb_image_hosts: Vec<String>,
     /// The addresses a picture may be fetched from. Only the test suite,
     /// whose image host is on loopback, sets anything but the default.
     pub image_addresses: AddressPolicy,
@@ -213,6 +240,8 @@ impl Default for Endpoints {
             lastfm: LASTFM_BASE_URL.to_owned(),
             deezer: DEEZER_BASE_URL.to_owned(),
             deezer_image_hosts: DEEZER_IMAGE_HOSTS.map(str::to_owned).to_vec(),
+            theaudiodb: THEAUDIODB_BASE_URL.to_owned(),
+            theaudiodb_image_hosts: THEAUDIODB_IMAGE_HOSTS.map(str::to_owned).to_vec(),
             image_addresses: AddressPolicy::default(),
         }
     }
@@ -259,6 +288,10 @@ enum Client {
     },
     Deezer {
         client: DeezerClient,
+        image_hosts: Vec<String>,
+    },
+    TheAudioDb {
+        client: TheAudioDbClient,
         image_hosts: Vec<String>,
     },
 }
@@ -309,11 +342,33 @@ impl Enrichment {
                     client: DeezerClient::with_http(http, endpoints.deezer.clone()),
                     image_hosts: endpoints.deezer_image_hosts.clone(),
                 },
+                // Banners are all it is asked for (RFC-014 decision 1).
+                Provider::TheAudioDb if !settings.images => continue,
+                Provider::TheAudioDb => {
+                    let key = settings.theaudiodb_key.clone().ok_or_else(|| {
+                        anyhow::anyhow!("metadata provider theaudiodb is configured without a key")
+                    })?;
+                    Client::TheAudioDb {
+                        client: TheAudioDbClient::with_http(
+                            http,
+                            endpoints.theaudiodb.clone(),
+                            key,
+                        )
+                        .map_err(|_| anyhow::anyhow!("the TheAudioDB address is not https"))?,
+                        image_hosts: endpoints.theaudiodb_image_hosts.clone(),
+                    }
+                }
+            };
+            let pace = match provider {
+                Provider::TheAudioDb => {
+                    Pace::with_floor(settings.rate_per_sec, THEAUDIODB_INTERVAL)
+                }
+                Provider::LastFm | Provider::Deezer => Pace::new(settings.rate_per_sec),
             };
             sources.push(Source {
                 provider,
                 client,
-                pace: Pace::new(settings.rate_per_sec),
+                pace,
             });
         }
         if sources.is_empty() {
@@ -471,6 +526,12 @@ impl Enrichment {
                 tracing::warn!(%error, "cached artist portrait could not be linked");
             }
         }
+        // And the banner, by the same reasoning (RFC-014 decision 3).
+        if let Some(hash) = ordered.iter().find_map(|row| row.fanart_hash.as_deref()) {
+            if let Err(error) = engine.db.link_artist_fanart(&canonical, hash).await {
+                tracing::warn!(%error, "cached artist banner could not be linked");
+            }
+        }
         Ok(ordered)
     }
 
@@ -531,6 +592,10 @@ impl Engine {
                 client,
                 image_hosts,
             } => self.ask_deezer(source, client, image_hosts, name).await,
+            Client::TheAudioDb {
+                client,
+                image_hosts,
+            } => self.ask_theaudiodb(source, client, image_hosts, name).await,
         };
         let answer = match answer {
             Ok(answer) => answer,
@@ -610,6 +675,7 @@ impl Engine {
             bio_full,
             similar,
             image: None,
+            fanart: None,
         })
     }
 
@@ -673,8 +739,65 @@ impl Engine {
                 client,
                 image_hosts,
             } => Some((source, client, image_hosts.as_slice())),
-            Client::LastFm { .. } => None,
+            Client::LastFm { .. } | Client::TheAudioDb { .. } => None,
         })
+    }
+
+    /// The artist search, then the first fanart that is really one (RFC-014
+    /// decision 2).
+    ///
+    /// The fanarts are tried in TheAudioDB's order: one the fetcher refuses
+    /// for what it is gives way to the next, and the first stored ends the
+    /// search. None accepted, or no artist by that name, is a miss. A picture
+    /// host that could not be reached is unreached, like the search, and
+    /// writes nothing: it says nothing about the artist.
+    async fn ask_theaudiodb(
+        &self,
+        source: &Source,
+        client: &TheAudioDbClient,
+        image_hosts: &[String],
+        name: &str,
+    ) -> Result<ArtistAnswer, Verdict> {
+        source.pace.wait().await;
+        // English is asked only because the call takes a language: the
+        // biography it selects is not kept.
+        let Some(artist) = self.bounded(client.artist_info(name, "en")).await? else {
+            return Ok(ArtistAnswer::default());
+        };
+        for fanart in &artist.fanart_urls {
+            source.pace.wait().await;
+            let fetched = portrait::fetch(
+                fanart,
+                image_hosts,
+                self.image_addresses,
+                self.request_timeout,
+            )
+            .await;
+            let picture = match fetched {
+                Ok(picture) => picture,
+                Err(refusal) if refusal.is_answer() => {
+                    tracing::debug!(
+                        provider = source.provider.as_str(),
+                        verdict = %refusal,
+                        "artist fanart refused; trying the next"
+                    );
+                    continue;
+                }
+                Err(refusal) => return Err(Verdict::Image(refusal)),
+            };
+            portrait::store(&self.artwork_dir, &picture)
+                .await
+                .map_err(|_| Verdict::Store)?;
+            return Ok(ArtistAnswer {
+                fanart: Some(StoredPortrait {
+                    hash: picture.hash,
+                    format: picture.format,
+                    byte_size: picture.bytes.len() as i64,
+                }),
+                ..ArtistAnswer::default()
+            });
+        }
+        Ok(ArtistAnswer::default())
     }
 
     /// One request, under the request timeout; anything but an answer is a
@@ -793,6 +916,16 @@ impl Pace {
         Self {
             interval: Duration::from_secs(1) / rate_per_sec.max(1),
             next: std::sync::Mutex::new(Instant::now()),
+        }
+    }
+
+    /// The operator's rate, but never faster than one request per `floor`:
+    /// a provider's own ceiling, which the shared setting cannot raise.
+    fn with_floor(rate_per_sec: u32, floor: Duration) -> Self {
+        let pace = Self::new(rate_per_sec);
+        Self {
+            interval: pace.interval.max(floor),
+            ..pace
         }
     }
 

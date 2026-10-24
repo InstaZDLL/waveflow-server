@@ -19,6 +19,7 @@ import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 const PROVIDER_NAMES: Record<string, string> = {
   lastfm: "Last.fm",
   deezer: "Deezer",
+  theaudiodb: "TheAudioDB",
 };
 
 /**
@@ -115,9 +116,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   // The artist row carries the portrait once the server has linked it; the
   // enrichment names it as soon as it is cached, which may be a visit sooner.
   const portrait = value.artwork_hash ?? image?.artwork_hash ?? null;
-  // The banner chosen by hand (RFC-013), or else the portrait, blurred, as the
-  // desktop draws it: a header that carries the artist even with no banner.
+  // The banner chosen by hand (RFC-013) or TheAudioDB's fanart (RFC-014), or
+  // else the portrait, blurred, as the desktop draws it: a header that carries
+  // the artist even with no banner.
   const banner = value.banner_hash ?? null;
+  const bannerSource = value.enrichment?.banner ?? null;
   const backdrop = banner ?? portrait;
   // Offered where the server would take it: owners and managers.
   const mayChoose = mayCorrectTracks(
@@ -165,6 +168,22 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 date: new Intl.DateTimeFormat(locale, {
                   dateStyle: "medium",
                 }).format(new Date(image.source.fetched_at)),
+              })}
+            </p>
+          ) : null}
+          {/* Credited only while it is the banner shown: a chosen one came
+              from no provider. TheAudioDB's terms ask for the credit. */}
+          {bannerSource &&
+          !value.image_choice?.banner &&
+          bannerSource.artwork_hash === banner ? (
+            <p className="muted artist-source">
+              {t("artists.bannerSource", {
+                provider:
+                  PROVIDER_NAMES[bannerSource.source.provider] ??
+                  bannerSource.source.provider,
+                date: new Intl.DateTimeFormat(locale, {
+                  dateStyle: "medium",
+                }).format(new Date(bannerSource.source.fetched_at)),
               })}
             </p>
           ) : null}

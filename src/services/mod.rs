@@ -972,9 +972,9 @@ pub struct ArtistDetail {
     /// the prefill decision 6 refuses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enrichment: Option<ArtistEnrichment>,
-    /// The banner chosen for this artist by hand (RFC-013 decision 3), absent
-    /// when none was. There is no automatic banner: a client without one
-    /// draws what it drew before.
+    /// The banner this artist shows: the one chosen by hand (RFC-013
+    /// decision 3), or else TheAudioDB's fanart (RFC-014 decision 4). Absent
+    /// when there is neither, and a client then draws what it drew before.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub banner_hash: Option<String>,
     /// What was chosen by hand, kind by kind, so a client can say "chosen"
@@ -1015,6 +1015,10 @@ pub struct ArtistEnrichment {
     pub bio: Option<EnrichedBio>,
     /// The first configured provider with a portrait supplies it.
     pub image: Option<EnrichedImage>,
+    /// The automatic banner and where it came from (RFC-014 decision 4).
+    /// Present only while it is the banner shown: a banner chosen by hand
+    /// came from no provider, and this must not say otherwise.
+    pub banner: Option<EnrichedImage>,
     /// The first configured provider whose neighbours include artists the
     /// caller can see supplies the list — those artists only, best first.
     pub similar: Option<EnrichedSimilar>,
@@ -1026,6 +1030,7 @@ impl ArtistEnrichment {
             state: EnrichmentState::Disabled,
             bio: None,
             image: None,
+            banner: None,
             similar: None,
         }
     }
@@ -1063,7 +1068,7 @@ pub struct EnrichedBio {
     pub source: EnrichmentSource,
 }
 
-/// A portrait, as a key into the artwork store.
+/// A portrait or a banner, as a key into the artwork store.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EnrichedImage {
     /// Served by the artwork route, as every `artwork_hash` is.

@@ -5464,6 +5464,56 @@ test("shows a listener the artist's banner with nothing to change", async ({
 });
 
 /**
+ * The automatic banner (RFC-014): TheAudioDB's fanart is drawn behind the
+ * header and credited to TheAudioDB, whose terms ask for it; a banner chosen
+ * by hand is credited to nobody.
+ */
+test("credits TheAudioDB for an automatic banner and nobody for a chosen one", async ({
+  page,
+}) => {
+  await serveArtistImages(page);
+  let chosen = false;
+  await page.route("**/api/v2/artists/artist-1", (route) =>
+    route.fulfill({
+      json: {
+        ...artistDetail,
+        library_id: "library-1",
+        banner_hash: (chosen ? "b" : "c").repeat(64),
+        ...(chosen
+          ? { image_choice: { banner: { source: "upload", set_at: 1 } } }
+          : {}),
+        enrichment: {
+          state: "ready",
+          bio: null,
+          image: null,
+          similar: null,
+          banner: chosen
+            ? null
+            : {
+                artwork_hash: "c".repeat(64),
+                source: {
+                  provider: "theaudiodb",
+                  fetched_at: Date.UTC(2026, 9, 24),
+                },
+              },
+        },
+      },
+    }),
+  );
+
+  await page.goto("/artists/artist-1");
+  const hero = page.locator(".artist-hero");
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expect(hero.getByText(/^Banner from TheAudioDB, /)).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  chosen = true;
+  await page.reload();
+  await expect(hero.locator("img.artist-banner")).toBeVisible();
+  await expect(hero.getByText(/^Banner from /)).toHaveCount(0);
+});
+
+/**
  * Choosing the portrait from Deezer (RFC-013 step 4): the picker searches the
  * artist's name as it opens, shows previews the server holds and nothing from
  * Deezer itself, says what a refusal means, and a pick sends the Deezer id

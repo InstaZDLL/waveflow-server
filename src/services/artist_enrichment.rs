@@ -28,10 +28,13 @@ impl DomainServices {
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
         let mut detail = self.artist(user_id, artist_id).await?;
-        detail.enrichment = Some(
-            self.enrichment_of(user_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
-                .await?,
-        );
+        let mut enrichment = self
+            .enrichment_of(user_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
+            .await?;
+        if detail.image_choice.banner.is_some() {
+            enrichment.banner = None;
+        }
+        detail.enrichment = Some(enrichment);
         Ok(detail)
     }
 
@@ -71,6 +74,7 @@ impl DomainServices {
             .await?;
         let bio = merged_bio(&rows);
         let image = merged_image(&rows);
+        let banner = merged_banner(&rows);
         // Only a fresh row is an answer. An expired one has just had its
         // refresh scheduled, and an expired miss is not "nobody knows" but
         // "being asked again" — `pending`, as decision 11 defines it. Stale
@@ -78,7 +82,7 @@ impl DomainServices {
         let now = crate::authentication::now_ms();
         let answered = rows.iter().filter(|row| row.expires_at > now).count();
         let state = state_of(
-            bio.is_some() || image.is_some() || similar.is_some(),
+            bio.is_some() || image.is_some() || banner.is_some() || similar.is_some(),
             answered,
             engine.provider_count(),
         );
@@ -86,6 +90,7 @@ impl DomainServices {
             state,
             bio,
             image,
+            banner,
             similar,
         })
     }
@@ -332,6 +337,16 @@ fn merged_image(rows: &[CachedArtist]) -> Option<EnrichedImage> {
     })
 }
 
+/// The first configured provider with a banner supplies it (RFC-014).
+fn merged_banner(rows: &[CachedArtist]) -> Option<EnrichedImage> {
+    rows.iter().find_map(|row| {
+        row.fanart_hash.as_ref().map(|hash| EnrichedImage {
+            artwork_hash: hash.clone(),
+            source: source_of(row),
+        })
+    })
+}
+
 /// Content wins over everything; without it, a provider that has not
 /// answered makes the lookup `pending`, and only when every one of them has
 /// answered is it `none`.
@@ -365,6 +380,7 @@ mod tests {
             bio_summary: bio.map(str::to_owned),
             bio_full: None,
             image_hash: None,
+            fanart_hash: None,
             fetched_at,
             expires_at: fetched_at + 1,
         }

@@ -200,8 +200,8 @@ pub struct ScrobbleDestination {
 #[derive(Clone)]
 pub struct MetadataSettings {
     /// `WAVEFLOW_METADATA_PROVIDERS`: an ordered, comma-separated list, empty
-    /// by default, of `lastfm` and `deezer`. The order is the order fields are
-    /// merged in when read.
+    /// by default, of `lastfm`, `deezer` and `theaudiodb`. The order is the
+    /// order fields are merged in when read.
     pub providers: Vec<crate::enrichment::Provider>,
     /// `WAVEFLOW_METADATA_IMAGES`, on by default, `off` to keep the lookups and
     /// refuse decision 8's image fetch. A narrowing only: it switches nothing
@@ -210,6 +210,11 @@ pub struct MetadataSettings {
     /// `WAVEFLOW_METADATA_LASTFM_KEY`, the operator's own application key.
     /// Required when `providers` names `lastfm`: no key ships in this binary.
     pub lastfm_key: Option<String>,
+    /// `WAVEFLOW_METADATA_THEAUDIODB_KEY`, the operator's own TheAudioDB key.
+    /// Required when `providers` names `theaudiodb` (RFC-014 decision 1): the
+    /// public test key `waveflow-core` uses for one desktop user is not one a
+    /// server may share with everyone else's.
+    pub theaudiodb_key: Option<String>,
     /// `WAVEFLOW_METADATA_TTL_DAYS`: how long an answer with content stands.
     pub ttl: Duration,
     /// `WAVEFLOW_METADATA_MISS_TTL_DAYS`: how long "the provider knows nothing"
@@ -230,6 +235,7 @@ impl MetadataSettings {
             providers: Vec::new(),
             images: true,
             lastfm_key: None,
+            theaudiodb_key: None,
             ttl: Duration::from_secs(30 * 24 * 60 * 60),
             miss_ttl: Duration::from_secs(7 * 24 * 60 * 60),
             rate_per_sec: 4,
@@ -250,6 +256,10 @@ impl std::fmt::Debug for MetadataSettings {
             .field(
                 "lastfm_key",
                 &self.lastfm_key.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "theaudiodb_key",
+                &self.theaudiodb_key.as_ref().map(|_| "[redacted]"),
             )
             .field("ttl", &self.ttl)
             .field("miss_ttl", &self.miss_ttl)
@@ -1056,9 +1066,11 @@ fn normalize_public_url(value: &str) -> anyhow::Result<String> {
 fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
     let defaults = MetadataSettings::off();
     let lastfm_key = read_trimmed_env("WAVEFLOW_METADATA_LASTFM_KEY");
+    let theaudiodb_key = read_trimmed_env("WAVEFLOW_METADATA_THEAUDIODB_KEY");
     let providers = parse_metadata_providers(
         &std::env::var("WAVEFLOW_METADATA_PROVIDERS").unwrap_or_default(),
         lastfm_key.is_some(),
+        theaudiodb_key.is_some(),
     )?;
     let days = |name: &str, default: Duration| -> anyhow::Result<Duration> {
         let days: u64 = parse_positive_env(name, default.as_secs() / (24 * 60 * 60))?;
@@ -1070,6 +1082,7 @@ fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
         providers,
         images: parse_bool_env("WAVEFLOW_METADATA_IMAGES", defaults.images)?,
         lastfm_key,
+        theaudiodb_key,
         ttl: days("WAVEFLOW_METADATA_TTL_DAYS", defaults.ttl)?,
         miss_ttl: days("WAVEFLOW_METADATA_MISS_TTL_DAYS", defaults.miss_ttl)?,
         rate_per_sec: parse_positive_env("WAVEFLOW_METADATA_RATE_PER_SEC", defaults.rate_per_sec)?,
@@ -1090,6 +1103,7 @@ fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
 fn parse_metadata_providers(
     list: &str,
     has_lastfm_key: bool,
+    has_theaudiodb_key: bool,
 ) -> anyhow::Result<Vec<crate::enrichment::Provider>> {
     let mut providers = Vec::new();
     for name in list
@@ -1105,6 +1119,11 @@ fn parse_metadata_providers(
         if provider == crate::enrichment::Provider::LastFm && !has_lastfm_key {
             anyhow::bail!(
                 "WAVEFLOW_METADATA_PROVIDERS names lastfm without WAVEFLOW_METADATA_LASTFM_KEY"
+            );
+        }
+        if provider == crate::enrichment::Provider::TheAudioDb && !has_theaudiodb_key {
+            anyhow::bail!(
+                "WAVEFLOW_METADATA_PROVIDERS names theaudiodb without WAVEFLOW_METADATA_THEAUDIODB_KEY"
             );
         }
         providers.push(provider);
@@ -1236,25 +1255,32 @@ mod tests {
     fn metadata_providers_are_read_strictly() {
         use crate::enrichment::Provider;
 
-        assert_eq!(parse_metadata_providers("", false).unwrap(), []);
-        assert_eq!(parse_metadata_providers(" , ", false).unwrap(), []);
+        assert_eq!(parse_metadata_providers("", false, false).unwrap(), []);
+        assert_eq!(parse_metadata_providers(" , ", false, false).unwrap(), []);
         assert_eq!(
-            parse_metadata_providers(" lastfm ", true).unwrap(),
+            parse_metadata_providers(" lastfm ", true, false).unwrap(),
             [Provider::LastFm]
         );
         // No key ships in the binary: naming the provider without one is a
         // misconfiguration, not a quiet off.
-        assert!(parse_metadata_providers("lastfm", false).is_err());
-        assert!(parse_metadata_providers("lastfm,lastfm", true).is_err());
-        assert!(parse_metadata_providers("last.fm", true).is_err());
+        assert!(parse_metadata_providers("lastfm", false, false).is_err());
+        assert!(parse_metadata_providers("lastfm,lastfm", true, false).is_err());
+        assert!(parse_metadata_providers("last.fm", true, false).is_err());
         // Deezer asks for no key, so none is required of it.
         assert_eq!(
-            parse_metadata_providers("lastfm, deezer", true).unwrap(),
+            parse_metadata_providers("lastfm, deezer", true, false).unwrap(),
             [Provider::LastFm, Provider::Deezer]
         );
         assert_eq!(
-            parse_metadata_providers("deezer", false).unwrap(),
+            parse_metadata_providers("deezer", false, false).unwrap(),
             [Provider::Deezer]
+        );
+        // TheAudioDB asks for a key of its own (RFC-014 decision 1), and the
+        // Last.fm one does not stand in for it.
+        assert!(parse_metadata_providers("theaudiodb", true, false).is_err());
+        assert_eq!(
+            parse_metadata_providers("deezer, theaudiodb", false, true).unwrap(),
+            [Provider::Deezer, Provider::TheAudioDb]
         );
     }
 
