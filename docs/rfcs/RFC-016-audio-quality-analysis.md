@@ -349,8 +349,9 @@ table in decision 6 holds about 300 bytes per file.
 
 ## Decision 5 — when a file is measured again
 
-A measurement is **of a content, by a version**. It is current when its
-`full_hash` equals the track's and its `version` equals the analyser's.
+A measurement is **of a content, by a version, through a decoder**. It is
+current when its `full_hash` equals the track's, its `version` equals the
+analyser's, and its `decoder` equals the FFmpeg the server runs now.
 Anything else is `pending`, and the next wake measures it.
 
 - **A changed file at the same path** keeps its track id, since the scanner
@@ -375,10 +376,19 @@ Anything else is `pending`, and the next wake measures it.
   `pending` and is measured again, in the background, at the same bounded
   pace. A change to the verdict rules is not a detector change and bumps
   nothing, because the verdict is computed at read time (decision 3).
+- **A different FFmpeg** re-measures too, without anyone bumping anything.
+  The samples are FFmpeg's, and a decoder fix changes them for the files it
+  fixes. The server already runs `ffmpeg -version` at start (`check_tool`,
+  which today reads only the exit status); it keeps the first line of the
+  output, and each measurement records the line it was made under. An upgrade, a downgrade or a different build
+  therefore makes every measurement `pending` again, and the background pass
+  redoes them at its bounded pace, about an hour of one core for 10,000
+  files (decision 4). Lossless decoders are bit-exact by design, so this
+  mostly re-measures to the same numbers; it is the price of never showing a
+  verdict about samples the current decoder would not produce.
 - **A library analysed again on request** (`POST …/quality/analysis`, owner or
   manager): its measurements are deleted and its files queued. This is for an
-  operator who replaced FFmpeg, or who doubts a result; it is never needed for
-  correctness.
+  operator who doubts a result; it is never needed for correctness.
 
 ## Decision 6 — where the results live
 
@@ -393,6 +403,8 @@ CREATE TABLE track_quality (
     full_hash TEXT NOT NULL,
     -- QUALITY_VERSION when it ran.
     version INTEGER NOT NULL CHECK (version > 0),
+    -- The first line of `ffmpeg -version` when it ran (decision 5).
+    decoder TEXT NOT NULL CHECK (length(decoder) > 0),
     outcome TEXT NOT NULL CHECK (outcome IN ('measured', 'silent', 'unreadable')),
     -- Where the wall stands, in hertz; NULL when the spectrum has none.
     cutoff_hz REAL,
@@ -561,8 +573,9 @@ ever specified.
 - **`src/scanner.rs`**: one line, a wake of the analyser when a scan job
   finishes. The scanner reads nothing new.
 - **`src/media.rs`**: `secure_track_path` becomes `pub(crate)`, so the
-  analyser and the spectrogram read files through the guard streams use. The
-  transcode semaphores are not shared.
+  analyser and the spectrogram read files through the guard streams use, and
+  the start-up check of `ffmpeg -version` keeps the first line of its output
+  (decision 5). The transcode semaphores are not shared.
 - **`src/services/attention.rs`**: the `probable_fake_lossless` category.
 - **`src/config.rs`**: `WAVEFLOW_QUALITY_PARALLELISM`.
 - **The Subsonic façade**: nothing. `docs/subsonic-compatibility.md` needs no
@@ -590,7 +603,8 @@ ever specified.
      noise at 96 kHz with a full band does not;
    - a 16-bit file written as 24-bit measures `padded` with 16 effective bits;
    - a changed file goes back to `pending` and is measured again; a moved one
-     keeps its measurement;
+     keeps its measurement; a measurement recorded under another `decoder`
+     line is `pending`;
    - a file FFmpeg cannot decode is `unreadable` once and not retried until it
      changes;
    - a scan in progress holds the analyser back until it finishes;
