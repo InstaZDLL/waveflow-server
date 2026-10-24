@@ -1,0 +1,11 @@
+-- What an incremental scan compares before it reads a file (RFC-018 decision 1).
+--
+-- The size and modification time of the two lyrics sidecars a scan reads beside
+-- the audio file, `<name>.lrc` and `<name>.txt`, absent ones included:
+--
+--     lrc:<size>:<mtime_ms>|txt:<size>:<mtime_ms>
+--
+-- with `-` for an absent sidecar, so `lrc:-|txt:-` is a file with none. Never
+-- NULL once written: NULL means only "never computed", which never matches, so
+-- the first scan after this migration reads every file once and fills it.
+ALTER TABLE track ADD COLUMN sidecar_signature TEXT;

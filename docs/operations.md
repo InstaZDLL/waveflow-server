@@ -236,6 +236,31 @@ next visit asks again.
 **What it logs.** The provider and a verdict, such as `answered HTTP 503` —
 never the request URL, which carries your key.
 
+## Scanning
+
+A scan reads only what changed. A file whose size and modification time are
+the ones the catalogue holds, with its `.lrc` and `.txt` lyrics sidecars
+unchanged too, is skipped from a `stat` alone, without being opened, so a
+rescan of an unchanged library costs a directory walk and not a read of every
+byte. The first scan after upgrading to this version reads every file once, to
+record what the next ones compare. [RFC-018](rfcs/RFC-018-incremental-scan.md)
+carries the reasoning.
+
+A file rewritten in place with both its size and its modification time kept is
+therefore not noticed by an ordinary scan. To have every file read again:
+
+```bash
+waveflow-server database rescan-full
+```
+
+The next scan of every library then skips nothing, and the request is spent.
+
+A folder the scan cannot read, such as wrong permissions or an unmounted share,
+is reported in the scan's errors with its path relative to the library, and
+the scan goes on. The tracks under it are left as they are, not marked missing,
+so a folder that is briefly unreadable does not make its albums vanish and come
+back. Only the library root itself failing to open fails the scan.
+
 ## Probes
 
 | Path | Answers |

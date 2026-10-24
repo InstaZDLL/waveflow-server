@@ -47,7 +47,7 @@ hold:
 - its size and modification time equal the stored ones;
 - the track is available;
 - its sidecar signature equals the stored one;
-- this is not a full scan (`database rescan --full`, or the identity-spec
+- this is not a full scan (`waveflow-server database rescan-full`, or the identity-spec
   change that forces one);
 - the track already has the identity hint the skip path writes today, so a row
   from before that column still gets its one extraction.

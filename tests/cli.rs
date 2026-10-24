@@ -1164,3 +1164,30 @@ async fn a_key_change_prints_what_it_costs_and_then_what_it_did() {
         "the adoption left no key behind"
     );
 }
+
+/// RFC-018: an incremental scan skips a file whose size and modification time
+/// are unchanged, so the operator needs a way to have every file read again.
+/// The request is stored on every library and spent by its next scan.
+#[tokio::test]
+async fn database_rescan_full_asks_every_library_to_read_everything() {
+    let (_temp, config, state) = test_app().await;
+    let owner = inserted_account(&state, "rescan-owner", "admin").await;
+    let music = config.data_dir.join("rescan-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Rescan",
+            &std::fs::canonicalize(&music).unwrap(),
+            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::authentication::now_ms(),
+        )
+        .await
+        .unwrap();
+    assert!(!state.db.full_scan_requested(library).await.unwrap());
+
+    run_cli(&state, &["database", "rescan-full"]).await.unwrap();
+
+    assert!(state.db.full_scan_requested(library).await.unwrap());
+}

@@ -38,6 +38,21 @@ pub struct LibraryAccess {
     pub accepts_canvas: bool,
 }
 
+/// What an incremental scan compares before reading a file (RFC-018
+/// decision 1): enough to skip it without opening it.
+#[derive(Debug, Clone)]
+pub struct SkipFacts {
+    pub id: Uuid,
+    pub file_size: i64,
+    pub modified_at: i64,
+    pub available: bool,
+    /// The relocation hint is present; a row from before the column still
+    /// needs its one extraction.
+    pub has_pid: bool,
+    /// `None` until a scan has computed it, which never matches.
+    pub sidecar_signature: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExistingTrack {
     pub id: Uuid,
@@ -1083,6 +1098,93 @@ impl Database {
 
     pub async fn mark_track_seen(&self, track_id: Uuid, scan_id: Uuid) -> Result<(), sqlx::Error> {
         self.mark_tracks_seen(&[track_id], scan_id).await
+    }
+
+    /// Every track of the library by its path, with what the pre-check compares.
+    /// Read once per scan: a row per track, small, and one query instead of one
+    /// per file.
+    pub async fn track_skip_facts(
+        &self,
+        library_id: Uuid,
+    ) -> Result<std::collections::HashMap<String, SkipFacts>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id, relative_path, file_size, file_modified_at, is_available,                     pid IS NOT NULL AS has_pid, sidecar_signature              FROM track WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .fetch_all(self.pool())
+        .await?;
+        let mut facts = std::collections::HashMap::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.try_get("id")?;
+            facts.insert(
+                row.try_get("relative_path")?,
+                SkipFacts {
+                    id: Uuid::parse_str(&id).map_err(|error| sqlx::Error::Decode(error.into()))?,
+                    file_size: row.try_get("file_size")?,
+                    modified_at: row.try_get("file_modified_at")?,
+                    available: row.try_get::<i64, _>("is_available")? != 0,
+                    has_pid: row.try_get::<i64, _>("has_pid")? != 0,
+                    sidecar_signature: row.try_get("sidecar_signature")?,
+                },
+            );
+        }
+        Ok(facts)
+    }
+
+    /// Records the sidecar signature of files a scan read, by path, so the next
+    /// scan can skip them (RFC-018 decision 1).
+    pub async fn set_sidecar_signatures(
+        &self,
+        library_id: Uuid,
+        signatures: &[(String, String)],
+    ) -> Result<(), sqlx::Error> {
+        if signatures.is_empty() {
+            return Ok(());
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        for (relative_path, signature) in signatures {
+            sqlx::query(
+                "UPDATE track SET sidecar_signature = ? WHERE library_id = ? AND relative_path = ?",
+            )
+            .bind(signature)
+            .bind(library_id.to_string())
+            .bind(relative_path)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
+    /// Stamps as seen by this scan the tracks under folders the scan could not
+    /// read, without touching their availability, so the pass that marks the
+    /// unseen missing leaves them as they are (RFC-018 decision 3).
+    pub async fn mark_tracks_under_seen(
+        &self,
+        library_id: Uuid,
+        folders: &[String],
+        scan_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        if folders.is_empty() {
+            return Ok(());
+        }
+        let _writer = self.writer_guard().await;
+        let mut tx = self.pool().begin().await?;
+        for folder in folders {
+            // A prefix compared as text rather than with LIKE: a folder name
+            // holding `%` or `_` must not widen the match.
+            sqlx::query(
+                "UPDATE track SET last_seen_scan_id = ?                  WHERE library_id = ?                    AND (relative_path = ? OR substr(relative_path, 1, length(?) + 1) = ? || '/')",
+            )
+            .bind(scan_id.to_string())
+            .bind(library_id.to_string())
+            .bind(folder)
+            .bind(folder)
+            .bind(folder)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
     }
 
     pub async fn mark_tracks_seen(
