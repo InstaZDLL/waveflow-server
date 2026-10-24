@@ -61,9 +61,19 @@ relocation hint, is unchanged.
 an unchanged audio file must still be picked up. So a new nullable column,
 `track.sidecar_signature`, records the size and modification time of each of
 the two possible sidecars, absent ones included. It is computed from `stat`
-alone. `NULL` (every row, right after the migration) never matches, so the
-first scan after an upgrade reads every file once and fills the column, and the
-scans after it skip.
+alone, and it is a string that is never `NULL` once written:
+
+```text
+lrc:<size>:<mtime_ms>|txt:<size>:<mtime_ms>
+```
+
+An absent sidecar writes `-` in place of its size and modification time:
+`lrc:-|txt:-` is a file with no sidecar at all. Absence is therefore a value
+like any other, and adding, editing or deleting either sidecar changes the
+string. `NULL` keeps one meaning only: never computed. Every row right after
+the migration is `NULL`, and `NULL` never matches, so the first scan after an
+upgrade reads every file once and fills the column; the scans after it skip,
+sidecar or not.
 
 **What the trade costs.** A file rewritten in place with its size and
 modification time both preserved is missed until the next full scan. Some tag
