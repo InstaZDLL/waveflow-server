@@ -174,12 +174,13 @@ jobs:
     # every tag: two releases publishing at once could interleave their
     # writes and leave the floating tag on one version in GHCR and another on
     # Docker Hub. Only this job writes tags, so only this job is serialized;
-    # the builds still run side by side. GitHub keeps one waiting job per
-    # group, so a third release arriving meanwhile cancels the second one's
-    # publish — visibly, and a dispatch of that tag publishes it again.
+    # the builds still run side by side. `queue: max` keeps every waiting
+    # publish in line: by default GitHub keeps only one, and a third release
+    # arriving meanwhile would cancel the second's publish outright.
     concurrency:
       group: release-floating-tags
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
