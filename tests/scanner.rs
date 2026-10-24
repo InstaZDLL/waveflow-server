@@ -1289,10 +1289,25 @@ async fn an_unreadable_folder_costs_that_folder_only() {
     .await;
     assert_eq!(first.added, 2);
 
+    /// Puts the permissions back however the test ends, or the temporary
+    /// directory could not be removed.
+    struct Unlock(std::path::PathBuf);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
     let locked = root.join("Locked");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unlock = Unlock(locked.clone());
+    if std::fs::read_dir(&locked).is_ok() {
+        // Root reads through `chmod 000`: nothing here can be made unreadable.
+        eprintln!("skipped: the folder stays readable to this user");
+        return;
+    }
     let second = scan_once(&state, owner, library.clone()).await;
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    drop(unlock);
 
     let second = job(&state, owner, second).await;
     assert_eq!(second.errors, 1);
@@ -1305,4 +1320,54 @@ async fn an_unreadable_folder_costs_that_folder_only() {
         .await
         .unwrap();
     assert_eq!(available, 2);
+}
+
+/// When everything a library holds sits under the unreadable folder, the walk
+/// finds no file and the scan runs no batch: the folder's error must still be
+/// counted on the job, and its track still not marked missing.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreadable_folder_holding_everything_is_still_counted() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Unlock(std::path::PathBuf);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let (_temp, state, owner, library, root) =
+        incremental_library("incremental-all-locked", |music| {
+            std::fs::create_dir_all(music.join("Locked")).unwrap();
+            write_test_wav(&music.join("Locked/Only.wav"));
+        })
+        .await;
+    assert_eq!(
+        job(
+            &state,
+            owner,
+            scan_once(&state, owner, library.clone()).await
+        )
+        .await
+        .added,
+        1
+    );
+
+    let locked = root.join("Locked");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unlock = Unlock(locked.clone());
+    if std::fs::read_dir(&locked).is_ok() {
+        eprintln!("skipped: the folder stays readable to this user");
+        return;
+    }
+    let second = scan_once(&state, owner, library).await;
+    drop(unlock);
+
+    let second = job(&state, owner, second).await;
+    assert_eq!(
+        second.errors, 1,
+        "the folder's error was not recorded on the job"
+    );
+    assert_eq!(second.unavailable, 0);
 }

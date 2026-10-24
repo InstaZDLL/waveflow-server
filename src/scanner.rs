@@ -262,7 +262,11 @@ impl ScanManager {
         let _library_guard = lock.lock().await;
         tokio::fs::create_dir_all(&self.artwork_dir).await?;
         let root = tokio::fs::canonicalize(&library.root_path).await?;
-        let Discovery { paths, unreadable } = tokio::task::spawn_blocking({
+        let Discovery {
+            paths,
+            unreadable,
+            incomplete,
+        } = tokio::task::spawn_blocking({
             let root = root.clone();
             move || discover_audio(&root)
         })
@@ -335,6 +339,9 @@ impl ScanManager {
                 .map(|folder| (folder.clone(), "folder could not be read".to_owned()))
                 .collect();
             self.db.add_scan_errors(scan_id, &errors).await?;
+            // Written now, not left to the batches: a library whose only
+            // content sits under the unreadable folder has no batch at all.
+            self.tick(&progress).await?;
         }
 
         while let Some(batch) = scanned.next().await {
@@ -484,7 +491,17 @@ impl ScanManager {
         self.db
             .mark_tracks_under_seen(library.id, &unreadable, scan_id)
             .await?;
-        progress.unavailable = self.db.mark_unseen_unavailable(library.id, scan_id).await?;
+        // A walk error that named no path leaves no folder to spare, so
+        // nothing this walk missed can be called missing.
+        progress.unavailable = if incomplete {
+            tracing::warn!(
+                library_id = %library.id,
+                "the walk could not say what it failed to read; nothing is marked missing this scan"
+            );
+            0
+        } else {
+            self.db.mark_unseen_unavailable(library.id, scan_id).await?
+        };
         // After availability is settled, not before: the album and artist
         // identifiers are a majority vote over the tracks that are still there,
         // so a file that vanished must stop voting first.
@@ -600,6 +617,9 @@ fn sidecar_signature(path: &Path) -> String {
 struct Discovery {
     paths: Vec<PathBuf>,
     unreadable: Vec<String>,
+    /// An error named no path inside the root, so the walk cannot say which
+    /// tracks it missed: none may be marked missing.
+    incomplete: bool,
 }
 
 /// Walks the library (RFC-018 decision 3). An entry the walk cannot read is
@@ -609,16 +629,22 @@ struct Discovery {
 fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
     let mut paths = Vec::new();
     let mut unreadable = Vec::new();
+    let mut incomplete = false;
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) if error.depth() == 0 => return Err(error.into()),
             Err(error) => {
-                let folder = error
+                let Some(folder) = error
                     .path()
                     .and_then(|path| path.strip_prefix(root).ok())
                     .map(|path| path.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_else(|| "<unknown>".to_owned());
+                else {
+                    tracing::warn!("the library walk failed somewhere it could not name");
+                    incomplete = true;
+                    unreadable.push("<unknown>".to_owned());
+                    continue;
+                };
                 tracing::warn!(
                     path = %folder,
                     "a folder in the library could not be read; its tracks are left as they are"
@@ -644,7 +670,11 @@ fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
         }
     }
     paths.sort();
-    Ok(Discovery { paths, unreadable })
+    Ok(Discovery {
+        paths,
+        unreadable,
+        incomplete,
+    })
 }
 
 /// The candidates a scan may still claim.
