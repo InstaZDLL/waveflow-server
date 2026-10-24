@@ -177,15 +177,22 @@ impl AuthService {
                 None => security::verify_password(&password, &dummy_hash).map(|_| false),
             }
         })
-        .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "password worker failed");
-            AuthError::Unavailable
-        })?
-        .map_err(|error| {
-            tracing::warn!(error = %error, "stored password hash is invalid");
-            AuthError::Unavailable
-        })?;
+        .await;
+        // A worker that failed and a stored hash that cannot be read are the
+        // server's faults, not an answer to the guess: the slot goes back.
+        let valid = match valid {
+            Ok(Ok(valid)) => valid,
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "stored password hash is invalid");
+                reservation.release();
+                return Err(AuthError::Unavailable);
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "password worker failed");
+                reservation.release();
+                return Err(AuthError::Unavailable);
+            }
+        };
         let Some(account) = account.filter(|_| valid) else {
             self.guard.note(client.surface, Refusal::WrongCredentials);
             return Err(AuthError::InvalidCredentials);
