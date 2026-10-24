@@ -6334,6 +6334,8 @@ test("lists a library's files by what their audio says, worst first", async ({
   const rows = page.locator(".quality-table tbody tr");
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toContainText("Made From An MP3");
+  // The cover before the title: a name alone is hard to place.
+  await expect(rows.first().locator(".song-cover")).toHaveCount(1);
   await expect(rows.first()).toContainText("16.4 kHz");
   await expect(rows.first()).toContainText("Probably from a lossy file");
   await expect(rows.nth(1)).toContainText("Full band");
@@ -6472,4 +6474,64 @@ test("says the analysis waits for the scan", async ({ page }) => {
   await expect(
     page.getByText("Waiting for the scan to finish before analysing."),
   ).toBeVisible();
+});
+
+/** What the summary says of the analysis, at rest or at work. */
+function analysisAt(
+  measured: number,
+  state: "idle" | "running",
+): { measured: number; analysis: Record<string, unknown> } {
+  return {
+    measured,
+    analysis: {
+      state,
+      in_flight: state === "running" ? 1 : 0,
+      pass_started_at: state === "running" ? 1_700_000_000_000 : null,
+      last_measured_at: 1_700_000_000_000,
+    },
+  };
+}
+
+test("offers no new analysis while one runs", async ({ page }) => {
+  const state = await serveQuality(page);
+  state.analyses = [analysisAt(1, "running")];
+  await page.goto("/quality");
+  await expect(page.getByText(/^Analysing now:/)).toBeVisible();
+  // The server says a pass runs, so there is nothing to start: the offer
+  // comes from its answer, not from what this page remembers doing.
+  await expect(
+    page.getByRole("button", { name: "Analyse again" }),
+  ).toHaveCount(0);
+});
+
+test("asks for the header again when the list is filtered", async ({
+  page,
+}) => {
+  const state = await serveQuality(page);
+  state.analyses = [analysisAt(0, "idle"), analysisAt(2, "idle")];
+  await page.goto("/quality");
+  await expect(page.getByText("0 of 3 lossless files analysed")).toBeVisible();
+  await page
+    .getByRole("list", { name: "Verdicts" })
+    .getByRole("link", { name: /No sign of a lossy source/ })
+    .click();
+  // At rest the summary is not polled, so only the filter can have asked.
+  await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
+});
+
+test("asks for the header again on every visit", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === "mobile", "walks the desktop sidebar");
+  const state = await serveQuality(page);
+  state.analyses = [analysisAt(0, "idle"), analysisAt(2, "idle")];
+  await page.goto("/quality");
+  await expect(page.getByText("0 of 3 lossless files analysed")).toBeVisible();
+  // Away and back inside the cache's thirty seconds: an answer held from the
+  // first visit would contradict the rows drawn on the second.
+  const sidebar = page.getByRole("navigation");
+  await sidebar.getByRole("link", { name: "Queue" }).click();
+  await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
+  await sidebar.getByRole("link", { name: "Quality" }).click();
+  await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
 });

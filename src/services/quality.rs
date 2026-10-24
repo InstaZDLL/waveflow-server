@@ -187,13 +187,14 @@ pub enum AnalysisState {
     Off,
     /// Nothing of this library is waiting, and nothing is being measured.
     Idle,
-    /// Files are waiting and the analyser is not on them yet: between passes,
-    /// or held back by work the caller cannot see.
+    /// Files are waiting and no pass is running yet: the analyser is between
+    /// passes, and the next wake reaches them.
     Queued,
     /// Files are waiting, and a scan the caller can see holds the analysis
     /// back until it finishes.
     WaitingForScan,
-    /// A pass is measuring files.
+    /// A pass is running. One held back by a scan the caller cannot see is
+    /// still `running` to them: that scan is not theirs to know about.
     Running,
 }
 
@@ -535,12 +536,16 @@ impl DomainServices {
     /// The file counts as in flight for its library until the caller drops
     /// the guard handed back with it, which is once its row is written.
     async fn measure_one(&self, pending: Pending) -> Option<(Measured, Counting)> {
+        // In flight from the moment the pass picks the file, before any wait:
+        // a scan the caller cannot see must change nothing they are shown,
+        // and a file that stopped counting while it waited would say a scan
+        // had started somewhere.
+        let measuring = Counting::measuring(&self.quality, pending.library_id);
         let mut scans = self.scanner.scans_in_flight();
         if *scans.borrow_and_update() > 0 {
             let _waiting = Counting::waiting(&self.quality);
             let _ = scans.wait_for(|running| *running == 0).await;
         }
-        let measuring = Counting::measuring(&self.quality, pending.library_id);
         let path = crate::media::secure_track_path(
             std::path::Path::new(&pending.root_path),
             &pending.relative_path,
@@ -852,8 +857,9 @@ impl DomainServices {
     ///
     /// A scan holds every measurement back, of every library, but the page
     /// says "waiting for the scan" only when the caller can see a library being
-    /// scanned: a scan of somebody else's library is not something to confirm
-    /// to them, and their files then read as merely queued.
+    /// scanned. A scan of somebody else's library is not something to confirm
+    /// to them, so it changes nothing they are shown: the pass still reads as
+    /// running, and its file as in flight.
     async fn quality_analysis(
         &self,
         user_id: Uuid,
@@ -884,7 +890,10 @@ impl DomainServices {
             || (waiting && self.sees_a_scan(user_id).await?)
         {
             AnalysisState::WaitingForScan
-        } else if pass_started_at.is_some() && !waiting {
+        } else if pass_started_at.is_some() {
+            // Whatever `waiting` says: a pass held back by a scan the caller
+            // cannot see reads exactly as one that is not, so the state never
+            // tells them that somebody else's library is being scanned.
             AnalysisState::Running
         } else {
             AnalysisState::Queued

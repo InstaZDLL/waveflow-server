@@ -1077,9 +1077,9 @@ async fn a_running_pass_moves_one_file_at_a_time() {
     assert_eq!(analysis(&shelf).await.state, AnalysisState::Idle);
 }
 
-/// A scan of somebody else's library holds every measurement back, but the
-/// page does not name it to someone who cannot see that library: their files
-/// read as queued.
+/// A scan of somebody else's library holds every measurement back, but it
+/// changes nothing its outsiders are shown: the pass reads as running and its
+/// file as in flight, exactly as with no scan at all.
 #[tokio::test]
 async fn a_scan_the_caller_cannot_see_is_not_named() {
     let shelf = shelf("mine").await;
@@ -1107,11 +1107,13 @@ async fn a_scan_the_caller_cannot_see_is_not_named() {
     // Long enough for the pass to have reached the scan and stopped there.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     assert!(!pass.is_finished(), "the pass waits for the scan");
+    let held = analysis(&shelf).await;
     assert_eq!(
-        analysis(&shelf).await.state,
-        AnalysisState::Queued,
+        (held.state, held.in_flight),
+        (AnalysisState::Running, 1),
         "nothing says another library is being scanned"
     );
+    assert!(held.pass_started_at.is_some());
 
     drop(scan);
     assert_eq!(pass.await.unwrap(), 1);
@@ -1137,4 +1139,55 @@ async fn the_route_carries_the_analysis() {
     assert_eq!(summary["analysis"]["state"], "queued");
     assert_eq!(summary["analysis"]["in_flight"], 0);
     assert!(summary["analysis"]["last_measured_at"].is_null());
+}
+
+/// The header and the list are one answer: for every verdict, the summary
+/// counts exactly the files the list carries under it, including when some
+/// files are measured, some wait, and a measured one has gone unavailable.
+#[tokio::test]
+async fn the_summary_counts_what_the_list_lists() {
+    let shelf = shelf("agree").await;
+    let scratch = shelf.config.data_dir.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    genuine(&shelf.music.join("genuine.flac"), 3);
+    from_mp3(&shelf.music.join("from-mp3.flac"), &scratch);
+    padded(&shelf.music.join("padded.flac"), &scratch);
+    genuine(&shelf.music.join("gone.flac"), 9);
+    std::fs::copy(scratch.join("from-mp3.mp3"), shelf.music.join("lossy.mp3")).unwrap();
+    shelf.scan().await;
+    shelf.analyze().await;
+    // Measured, then gone: its row stays, and neither side may count it.
+    std::fs::remove_file(shelf.music.join("gone.flac")).unwrap();
+    // Added after the pass: pending on both sides.
+    genuine(&shelf.music.join("late.flac"), 11);
+    shelf.scan().await;
+
+    let summary = shelf
+        .state
+        .services
+        .quality_summary(shelf.owner, shelf.library.id)
+        .await
+        .unwrap();
+    let listed = shelf
+        .state
+        .services
+        .quality_tracks(
+            shelf.owner,
+            shelf.library.id,
+            None,
+            None,
+            BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    for entry in &summary.verdicts {
+        let in_list = listed
+            .iter()
+            .filter(|track| track.quality.verdict == entry.verdict)
+            .count() as i64;
+        assert_eq!(entry.count, in_list, "{:?}", entry.verdict);
+    }
+    assert_eq!(listed.len(), 5);
+    assert_eq!(summary.lossless, 4);
+    assert_eq!(summary.measured, 3);
 }
