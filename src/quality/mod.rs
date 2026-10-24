@@ -44,13 +44,15 @@ pub const SPECTROGRAM_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a spectrogram may take under a request timeout of `request`.
 ///
 /// The router's own timeout answers first otherwise, and the caller is told
-/// whatever that layer says rather than the `503` the route documents. Five
-/// seconds are left for the access check, the path guard and the answer, and
-/// one second is the least any picture is given.
+/// whatever that layer says rather than the `503` the route documents. The
+/// access check, the path guard and the answer keep five seconds, or half the
+/// request timeout when that is shorter, so the picture always gives up
+/// strictly before the request does, whatever an operator sets. A request
+/// timeout too short to draw anything then costs the spectrogram and nothing
+/// else: it is not a reason to refuse a setting every other route lives with.
 pub fn spectrogram_deadline(request: Duration) -> Duration {
-    request
-        .saturating_sub(Duration::from_secs(5))
-        .clamp(Duration::from_secs(1), SPECTROGRAM_TIMEOUT)
+    let margin = Duration::from_secs(5).min(request / 2);
+    request.saturating_sub(margin).min(SPECTROGRAM_TIMEOUT)
 }
 
 /// The picture's parameters, which are part of its `ETag`: a change here is a
@@ -438,6 +440,12 @@ mod tests {
         assert_eq!(
             spectrogram_deadline(Duration::from_secs(2)),
             Duration::from_secs(1)
+        );
+        // The shortest setting the configuration accepts still leaves the
+        // route time to answer for itself.
+        assert_eq!(
+            spectrogram_deadline(Duration::from_secs(1)),
+            Duration::from_millis(500)
         );
     }
 
