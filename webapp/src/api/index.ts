@@ -17,6 +17,25 @@ export {
   rotateOwnSubsonicCredential,
 } from "./account";
 export { artworkUrl, cachedArtworkUrl } from "./artwork";
+export type {
+  AttentionCategory,
+  AttentionCount,
+  AttentionTrack,
+  CreditCandidate,
+  CreditDecision,
+  CreditDecisionKind,
+  CreditFragment,
+  TrackCategory,
+} from "./attention";
+export {
+  ATTENTION_TRACKS_PAGE,
+  decideCredit,
+  getAttentionSummary,
+  listAttentionTracks,
+  listCreditCandidates,
+  listCreditDecisions,
+  removeCreditDecision,
+} from "./attention";
 export type { CanvasBlob } from "./canvas";
 export { canvasUrl, placeCanvas, removeCanvas } from "./canvas";
 export type {

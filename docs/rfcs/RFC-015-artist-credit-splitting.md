@@ -1,10 +1,14 @@
 # RFC-015 — Splitting a joined artist credit, and a page for what needs a decision
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#315](https://github.com/InstaZDLL/waveflow-server/pull/315) (this
-  RFC). The *Status* field above never flips in this project; this line is the
-  one that says what is running.
+- **Implemented by**: [#315](https://github.com/InstaZDLL/waveflow-server/pull/315)
+  (this RFC) and [#316](https://github.com/InstaZDLL/waveflow-server/pull/316)
+  (steps 2 to 4 together: the decision table and `track_credit`, the second
+  step in the scan, applying and undoing a decision, favourites and ratings
+  through the journal, the "Needs attention" routes and track categories, the
+  web client's page and the artist page's "Split into N artists"). The
+  *Status* field above never flips in this project; this line is the one that
+  says what is running.
 - **Date**: 2026-10-24
 - **Revised**: 2026-10-24, after review on #315. The server keeps each
   track's credits as the tags give them (`track_credit`), and one function
@@ -416,7 +420,7 @@ its category at once. Only available tracks are counted.
 | `missing_track_number` | effective track number `NULL` or `<= 0` |
 | `missing_cover` | neither the track nor its album has artwork |
 | `album_year_conflict` | its album's available tracks carry more than one non-zero effective year |
-| `compilation_no_album_artist` | flagged a compilation, and the file names no album artist (it was filed under `Various Artists` by the fallback) |
+| `compilation_no_album_artist` | its album is flagged a compilation and its album artist is `Various Artists`. That is the fallback for a compilation whose files name no album artist, and the server cannot tell it from a file that writes those words itself, so both are listed |
 | `duplicate_track_number` | another track of the same album has the same `COALESCE(disc, 1)` and the same number `> 0` |
 | `track_number_gap` | on its disc, `MAX - MIN + 1 > COUNT(DISTINCT number)` |
 | `probable_duplicate` | same normalised title and same credited artists, durations chained within 2 seconds. This reuses `waveflow_core::metadata::name_match::normalize_name` and `waveflow_core::inventory::chain_by_duration`, both public at the pinned revision |
@@ -451,7 +455,7 @@ caller is not an owner or manager of, and for an id not in it.
 | --- | --- |
 | `GET /libraries/{id}/attention` | `[{ category, count }]` for `split_credits` and each track category, in display order. |
 | `GET /libraries/{id}/attention/credits` | The candidates of decision 8, sorted as stated, with their fragments. |
-| `GET /libraries/{id}/attention/tracks?category=&offset=&limit=` | The tracks in one category, as the song items `GET /libraries/{id}/tracks` already returns. `probable_duplicate` adds a group key to each item, so a client can draw the groups. `422` for an unknown category. |
+| `GET /libraries/{id}/attention/tracks?category=&offset=&limit=` | The tracks in one category, as the song items `GET /libraries/{id}/tracks` already returns. `probable_duplicate` adds `duplicate_group`, numbered from one, to each item, so a client can draw the groups. `422` for an unknown category. |
 | `GET /libraries/{id}/credit-decisions` | The decisions, newest first: id, credit, decision, parts, who and when. |
 | `POST /libraries/{id}/credit-decisions` | `{ "artist_id": …, "decision": "split" \| "keep" }`. The artist must be a candidate. A split takes its fragments as decision 2 computes them now, and the server stores them. `201` with the decision. `409` when the credit already has one (remove it first). `422` for an artist that is not a candidate. |
 | `DELETE /libraries/{id}/credit-decisions/{decision_id}` | Decision 7. `204`. |

@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::{authentication::AuthError, AppState};
 
 pub(crate) mod access;
+mod attention;
 mod auth;
 mod bookmarks;
 mod catalog;
@@ -47,6 +48,7 @@ mod users;
 mod web_session;
 
 pub(crate) use access::*;
+pub use attention::*;
 pub use auth::*;
 pub use bookmarks::*;
 pub use catalog::*;
@@ -133,6 +135,26 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/folders/{folder_id}",
             axum::routing::patch(update_folder).delete(delete_folder),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/attention",
+            get(attention_summary),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/attention/credits",
+            get(attention_credits),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/attention/tracks",
+            get(attention_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/credit-decisions",
+            get(list_credit_decisions).post(create_credit_decision),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/credit-decisions/{decision_id}",
+            delete(delete_credit_decision),
         )
         .route("/api/v2/libraries/{library_id}/events", get(library_events))
         .route(

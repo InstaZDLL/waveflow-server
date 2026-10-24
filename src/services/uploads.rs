@@ -858,6 +858,7 @@ impl DomainServices {
                 .bind(&relative)
                 .fetch_optional(&mut *tx)
                 .await?;
+        let decisions = crate::catalog::credit_decisions(&mut tx, target.library_id).await?;
         crate::database::Database::apply_catalog_track_in_transaction(
             &mut tx,
             self.db.pid(),
@@ -874,6 +875,7 @@ impl DomainServices {
                 // the feed as a track it has just discovered.
                 origin_device_id,
             },
+            &decisions,
             now,
         )
         .await?;

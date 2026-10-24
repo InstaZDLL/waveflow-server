@@ -3,11 +3,13 @@ import { playsByInstant, scrobbleRows, tracksToName } from "../lib/scrobbling";
 import {
   type AlbumSort,
   type ArtistDetail,
+  ATTENTION_TRACKS_PAGE,
   artistTopSongs,
   canvasUrl,
   FOLDER_TRACKS_PAGE,
   getAlbum,
   getArtist,
+  getAttentionSummary,
   getLyrics,
   getTrack,
   getTrackCredits,
@@ -17,7 +19,10 @@ import {
   listApiTokens,
   listArtistAlbums,
   listArtists,
+  listAttentionTracks,
   listBookmarks,
+  listCreditCandidates,
+  listCreditDecisions,
   listFavorites,
   listFolders,
   listFolderTracks,
@@ -41,6 +46,7 @@ import {
   SONG_PAGE,
   type SongSort,
   search,
+  type TrackCategory,
 } from "./index";
 
 /**
@@ -215,6 +221,51 @@ export const trackPropertiesQuery = (trackId: string) =>
  * A library's whole filed tree: bounded by the server's folder cap, so it
  * is held whole rather than paged.
  */
+/**
+ * "Needs attention" (RFC-015): every query of the page is keyed under
+ * `attention` and the library, so one invalidation after a decision, a
+ * correction or a scan refreshes the whole page.
+ */
+export const attentionSummaryQuery = (libraryId: string) =>
+  queryOptions({
+    queryKey: ["attention", libraryId, "summary"],
+    queryFn: () => getAttentionSummary(libraryId),
+  });
+
+export const creditCandidatesQuery = (libraryId: string) =>
+  queryOptions({
+    queryKey: ["attention", libraryId, "credits"],
+    queryFn: () => listCreditCandidates(libraryId),
+  });
+
+export const creditDecisionsQuery = (libraryId: string) =>
+  queryOptions({
+    queryKey: ["attention", libraryId, "decisions"],
+    queryFn: () => listCreditDecisions(libraryId),
+  });
+
+/** The tracks of one category, a page at a time. A short page is the end. */
+export const attentionTracksQuery = (
+  libraryId: string,
+  category: TrackCategory,
+) =>
+  infiniteQueryOptions({
+    queryKey: ["attention", libraryId, "tracks", category],
+    queryFn: ({ pageParam, signal }) =>
+      listAttentionTracks(
+        libraryId,
+        category,
+        pageParam,
+        ATTENTION_TRACKS_PAGE,
+        signal,
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.length < ATTENTION_TRACKS_PAGE
+        ? undefined
+        : lastParam + ATTENTION_TRACKS_PAGE,
+  });
+
 export const filedTreeQuery = (libraryId: string) =>
   queryOptions({
     queryKey: ["filed-tree", libraryId],

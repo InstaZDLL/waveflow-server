@@ -3067,6 +3067,151 @@ button.danger {
   vertical-align: middle;
 }
 
+/* "Needs attention" (RFC-015). The lists read as the folder cards do, one
+   per row of a wrapping grid; an empty list stays where it is, greyed, so the
+   page keeps its shape as lists empty, as on the desktop. */
+.attention-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.attention-category {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.attention-category:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--panel-strong);
+}
+
+.attention-category[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.attention-category.empty {
+  color: var(--muted);
+}
+
+.attention-note,
+.attention-notice {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.attention-views {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.attention-views button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+}
+
+.attention-row-main {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.attention-credit {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.attention-fragments {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-fragment {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+}
+
+/* A fragment the library already knows is the strongest hint a split is
+   right, so it reads as a link to that artist. */
+.attention-fragment.known {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  gap: var(--space-2);
+}
+
+@media (max-width: 40rem) {
+  .attention-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+.attention-group h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.artist-split {
+  margin-top: var(--space-2);
+}
+
+.artist-image-button.armed {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 /* The artist header's backdrop (RFC-013): the banner chosen by hand, framed at
    a fixed point as the desktop frames it, or else the portrait, blurred. The
    gradient keeps the title legible over any picture, so the text goes light

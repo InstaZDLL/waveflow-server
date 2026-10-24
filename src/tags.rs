@@ -64,6 +64,12 @@ impl Role {
         }
     }
 
+    /// The role a stored name stands for, or `None` for one this vocabulary
+    /// does not hold.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.as_str() == value)
+    }
+
     /// The roles that name who the music is *by*, as opposed to who worked on
     /// it. These two are what `artists[]` and `albumArtists[]` render, and
     /// every other role is a contributor.

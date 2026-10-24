@@ -1410,10 +1410,12 @@ mod artist_image_search;
 mod artist_images;
 mod artists;
 mod artwork;
+mod attention;
 mod bookmarks;
 mod canvas;
 mod catalog;
 mod credentials;
+mod credit_decisions;
 mod favorites;
 mod lastfm;
 mod library_events;
@@ -1434,6 +1436,10 @@ pub(crate) mod uploads;
 
 pub use artist_image_search::{ArtistImageCandidate, ARTIST_IMAGE_SEARCH_DEADLINE};
 pub use artist_images::ArtistImageKind;
+pub use attention::{AttentionCategory, AttentionCount, AttentionTrack};
+pub use credit_decisions::{
+    CreditCandidate, CreditDecisionKind, CreditDecisionRecord, CreditFragment,
+};
 /// Crate-visible only: the adapter builds the browser-less journey's address
 /// from it, and nothing outside this binary has a use for it.
 pub(crate) use lastfm::LASTFM_AUTHORIZE_URL;
