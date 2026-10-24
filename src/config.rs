@@ -695,8 +695,16 @@ impl Config {
         };
 
         let metadata = parse_metadata_settings()?;
-        let trusted_proxies =
-            parse_proxy_addresses(&std::env::var("WAVEFLOW_TRUSTED_PROXIES").unwrap_or_default())?;
+        // Absent is empty; a value that is not UTF-8 refuses to boot, rather
+        // than starting with no trusted proxy and counting every client behind
+        // it under the proxy's address.
+        let trusted_proxies = match std::env::var("WAVEFLOW_TRUSTED_PROXIES") {
+            Ok(list) => parse_proxy_addresses(&list)?,
+            Err(std::env::VarError::NotPresent) => Vec::new(),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("WAVEFLOW_TRUSTED_PROXIES is not valid UTF-8")
+            }
+        };
 
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
