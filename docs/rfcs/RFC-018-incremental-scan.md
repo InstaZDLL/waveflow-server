@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: in progress: [#322](https://github.com/InstaZDLL/waveflow-server/pull/322)
-  (this RFC). The *Status* field above never flips in this
+  (this RFC) and [#324](https://github.com/InstaZDLL/waveflow-server/pull/324)
+  (the pre-check and its sidecar signature, streaming, tolerant discovery,
+  `database rescan-full`). The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
