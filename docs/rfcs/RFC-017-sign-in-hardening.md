@@ -47,14 +47,29 @@ minute, the figure Subsonic already uses.
   server that is the right trade: the alternative hands any stranger a switch
   that turns a user's clients off.
 - **The account is what was typed, except an API key.**
-  - For a password, the account is the username, stored as a hash as today, so
-    the limiter's memory never holds a name in clear.
+  - For a password, the account is the username in its **canonical form**,
+    hashed, so the limiter's memory never holds a name in clear. The
+    `account.username` column is `COLLATE NOCASE`, so `Alice`, `ALICE` and
+    `alice` reach the same account; the canonical form folds ASCII letters to
+    lower case, exactly the folding `NOCASE` does, so the three share one
+    window on every surface. Without it, each variant would bring a fresh
+    budget of twenty.
   - An API key is not an account name: it *is* the secret, and every wrong
     guess is a different value. Keying a window on it would give each guess a
-    fresh window and a fresh budget. So every `apiKey` attempt from one
-    address shares **one** window, `(address, "api-key")`. A real key is a
-    random 256-bit token, so this costs nothing to someone who holds one: their
-    first attempt succeeds.
+    fresh window and a fresh budget. So every **failed** `apiKey` attempt from
+    one address counts in **one** shared window, `(address, "api-key")`.
+  - **A valid key is never refused by the limiter.** An API key is looked up by
+    its hash, through an index, before the window is consulted. A key that
+    exists succeeds whatever the window holds, so a stranger's failures behind
+    the same address or proxy never turn a working client away. An unknown key
+    is refused as today, and its failure is counted. Once the shared window is
+    full, further unknown keys from that address are refused **without the
+    lookup**, which spares the database. Their answer is the same error 40 as
+    an unknown key, so nothing distinguishes the two cases. Guessing a random
+    256-bit key is hopeless at any rate, so the window protects the server's
+    effort, not the key.
+  - Today, `src/subsonic/auth.rs` knows no address at all; the implementation
+    PR passes it in, as decision 2 describes.
 - **The address is grouped as a network would hand it out.** An IPv4 address
   counts alone. An IPv6 address counts by its `/64`, the block one host
   routinely holds, so a single machine cannot become millions of addresses.
@@ -85,10 +100,12 @@ minute, the figure Subsonic already uses.
   as the Subsonic limiter does today, would let an attacker flush the window
   holding their own failures by sending a burst of fresh keys. So:
   - expired windows are pruned first;
-  - **one address may hold at most 32 live windows.** Past that, any further
-    account it tries shares a single overflow window for that address,
-    `(address, "*")`, rather than opening a new one. One address therefore
-    cannot fill the table, however many usernames it invents;
+  - **one address may hold at most 32 live windows, the overflow included.**
+    That is 31 windows for accounts and one reserved for the overflow window
+    `(address, "*")`. The 32nd account an address tries, and every one after
+    it, counts in that existing overflow window rather than opening a new one.
+    One address therefore cannot fill the table, however many usernames it
+    invents;
   - when the table still holds 65,536 live windows, a **new** key is refused
     as throttled, while keys already in the table go on as before. Reaching
     that point takes more than 2,000 distinct addresses or IPv6 `/64`s, all
@@ -207,7 +224,10 @@ attack in progress.
      window; an abandoned verification keeps its slot; a malformed or
      client-prefixed `X-Forwarded-For` never yields the client's chosen
      address; an all-trusted chain falls back to the peer; invented usernames
-     and API keys from one address never open more than 32 windows;
+     from one address never open more than 32 windows, the overflow included;
+     distinct invalid API keys from one address all increment the single
+     `(address, "api-key")` window, and a valid key still succeeds while that
+     window is full; `Alice` and `alice` share one window;
    - `docs/operations.md`.
 
 ## What is still open
