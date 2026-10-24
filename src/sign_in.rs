@@ -121,16 +121,20 @@ pub fn client_address(
     if !is_trusted(&peer) {
         return Some(peer);
     }
-    let entries: Vec<&str> = headers
+    // Split from the raw bytes, entry by entry: a value is never discarded
+    // whole because the part a client wrote holds a byte that is not text, or
+    // the walk would skip past the entry the proxy appended.
+    let entries: Vec<&[u8]> = headers
         .get_all("x-forwarded-for")
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
         .collect();
     let mut last_trusted = peer;
     for entry in entries.iter().rev() {
-        let Ok(address) = entry.parse::<IpAddr>() else {
+        let Some(address) = std::str::from_utf8(entry)
+            .ok()
+            .and_then(|entry| entry.trim().parse::<IpAddr>().ok())
+        else {
             return Some(last_trusted);
         };
         if is_trusted(&address) {
@@ -522,6 +526,31 @@ mod tests {
         assert_eq!(
             client_address(Some(ip("10.0.0.2")), &HeaderMap::new(), &trusted),
             Some(ip("10.0.0.2"))
+        );
+    }
+
+    /// A byte that is not text in the part the client wrote stops nothing on
+    /// the right of it: the entry the proxy appended is still found.
+    #[test]
+    fn a_non_text_byte_in_the_client_s_part_does_not_hide_the_proxy_s_entry() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "x-forwarded-for",
+            HeaderValue::from_bytes(b"1.1.1.1\xff, 198.51.100.7").unwrap(),
+        );
+        assert_eq!(
+            client_address(Some(ip("10.0.0.2")), &headers, &nets(&["10.0.0.0/8"])),
+            Some(ip("198.51.100.7"))
+        );
+        // And on its own, it stops the walk at the last trusted hop.
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "x-forwarded-for",
+            HeaderValue::from_bytes(b"\xff, 10.0.0.3").unwrap(),
+        );
+        assert_eq!(
+            client_address(Some(ip("10.0.0.2")), &headers, &nets(&["10.0.0.0/8"])),
+            Some(ip("10.0.0.3"))
         );
     }
 
