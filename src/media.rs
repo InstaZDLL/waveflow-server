@@ -71,6 +71,9 @@ struct MediaInner {
     pending_fills: DashSet<String>,
     active_transcodes: AtomicUsize,
     transcoding_available: bool,
+    /// SHA-256 of the whole `ffmpeg -version` output (RFC-016 decision 5): a
+    /// quality measurement is current only under the FFmpeg that made it.
+    ffmpeg_digest: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -126,7 +129,7 @@ pub enum MediaError {
 
 impl MediaService {
     pub async fn initialize(config: &Config) -> anyhow::Result<Self> {
-        check_tool(&config.ffmpeg_path, "ffmpeg").await?;
+        let ffmpeg_version = check_tool(&config.ffmpeg_path, "ffmpeg").await?;
         check_tool(&config.ffprobe_path, "ffprobe").await?;
         tokio::fs::create_dir_all(&config.transcode_cache_dir)
             .await
@@ -151,12 +154,18 @@ impl MediaService {
                 pending_fills: DashSet::new(),
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
+                ffmpeg_digest: crate::quality::decoder_digest(&ffmpeg_version),
             }),
         })
     }
 
     pub fn ffprobe_path(&self) -> &Path {
         &self.inner.ffprobe
+    }
+
+    /// Which FFmpeg this process runs, as `track_quality.decoder` records it.
+    pub fn ffmpeg_digest(&self) -> &str {
+        &self.inner.ffmpeg_digest
     }
 
     pub fn active_transcodes(&self) -> usize {
@@ -1454,26 +1463,35 @@ impl IntoResponse for MediaError {
 /// installation takes to say so.
 const TOOL_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
-async fn check_tool(path: &Path, name: &str) -> anyhow::Result<()> {
+/// Runs `<tool> -version` and answers what it printed.
+///
+/// The output is kept rather than discarded because FFmpeg's identifies the
+/// decoder a quality measurement was made through (RFC-016 decision 5).
+async fn check_tool(path: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
     let output = tokio::time::timeout(
         TOOL_CHECK_TIMEOUT,
         Command::new(path)
             .arg("-version")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status(),
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
     )
     .await
     .map_err(|_| anyhow::anyhow!("{name} check timed out: {}", path.display()))?
     .map_err(|error| anyhow::anyhow!("{name} is required at {}: {error}", path.display()))?;
-    if !output.success() {
-        anyhow::bail!("{name} check failed at {} with {output}", path.display());
+    if !output.status.success() {
+        anyhow::bail!(
+            "{name} check failed at {} with {}",
+            path.display(),
+            output.status
+        );
     }
-    Ok(())
+    Ok(output.stdout)
 }
 
-async fn secure_track_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
+pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
     let canonical_root = tokio::fs::canonicalize(root).await?;
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
@@ -1895,6 +1913,7 @@ mod tests {
             pending_fills: dashmap::DashSet::new(),
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
             transcoding_available: true,
+            ffmpeg_digest: String::new(),
         };
         prune_cache(&inner).await;
         assert!(!old.exists());

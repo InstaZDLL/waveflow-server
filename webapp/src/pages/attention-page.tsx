@@ -43,6 +43,10 @@ const CATEGORIES: Array<{ key: AttentionCategory; label: TranslationKey }> = [
   { key: "duplicate_track_number", label: "attention.duplicate_track_number" },
   { key: "track_number_gap", label: "attention.track_number_gap" },
   { key: "probable_duplicate", label: "attention.probable_duplicate" },
+  {
+    key: "probable_fake_lossless",
+    label: "attention.probable_fake_lossless",
+  },
 ];
 
 /** How long a Split waits for the second click, as on the desktop. */

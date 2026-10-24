@@ -1,11 +1,17 @@
 # RFC-016 — The real quality of a file, measured from its audio
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#317](https://github.com/InstaZDLL/waveflow-server/pull/317) (this
-  RFC). The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+- **Implemented by**: [#317](https://github.com/InstaZDLL/waveflow-server/pull/317)
+  (this RFC) and [#319](https://github.com/InstaZDLL/waveflow-server/pull/319)
+  (steps 2 to 4 together: the migration, the ported detector and the FFmpeg
+  pipe, the background analyser, the verdicts, the five routes, the "Needs
+  attention" category, the Quality page and the track properties' "Real
+  quality" section). The *Status* field above never flips in this project;
+  this line is the one that says what is running.
 - **Date**: 2026-10-24
+- **Revised**: 2026-10-25, with the implementation. `upsampled` stops at
+  30 kHz rather than 24, as measured on FFmpeg's own resampler (decision 3),
+  and decision 3 says which upsampled files it cannot see.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (FFmpeg, read-only
   audio, the path guard, tenancy in the queries),
@@ -265,21 +271,35 @@ In order, the first that applies:
 | `unreadable` | FFmpeg failed or ran past its deadline on this content | "Could not be read" |
 | `silent` | no frame above −60 dBFS | "Silent" |
 | `lossy_source` | `probable_fake_lossless_sql!`: a wall at or under `MIN(21000, sample_rate / 2 − 1000)` | "Probably from a lossy file", with the cutoff |
-| `upsampled` | `sample_rate > 48000` and a wall at or under 24 kHz | "Probably upsampled", with the cutoff |
+| `upsampled` | `sample_rate > 48000` and a wall at or under 30 kHz | "Probably upsampled", with the cutoff |
 | `padded` | `effective_bits < bit_depth` | "Padded to N bits", with the real depth |
 | `consistent` | none of the above | "No sign of a lossy source" |
 
 - **`lossy_source` before `upsampled`.** A 96 kHz file with a wall at 16 kHz
   came from an MP3 first; that it was upsampled afterwards is the lesser
-  news. Between 21 and 24 kHz the two cannot be confused: no lossy encoder
-  cuts there, and a CD converter's filter does.
-- **`upsampled` is new**, and its threshold is not the desktop's tuning. 24 kHz
-  is the Nyquist of a 48 kHz source, so a file above 48 kHz whose highs stop
-  at or under it holds nothing a 48 kHz file could not. The wall test is the
+  news. Above 21 kHz the two cannot be confused: no lossy encoder cuts
+  there, and a resampler's filter does.
+- **`upsampled` is new**, and its threshold is not the desktop's tuning. The
+  first draft put it at 24 kHz, the Nyquist of a 48 kHz source, on the
+  reasoning that a file above 48 kHz whose highs stop there holds nothing a
+  48 kHz file could not. Measured, a resampler's filter does not stop dead
+  at the source's Nyquist. On white noise through FFmpeg's own resampler,
+  the wall stands at 21.5 to 23.8 kHz with a steep filter
+  (`filter_size=64:cutoff=0.91`), and at 25.7 kHz from 44.1 kHz and 28.0 kHz
+  from 48 kHz with its default one, whose transition runs past the source's
+  Nyquist. The threshold is 30 kHz, which holds all of them. A genuine
+  96 kHz recording of the same noise has no wall at all. The wall test is the
   same as for `lossy_source`, which is what protects a genuine hi-res
-  recording that simply has little above 24 kHz: it fades, it does not hit a
-  wall. The implementation measures it on upsampled fixtures before it ships
-  (step 2's tests), and the page says "probably".
+  recording that simply has little up high: it fades, it does not hit a
+  wall. And the page says "probably".
+- **What `upsampled` cannot see.** The same three minutes of real music
+  through FFmpeg's default resampler show no wall at all: that filter lets
+  through images of the music's own highs, mirrored above the source's
+  Nyquist, and they come back within 15 dB of the level under the wall,
+  which the desktop's rule reads, rightly, as content. Such a file is
+  `consistent`. A steeper resampler leaves the wall, at 21.5 kHz on the
+  same music, and is found. As with encoders that do not low-pass, no
+  measure of where the highs stop finds what does not stop.
 - **`padded` is the mildest**, and comes after the other two for that reason: a 16-bit file in a
   24-bit container is still a lossless CD. It is reported because it is a
   claim the container makes and the audio contradicts, and because it is how
@@ -324,7 +344,9 @@ a library's backlog, and the analysis is never urgent.
 
 **How long one file may take.** A deadline of 60 seconds plus the track's own
 duration, which asks the decoder for real time where it ran 650 times faster
-here, so only a stuck process meets it. After it, the process is killed
+here, so only a stuck process meets it, and never more than 30 minutes: the
+duration is what the file's header claims, and a crafted file claiming ten
+hours that hangs FFmpeg must not hold a slot for ten hours. After it, the process is killed
 (`kill_on_drop`) and the file recorded `unreadable` for this content. A file
 that cannot be read is not retried on every wake, which would loop forever on
 one bad file; it is retried when its content changes or the detector's
@@ -511,7 +533,9 @@ by `WAVEFLOW_QUALITY_PARALLELISM` plus one, so a reader can still have one
 drawn while the background analysis runs; beyond that the route answers
 `429` with `Retry-After`. Access is checked before the bound, so an account
 that may not read the track gets `404` and never learns from a `429` that
-something is there. It has a 30-second deadline. Unlike the analysis,
+something is there. It has a 20-second deadline, and less when the
+request timeout leaves less, so the route answers its own `503` before the
+router's timeout answers for it. Unlike the analysis,
 it is on the answering path, because a picture someone clicked for is the
 answer; that is why it is bounded and never computed for anyone who did not
 ask. It is drawn for any file, lossy ones included, because a reader may want

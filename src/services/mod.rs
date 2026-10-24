@@ -1364,6 +1364,9 @@ pub struct DomainServices {
     /// [`ARTIST_IMAGE_SEARCH_DEADLINE`], except where a test shortens it
     /// rather than wait five minutes.
     image_search_deadline_ms: Arc<std::sync::atomic::AtomicU64>,
+    /// The quality analysis (RFC-016): its bound, the FFmpeg it measures with,
+    /// and the spectrograms in flight.
+    quality: quality::QualityRuntime,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1424,6 +1427,7 @@ mod library_tree;
 mod lyrics_uploads;
 mod playback;
 mod playlists;
+mod quality;
 mod radio;
 mod scan;
 mod scrobbling;
@@ -1462,6 +1466,10 @@ pub use library_folders::{
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
+pub use quality::{
+    QualitySummary, QualityTrack, QualityVerdict, QualityVerdictCount, Spectrogram, TrackQuality,
+    TrackQualityDetail,
+};
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
     ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
@@ -1516,6 +1524,10 @@ impl DomainServices {
             image_search_deadline_ms: Arc::new(std::sync::atomic::AtomicU64::new(
                 u64::try_from(ARTIST_IMAGE_SEARCH_DEADLINE.as_millis()).unwrap_or(u64::MAX),
             )),
+            quality: quality::QualityRuntime::new(
+                config.quality_parallelism,
+                config.request_timeout,
+            ),
         }
     }
 

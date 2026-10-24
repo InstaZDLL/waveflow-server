@@ -11,10 +11,12 @@ import {
   getArtist,
   getAttentionSummary,
   getLyrics,
+  getQualitySummary,
   getTrack,
   getTrackCredits,
   getTrackOverrides,
   getTrackProperties,
+  getTrackQuality,
   listAlbums,
   listApiTokens,
   listArtistAlbums,
@@ -34,6 +36,7 @@ import {
   listNowPlaying,
   listOwnApiTokens,
   listPlaylists,
+  listQualityTracks,
   listRadioStations,
   listRandomSongs,
   listScrobbleDestinations,
@@ -42,6 +45,8 @@ import {
   listSongs,
   listUncertainScrobbles,
   listUsers,
+  QUALITY_TRACKS_PAGE,
+  type QualityVerdict,
   readOwnSubsonicCredential,
   SONG_PAGE,
   type SongSort,
@@ -264,6 +269,53 @@ export const attentionTracksQuery = (
       last.length < ATTENTION_TRACKS_PAGE
         ? undefined
         : lastParam + ATTENTION_TRACKS_PAGE,
+  });
+
+/**
+ * The quality page (RFC-016): keyed under `quality` and the library, so one
+ * invalidation after a request for a new analysis refreshes the whole page.
+ * While the analysis runs, the summary is asked again every ten seconds by the
+ * page itself; the list follows when the counts move.
+ */
+export const qualitySummaryQuery = (libraryId: string) =>
+  queryOptions({
+    queryKey: ["quality", libraryId, "summary"],
+    queryFn: () => getQualitySummary(libraryId),
+  });
+
+/** One filter of the list, a page at a time. A short page is the end. */
+export const qualityTracksQuery = (
+  libraryId: string,
+  filter: { verdict?: QualityVerdict; codec?: string },
+) =>
+  infiniteQueryOptions({
+    queryKey: [
+      "quality",
+      libraryId,
+      "tracks",
+      filter.verdict ?? "",
+      filter.codec ?? "",
+    ],
+    queryFn: ({ pageParam, signal }) =>
+      listQualityTracks(
+        libraryId,
+        filter,
+        pageParam,
+        QUALITY_TRACKS_PAGE,
+        signal,
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.length < QUALITY_TRACKS_PAGE
+        ? undefined
+        : lastParam + QUALITY_TRACKS_PAGE,
+  });
+
+/** One track's verdict and spectrum, for its properties. */
+export const trackQualityQuery = (trackId: string) =>
+  queryOptions({
+    queryKey: ["track-quality", trackId],
+    queryFn: () => getTrackQuality(trackId),
   });
 
 export const filedTreeQuery = (libraryId: string) =>

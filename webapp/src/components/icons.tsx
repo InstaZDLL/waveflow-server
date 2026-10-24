@@ -33,9 +33,21 @@ export type IconName =
   | "download"
   | "folder"
   | "back"
-  | "inbox";
+  | "inbox"
+  | "quality";
 
 const paths: Record<IconName, ReactNode> = {
+  // Bars that fall away to the right and stop: a spectrum, and where its highs
+  // end.
+  quality: (
+    <>
+      <path d="M4 19v-7" />
+      <path d="M8 19V7" />
+      <path d="M12 19V5" />
+      <path d="M16 19v-6" />
+      <path d="M20 19v-1" />
+    </>
+  ),
   // A tray: what has arrived and is waiting to be put away.
   inbox: (
     <>

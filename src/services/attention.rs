@@ -29,11 +29,14 @@ pub enum AttentionCategory {
     DuplicateTrackNumber,
     TrackNumberGap,
     ProbableDuplicate,
+    /// Lossless files whose highs stop at a lossy encoder's wall (RFC-016
+    /// decision 9).
+    ProbableFakeLossless,
 }
 
 impl AttentionCategory {
     /// Display order, the desktop's.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::SplitCredits,
         Self::MissingArtist,
         Self::MissingAlbum,
@@ -45,6 +48,7 @@ impl AttentionCategory {
         Self::DuplicateTrackNumber,
         Self::TrackNumberGap,
         Self::ProbableDuplicate,
+        Self::ProbableFakeLossless,
     ];
 
     /// `None` for anything that is not a track category, so a route can answer
@@ -147,6 +151,19 @@ macro_rules! track_number_gap {
     };
 }
 
+// RFC-016's `lossy_source` verdict, as the desktop defines its category: a
+// current measurement of a lossless file with a wall where a lossy encoder puts
+// one, through the core's own definition.
+macro_rules! probable_fake_lossless {
+    () => {
+        concat!(
+            "EXISTS (SELECT 1 FROM track_quality ta \n               WHERE ta.track_id = t.id AND ta.full_hash = t.full_hash AND ",
+            waveflow_core::probable_fake_lossless_sql!(),
+            ")"
+        )
+    };
+}
+
 macro_rules! count_head {
     () => {
         "SELECT COUNT(*) FROM track t \
@@ -194,6 +211,7 @@ impl AttentionCategory {
             Self::CompilationNoAlbumArtist => category_sql!(compilation_no_album_artist),
             Self::DuplicateTrackNumber => category_sql!(duplicate_track_number),
             Self::TrackNumberGap => category_sql!(track_number_gap),
+            Self::ProbableFakeLossless => category_sql!(probable_fake_lossless),
             Self::SplitCredits | Self::ProbableDuplicate => return None,
         })
     }

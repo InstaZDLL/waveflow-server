@@ -334,6 +334,12 @@ pub struct Config {
     pub transcode_cache_max_bytes: u64,
     pub transcode_global_limit: usize,
     pub transcode_per_user_limit: usize,
+    /// How many lossless files the quality analysis (RFC-016) measures at once,
+    /// each one FFmpeg process on one thread. `WAVEFLOW_QUALITY_PARALLELISM`, `1`
+    /// by default, so the analysis costs one core at most whatever the size of
+    /// the library; `0` turns it off, and every lossless file then stays
+    /// `pending`.
+    pub quality_parallelism: usize,
     /// What the server will accept when a library opts in to receiving files.
     ///
     /// `WAVEFLOW_UPLOAD_MAX_FILE_BYTES`, `WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES`,
@@ -471,6 +477,7 @@ impl std::fmt::Debug for Config {
             .field("transcode_cache_dir", &self.transcode_cache_dir)
             .field("transcode_cache_max_bytes", &self.transcode_cache_max_bytes)
             .field("transcode_global_limit", &self.transcode_global_limit)
+            .field("quality_parallelism", &self.quality_parallelism)
             .field("transcode_per_user_limit", &self.transcode_per_user_limit)
             .field("uploads", &self.uploads)
             .field("library_event_retention", &self.library_event_retention)
@@ -542,6 +549,12 @@ impl Config {
         let transcode_global_limit = parse_positive_env("WAVEFLOW_TRANSCODE_GLOBAL_LIMIT", 4usize)?;
         let transcode_per_user_limit =
             parse_positive_env("WAVEFLOW_TRANSCODE_PER_USER_LIMIT", 2usize)?;
+        // Zero is a setting here, not a mistake: it is how an operator turns the
+        // analysis off, so this is not `parse_positive_env`.
+        let quality_parallelism = std::env::var("WAVEFLOW_QUALITY_PARALLELISM")
+            .unwrap_or_else(|_| "1".to_owned())
+            .parse::<usize>()
+            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_QUALITY_PARALLELISM: {error}"))?;
         let uploads = UploadLimits {
             max_file_bytes: parse_positive_env("WAVEFLOW_UPLOAD_MAX_FILE_BYTES", 1_073_741_824i64)?,
             library_quota_bytes: parse_positive_env(
@@ -741,6 +754,7 @@ impl Config {
             transcode_cache_max_bytes,
             transcode_global_limit,
             transcode_per_user_limit,
+            quality_parallelism,
             uploads,
             library_event_retention,
             canvas_dir,
@@ -791,6 +805,7 @@ impl Config {
             transcode_cache_max_bytes: 128 * 1024 * 1024,
             transcode_global_limit: 2,
             transcode_per_user_limit: 1,
+            quality_parallelism: 1,
             // Small enough that a test can reach every bound without writing a
             // gigabyte, and shaped like production rather than unlimited: a
             // suite that never meets a limit never proves one exists.

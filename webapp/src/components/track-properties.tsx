@@ -7,6 +7,7 @@ import { useI18n } from "../state/i18n";
 import { Artwork } from "./artwork";
 import { Icon } from "./icons";
 import { LyricsSection } from "./lyrics-section";
+import { QualitySection } from "./quality-section";
 
 /** One row of a list, left out entirely when it has nothing to say. */
 type Row = { label: string; value: ReactNode; corrected?: string | null };
@@ -259,6 +260,7 @@ export function TrackProperties({
       <Section title={t("properties.file")} rows={file} />
       <Section title={t("properties.tags")} rows={tags} />
       <Section title={t("properties.sound")} rows={sound} />
+      <QualitySection song={song} />
       <LyricsSection song={song} list={lyrics} known={lyricsKnown} />
     </dialog>
   );
