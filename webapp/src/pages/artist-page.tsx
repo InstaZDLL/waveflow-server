@@ -9,9 +9,11 @@ import {
 } from "../api/queries";
 import { AlbumGrid } from "../components/album-grid";
 import { ArtistImageControls } from "../components/artist-image-controls";
+import { ArtistSplit } from "../components/artist-split";
 import { Artwork } from "../components/artwork";
 import { Loading } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
+import { isSplitCandidate } from "../lib/credit-fragments";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 
@@ -159,6 +161,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <p className="muted">
             {t("artists.libraryCount", { count: value.album_count })}
           </p>
+          {/* A joined credit, such as "Ashreveal, Ashish Swargiary" (RFC-015):
+              offered where the server would list it, to whoever may decide. */}
+          {mayChoose && isSplitCandidate(value.name) ? (
+            <ArtistSplit artist={value} />
+          ) : null}
           {value.image_choice?.portrait ? (
             <p className="muted artist-source">{t("artistImage.chosen")}</p>
           ) : image && image.artwork_hash === portrait ? (

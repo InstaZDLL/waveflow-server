@@ -5,6 +5,7 @@ pub mod authentication;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod credit_split;
 pub mod database;
 pub mod enrichment;
 pub mod lyrics;
@@ -147,6 +148,12 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::delete_folder,
         api::folder_tracks,
         api::place_tracks,
+        api::attention_summary,
+        api::attention_credits,
+        api::attention_tracks,
+        api::list_credit_decisions,
+        api::create_credit_decision,
+        api::delete_credit_decision,
         api::get_track,
         api::update_track,
         api::get_track_lyrics,
@@ -317,6 +324,14 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::ArtistImageCandidate,
         api::DeezerPortraitPick,
         services::FiledTree,
+        services::AttentionCategory,
+        services::AttentionCount,
+        services::AttentionTrack,
+        services::CreditCandidate,
+        services::CreditFragment,
+        services::CreditDecisionKind,
+        services::CreditDecisionRecord,
+        api::CreditDecisionRequest,
         services::FolderPatch,
         services::FolderRemoved,
         services::Placed,

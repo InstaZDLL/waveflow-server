@@ -3432,16 +3432,17 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The twelve the bar cannot hold — including the two this account is
-  // entitled to as an administrator of a library that takes files. `Radio`
-  // joined them with #217, and `Folders` with RFC-012's filed folders; this count
-  // is what said so: a new entry in the sidebar reaches the sheet, and the
-  // sheet is pinned.
+  // The thirteen the bar cannot hold — including the three this account is
+  // entitled to as an administrator and owner of a library that takes files.
+  // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
+  // `Needs attention` with RFC-015; this count is what said so: a new entry in
+  // the sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
     "Genres",
     "Folders",
+    "Needs attention",
     "Settings",
     "Random",
     "Recently played",
@@ -3455,7 +3456,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(12);
+  await expect(sheet.getByRole("link")).toHaveCount(13);
 
   await expectNoWcagViolations(page);
 
@@ -3494,6 +3495,10 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Shares" })).toBeVisible();
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
+  // Nothing on it is a listener's to decide (RFC-015).
+  await expect(
+    sheet.getByRole("link", { name: "Needs attention" }),
+  ).toHaveCount(0);
 });
 
 /** A tab switch keeps the current screen until the destination can render. */
@@ -5602,4 +5607,232 @@ test("chooses an artist's portrait from a Deezer search", async ({ page }) => {
   expect(picks).toEqual([{ deezer_id: 76 }]);
   expect(searches).toEqual(["Björk", "Nobody", "Bjork", "Bjork"]);
   expect(thirdParty).toEqual([]);
+});
+
+/**
+ * "Needs attention" (RFC-015), as the server answers it: the lists and their
+ * counts, the joined credits with the fragments the library already knows,
+ * and the decisions. Held here so a test can watch what the page writes.
+ */
+async function serveAttention(page: Page) {
+  const state = {
+    candidates: [
+      {
+        artist_id: "artist-joined",
+        name: "Ashreveal, Ashish Swargiary",
+        track_count: 1,
+        fragments: [
+          { name: "Ashreveal", artist_id: "artist-known", album_count: 2 },
+          { name: "Ashish Swargiary", artist_id: null, album_count: 0 },
+        ],
+      },
+    ],
+    decisions: [] as Array<Record<string, unknown>>,
+    writes: [] as Array<{ method: string; path: string; body: unknown }>,
+    asks: 0,
+  };
+  const base = "**/api/v2/libraries/library-1";
+  await page.route(`${base}/attention`, (route) => {
+    state.asks += 1;
+    return route.fulfill({
+      json: [
+        { category: "split_credits", count: state.candidates.length },
+        { category: "missing_artist", count: 0 },
+        { category: "missing_album", count: 0 },
+        { category: "missing_year", count: 1 },
+        { category: "missing_track_number", count: 0 },
+        { category: "missing_cover", count: 0 },
+        { category: "album_year_conflict", count: 0 },
+        { category: "compilation_no_album_artist", count: 0 },
+        { category: "duplicate_track_number", count: 0 },
+        { category: "track_number_gap", count: 0 },
+        { category: "probable_duplicate", count: 0 },
+      ],
+    });
+  });
+  await page.route(`${base}/attention/credits`, (route) =>
+    route.fulfill({ json: state.candidates }),
+  );
+  await page.route(`${base}/attention/tracks?*`, (route) => {
+    const category = new URL(route.request().url()).searchParams.get(
+      "category",
+    );
+    return route.fulfill({
+      json: category === "missing_year" ? [song(4, "Yearless", 0, false)] : [],
+    });
+  });
+  await page.route(`${base}/credit-decisions`, async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({ json: state.decisions });
+      return;
+    }
+    const body = request.postDataJSON();
+    state.writes.push({ method: "POST", path: "credit-decisions", body });
+    const candidate = state.candidates.find(
+      (entry) => entry.artist_id === body.artist_id,
+    );
+    state.candidates = state.candidates.filter(
+      (entry) => entry.artist_id !== body.artist_id,
+    );
+    const decision = {
+      id: "decision-1",
+      credit: candidate?.name ?? "?",
+      decision: body.decision,
+      ...(body.decision === "split"
+        ? { parts: candidate?.fragments.map((fragment) => fragment.name) }
+        : {}),
+      decided_by: "listener",
+      decided_at: 1_700_000_000_000,
+    };
+    state.decisions = [decision];
+    await route.fulfill({ status: 201, json: decision });
+  });
+  await page.route(`${base}/credit-decisions/*`, async (route) => {
+    const request = route.request();
+    state.writes.push({
+      method: request.method(),
+      path: new URL(request.url()).pathname.split("/").at(-1) ?? "",
+      body: null,
+    });
+    state.decisions = [];
+    await route.fulfill({ status: 204, body: "" });
+  });
+  return state;
+}
+
+test("lists what needs attention, splits a credit on the second click, and undoes it", async ({
+  page,
+}) => {
+  const state = await serveAttention(page);
+  await page.goto("/attention");
+  await expect(
+    page.getByRole("heading", { name: "Needs attention" }),
+  ).toBeVisible();
+  await expect(page.getByText("2 things to look at")).toBeVisible();
+  // The first list holding something is open, and an empty one stays drawn.
+  const lists = page.getByRole("list", { name: "Lists" });
+  await expect(
+    lists.getByRole("link", { name: /Artists to split/ }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(lists.getByRole("link", { name: /Missing cover/ })).toHaveClass(
+    /empty/,
+  );
+
+  // A fragment the library already knows leads to that artist.
+  const fragments = page.getByRole("list", {
+    name: "What Ashreveal, Ashish Swargiary would split into",
+  });
+  await expect(
+    fragments.getByRole("link", { name: "Ashreveal" }),
+  ).toHaveAttribute("href", "/artists/artist-known");
+  await expect(fragments.getByText("Ashish Swargiary")).toBeVisible();
+
+  // The first click arms, and sends nothing.
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  const confirm = page.getByRole("button", { name: "Confirm: split into 2" });
+  await expect(confirm).toBeVisible();
+  expect(state.writes).toEqual([]);
+  await expectNoWcagViolations(page);
+  await confirm.click();
+  await expect(
+    page.getByText("Ashreveal, Ashish Swargiary is split."),
+  ).toBeVisible();
+  expect(state.writes).toEqual([
+    {
+      method: "POST",
+      path: "credit-decisions",
+      body: { artist_id: "artist-joined", decision: "split" },
+    },
+  ]);
+  await expect(
+    page.getByText("No credit is waiting for a decision."),
+  ).toBeVisible();
+
+  // Decided, then undone.
+  await page.getByRole("button", { name: "Decided" }).click();
+  await expect(
+    page.getByText("Split into Ashreveal · Ashish Swargiary"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(
+    page.getByText("The decision about Ashreveal, Ashish Swargiary is undone."),
+  ).toBeVisible();
+  expect(state.writes.at(-1)).toEqual({
+    method: "DELETE",
+    path: "decision-1",
+    body: null,
+  });
+
+  // A track list opens its tracks in the song table.
+  await lists.getByRole("link", { name: /Missing year/ }).click();
+  await expect(page).toHaveURL(/category=missing_year/);
+  await expect(page.getByText("Yearless")).toBeVisible();
+  await expectNoWcagViolations(page);
+});
+
+/**
+ * A listener cannot act on any of it, so the page says so and asks nothing:
+ * the server would answer `404` regardless.
+ */
+test("asks nothing of the server for a listener's library", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  const state = await serveAttention(page);
+  await page.goto("/attention");
+  await expect(
+    page.getByText(
+      "Only the owners and managers of this library see what needs attention in it.",
+    ),
+  ).toBeVisible();
+  // Settled before counting: the message and a request fired beside it
+  // arrive together, and a count taken first would be zero either way.
+  await page.waitForLoadState("networkidle");
+  expect(state.asks).toBe(0);
+});
+
+/** The desktop's other way in: from the joined artist's own page. */
+test("splits a joined artist from its page, after a confirming click", async ({
+  page,
+}) => {
+  const state = await serveAttention(page);
+  await page.route("**/api/v2/artists/artist-joined", (route) =>
+    route.fulfill({
+      json: {
+        ...artistDetail,
+        id: "artist-joined",
+        name: "Ashreveal, Ashish Swargiary",
+        library_id: "library-1",
+        album_count: 0,
+        albums: [],
+      },
+    }),
+  );
+  await page.route("**/api/v2/artists/artist-joined/*", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  await page.goto("/artists/artist-joined");
+  const offer = page.getByRole("button", { name: "Split into 2 artists" });
+  await expect(offer).toBeVisible();
+  await offer.click();
+  await page.getByRole("button", { name: "Confirm: split into 2" }).click();
+  await expect(page).toHaveURL(/\/artists$/);
+  expect(state.writes).toEqual([
+    {
+      method: "POST",
+      path: "credit-decisions",
+      body: { artist_id: "artist-joined", decision: "split" },
+    },
+  ]);
+
+  // A listener is offered nothing.
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  await page.goto("/artists/artist-joined");
+  await expect(
+    page.getByRole("heading", { name: "Ashreveal, Ashish Swargiary" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Split into 2 artists" }),
+  ).toHaveCount(0);
 });

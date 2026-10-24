@@ -56,6 +56,7 @@ import { AlbumPage } from "./pages/album-page";
 import { AlbumsPage } from "./pages/albums-page";
 import { ArtistPage } from "./pages/artist-page";
 import { ArtistsPage } from "./pages/artists-page";
+import { AttentionPage, isAttentionCategory } from "./pages/attention-page";
 import { AuthorizePage } from "./pages/authorize-page";
 import { FavoritesPage } from "./pages/favorites-page";
 import { FoldersPage } from "./pages/folders-page";
@@ -80,6 +81,7 @@ import { I18nProvider, type TranslationKey, useI18n } from "./state/i18n";
 import {
   LibraryPicker,
   LibraryScopeProvider,
+  mayCorrectTracks,
   mayUploadTo,
   useLibraryScope,
 } from "./state/library-scope";
@@ -117,6 +119,7 @@ const navigation: Array<{
     | "/artists"
     | "/songs"
     | "/folders"
+    | "/attention"
     | "/genres"
     | "/search"
     | "/favourites"
@@ -136,6 +139,8 @@ const navigation: Array<{
   admin?: boolean;
   /** Shown only where the active library takes files from this account. */
   upload?: boolean;
+  /** Shown only to the active library's owners and managers. */
+  curate?: boolean;
   primary?: boolean;
   /** The rail section it is filed under. */
   group: NavigationGroup;
@@ -154,6 +159,13 @@ const navigation: Array<{
     to: "/folders",
     labelKey: "nav.folders",
     icon: "folder",
+    group: "library",
+  },
+  {
+    to: "/attention",
+    labelKey: "nav.attention",
+    icon: "info",
+    curate: true,
     group: "library",
   },
   {
@@ -299,6 +311,8 @@ async function prepareTab(
     // The folder is in the address, and the rail links to the root: the
     // page draws its own frame and waits for its folder there.
     case "/folders":
+    // Its lists are asked for once the page knows the active library.
+    case "/attention":
       break;
     // A fresh draw on every ask, held for no time at all: a draw made here
     // is thrown away before the page mounts, and the page then draws again.
@@ -340,7 +354,9 @@ function permitted(
   library: Parameters<typeof mayUploadTo>[0],
 ): boolean {
   return (
-    (!item.admin || role === "admin") && (!item.upload || mayUploadTo(library))
+    (!item.admin || role === "admin") &&
+    (!item.upload || mayUploadTo(library)) &&
+    (!item.curate || mayCorrectTracks(library ?? undefined))
   );
 }
 
@@ -873,6 +889,22 @@ const foldersRoute = createRoute({
   },
 });
 
+// The open list is a search parameter, so a list can be linked to and the
+// back button walks between them.
+const attentionRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/attention",
+  validateSearch: (search: Record<string, unknown>) => ({
+    category: isAttentionCategory(search.category)
+      ? search.category
+      : undefined,
+  }),
+  component: function AttentionRoute() {
+    const { category } = attentionRoute.useSearch();
+    return <AttentionPage category={category} />;
+  },
+});
+
 const uploadRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/upload",
@@ -902,6 +934,7 @@ const routeTree = rootRoute.addChildren([
     albumRoute,
     songsRoute,
     foldersRoute,
+    attentionRoute,
     artistsRoute,
     artistRoute,
     genresRoute,
