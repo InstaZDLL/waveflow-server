@@ -74,6 +74,14 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     assert_eq!(openapi.status(), StatusCode::OK);
     let document = json_body(openapi).await;
     assert!(document["paths"]["/api/v2/auth/login"].is_object());
+    // RFC-017: both password sign-ins can answer 429, and say when to retry.
+    for path in ["/api/v2/auth/login", "/api/v2/web/auth/login"] {
+        let throttled = &document["paths"][path]["post"]["responses"]["429"];
+        assert!(
+            throttled["headers"]["Retry-After"].is_object(),
+            "{path}: {throttled}"
+        );
+    }
     for path in [
         "/api/v2/setup",
         "/api/v2/web/auth/login",

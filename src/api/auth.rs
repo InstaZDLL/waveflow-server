@@ -25,6 +25,8 @@ pub struct RefreshRequest {
         (status = 200, body = crate::authentication::AuthTokens),
         (status = 401, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
+        (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
+            headers(("Retry-After" = u32, description = "Seconds until the attempt may be made again"))),
         (status = 503, body = ErrorResponse)
     )
 )]
@@ -105,6 +107,8 @@ pub async fn logout(
         (status = 401, body = ErrorResponse),
         (status = 403, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
+        (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
+            headers(("Retry-After" = u32, description = "Seconds until the attempt may be made again"))),
         (status = 503, body = ErrorResponse)
     )
 )]
