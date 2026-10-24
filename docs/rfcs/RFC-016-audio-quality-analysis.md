@@ -6,7 +6,9 @@
   (steps 2 to 4 together: the migration, the ported detector and the FFmpeg
   pipe, the background analyser, the verdicts, the five routes, the "Needs
   attention" category, the Quality page and the track properties' "Real
-  quality" section). The *Status* field above never flips in this project;
+  quality" section), then [#320](https://github.com/InstaZDLL/waveflow-server/pull/320)
+  (the analysis state in the summary and on the page, and one write per
+  measurement). The *Status* field above never flips in this project;
   this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Revised**: 2026-10-25, with the implementation. `upsampled` stops at
