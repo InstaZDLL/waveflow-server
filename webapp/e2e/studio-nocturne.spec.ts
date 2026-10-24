@@ -6121,26 +6121,33 @@ for (const { theme, banner, portrait } of [
       ),
     );
 
-    expect(await lowestContrast(page, hero.locator("h2")), "the name").toBeGreaterThanOrEqual(3);
-    for (const [name, text] of [
-      ["the kicker", hero.locator(".eyebrow")],
-      ["the count", hero.locator(".muted").first()],
+    // Each text named by what it says, so that a line gone missing fails
+    // here instead of handing its place to the next one of the same class.
+    const name = hero.getByRole("heading", { name: "Björk", exact: true });
+    const kicker = hero.locator(".eyebrow");
+    const count = hero.getByText("2 albums in your library", { exact: true });
+    const source = hero.getByText("Portrait chosen by hand", { exact: true });
+    for (const text of [name, kicker, count, source]) {
+      await expect(text).toHaveCount(1);
+      await expect(text).toBeVisible();
+    }
+    // And no other source line beside it, left unmeasured.
+    await expect(hero.locator(".artist-source")).toHaveCount(1);
+    expect(await lowestContrast(page, name), "the name").toBeGreaterThanOrEqual(3);
+    for (const [label, text] of [
+      ["the kicker", kicker],
+      ["the count", count],
+      ["the source", source],
     ] as const) {
-      expect(await lowestContrast(page, text), name).toBeGreaterThanOrEqual(4.5);
+      expect(await lowestContrast(page, text), label).toBeGreaterThanOrEqual(4.5);
     }
-    // Where each picture came from, under the count: the chosen portrait
-    // draws one line at least, and an empty list would measure nothing.
-    const sources = hero.locator(".artist-source");
-    await expect(sources.first()).toBeVisible();
-    for (const source of await sources.all()) {
-      expect(
-        await lowestContrast(page, source),
-        `the source “${await source.innerText()}”`,
-      ).toBeGreaterThanOrEqual(4.5);
+    // Every button is measured; these two are required, the plain one and the
+    // quiet one, so the loop below cannot pass over an empty list.
+    for (const required of ["Change portrait", "Automatic portrait"]) {
+      const button = hero.getByRole("button", { name: required, exact: true });
+      await expect(button).toHaveCount(1);
+      await expect(button).toBeVisible();
     }
-    // An empty list would measure nothing and pass.
-    await expect(hero.locator(".artist-image-button").first()).toBeVisible();
-    await expect(hero.locator(".artist-image-button.subtle").first()).toBeVisible();
     for (const button of await hero.locator(".artist-image-button").all()) {
       if (!(await button.isVisible())) continue;
       expect(
