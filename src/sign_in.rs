@@ -120,13 +120,23 @@ pub fn canonical_account(username: &str) -> String {
 /// An IPv4-mapped IPv6 address is read as the IPv4 address it carries, the
 /// peer included: a dual-stack listener reports an IPv4 proxy as
 /// `::ffff:10.0.0.2`, which an IPv4 network in the list would not contain.
+/// An IPv4 address is trusted under either spelling, so a list that names the
+/// proxy in its mapped form still holds it.
 pub fn client_address(
     peer: Option<IpAddr>,
     headers: &HeaderMap,
     trusted: &[IpNet],
 ) -> Option<IpAddr> {
     let peer = unmapped(peer?);
-    let is_trusted = |address: &IpAddr| trusted.iter().any(|net| net.contains(address));
+    let is_trusted = |address: &IpAddr| {
+        let mapped = match address {
+            IpAddr::V4(v4) => Some(IpAddr::V6(v4.to_ipv6_mapped())),
+            IpAddr::V6(_) => None,
+        };
+        trusted.iter().any(|net| {
+            net.contains(address) || mapped.as_ref().is_some_and(|mapped| net.contains(mapped))
+        })
+    };
     if !is_trusted(&peer) {
         return Some(peer);
     }
@@ -545,6 +555,14 @@ mod tests {
             ),
             Some(ip("198.51.100.7"))
         );
+        // And a list naming the proxy in its mapped form holds it whichever
+        // way the socket reports it.
+        for peer in ["::ffff:10.0.0.2", "10.0.0.2"] {
+            assert_eq!(
+                client_address(Some(ip(peer)), &headers, &nets(&["::ffff:10.0.0.0/104"])),
+                Some(ip("198.51.100.7"))
+            );
+        }
     }
 
     #[test]
