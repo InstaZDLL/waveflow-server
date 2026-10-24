@@ -1,10 +1,14 @@
 # RFC-015 — Splitting a joined artist credit, and a page for what needs a decision
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#315](https://github.com/InstaZDLL/waveflow-server/pull/315) (this
-  RFC). The *Status* field above never flips in this project; this line is the
-  one that says what is running.
+- **Implemented by**: [#315](https://github.com/InstaZDLL/waveflow-server/pull/315)
+  (this RFC) and [#316](https://github.com/InstaZDLL/waveflow-server/pull/316)
+  (steps 2 to 4 together: the decision table and `track_credit`, the second
+  step in the scan, applying and undoing a decision, favourites and ratings
+  through the journal, the "Needs attention" routes and track categories, the
+  web client's page and the artist page's "Split into N artists"). The
+  *Status* field above never flips in this project; this line is the one that
+  says what is running.
 - **Date**: 2026-10-24
 - **Revised**: 2026-10-24, after review on #315. The server keeps each
   track's credits as the tags give them (`track_credit`), and one function
