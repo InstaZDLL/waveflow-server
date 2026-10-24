@@ -1,8 +1,10 @@
 # RFC-014 — An automatic artist banner, from TheAudioDB's fanart
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+- **Implemented by**: in progress, in the order of "The order of the work"
+  below: [#312](https://github.com/InstaZDLL/waveflow-server/pull/312) (this
+  RFC). The *Status* field above never flips in this project; this line is the
+  one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-011](RFC-011-metadata-enrichment.md) (the providers, the
