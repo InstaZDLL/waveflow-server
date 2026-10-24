@@ -3,8 +3,12 @@
 - **Status**: Proposed
 - **Implemented by**: in progress, in the order of "The order of the work"
   below: [#312](https://github.com/InstaZDLL/waveflow-server/pull/312) (this
-  RFC). The *Status* field above never flips in this project; this line is the
-  one that says what is running.
+  RFC) and [#314](https://github.com/InstaZDLL/waveflow-server/pull/314)
+  (steps 2 and 3 together: the `theaudiodb` provider and its key, the fill and
+  its pace, the fanart columns, linking and unlinking, the effective banner
+  and `enrichment.banner`, the sweep, and the credit in the web client). The
+  *Status* field above never flips in this project; this line is the one that
+  says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-011](RFC-011-metadata-enrichment.md) (the providers, the

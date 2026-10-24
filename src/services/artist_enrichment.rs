@@ -29,7 +29,7 @@ impl DomainServices {
     ) -> Result<ArtistDetail, ServiceError> {
         let mut detail = self.artist(user_id, artist_id).await?;
         detail.enrichment = Some(
-            self.enrichment_of(user_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
+            self.enrichment_of(user_id, artist_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
                 .await?,
         );
         Ok(detail)
@@ -43,7 +43,7 @@ impl DomainServices {
         similar_limit: usize,
     ) -> Result<ArtistEnrichment, ServiceError> {
         let summary = self.artist_summary(user_id, artist_id).await?;
-        self.enrichment_of(user_id, &summary.artist.name, similar_limit)
+        self.enrichment_of(user_id, artist_id, &summary.artist.name, similar_limit)
             .await
     }
 
@@ -51,6 +51,7 @@ impl DomainServices {
     async fn enrichment_of(
         &self,
         user_id: Uuid,
+        artist_id: Uuid,
         name: &str,
         similar_limit: usize,
     ) -> Result<ArtistEnrichment, ServiceError> {
@@ -71,6 +72,20 @@ impl DomainServices {
             .await?;
         let bio = merged_bio(&rows);
         let image = merged_image(&rows);
+        // Credited only while it is the banner shown (RFC-014 decision 4): a
+        // banner chosen by hand came from no provider, whichever entry point
+        // asks.
+        let chosen_banner: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM artist_image_choice              WHERE artist_id=? AND kind='banner')",
+        )
+        .bind(artist_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        let banner = if chosen_banner {
+            None
+        } else {
+            merged_banner(&rows)
+        };
         // Only a fresh row is an answer. An expired one has just had its
         // refresh scheduled, and an expired miss is not "nobody knows" but
         // "being asked again" — `pending`, as decision 11 defines it. Stale
@@ -78,7 +93,7 @@ impl DomainServices {
         let now = crate::authentication::now_ms();
         let answered = rows.iter().filter(|row| row.expires_at > now).count();
         let state = state_of(
-            bio.is_some() || image.is_some() || similar.is_some(),
+            bio.is_some() || image.is_some() || banner.is_some() || similar.is_some(),
             answered,
             engine.provider_count(),
         );
@@ -86,6 +101,7 @@ impl DomainServices {
             state,
             bio,
             image,
+            banner,
             similar,
         })
     }
@@ -332,6 +348,16 @@ fn merged_image(rows: &[CachedArtist]) -> Option<EnrichedImage> {
     })
 }
 
+/// The first configured provider with a banner supplies it (RFC-014).
+fn merged_banner(rows: &[CachedArtist]) -> Option<EnrichedImage> {
+    rows.iter().find_map(|row| {
+        row.fanart_hash.as_ref().map(|hash| EnrichedImage {
+            artwork_hash: hash.clone(),
+            source: source_of(row),
+        })
+    })
+}
+
 /// Content wins over everything; without it, a provider that has not
 /// answered makes the lookup `pending`, and only when every one of them has
 /// answered is it `none`.
@@ -365,6 +391,7 @@ mod tests {
             bio_summary: bio.map(str::to_owned),
             bio_full: None,
             image_hash: None,
+            fanart_hash: None,
             fetched_at,
             expires_at: fetched_at + 1,
         }

@@ -149,6 +149,10 @@ Settings, under `WAVEFLOW_METADATA_*`, in `src/config.rs` with the rest:
   widening: an empty provider list means no outbound request of any kind, and
   this setting cannot contradict it.
 - `WAVEFLOW_METADATA_LASTFM_KEY` — the operator's own application key.
+- `WAVEFLOW_METADATA_THEAUDIODB_KEY` — added by
+  [RFC-014](RFC-014-automatic-artist-banner.md) for the `theaudiodb`
+  provider, which is asked for artist banners only, under the same rule: no
+  key ships in the binary.
 - `WAVEFLOW_METADATA_TTL_DAYS`, `WAVEFLOW_METADATA_MISS_TTL_DAYS`,
   `WAVEFLOW_METADATA_RATE_PER_SEC`, `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS`.
 

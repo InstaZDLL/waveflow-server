@@ -182,12 +182,13 @@ WAVEFLOW_METADATA_LASTFM_KEY=…   # your own Last.fm API application's key
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `WAVEFLOW_METADATA_PROVIDERS` | empty | The switch: an ordered, comma-separated list. Empty is off. The providers are `lastfm` (biographies and similar artists) and `deezer` (artist portraits, no key) |
+| `WAVEFLOW_METADATA_PROVIDERS` | empty | The switch: an ordered, comma-separated list. Empty is off. The providers are `lastfm` (biographies and similar artists), `deezer` (artist portraits, no key) and `theaudiodb` (artist banners only — not its biographies) |
 | `WAVEFLOW_METADATA_LASTFM_KEY` | — | Required when `lastfm` is listed; the server refuses to start without it. No key ships in the binary |
-| `WAVEFLOW_METADATA_IMAGES` | on | `off` keeps the lookups and refuses artist image downloads; `deezer` is then not asked at all, since portraits are all it is asked for |
+| `WAVEFLOW_METADATA_THEAUDIODB_KEY` | — | Required when `theaudiodb` is listed; the server refuses to start without it. TheAudioDB's public test key is not used |
+| `WAVEFLOW_METADATA_IMAGES` | on | `off` keeps the lookups and refuses artist image downloads; `deezer` and `theaudiodb` are then not asked at all, since images are all they are asked for |
 | `WAVEFLOW_METADATA_TTL_DAYS` | 30 | How long an answer with content is kept before it is asked again |
 | `WAVEFLOW_METADATA_MISS_TTL_DAYS` | 7 | How long "the provider knows nothing about this artist" is kept |
-| `WAVEFLOW_METADATA_RATE_PER_SEC` | 4 | Requests per second, per provider |
+| `WAVEFLOW_METADATA_RATE_PER_SEC` | 4 | Requests per second, per provider. TheAudioDB is never asked faster than once every two seconds, its free tier's ceiling, whatever this says |
 | `WAVEFLOW_METADATA_REQUEST_TIMEOUT_SECS` | 10 | How long one request may take before it counts as unanswered |
 
 **Scrobbling's Last.fm key does not switch this on.** An application you
@@ -209,9 +210,21 @@ PNG or WebP by its own bytes, and at most 10 MiB. A picture that fails any of
 these is not fetched and the artist is remembered as having none until the
 short TTL runs out.
 
+With `theaudiodb` listed, also `www.theaudiodb.com`, with your key in the
+request path, and then the artist's **fanart** — the wide photograph the
+artist page draws behind its header when no banner was chosen by hand —
+under the same rules, from TheAudioDB's image hosts (`r2.theaudiodb.com`,
+`www.theaudiodb.com`). Its fanarts are tried in order and the first real one
+is kept; the 1000×185 strips TheAudioDB calls banners are never asked for.
+A banner chosen by hand always wins over it, and the page credits TheAudioDB
+whenever its fanart is the one shown. If a later answer no longer offers the
+fanart, the artist goes back to having no automatic banner; a request that
+fails changes nothing.
+
 **What it stores.** In `waveflow.db`, for each provider and each artist name
 asked about: the biography, the ranked list of similar artists by name, the
-portrait's hash, whether the provider knew the artist, and when to ask again.
+portrait's and the banner's hashes, whether the provider knew the artist, and
+when to ask again.
 The portrait itself goes in the artwork store beside the covers, and every
 artist with that name shows it through the `coverArt` it already carries —
 **back it up with the rest of `artwork_dir`**: unlike a cover, it cannot be

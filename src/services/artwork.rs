@@ -230,6 +230,7 @@ impl DomainServices {
         let removed = sqlx::query(
             "DELETE FROM artwork WHERE \
                NOT EXISTS (SELECT 1 FROM artist WHERE artist.artwork_hash = artwork.hash) \
+               AND NOT EXISTS (SELECT 1 FROM artist WHERE artist.fanart_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM album WHERE album.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM track WHERE track.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM artist_image_choice c WHERE c.artwork_hash = artwork.hash) \

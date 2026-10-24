@@ -270,6 +270,7 @@ const en = {
   "artists.bioSource": "Biography from {provider}, {date}.",
   "artists.similarSource": "Suggested by {provider}, {date}.",
   "artists.portraitSource": "Portrait from {provider}, {date}.",
+  "artists.bannerSource": "Banner from {provider}, {date}.",
   "favourites.detail": {
     one: "{count} saved track",
     other: "{count} saved tracks",
@@ -984,6 +985,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "artists.bioSource": "Biographie fournie par {provider}, le {date}.",
   "artists.similarSource": "Suggérés par {provider}, le {date}.",
   "artists.portraitSource": "Portrait fourni par {provider}, le {date}.",
+  "artists.bannerSource": "Bannière fournie par {provider}, le {date}.",
   "favourites.detail": {
     one: "{count} piste enregistrée",
     other: "{count} pistes enregistrées",

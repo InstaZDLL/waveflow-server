@@ -81,6 +81,11 @@ export type ArtistEnrichment = {
     source: EnrichmentSource;
   } | null;
   image: { artwork_hash: string; source: EnrichmentSource } | null;
+  /**
+   * The automatic banner and its provider (RFC-014), present only while it is
+   * the banner shown. Optional so an older server parses.
+   */
+  banner?: { artwork_hash: string; source: EnrichmentSource } | null;
   similar: { artists: Artist[]; source: EnrichmentSource } | null;
 };
 

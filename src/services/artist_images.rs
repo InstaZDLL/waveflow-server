@@ -120,7 +120,8 @@ pub(super) async fn write_choice(
 }
 
 impl DomainServices {
-    /// The chosen banner and what was chosen, for the artist page. Read after
+    /// The banner shown and what was chosen, for the artist page: the chosen
+    /// banner, or else the provider's fanart (RFC-014 decision 4). Read after
     /// access to the artist was established by the caller.
     pub(super) async fn artist_image_choices(
         &self,
@@ -148,6 +149,13 @@ impl DomainServices {
                 }
                 _ => {}
             }
+        }
+        if banner.is_none() {
+            banner = sqlx::query_scalar("SELECT fanart_hash FROM artist WHERE id=?")
+                .bind(artist_id.to_string())
+                .fetch_optional(self.db.pool())
+                .await?
+                .flatten();
         }
         Ok((banner, choices))
     }
