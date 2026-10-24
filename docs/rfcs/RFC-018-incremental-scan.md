@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: in progress: [#322](https://github.com/InstaZDLL/waveflow-server/pull/322)
-  (this RFC). The *Status* field above never flips in this
+  (this RFC) and [#324](https://github.com/InstaZDLL/waveflow-server/pull/324)
+  (the pre-check and its sidecar signature, streaming, tolerant discovery,
+  `database rescan-full`). The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
@@ -47,7 +49,7 @@ hold:
 - its size and modification time equal the stored ones;
 - the track is available;
 - its sidecar signature equals the stored one;
-- this is not a full scan (`database rescan --full`, or the identity-spec
+- this is not a full scan (`waveflow-server database rescan-full`, or the identity-spec
   change that forces one);
 - the track already has the identity hint the skip path writes today, so a row
   from before that column still gets its one extraction.

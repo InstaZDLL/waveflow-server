@@ -262,7 +262,11 @@ impl ScanManager {
         let _library_guard = lock.lock().await;
         tokio::fs::create_dir_all(&self.artwork_dir).await?;
         let root = tokio::fs::canonicalize(&library.root_path).await?;
-        let paths = tokio::task::spawn_blocking({
+        let Discovery {
+            paths,
+            unreadable,
+            incomplete,
+        } = tokio::task::spawn_blocking({
             let root = root.clone();
             move || discover_audio(&root)
         })
@@ -282,22 +286,33 @@ impl ScanManager {
             .start_scan_job(scan_id, paths.len() as i64, full)
             .await?;
 
+        // What the catalogue already knows, read once: the pre-check compares
+        // against it before a file is opened (RFC-018 decision 1).
+        let facts = Arc::new(self.db.track_skip_facts(library.id).await?);
         let root_for_tasks = root.clone();
         let artwork_dir = self.artwork_dir.clone();
-        let mut extracted = stream::iter(paths.into_iter().map(|path| {
+        // In path order, as they finish, a few batches at most in memory
+        // (RFC-018 decision 2): `buffered` keeps the order `paths` has, so the
+        // outcome is the same however the extractions interleave.
+        let mut scanned = stream::iter(paths.into_iter().map(|path| {
             let root = root_for_tasks.clone();
             let artwork = artwork_dir.clone();
+            let facts = Arc::clone(&facts);
             async move {
                 let relative = relative_path(&root, &path);
+                let known = relative
+                    .as_ref()
+                    .ok()
+                    .and_then(|relative| facts.get(relative))
+                    .cloned();
                 let result =
-                    tokio::task::spawn_blocking(move || extract_file(&path, &artwork)).await;
+                    tokio::task::spawn_blocking(move || scan_file(&path, &artwork, known, full))
+                        .await;
                 (relative, result)
             }
         }))
-        .buffer_unordered(self.parallelism)
-        .collect::<Vec<_>>()
-        .await;
-        extracted.sort_by(|left, right| scan_result_path(left).cmp(scan_result_path(right)));
+        .buffered(self.parallelism)
+        .chunks(25);
 
         let mut progress = ScanProgress {
             scan_id,
@@ -315,20 +330,62 @@ impl ScanManager {
             message: None,
         };
 
-        for batch in extracted.chunks(25) {
+        // A folder the walk could not read is reported, and its tracks are left
+        // as they are below (RFC-018 decision 3).
+        if !unreadable.is_empty() {
+            progress.errors += unreadable.len() as i64;
+            let errors: Vec<(String, String)> = unreadable
+                .iter()
+                .map(|folder| (folder.clone(), "folder could not be read".to_owned()))
+                .collect();
+            self.db.add_scan_errors(scan_id, &errors).await?;
+            // Written now, not left to the batches: a library whose only
+            // content sits under the unreadable folder has no batch at all.
+            self.tick(&progress).await?;
+        }
+
+        let walked = Walked {
+            discovered: &discovered,
+            unreadable: &unreadable,
+            incomplete,
+        };
+        while let Some(batch) = scanned.next().await {
             let mut applies = Vec::new();
             let mut seen = Vec::new();
             let mut errors = Vec::new();
             let mut claimed_relocations = HashSet::new();
             let mut hints = Vec::new();
+            let mut signatures = Vec::new();
             for (relative, task_result) in batch {
                 progress.processed += 1;
+                let task_result = match task_result {
+                    // Unchanged, and never opened.
+                    Ok(Scanned::Skipped(id)) => {
+                        seen.push(id);
+                        progress.skipped += 1;
+                        continue;
+                    }
+                    Ok(Scanned::Read(result, signature)) => {
+                        // Only a read that succeeded records what it read: a
+                        // failed one must be tried again, sidecars included.
+                        if let (Ok(relative), Ok(_), Some(signature)) =
+                            (&relative, result.as_ref(), signature)
+                        {
+                            signatures.push((relative.clone(), signature));
+                        }
+                        Ok(*result)
+                    }
+                    Err(error) => Err(error),
+                };
                 match (relative, task_result) {
                     (Ok(relative), Ok(Ok(input))) => {
-                        let mut input = input.clone();
+                        let mut input = input;
                         progress.current_path = Some(relative.clone());
                         input.relative_path = relative.clone();
-                        let existing = self.db.existing_track_by_path(library.id, relative).await?;
+                        let existing = self
+                            .db
+                            .existing_track_by_path(library.id, &relative)
+                            .await?;
                         if let Some(existing) = existing.as_ref() {
                             if !full
                                 && existing.file_size == input.file_size
@@ -367,7 +424,7 @@ impl ScanManager {
                                 self.db
                                     .relocation_candidates(library.id, &input.full_hash)
                                     .await?,
-                                &discovered,
+                                &walked,
                                 &claimed_relocations,
                             );
                             if missing.is_empty() {
@@ -387,7 +444,7 @@ impl ScanManager {
                                             ),
                                         )
                                         .await?,
-                                    &discovered,
+                                    &walked,
                                     &claimed_relocations,
                                 );
                             }
@@ -409,12 +466,9 @@ impl ScanManager {
                     }
                     (relative, result) => {
                         progress.errors += 1;
-                        let path = relative
-                            .as_ref()
-                            .cloned()
-                            .unwrap_or_else(|_| "<invalid-relative-path>".into());
+                        let path = relative.unwrap_or_else(|_| "<invalid-relative-path>".into());
                         let message = match result {
-                            Ok(Err(error)) => error.clone(),
+                            Ok(Err(error)) => error,
                             Err(error) => format!("extract worker failed: {error}"),
                             Ok(Ok(_)) => "relative path failed".into(),
                         };
@@ -436,11 +490,27 @@ impl ScanManager {
                     ApplyOutcome::Moved => progress.moved += 1,
                 }
             }
+            self.db
+                .set_sidecar_signatures(library.id, &signatures)
+                .await?;
             self.db.add_scan_errors(scan_id, &errors).await?;
             self.tick(&progress).await?;
         }
 
-        progress.unavailable = self.db.mark_unseen_unavailable(library.id, scan_id).await?;
+        self.db
+            .mark_tracks_under_seen(library.id, &unreadable, scan_id)
+            .await?;
+        // A walk error that named no path leaves no folder to spare, so
+        // nothing this walk missed can be called missing.
+        progress.unavailable = if incomplete {
+            tracing::warn!(
+                library_id = %library.id,
+                "the walk could not say what it failed to read; nothing is marked missing this scan"
+            );
+            0
+        } else {
+            self.db.mark_unseen_unavailable(library.id, scan_id).await?
+        };
         // After availability is settled, not before: the album and artist
         // identifiers are a majority vote over the tracks that are still there,
         // so a file that vanished must stop voting first.
@@ -484,23 +554,158 @@ impl ScanManager {
     }
 }
 
-fn scan_result_path(
-    result: &(
-        anyhow::Result<String>,
-        Result<Result<CatalogTrackInput, String>, tokio::task::JoinError>,
-    ),
-) -> &str {
-    result.0.as_deref().unwrap_or("<invalid-relative-path>")
-}
-
 fn scan_id(progress: &ScanProgress) -> Uuid {
     progress.scan_id
 }
 
-fn discover_audio(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+/// What a scan does with one discovered file.
+enum Scanned {
+    /// Unchanged since the last scan: skipped without being opened.
+    Skipped(Uuid),
+    /// Read, with the sidecar signature to record once it is applied.
+    /// `None` when a sidecar could not be opened: nothing is recorded, so the
+    /// file is read again until it can be.
+    Read(Box<Result<CatalogTrackInput, String>>, Option<String>),
+}
+
+/// The pre-check, then the read (RFC-018 decision 1).
+///
+/// A file whose size, modification time and sidecar signature match what the
+/// catalogue holds, on an available track that already has its relocation
+/// hint, is skipped from a `stat` alone. Anything else, and every file on a
+/// full scan, is read as before.
+fn scan_file(
+    path: &Path,
+    artwork_dir: &Path,
+    known: Option<crate::catalog::SkipFacts>,
+    full: bool,
+) -> Scanned {
+    let signature = sidecar_signature(path);
+    if let Some(known) = known.filter(|_| !full) {
+        let unchanged = file_stamp(path).is_some_and(|(size, modified_at)| {
+            size == known.file_size && modified_at == known.modified_at
+        }) && known.available
+            && known.has_pid
+            && signature.is_some()
+            && known.sidecar_signature == signature;
+        if unchanged {
+            return Scanned::Skipped(known.id);
+        }
+    }
+    Scanned::Read(Box::new(extract_file(path, artwork_dir)), signature)
+}
+
+/// A file's size and modification time, as `extract_file` records them.
+fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0);
+    Some((metadata.len() as i64, modified_at))
+}
+
+/// The two lyrics sidecars a scan reads beside an audio file, by size and
+/// modification time, absent ones as `-`:
+/// `lrc:<size>:<mtime_ms>|txt:<size>:<mtime_ms>`. Adding, editing or deleting
+/// either changes it; it is never empty.
+///
+/// `None` when a sidecar exists but cannot be opened. The read then goes ahead
+/// without its lyrics, and recording the signature would skip the file for as
+/// long as the sidecar's size and time stay put — a permission fixed later
+/// moves neither. With no signature the file is read on every scan until the
+/// sidecar can be.
+///
+/// Read without following links, and a sidecar that is not a regular file — a
+/// link, a FIFO, a folder — counts as absent, since `read_sidecar` would not
+/// read it either. Only a regular file is opened, and never in a way that can
+/// block.
+fn sidecar_signature(path: &Path) -> Option<String> {
+    let mut parts = Vec::with_capacity(2);
+    for extension in ["lrc", "txt"] {
+        let sidecar = path.with_extension(extension);
+        match fs::symlink_metadata(&sidecar) {
+            Ok(metadata) if metadata.is_file() => {
+                sidecar_options().open(&sidecar).ok()?;
+                let modified_at = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                    .map(|value| value.as_millis() as i64)
+                    .unwrap_or(0);
+                parts.push(format!("{extension}:{}:{modified_at}", metadata.len()));
+            }
+            _ => parts.push(format!("{extension}:-")),
+        }
+    }
+    Some(parts.join("|"))
+}
+
+/// How a sidecar is opened, for reading it and for checking that it can be:
+/// never through a link, and without blocking on a special file swapped in
+/// after it was looked at.
+fn sidecar_options() -> fs::OpenOptions {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself so descriptor metadata can reject a
+        // symlink instead of validating one path and reading its later target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options
+}
+
+/// What the walk found: the audio files, in path order, and the folders it
+/// could not read, relative to the root.
+struct Discovery {
+    paths: Vec<PathBuf>,
+    unreadable: Vec<String>,
+    /// An error named no path inside the root, so the walk cannot say which
+    /// tracks it missed: none may be marked missing.
+    incomplete: bool,
+}
+
+/// Walks the library (RFC-018 decision 3). An entry the walk cannot read is
+/// logged by its path relative to the root, never the absolute one, and the
+/// walk goes on; only the root itself failing fails the scan, since then
+/// nothing can be told apart.
+fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
     let mut paths = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut incomplete = false;
     for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.depth() == 0 => return Err(error.into()),
+            Err(error) => {
+                let Some(folder) = error
+                    .path()
+                    .and_then(|path| path.strip_prefix(root).ok())
+                    .map(|path| path.to_string_lossy().replace('\\', "/"))
+                else {
+                    tracing::warn!("the library walk failed somewhere it could not name");
+                    incomplete = true;
+                    unreadable.push("<unknown>".to_owned());
+                    continue;
+                };
+                tracing::warn!(
+                    path = %folder,
+                    "a folder in the library could not be read; its tracks are left as they are"
+                );
+                unreadable.push(folder);
+                continue;
+            }
+        };
         if entry.file_type().is_symlink() || !entry.file_type().is_file() {
             continue;
         }
@@ -518,25 +723,54 @@ fn discover_audio(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
         }
     }
     paths.sort();
-    Ok(paths)
+    Ok(Discovery {
+        paths,
+        unreadable,
+        incomplete,
+    })
+}
+
+/// What one walk saw, as relocation needs it: the files it found, and what
+/// it could not look at.
+struct Walked<'a> {
+    discovered: &'a HashSet<String>,
+    unreadable: &'a [String],
+    incomplete: bool,
+}
+
+impl Walked<'_> {
+    /// Whether the walk can say this track's file is gone: it was not found,
+    /// and it does not sit under a folder the walk could not read.
+    fn saw_missing(&self, relative_path: &str) -> bool {
+        !self.incomplete
+            && !self.discovered.contains(relative_path)
+            && !self.unreadable.iter().any(|folder| {
+                relative_path == folder
+                    || relative_path
+                        .strip_prefix(folder.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+    }
 }
 
 /// The candidates a scan may still claim.
 ///
 /// A track whose file this walk found is not missing, whatever a hash or a hint
 /// says about it, and one already claimed by an earlier file in this batch is
-/// spoken for. What survives is what genuinely disappeared — and a relocation
-/// is only recorded when exactly one thing did, because moving a favourite onto
-/// the wrong row is worse than not moving it at all.
+/// spoken for. Nor is one under a folder the walk could not read, or any at all
+/// when the walk could not say what it missed (RFC-018 decision 3): its file
+/// may be right where it was. What survives is what genuinely disappeared — and
+/// a relocation is only recorded when exactly one thing did, because moving a
+/// favourite onto the wrong row is worse than not moving it at all.
 fn unclaimed(
     candidates: Vec<crate::catalog::ExistingTrack>,
-    discovered: &HashSet<String>,
+    walked: &Walked<'_>,
     claimed: &HashSet<Uuid>,
 ) -> Vec<crate::catalog::ExistingTrack> {
     candidates
         .into_iter()
         .filter(|candidate| {
-            !discovered.contains(&candidate.relative_path) && !claimed.contains(&candidate.id)
+            walked.saw_missing(&candidate.relative_path) && !claimed.contains(&candidate.id)
         })
         .collect()
 }
@@ -994,22 +1228,7 @@ fn push_lyrics(found: &mut Vec<LyricsInput>, source: &'static str, content: &str
 }
 
 fn read_sidecar(path: &Path) -> Option<String> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Open the reparse point itself so descriptor metadata can reject a
-        // symlink instead of validating one path and reading its later target.
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let file = options.open(path).ok()?;
+    let file = sidecar_options().open(path).ok()?;
     let metadata = file.metadata().ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_LYRICS_BYTES
     {
@@ -1044,7 +1263,31 @@ fn lyrics_hash(entries: &[LyricsInput]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extended_tags, read_sidecar, MAX_LYRICS_BYTES};
+    use super::{extended_tags, read_sidecar, Walked, MAX_LYRICS_BYTES};
+
+    /// A track under a folder the walk could not read is not missing, so no
+    /// file elsewhere may claim it; nor may any track when the walk could not
+    /// name what it missed.
+    #[test]
+    fn a_track_the_walk_could_not_see_is_not_missing() {
+        let discovered = std::collections::HashSet::from(["Found/One.wav".to_owned()]);
+        let unreadable = vec!["Locked".to_owned()];
+        let walked = Walked {
+            discovered: &discovered,
+            unreadable: &unreadable,
+            incomplete: false,
+        };
+        assert!(!walked.saw_missing("Found/One.wav"));
+        assert!(!walked.saw_missing("Locked/Two.wav"));
+        assert!(!walked.saw_missing("Locked"));
+        assert!(walked.saw_missing("Lockedness/Three.wav"));
+        assert!(walked.saw_missing("Gone/Four.wav"));
+        let incomplete = Walked {
+            incomplete: true,
+            ..walked
+        };
+        assert!(!incomplete.saw_missing("Gone/Four.wav"));
+    }
     use lofty::{
         prelude::ItemKey,
         tag::{Tag, TagType},

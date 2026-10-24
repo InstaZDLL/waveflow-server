@@ -306,6 +306,10 @@ pub enum DatabaseCommand {
     Backup(BackupArgs),
     /// Restore a backup bundle before opening SQLite.
     Restore(RestoreArgs),
+    /// Read every file again on the next scan of every library, skipping
+    /// nothing (RFC-018): for a file rewritten in place with its size and
+    /// modification time both kept, which an ordinary scan does not open.
+    RescanFull,
 }
 
 #[derive(Debug, Args)]
@@ -384,6 +388,14 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
             DatabaseCommand::Backup(args) => backup(state, args).await,
             DatabaseCommand::Restore(_) => {
                 anyhow::bail!("restore must run before server initialization")
+            }
+            DatabaseCommand::RescanFull => {
+                let libraries = db.request_full_scan_everywhere().await?;
+                println!(
+                    "The next scan of {libraries} librar{} will read every file.",
+                    if libraries == 1 { "y" } else { "ies" }
+                );
+                Ok(())
             }
         },
         Command::Key { .. } => {
