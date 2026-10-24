@@ -37,8 +37,10 @@ export function ArtistSplit({ artist }: { artist: ArtistDetail }) {
     setFailed(false);
     try {
       await decideCredit(artist.library_id, artist.id, "split");
-      await client.invalidateQueries();
+      // Away first: this page's own query would otherwise be asked again,
+      // and answer 404, before the artists list could be reached.
       await navigate({ to: "/artists" });
+      await client.invalidateQueries();
     } catch {
       setFailed(true);
       setBusy(false);

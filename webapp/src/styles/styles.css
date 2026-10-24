@@ -3198,6 +3198,11 @@ button.danger {
   }
 }
 
+.attention-group h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
 .artist-split {
   margin-top: var(--space-2);
 }

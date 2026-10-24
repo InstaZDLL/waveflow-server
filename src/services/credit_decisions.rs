@@ -332,13 +332,13 @@ impl DomainServices {
                 .await?;
             }
         }
+        if parts.is_some() {
+            rederive(&mut tx, library_id).await?;
+        }
         tx.commit().await?;
         drop(writer);
         for (user, receipt) in receipts {
             self.sync.publish(user, receipt);
-        }
-        if parts.is_some() {
-            self.rederive(library_id).await?;
         }
         self.credit_decisions(user_id, library_id)
             .await?
@@ -441,11 +441,11 @@ impl DomainServices {
                 .await?;
             }
         }
+        if split {
+            rederive(&mut tx, library_id).await?;
+        }
         tx.commit().await?;
         drop(writer);
-        if split {
-            self.rederive(library_id).await?;
-        }
         Ok(())
     }
 
@@ -514,15 +514,6 @@ impl DomainServices {
             )
             .await?;
         }
-        Ok(())
-    }
-
-    /// The derivations a scan reruns at its end, rerun because the credits
-    /// they are derived from moved: album credits, per-role counts, the artist
-    /// sweep and the search index, then the sort names.
-    async fn rederive(&self, library_id: Uuid) -> Result<(), ServiceError> {
-        self.db.consolidate_catalog_derivations(library_id).await?;
-        self.db.consolidate_sort_names(library_id).await?;
         Ok(())
     }
 
@@ -716,6 +707,19 @@ impl DomainServices {
             OperationClaim::Replayed(_) => Err(ServiceError::Conflict),
         }
     }
+}
+
+/// The derivations a scan reruns at its end, rerun because the credits they
+/// are derived from moved: album credits, per-role counts, the artist sweep
+/// and the search index, then the sort names.
+///
+/// In the decision's own transaction, under the writer gate it already holds:
+/// a decision recorded while its derivations failed would leave an artist row
+/// the feed has already announced as deleted, and a retry would only answer
+/// `409`. Together, the two land or neither does.
+async fn rederive(tx: &mut Transaction<'_, Sqlite>, library_id: Uuid) -> Result<(), sqlx::Error> {
+    crate::database::Database::consolidate_catalog_derivations_in(tx, library_id).await?;
+    crate::database::Database::consolidate_sort_names_in(tx, library_id).await
 }
 
 /// Whether anything still credits an artist: a participant, or an album that

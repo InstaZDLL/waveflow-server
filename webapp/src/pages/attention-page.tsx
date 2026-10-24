@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   type AttentionCategory,
+  type AttentionTrack,
   type CreditCandidate,
   type CreditDecision,
   decideCredit,
@@ -180,12 +181,34 @@ function TracksPanel({
   const { t } = useI18n();
   const tracks = useInfiniteQuery(attentionTracksQuery(libraryId, category));
   const songs = useMemo(() => tracks.data?.pages.flat() ?? [], [tracks.data]);
+  // Probable duplicates arrive group by group; each is drawn as its own table
+  // so a group reads as one recording. A group a page boundary cut in two is
+  // joined again here, because adjacent rows of one group are one group.
+  const groups = useMemo(() => {
+    const grouped: Array<{ group: number; songs: AttentionTrack[] }> = [];
+    for (const song of songs) {
+      const group = song.duplicate_group ?? 0;
+      const last = grouped.at(-1);
+      if (last && last.group === group) last.songs.push(song);
+      else grouped.push({ group, songs: [song] });
+    }
+    return grouped;
+  }, [songs]);
   if (!tracks.data) return <Loading error={tracks.error} />;
   if (!songs.length) return <p className="muted">{t("attention.empty")}</p>;
   return (
     <>
       <p className="muted attention-note">{t("attention.tracksNote")}</p>
-      <SongTable songs={songs} />
+      {category === "probable_duplicate" ? (
+        groups.map((entry) => (
+          <section key={entry.group} className="attention-group">
+            <h3>{t("attention.duplicateGroup", { group: entry.group })}</h3>
+            <SongTable songs={entry.songs} />
+          </section>
+        ))
+      ) : (
+        <SongTable songs={songs} />
+      )}
       {tracks.hasNextPage ? (
         <div className="actions">
           <button
@@ -224,20 +247,24 @@ function CreditsPanel({ libraryId }: { libraryId: string }) {
   async function attempt(write: () => Promise<unknown>, said: string) {
     setBusy(true);
     setNotice(null);
+    // Re-read whatever the answer: a refusal is usually another owner having
+    // decided first — the credit is decided, or its artist is gone — and the
+    // row on screen is what is out of date.
     try {
       await write();
-      await client.invalidateQueries();
       setNotice({ error: false, text: said });
     } catch (error) {
       setNotice({
         error: true,
         text: t(
-          error instanceof ApiError && error.status === 409
+          error instanceof ApiError &&
+            (error.status === 409 || error.status === 404)
             ? "attention.alreadyDecided"
             : "attention.failed",
         ),
       });
     } finally {
+      await client.invalidateQueries();
       setBusy(false);
     }
   }

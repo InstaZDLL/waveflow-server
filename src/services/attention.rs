@@ -314,39 +314,45 @@ impl DomainServices {
         .bind(library_id.to_string())
         .fetch_all(self.db.pool())
         .await?;
-        let mut artists: HashMap<String, Vec<String>> = HashMap::new();
-        for (track, artist) in credited {
-            artists.entry(track).or_default().push(artist);
-        }
-        let mut buckets: BTreeMap<(String, String), Vec<(usize, i64)>> = BTreeMap::new();
-        for (index, (id, title, duration)) in tracks.iter().enumerate() {
-            let mut names = artists.remove(id).unwrap_or_default();
-            names.sort();
-            let key = (
-                waveflow_core::metadata::name_match::normalize_name(title),
-                names.join("|"),
-            );
-            buckets.entry(key).or_default().push((index, *duration));
-        }
-        let mut grouped = Vec::new();
-        let mut group = 0;
-        for items in buckets.into_values() {
-            let items: Vec<(i64, i64)> = items
-                .into_iter()
-                .map(|(index, duration)| (index as i64, duration))
-                .collect();
-            for members in waveflow_core::inventory::chain_by_duration(
-                &items,
-                waveflow_core::inventory::DURATION_TOLERANCE_MS,
-            ) {
-                group += 1;
-                for member in members {
-                    let id = Uuid::parse_str(&tracks[member as usize].0)
-                        .map_err(|_| ServiceError::Invalid)?;
-                    grouped.push((id, group));
+        // Normalising every title and chaining every bucket is work in
+        // proportion to the library, so it runs off the async workers.
+        tokio::task::spawn_blocking(move || {
+            let mut artists: HashMap<String, Vec<String>> = HashMap::new();
+            for (track, artist) in credited {
+                artists.entry(track).or_default().push(artist);
+            }
+            let mut buckets: BTreeMap<(String, String), Vec<(usize, i64)>> = BTreeMap::new();
+            for (index, (id, title, duration)) in tracks.iter().enumerate() {
+                let mut names = artists.remove(id).unwrap_or_default();
+                names.sort();
+                let key = (
+                    waveflow_core::metadata::name_match::normalize_name(title),
+                    names.join("|"),
+                );
+                buckets.entry(key).or_default().push((index, *duration));
+            }
+            let mut grouped = Vec::new();
+            let mut group = 0;
+            for items in buckets.into_values() {
+                let items: Vec<(i64, i64)> = items
+                    .into_iter()
+                    .map(|(index, duration)| (index as i64, duration))
+                    .collect();
+                for members in waveflow_core::inventory::chain_by_duration(
+                    &items,
+                    waveflow_core::inventory::DURATION_TOLERANCE_MS,
+                ) {
+                    group += 1;
+                    for member in members {
+                        let id = Uuid::parse_str(&tracks[member as usize].0)
+                            .map_err(|_| ServiceError::Invalid)?;
+                        grouped.push((id, group));
+                    }
                 }
             }
-        }
-        Ok(grouped)
+            Ok(grouped)
+        })
+        .await
+        .map_err(|_| ServiceError::Unavailable)?
     }
 }

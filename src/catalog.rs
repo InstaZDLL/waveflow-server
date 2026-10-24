@@ -712,6 +712,18 @@ impl Database {
     pub async fn consolidate_sort_names(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool().begin().await?;
+        Self::consolidate_sort_names_in(&mut tx, library_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// [`Self::consolidate_sort_names`] inside a transaction the caller holds,
+    /// under the writer gate it already took: a credit decision re-derives in
+    /// the transaction that records it, so the two land or fail together.
+    pub(crate) async fn consolidate_sort_names_in(
+        tx: &mut Transaction<'_, Sqlite>,
+        library_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE album SET sort_name = ( \
                SELECT t.sort_album FROM track t \
@@ -723,7 +735,7 @@ impl Database {
              WHERE library_id = ?",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query(
             "UPDATE artist SET sort_name = ( \
@@ -737,9 +749,8 @@ impl Database {
              WHERE library_id = ?",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 
@@ -761,6 +772,18 @@ impl Database {
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.pool().begin().await?;
+        Self::consolidate_catalog_derivations_in(&mut tx, library_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// [`Self::consolidate_catalog_derivations`] inside a transaction the caller
+    /// holds, under the writer gate it already took, for the same reason as
+    /// [`Self::consolidate_sort_names_in`].
+    pub(crate) async fn consolidate_catalog_derivations_in(
+        tx: &mut Transaction<'_, Sqlite>,
+        library_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE album SET musicbrainz_id = ( \
                SELECT t.musicbrainz_release_id FROM track t \
@@ -775,7 +798,7 @@ impl Database {
              WHERE library_id = ?",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query(
             "UPDATE artist SET musicbrainz_id = ( \
@@ -789,7 +812,7 @@ impl Database {
              WHERE library_id = ?",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         // The album's own credits, derived here rather than written per track.
         // A track-by-track write would be a last-writer-wins race between
@@ -797,7 +820,7 @@ impl Database {
         // settled makes the answer the same whatever order the scan ran in.
         sqlx::query("DELETE FROM album_participant WHERE library_id = ?")
             .bind(library_id.to_string())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query(
             "INSERT INTO album_participant \
@@ -812,7 +835,7 @@ impl Database {
               GROUP BY t.album_id, tp.artist_id, tp.role, tp.sub_role",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         // What each artist has to show for each capacity. `albumCount` used to
         // be a count over the album's single artist column, which could only
@@ -820,7 +843,7 @@ impl Database {
         // simply the keys of this table.
         sqlx::query("DELETE FROM artist_role_stats WHERE library_id = ?")
             .bind(library_id.to_string())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query(
             "INSERT INTO artist_role_stats \
@@ -833,7 +856,7 @@ impl Database {
               GROUP BY tp.artist_id, t.library_id, tp.role",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         // An album no track depends on is no longer in the catalogue. This
         // matters most on the scan that follows the identity migration: the
@@ -847,7 +870,7 @@ impl Database {
                AND NOT EXISTS (SELECT 1 FROM track t WHERE t.album_id = album.id)",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         // An artist row outlives the tag that created it: rename a credit and
         // the old name stays in the index forever. An artist credited on
@@ -861,7 +884,7 @@ impl Database {
                AND NOT EXISTS (SELECT 1 FROM album al WHERE al.album_artist_id = artist.id)",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         // The artist search index, rewritten whole rather than kept in step
         // row by row. An artist row is touched once per track of every album
@@ -872,7 +895,7 @@ impl Database {
         // standing, under the sort names settled before this pass ran.
         sqlx::query("DELETE FROM artist_fts WHERE library_id = ?")
             .bind(library_id.to_string())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query(
             "INSERT INTO artist_fts (artist_id, library_id, name, sort_name) \
@@ -880,9 +903,8 @@ impl Database {
                FROM artist WHERE library_id = ?",
         )
         .bind(library_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 
@@ -1122,6 +1144,11 @@ impl Database {
         }
         let _writer = self.writer_guard().await;
         let mut tx = self.pool().begin().await?;
+        // Read once per batch, inside the transaction that writes it (RFC-015):
+        // a decision taken while a scan runs is either before this batch,
+        // which applies it, or after it, in which case the decision's own pass
+        // finds what this batch wrote.
+        let decisions = credit_decisions(&mut tx, library_id).await?;
         let now = now_ms();
         let mut outcomes = Vec::with_capacity(applies.len());
         for apply in applies {
@@ -1132,6 +1159,7 @@ impl Database {
                     library_id,
                     Some(scan_id),
                     apply,
+                    &decisions,
                     now,
                 )
                 .await?,
@@ -1168,6 +1196,7 @@ impl Database {
         library_id: Uuid,
         scan_id: Option<Uuid>,
         apply: &CatalogApply,
+        decisions: &crate::credit_split::Decisions,
         now: i64,
     ) -> Result<ApplyOutcome, sqlx::Error> {
         let input = &apply.input;
@@ -1189,14 +1218,10 @@ impl Database {
         // not undo them. Only its own `artist` credits are displaced: a
         // composer or a conductor comes from the file and nobody corrected it.
         let overrides = track_override_lists(tx, track_id).await?;
-        // Read inside the transaction that writes the batch, so a decision
-        // taken while a scan runs is either before this batch, which applies
-        // it, or after it, in which case the decision's own pass finds what
-        // this batch wrote.
-        let decisions = credit_decisions(tx, library_id).await?;
+        // The library's decisions, read by the caller inside this transaction.
         let credits = crate::credit_split::resolve(
             &file_credits,
-            &decisions,
+            decisions,
             overrides.artists.as_deref(),
             |name| pid.artist_id(library_id, name.trim()),
         );

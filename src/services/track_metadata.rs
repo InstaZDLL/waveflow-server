@@ -326,6 +326,7 @@ impl DomainServices {
             // have refused every received file until a scan happened to walk
             // past it.
             let scan_id = last_seen_scan_id.map(parse_uuid).transpose()?;
+            let decisions = crate::catalog::credit_decisions(&mut tx, library_id).await?;
             crate::database::Database::apply_catalog_track_in_transaction(
                 &mut tx,
                 self.db.pid(),
@@ -337,6 +338,7 @@ impl DomainServices {
                     moved: false,
                     origin_device_id,
                 },
+                &decisions,
                 now,
             )
             .await?;

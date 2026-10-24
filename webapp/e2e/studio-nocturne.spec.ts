@@ -5630,6 +5630,9 @@ async function serveAttention(page: Page) {
     decisions: [] as Array<Record<string, unknown>>,
     writes: [] as Array<{ method: string; path: string; body: unknown }>,
     asks: 0,
+    /** Answer the next decision with this status, as if another owner had
+     * decided first: the credit leaves the list on the server. */
+    refuseWith: null as number | null,
   };
   const base = "**/api/v2/libraries/library-1";
   await page.route(`${base}/attention`, (route) => {
@@ -5657,8 +5660,22 @@ async function serveAttention(page: Page) {
     const category = new URL(route.request().url()).searchParams.get(
       "category",
     );
+    const twice = (index: number, title: string, group: number) => ({
+      ...song(index, title, 0, false),
+      duplicate_group: group,
+    });
     return route.fulfill({
-      json: category === "missing_year" ? [song(4, "Yearless", 0, false)] : [],
+      json:
+        category === "missing_year"
+          ? [song(4, "Yearless", 0, false)]
+          : category === "probable_duplicate"
+            ? [
+                twice(5, "Echo", 1),
+                twice(6, "Echo (copy)", 1),
+                twice(7, "Other", 2),
+                twice(8, "Other (copy)", 2),
+              ]
+            : [],
     });
   });
   await page.route(`${base}/credit-decisions`, async (route) => {
@@ -5669,6 +5686,13 @@ async function serveAttention(page: Page) {
     }
     const body = request.postDataJSON();
     state.writes.push({ method: "POST", path: "credit-decisions", body });
+    if (state.refuseWith !== null) {
+      const status = state.refuseWith;
+      state.refuseWith = null;
+      state.candidates = [];
+      await route.fulfill({ status, json: { error: "conflict" } });
+      return;
+    }
     const candidate = state.candidates.find(
       (entry) => entry.artist_id === body.artist_id,
     );
@@ -5768,7 +5792,39 @@ test("lists what needs attention, splits a credit on the second click, and undoe
   await lists.getByRole("link", { name: /Missing year/ }).click();
   await expect(page).toHaveURL(/category=missing_year/);
   await expect(page.getByText("Yearless")).toBeVisible();
+
+  // Probable duplicates are drawn group by group.
+  await lists.getByRole("link", { name: /Probable duplicates/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Probable duplicate 1" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Probable duplicate 2" }),
+  ).toBeVisible();
+  await expect(page.locator(".attention-group")).toHaveCount(2);
+  await expect(
+    page.locator(".attention-group").first().getByText("Echo (copy)"),
+  ).toBeVisible();
   await expectNoWcagViolations(page);
+});
+
+/**
+ * Two owners deciding the same credit: the second is refused, and the list is
+ * read again rather than left showing a row that is no longer there.
+ */
+test("reloads the credits when a decision is refused", async ({ page }) => {
+  const state = await serveAttention(page);
+  state.refuseWith = 409;
+  await page.goto("/attention?category=split_credits");
+  await page.getByRole("button", { name: "Keep as one" }).click();
+  await expect(
+    page.getByText(
+      "This credit was decided in the meantime. The list has been reloaded.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No credit is waiting for a decision."),
+  ).toBeVisible();
 });
 
 /**

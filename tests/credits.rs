@@ -895,12 +895,14 @@ async fn a_second_decision_on_one_credit_is_a_conflict() {
             CreditDecisionKind::Split,
         )
         .await;
+    // Asserted on the variant alone: printing the result would put the
+    // decision's identifiers in the failure message for nothing.
     assert!(
         matches!(
             again,
             Err(waveflow_server::services::ServiceError::Conflict)
         ),
-        "{again:?}"
+        "a second decision on one credit is a conflict"
     );
 }
 
