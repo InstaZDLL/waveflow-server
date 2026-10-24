@@ -248,7 +248,10 @@ CREATE TABLE track_credit (
     position INTEGER NOT NULL CHECK (position >= 0),
     name TEXT NOT NULL CHECK (length(trim(name)) > 0),
     sort_name TEXT,
-    PRIMARY KEY (track_id, role, sub_role, position),
+    -- Positions are per role, across sub-roles, as in track_participant: the
+    -- performers of one track are numbered in one sequence whatever their
+    -- instruments.
+    PRIMARY KEY (track_id, role, position),
     FOREIGN KEY (track_id, library_id)
         REFERENCES track(id, library_id) ON DELETE CASCADE
 ) STRICT;
@@ -270,9 +273,11 @@ that track's `track_participant` rows:
    parts that keep their three sort forms. Pairing after the deduplication
    would compare three names with four sort forms and drop all of them.
    `paired_sorts` itself, which serves the first step, is unchanged.
-3. A name that already appeared earlier in the same role and sub-role is not
-   credited twice. Positions are numbered contiguously from zero, which the
-   relation's `UNIQUE (track_id, role, position)` requires.
+3. A name whose **artist** already appeared earlier in the same role and
+   sub-role is not credited twice. The artist is the derived id, so two
+   spellings of one name count as one. The first occurrence wins. Positions are
+   numbered contiguously from zero across the role, which the relation's
+   `UNIQUE (track_id, role, position)` requires.
 
 **A correction is never rewritten.** On a track whose `track_override.artists`
 is set, the `artist` role comes from that list, exactly as it does today, and
@@ -311,8 +316,17 @@ Then, in both cases where a decision moved something:
   rewritten, as `set_track_metadata` already does after a correction.
 
 **The upgrade.** The migration fills `track_credit` from `track_participant`,
-since no decision exists yet and the two lists are therefore the same. Under
-a correction, the `artist` rows it copies are the corrected list rather than
+since no decision exists yet. The two lists are not always identical. A file
+that names one artist twice, `ARTISTS = ["A, C", "A, C"]` for instance, has
+two first-step credits and one participant, because `track_participant` holds
+one row per artist and role. The copy is still exact for everything the
+function writes, because rule 3 keeps the first occurrence. A later credit
+that names the same artist as an earlier one has the same key and the same
+decision, so it expands to the same parts, and every one of those parts is
+already credited. Dropping it changes no participant, under any set of
+decisions, in either direction. The copy loses only repetitions, which the
+function would throw away anyway, and the next scan that reads the file writes
+them back. Under a correction, the `artist` rows it copies are the corrected list rather than
 the file's. Nothing reads them while the correction stands, and removing the
 correction re-reads the file, as it already does. So the upgrade schedules no
 rescan.
@@ -488,8 +502,10 @@ Each step is its own pull request, shippable without the next:
    - a track whose artists were corrected by hand keeps the corrected list
      through a split and a rescan, while its album artist still follows the
      decision;
-   - the migration's copy of `track_participant` into `track_credit` matches
-     what a scan of the same files writes;
+   - the migration's copy of `track_participant` into `track_credit` gives
+     the same participants as a scan of the same files, under no decision, a
+     split and its undo, including for a file that repeats a credit
+     (`["A, C", "A, C"]`) and for one where two credits share a part;
    - `A, B, B, C` keeps a sort form on each of its three parts;
    - a file retagged from `A, B` to `a, b` after the split is still undone,
      with its own spelling.
