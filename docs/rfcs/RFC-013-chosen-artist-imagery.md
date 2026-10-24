@@ -133,6 +133,9 @@ document: RFC-011 configures no fanart provider, and inventing one here would
 be a second enrichment RFC hidden inside this one. A client with no banner
 draws what it draws today; the web client may blur the portrait behind the
 header, as the desktop does, and that is a client's choice, not a field.
+[RFC-014](RFC-014-automatic-artist-banner.md) later adds the automatic banner,
+TheAudioDB's fanart, behind the chosen one: `banner_hash` is then the chosen
+banner, or that fanart, or absent.
 
 ## Decision 4 — how an image arrives
 
@@ -332,7 +335,9 @@ server, and no request to Deezer is needed to show it.
 ## Decision 5 — a way back
 
 Removing a choice returns the artist to the automatic image: for the portrait,
-whatever `artist.artwork_hash` holds; for the banner, none. The image itself
+whatever `artist.artwork_hash` holds; for the banner, none — or, once
+[RFC-014](RFC-014-automatic-artist-banner.md) ships, TheAudioDB's fanart where
+it found one, and none otherwise. The image itself
 is not deleted by the removal; the sweep collects it when nothing names it any
 more.
 
@@ -409,7 +414,8 @@ Each step is its own pull request, shippable without the next:
 
 - **An automatic banner.** TheAudioDB's fanart, which the desktop suggests,
   would need a provider RFC-011 does not configure — its own key, its own host
-  allowlist, its own entry in `WAVEFLOW_METADATA_PROVIDERS`.
+  allowlist, its own entry in `WAVEFLOW_METADATA_PROVIDERS`. Taken up by
+  [RFC-014](RFC-014-automatic-artist-banner.md).
 - **Cropping.** Neither picker crops; the client frames the banner at a fixed
   position, as the desktop does. A focal point stored beside the choice is a
   later, additive change.
