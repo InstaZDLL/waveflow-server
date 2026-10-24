@@ -6,10 +6,13 @@
   RFC). The *Status* field above never flips in this project; this line is the
   one that says what is running.
 - **Date**: 2026-10-24
-- **Revised**: 2026-10-24, after review on #315. A split's provenance is a
-  relation (`track_participant_source`) rather than one column, because one
-  part can come from several credits. Sort forms are paired before the
-  fragments are deduplicated. And an undo finds its rows by `credit_key`.
+- **Revised**: 2026-10-24, after review on #315. The server keeps each
+  track's credits as the tags give them (`track_credit`), and one function
+  computes the participants from them and the decisions. Applying and undoing
+  a decision both run that function, which keeps the file's order when two
+  credits share a part, finds tracks by `credit_key` rather than by spelling,
+  and leaves a typed correction alone. Sort forms are paired before the
+  fragments are deduplicated.
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (identity, the
   frozen Subsonic contract), [RFC-003](RFC-003-waveflow-sync-v2.md) (the user
@@ -200,7 +203,7 @@ A split moves exactly one kind of identifier: **the artists the credit names**.
   the Subsonic `artist` and `displayArtist` keep showing it. Only the credited
   list changes: `artists[]`, the participants and the per-artist pages.
   `track_override.artists` is the opposite case: a list someone typed is
-  final, and decisions are not applied to it.
+  final, and decisions are not applied to it (decision 5 says how).
 
 ### What follows the joined artist, and what does not
 
@@ -224,83 +227,95 @@ A split moves exactly one kind of identifier: **the artists the credit names**.
   the parts stay there. They are not moved back, because the account may like
   the parts on their own merits by then.
 
-## Decision 5 — a decision applies at once, and every scan applies it again
+## Decision 5 — the file's credits are kept, and the participants are computed from them
 
-**At once.** Taking a decision rewrites the stored catalogue in one
-transaction, under the writer gate. No file is read:
+The second step needs something to start from, both to apply a decision
+without reading a file and to undo one. A participant row records the result,
+which is not enough. One part can come from several credits:
+`ARTISTS = ["A, B", "A, C"]` with both split gives one `A` that two decisions
+produced. And once two credits share a part, nothing in the result says where
+each of them stood. So the server keeps **what the first step produced**, and
+the participants become a function of it.
 
-1. Every `track_participant` row that names the joined artist, in any role, is
-   replaced in place by the parts. Each part takes that row's role, sub-role
-   and position, and the later positions of the same track and role shift up.
-   A part the track already credits in the same role and sub-role is not
-   credited twice, and positions are renumbered so they stay contiguous. The
-   relation's `UNIQUE (track_id, role, position)` requires this.
-2. Each row the split touches records where it came from, in a new table.
-   One participant row can come from several credits: `ARTISTS = ["A, B",
-   "A, C"]` with both split gives one `A` that two decisions produced, and an
-   `A` credited on its own as well as inside `A, B` is a third case. So the
-   provenance is a relation, not a column:
+```sql
+-- The credits as tags::credits produced them, before any decision: the first
+-- step's output, per track, role and position.
+CREATE TABLE track_credit (
+    track_id TEXT NOT NULL,
+    library_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (length(trim(role)) > 0),
+    sub_role TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL CHECK (position >= 0),
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    sort_name TEXT,
+    PRIMARY KEY (track_id, role, sub_role, position),
+    FOREIGN KEY (track_id, library_id)
+        REFERENCES track(id, library_id) ON DELETE CASCADE
+) STRICT;
+```
 
-   ```sql
-   CREATE TABLE track_participant_source (
-       track_id TEXT NOT NULL,
-       artist_id TEXT NOT NULL,
-       library_id TEXT NOT NULL,
-       role TEXT NOT NULL,
-       sub_role TEXT NOT NULL DEFAULT '',
-       -- The decision's key, or the part's own key when the track also
-       -- credits that part in its own right.
-       credit_key TEXT NOT NULL,
-       -- The credit as this track's tags spelled it, and its sort form, so an
-       -- undo restores this track's spelling rather than another track's.
-       credit TEXT NOT NULL,
-       credit_sort TEXT,
-       PRIMARY KEY (track_id, artist_id, role, sub_role, credit_key),
-       FOREIGN KEY (track_id, artist_id, role, sub_role)
-           REFERENCES track_participant(track_id, artist_id, role, sub_role)
-           ON DELETE CASCADE
-   ) STRICT;
-   ```
+**One function writes the participants.** For one track, it reads the
+track's `track_credit` rows in order and the library's decisions, and writes
+that track's `track_participant` rows:
 
-   A participant row with no source row was never touched by a split, and
-   every row written before this RFC is in that case. A row that a split
-   touched and that the track also credits on its own carries a source row
-   under its own key, so an undo can tell it apart from a part that exists
-   only because of the split.
-3. The joined credit's sort form, if any, is cut by decision 2's rule and
-   paired with the fragments **before** they are deduplicated, position by
-   position, or not at all when the counts differ, as `paired_sorts` does for
-   a joined tag. The pairs are then deduplicated on the name's canonical form,
-   keeping the first. `A, B, B, C` with the sort form `a, b, b, c` therefore
-   gives three parts that keep their three sort forms. Pairing after the
-   deduplication would compare three names with four sort forms and drop all
-   of them. `paired_sorts` itself, which serves the first step, is unchanged.
-4. `album.album_artist_id` is repointed to the first part wherever it named
-   the joined artist.
-5. Then the two end-of-scan derivations run for the library, as they do after
-   a scan. `consolidate_catalog_derivations` rebuilds the album credits, the
-   per-role counts, the derived MusicBrainz ids, the artist sweep and the
-   artist search index. `consolidate_sort_names` re-votes the sort names. All
-   of these are already derived from `track_participant`, so they follow
-   without new code.
-6. The search index's copy of each affected track's credited names is
-   rewritten, as `set_track_metadata` already does after a correction.
+1. Each credit stands as it is, or, when its `credit_key` has a `split`
+   decision, is replaced in place by the decision's parts. Each part takes the
+   credit's role and sub-role, in the order the credits and then the parts
+   come.
+2. The credit's sort form, if any, is cut by decision 2's rule and paired with
+   the fragments **before** they are deduplicated, position by position, or
+   not at all when the counts differ, as `paired_sorts` does for a joined tag.
+   The pairs are then deduplicated on the name's canonical form, keeping the
+   first. `A, B, B, C` with the sort form `a, b, b, c` therefore gives three
+   parts that keep their three sort forms. Pairing after the deduplication
+   would compare three names with four sort forms and drop all of them.
+   `paired_sorts` itself, which serves the first step, is unchanged.
+3. A name that already appeared earlier in the same role and sub-role is not
+   credited twice. Positions are numbered contiguously from zero, which the
+   relation's `UNIQUE (track_id, role, position)` requires.
 
-**On every scan.** `apply_catalog_track_in_transaction` applies the second
-step of decision 1 to the credits it derives, reading the library's decisions
-**inside the transaction that writes the batch**. A decision taken while a
-scan runs is therefore either before a batch, which then applies it, or after
-it, in which case the rewrite above finds the rows that batch wrote. Nothing
-falls between the two. A file that changes, and a full rescan, write the parts
-again, with their source rows, which the desktop does not do.
+**A correction is never rewritten.** On a track whose `track_override.artists`
+is set, the `artist` role comes from that list, exactly as it does today, and
+the function leaves that role's participants alone. Its other roles, the album
+artist included, still come from the file's credits and still follow the
+decisions. `track_credit` keeps the file's `artist` credits even under a
+correction, so removing the correction hands the track back to them.
 
-A scan's skip path does not rewrite credits, so an unchanged file keeps what
-the rewrite gave it. That is the same result, reached by doing nothing.
+**Where it runs.**
 
-**The rule has one implementation.** The rewrite and the scan call the same
-function, which turns a credit name, its sort form and the decisions into a
-list of names. Both paths are tested against each other, so an immediate split
-and a rescan of the same files end in identical rows.
+- **On every scan.** `apply_catalog_track_in_transaction` writes the track's
+  `track_credit` rows, then calls the function. It reads the library's
+  decisions **inside the transaction that writes the batch**. A decision taken
+  while a scan runs is therefore either before a batch, which then applies it,
+  or after it, in which case the decision's own pass (below) finds the rows
+  that batch wrote. Nothing falls between the two. A file that changes, and a
+  full rescan, apply every decision again, which the desktop does not do.
+  A scan's skip path writes nothing, so an unchanged file keeps what the last
+  pass gave it.
+- **When a decision is taken or removed**, in one transaction under the writer
+  gate, with no file read: the function runs again for every track that has a
+  `track_credit` row under the decision's key. Rows are found **by key, never
+  by spelling**. A file retagged from `A, B` to `a, b` after the decision
+  still falls under it, because the key folds case.
+
+Then, in both cases where a decision moved something:
+
+- `album.album_artist_id` follows the first album-artist participant;
+- the two end-of-scan derivations run for the library, as they do after a
+  scan. `consolidate_catalog_derivations` rebuilds the album credits, the
+  per-role counts, the derived MusicBrainz ids, the artist sweep and the
+  artist search index, and `consolidate_sort_names` re-votes the sort names.
+  All of these are already derived from `track_participant`, so they follow
+  without new code;
+- the search index's copy of each affected track's credited names is
+  rewritten, as `set_track_metadata` already does after a correction.
+
+**The upgrade.** The migration fills `track_credit` from `track_participant`,
+since no decision exists yet and the two lists are therefore the same. Under
+a correction, the `artist` rows it copies are the corrected list rather than
+the file's. Nothing reads them while the correction stands, and removing the
+correction re-reads the file, as it already does. So the upgrade schedules no
+rescan.
 
 ## Decision 6 — clients learn of it as they learn of a scan
 
@@ -328,26 +343,20 @@ is a contract about shape, as RFC-013 decision 3 already relied on.
 
 Removing a decision restores the state without it:
 
-- **Removing a split** finds its rows by the decision's **`credit_key`**, never
-  by comparing spellings. A file retagged from `A, B` to `a, b` after the
-  decision still falls under it, because the key folds case, and the undo
-  still finds that file's rows. On every track, in one transaction under the
-  writer gate:
-  1. the source rows under that key are deleted;
-  2. a participant row the split touched that has no source row left existed
-     only because of the split, and is deleted. A row whose only remaining
-     source is its own key is credited in its own right: it stays, and that
-     source row goes, since the row is no longer touched by any split. A row
-     with another decision's key left, such as the `A` that `A, C` also
-     produced, stays exactly as it is;
-  3. one row naming the joined artist is upserted again under its derived id,
-     where the first of its parts stood, with the spelling and the sort form
-     this track's source rows recorded. Positions are renumbered as in
-     decision 5.
-
-  Then the same derivations, search-index rewrite and events as decision 5
-  follow. The result is the catalogue a scan without the decision would have
-  written, and the tests check exactly that.
+- **Removing a split** deletes the decision and runs decision 5's function
+  again for every track with a credit under its key. That is the whole
+  mechanism. The credits come back from `track_credit`, in the positions the
+  file gave them, with the spelling and sort form each track's tags wrote,
+  and the decisions that remain are applied as they were. On a track tagged
+  `ARTISTS = ["A, B", "A, C"]` with both credits split, the participants are
+  `A`, `B` and `C`. Undoing `A, C` gives `A`, `B`, `A, C`: the
+  parts of the first credit, then the second credit whole. Undoing `A, B`
+  instead gives `A, B`, `A`, `C`: the first credit whole, then the parts of
+  the second. In both cases the order is the file's, because it is read from the
+  file's credits and not from what the participants became. Then the same
+  derivations, search-index rewrite and events as decision 5 follow. The
+  result is the catalogue a scan without the decision would have written, and
+  the tests check exactly that.
 - **Removing a keep** changes no row. The credit simply becomes a candidate
   again and returns to the list.
 
@@ -455,9 +464,9 @@ services"), so the desktop can reach the same rules when it chooses to.
 - **The desktop app** (`InstaZDLL/WaveFlow`): nothing in this repository. Its
   own list keeps writing its own profile. Reading a server library's decisions,
   or sending one, is the desktop's own change, made against the routes above.
-- **Migrations**: one new dated file with `artist_credit_decision` and
-  `track_participant_source`. Both start empty, which is the correct state for
-  a catalogue nobody has decided anything about, so the upgrade schedules no
+- **Migrations**: one new dated file with `artist_credit_decision`, which
+  starts empty, and `track_credit`, filled from `track_participant`
+  (decision 5 says why that copy is exact enough). The upgrade schedules no
   rescan. None edits an applied migration.
 
 ## The order of the work
@@ -465,23 +474,29 @@ services"), so the desktop can reach the same rules when it chooses to.
 Each step is its own pull request, shippable without the next:
 
 1. **This RFC.**
-2. **Decisions, served**: the migration, the second step in the apply, the
-   rewrite and its undo, the moves of favourites and ratings through the
+2. **Decisions, served**: the migration, `track_credit` and the function that
+   computes participants from it, its runs on a scan and on a decision taken
+   or removed, the moves of favourites and ratings through the
    journal, the library events, `GET …/attention/credits` and the three
    decision routes. Tests:
    - a split and a rescan agree;
    - an album id survives a split;
    - a decision taken during a scan is not lost;
    - an undo restores the rows a scan without the decision writes;
-   - `ARTISTS = ["A, B", "A, C"]` with both split, then one undone, keeps `A`
-     and `C` and restores `A, B` alone;
+   - `ARTISTS = ["A, B", "A, C"]` with both split, then undone in each order,
+     gives the file's order both times;
+   - a track whose artists were corrected by hand keeps the corrected list
+     through a split and a rescan, while its album artist still follows the
+     decision;
+   - the migration's copy of `track_participant` into `track_credit` matches
+     what a scan of the same files writes;
    - `A, B, B, C` keeps a sort form on each of its three parts;
    - a file retagged from `A, B` to `a, b` after the split is still undone,
      with its own spelling.
 3. **The page, for credits**: a "Needs attention" page in the web client's
    "More" menu, shown to members who own or manage at least one library, with
-   the library scope the Folders and Upload pages already use. It lists the credits to
-   split with their known fragments, offers Split (confirmed by a second click,
+   the library scope the Folders and Upload pages already use. It lists the
+   credits to split with their known fragments, offers Split (confirmed by a second click,
    as on the desktop) and Keep as one, and has a Decided view with undo. The
    artist page gains "Split into N artists" for an owner or manager when the
    artist is a candidate, which is the desktop's other entry point.
