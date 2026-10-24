@@ -50,18 +50,39 @@ minute, the figure Subsonic already uses.
   API key for Subsonic's `apiKey`. It is stored as a hash, as today, so the
   limiter's memory never holds a key in clear.
 - **The attempt is reserved before the work, not after.** A request takes a
-  slot under the lock before anything is awaited, and gives it back on success.
-  Twenty concurrent requests therefore take twenty slots, and the
-  twenty-first is refused, which closes the race in point 4.
+  slot under the lock before anything is awaited. Twenty concurrent requests
+  therefore take twenty slots, and the twenty-first is refused, which closes
+  the race in point 4.
+- **What keeps a slot, and what gives it back.** A request that cannot be a
+  guess takes no slot: a malformed body, or a device name that fails
+  validation, is refused before the reservation is made. Once taken, the slot
+  is kept by default, through a guard that keeps it unless told otherwise. It
+  is given back on two outcomes only:
+  - a **success**;
+  - an **outage before the password was compared**: the account lookup fails,
+    or no verification permit is free (decision 3). Both answer `503`.
+
+  A wrong password, an unknown or disabled account, and a request abandoned
+  once its verification has started all keep the slot. That holds even when the
+  client hangs up, since the verification goes on to completion whether anyone
+  waits for it or not.
 - **When the limit is reached, nothing is checked.** The answer is the
   surface's usual refusal, so the response never says whether the password
   was right:
   - `429` on the native and web sign-ins, with a `Retry-After` header;
   - Subsonic's error 40, unchanged, since the wire contract is frozen.
-- **The table is bounded**, as the Subsonic one is now: past a fixed number of
-  keys, the oldest window is dropped. The limiter lives in memory, so a restart
-  forgets it. That is acceptable: a restart is not something an attacker
-  controls.
+- **The table is bounded, and an active window is never evicted.** Each key is
+  a client-chosen value, so evicting the oldest window when the table fills,
+  as the Subsonic limiter does today, would let an attacker flush the window
+  holding their own failures by sending a burst of fresh keys. So:
+  - expired windows are pruned first;
+  - when the table still holds 65,536 live windows, a **new** key is refused
+    as throttled, while keys already in the table go on as before;
+  - the limiter fails closed for strangers before it ever forgets a window that
+    is counting.
+
+  The limiter lives in memory, so a restart forgets it. That is acceptable: a
+  restart is not something an attacker controls.
 
 ## Decision 2 — the client address
 
@@ -71,10 +92,30 @@ with axum's `ConnectInfo`, so every request carries the peer's address.
 Behind a reverse proxy, the peer is the proxy, and every client would share one
 address. So **`WAVEFLOW_TRUSTED_PROXIES`**, a comma-separated list of addresses
 or CIDR blocks, empty by default, names the proxies whose `X-Forwarded-For` is
-believed. The client is the right-most address in that header that is not
-itself a trusted proxy. A request whose peer is not trusted is identified by
-its peer, and its `X-Forwarded-For` is ignored: believing a header from anyone
-would let each guess claim a fresh address.
+believed. A request whose peer is not trusted is identified by its peer, and
+its `X-Forwarded-For` is ignored: believing a header from anyone would let each
+guess claim a fresh address.
+
+When the peer is trusted, the header is read **from the right**:
+
+- several `X-Forwarded-For` headers are joined in the order received, as one
+  comma-separated list;
+- walking from the right-most entry leftwards, every entry that is itself a
+  trusted proxy is skipped, and the first one that is not is the client;
+- an entry that does not parse as an IP address stops the walk, and the client
+  is the last trusted hop reached, the peer if none. A malformed header
+  therefore never yields an address the attacker chose;
+- if every entry is a trusted proxy, the client is the left-most one.
+
+**The contract with the operator.** Reading from the right is only sound if
+each trusted proxy **appends** the address it received the connection from:
+nginx's `$proxy_add_x_forwarded_for`, Caddy's and Traefik's defaults. Entries
+to the left of the last proxy's own entry are whatever the client sent, and the
+walk never reaches them while a non-trusted entry stands to their right.
+
+A trusted proxy that forwards a client-supplied header without appending lets
+the client choose its address. `docs/operations.md` says, beside the setting,
+that only such appending proxies may be listed.
 
 Without the setting, behind a proxy, every client shares a budget per account.
 That is no worse than today's Subsonic limit, and `docs/operations.md` says to
@@ -82,17 +123,33 @@ set it.
 
 ## Decision 3 — every attempt costs the same, and the cost is bounded
 
-- **The same work for an account that does not exist.** An unknown username,
-  or a disabled account, is verified against a fixed dummy Argon2 hash with
-  the same parameters, made once at startup. Only then is it refused. The
-  answer and its timing no longer depend on whether the account exists.
+- **The same Argon2 work for an account that does not exist.** An unknown
+  username, or a disabled account, is verified against a fixed dummy Argon2
+  hash with the same parameters, made once at startup. Only then is it refused,
+  with the same `InvalidCredentials`. This removes the large signal, a whole
+  Argon2 verification present or absent. It does not make the two paths equal
+  to the microsecond: the account lookup, the branches and the error handling
+  still differ slightly. The claim is limited to that. The PR measures the two
+  paths in a test and asserts that their difference is small beside one
+  verification.
   Subsonic compares a decrypted password, a cheap step, so its timing is not
   the issue there; only decision 1 applies to it.
-- **At most a few verifications at once.** A semaphore admits
-  `max(2, available CPUs)` Argon2 verifications at a time. A sign-in that
-  cannot get a permit within five seconds answers `503`, and does not count as
-  a failure. Memory spent on guesses is therefore bounded by the semaphore and
-  not by the request rate.
+- **At most a few verifications at once, and a bounded queue.**
+  - **Running.** A semaphore admits `max(2, available CPUs)` Argon2
+    verifications at a time. The permit moves into the blocking task, so it is
+    held for exactly as long as the hashing runs, even when the request that
+    started it has gone.
+  - **Waiting.** At most four times as many requests may wait for a permit. A
+    request arriving when the queue is full answers `503` at once, without
+    waiting.
+  - **Timing out.** A request that waits five seconds without a permit answers
+    `503` as well.
+
+  Neither `503` counts as a failure (decision 1). What this bounds is
+  **Argon2's working memory**, about 19 MiB per running verification: its
+  total no longer grows with the request rate. It does not bound the
+  connections themselves, which are a matter for the listener and the reverse
+  proxy.
 
 ## What does not change
 
@@ -103,17 +160,37 @@ set it.
 
 ## Logging
 
-A refused attempt logs at `warn` with its surface and the words "throttled"
-or "unknown account". It never logs the username, the address, the key or
-the password. The `CLAUDE.md` rule against logging tokens and passwords has no
-exception for an attack in progress.
+**Refusals are counted, not logged one by one.** A burst of guesses must not
+become a burst of log lines.
+
+- **Counted.** The limiter counts refusals per surface (native, web, Subsonic)
+  and per reason (throttled, wrong credentials, queue full). The counts are
+  plain atomics, so a burst costs nothing to record.
+- **Logged once a minute at most.** At most once a minute, and only when a
+  count has moved, one `warn` line gives the counts for that minute.
+- **The first one immediately.** The first throttled refusal after a quiet
+  minute is also logged at once, so an operator watching sees an attack begin.
+- **Nothing per attempt above `debug`.**
+
+The log volume is therefore bounded by the clock, not by the attacker.
+
+No line ever carries the username, the address, the key or the password. The
+`CLAUDE.md` rule against logging tokens and passwords has no exception for an
+attack in progress.
 
 ## The order of the work
 
 1. **This RFC.**
-2. **One PR**: the limiter and its use on the three surfaces, the client
-   address and `WAVEFLOW_TRUSTED_PROXIES`, the dummy hash, the semaphore,
-   tests for each rule, and `docs/operations.md`.
+2. **One PR**, containing:
+   - the limiter and its use on the three surfaces;
+   - the client address and `WAVEFLOW_TRUSTED_PROXIES`, with its header walk;
+   - the dummy hash, the semaphore and its bounded queue;
+   - the aggregated refusal log;
+   - tests for each rule, among them: a saturated table never drops a live
+     window; an abandoned verification keeps its slot; a malformed or
+     client-prefixed `X-Forwarded-For` never yields the client's chosen
+     address;
+   - `docs/operations.md`.
 
 ## What is still open
 
