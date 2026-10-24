@@ -8,6 +8,14 @@ name: Release
 # image floats as `beta` rather than `latest`, and the release wears the
 # pre-release badge. Same rule as the desktop repository.
 #
+# The image goes to two registries, GHCR and Docker Hub, from one build: each
+# architecture is pushed to both by digest, and one manifest list is written
+# under every tag in both. A pull from either therefore resolves to the same
+# digest — two builds would have produced two images that only share a name.
+# Docker Hub is reached with the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+# repository secrets; without them the build stops at its login rather than
+# publishing to one registry and announcing two.
+#
 # The tag is the source of truth for the version. `Cargo.toml` is not read
 # here — a tag that disagrees with it would produce an image labelled one way
 # and reporting itself another, so the two are checked against each other
@@ -37,6 +45,10 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  # Docker Hub is spelled out rather than derived from `github.repository`:
+  # the GitHub owner and the Docker Hub namespace are two accounts that only
+  # happen to share a name. Lowercase, which Docker Hub requires as GHCR does.
+  DOCKERHUB_IMAGE: docker.io/instazdll/waveflow-server
 
 jobs:
   # Cheap, and it runs before any build minute is spent: a tag that does not
@@ -115,6 +127,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -123,7 +141,11 @@ jobs:
           # Pushed by digest; the tags are attached by the merge job. Pushing a
           # tag from each runner would leave whichever finished last as the
           # whole image rather than one architecture of it.
-          outputs: type=image,name=${{ needs.verify.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          #
+          # Both names in one output, quoted because the comma between them
+          # would otherwise end the `name` field: one build, so one digest,
+          # pushed to each registry.
+          outputs: type=image,"name=${{ needs.verify.outputs.image }},${{ env.DOCKERHUB_IMAGE }}",push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
@@ -148,6 +170,17 @@ jobs:
     needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # The run's own group is per tag, but `beta` and `latest` are shared by
+    # every tag: two releases publishing at once could interleave their
+    # writes and leave the floating tag on one version in GHCR and another on
+    # Docker Hub. Only this job writes tags, so only this job is serialized;
+    # the builds still run side by side. `queue: max` keeps every waiting
+    # publish in line: by default GitHub keeps only one, and a third release
+    # arriving meanwhile would cancel the second's publish outright.
+    concurrency:
+      group: release-floating-tags
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
@@ -166,14 +199,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       # `latest` is deliberately absent. It is a pre-release: a reader who
       # pulls `latest` should get a stable build or nothing, never a beta they
       # did not ask for. The floating tag for this line is `beta`.
+      #
+      # One `imagetools create` writes the manifest list under every tag in
+      # both registries, so the list itself is the same object everywhere.
+      # Its sources are named in GHCR only; the build pushed each architecture
+      # to Docker Hub too, so nothing has to cross between the registries.
       - name: Create the manifest
         working-directory: /tmp/digests
         run: |
           version="${{ needs.verify.outputs.version }}"
           image="${{ needs.verify.outputs.image }}"
+          hub_image="${{ env.DOCKERHUB_IMAGE }}"
           case "$version" in
             *-*) extra="beta" ;;
             *) extra="latest" ;;
@@ -192,8 +237,19 @@ jobs:
           docker buildx imagetools create \
             --tag "$image:$version" \
             --tag "$image:$extra" \
+            --tag "$hub_image:$version" \
+            --tag "$hub_image:$extra" \
             "${refs[@]}"
           docker buildx imagetools inspect "$image:$version"
+          # Read back rather than assumed: the promise is that both registries
+          # answer the same digest, and a mismatch is a failed release.
+          ghcr_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$version")"
+          hub_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$hub_image:$version")"
+          echo "ghcr=$ghcr_digest hub=$hub_digest"
+          if [ "$ghcr_digest" != "$hub_digest" ]; then
+            echo "::error::GHCR answers $ghcr_digest but Docker Hub answers $hub_digest"
+            exit 1
+          fi
 
   # The GitHub release comes last, once the image it announces exists. A
   # release page whose pull command 404s is worse than no page.
@@ -216,6 +272,7 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
           VERSION: ${{ needs.verify.outputs.version }}
           IMAGE: ${{ needs.verify.outputs.image }}
+          HUB_IMAGE: ${{ env.DOCKERHUB_IMAGE }}
         run: |
           case "$VERSION" in
             *-*) release_flag="--prerelease" ; channel="beta"   ;;
@@ -225,8 +282,8 @@ jobs:
           # printf with a single-quoted format rather than a heredoc: the body
           # is mostly backticks, and every one of them would be a command
           # substitution in an unquoted here-document.
-          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s`, for `linux/amd64` and `linux/arm64`.\n' \
-            "$IMAGE" "$VERSION" "$channel" > notes.md
+          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64`.\n' \
+            "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" > notes.md
 
           # `--generate-notes` appends the merged pull requests below this, so
           # the install line stays at the top where it is useful.

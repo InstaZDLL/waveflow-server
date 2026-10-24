@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/rust-1.98%2B-orange?style=flat-square&logo=rust" alt="Rust 1.98+" />
   <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
   <img src="https://img.shields.io/badge/API-OpenSubsonic-6a4bd6?style=flat-square" alt="OpenSubsonic" />
-  <img src="https://img.shields.io/badge/docker-ghcr.io-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR" />
+  <img src="https://img.shields.io/badge/docker-ghcr.io%20%7C%20Docker%20Hub-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR and Docker Hub" />
   <img src="https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square" alt="License AGPL-3.0" />
 </p>
 
@@ -38,6 +38,15 @@ docker run -d --name waveflow \
   -v /path/to/music:/music:ro \
   ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
 ```
+
+The image is published to two registries, for `linux/amd64` and `linux/arm64`, under the same tags and the same digest — pull from whichever your host reaches:
+
+| Registry | Image |
+| --- | --- |
+| GitHub Container Registry | `ghcr.io/instazdll/waveflow-server` |
+| Docker Hub | `docker.io/instazdll/waveflow-server` |
+
+Each release is tagged with its version; `beta` follows the latest pre-release, and `latest` will follow the latest stable release once there is one. Docker Hub carries the releases after `2.0.0-beta.1` — that one and earlier are on GHCR only, which is why the commands here pull from GHCR.
 
 Or with Compose — set `WAVEFLOW_MUSIC_PATH` to your music directory, which is mounted read-only:
 
