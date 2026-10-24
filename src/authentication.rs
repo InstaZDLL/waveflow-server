@@ -8,6 +8,7 @@ use crate::{
     config::Config,
     database::{AccountRole, Database, NewSession},
     security,
+    sign_in::{self, Refusal, SignInGuard, Surface},
 };
 
 #[derive(Clone)]
@@ -15,6 +16,17 @@ pub struct AuthService {
     db: Database,
     access_ttl_ms: i64,
     refresh_ttl_ms: i64,
+    /// The limiter, gate and tally every password check goes through
+    /// (RFC-017), Subsonic's included.
+    guard: std::sync::Arc<SignInGuard>,
+}
+
+/// Who is signing in, as far as the limiter is concerned: the surface, and the
+/// address bucket the request is counted under.
+#[derive(Debug, Clone)]
+pub struct SignInClient {
+    pub surface: Surface,
+    pub address: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -70,6 +82,10 @@ pub enum AuthError {
     InvalidRefreshToken,
     #[error("invalid device name")]
     InvalidDeviceName,
+    /// Too many failed attempts for this account from this address
+    /// (RFC-017). Nothing was checked.
+    #[error("too many failed sign-in attempts")]
+    Throttled,
     #[error("authentication service unavailable")]
     Unavailable,
 }
@@ -80,37 +96,69 @@ impl AuthService {
             db,
             access_ttl_ms: duration_millis(config.access_token_ttl),
             refresh_ttl_ms: duration_millis(config.refresh_token_ttl),
+            guard: SignInGuard::with_default_permits(),
         }
     }
 
+    /// The guard, for the surfaces that check a password elsewhere.
+    pub fn sign_in_guard(&self) -> &std::sync::Arc<SignInGuard> {
+        &self.guard
+    }
+
+    /// Signs in with a password (RFC-017).
+    ///
+    /// A request that cannot be a guess — a device name that fails validation
+    /// — is refused before anything is reserved. Then the attempt takes its
+    /// slot in the limiter, and keeps it unless it succeeds or fails for an
+    /// outage before the comparison. An unknown or disabled account costs the
+    /// same Argon2 verification as a real one, against a dummy hash, so the
+    /// answer's timing does not carry the large signal of a verification
+    /// present or absent.
     pub async fn login(
         &self,
         username: &str,
         password: &str,
         device_name: &str,
+        client: &SignInClient,
     ) -> Result<AuthTokens, AuthError> {
         let device_name = device_name.trim();
         if device_name.is_empty() || device_name.len() > 120 {
             return Err(AuthError::InvalidDeviceName);
         }
 
-        let account = self
-            .db
-            .account_by_username(username)
-            .await
-            .map_err(|error| {
+        let Ok(reservation) = self
+            .guard
+            .reserve(&client.address, &sign_in::canonical_account(username))
+        else {
+            self.guard.note(client.surface, Refusal::Throttled);
+            return Err(AuthError::Throttled);
+        };
+        let account = match self.db.account_by_username(username).await {
+            Ok(account) => account.filter(|account| !account.disabled),
+            Err(error) => {
                 tracing::error!(error = %error, "account lookup failed");
-                AuthError::Unavailable
-            })?
-            .ok_or(AuthError::InvalidCredentials)?;
-        if account.disabled {
-            return Err(AuthError::InvalidCredentials);
-        }
+                reservation.release();
+                return Err(AuthError::Unavailable);
+            }
+        };
+        let Some(permit) = self.guard.admit().await else {
+            reservation.release();
+            self.guard.note(client.surface, Refusal::Busy);
+            return Err(AuthError::Unavailable);
+        };
 
-        let encoded_hash = account.password_hash.clone();
+        // The permit moves into the blocking task, so it is held for exactly
+        // as long as the hashing runs, even if this request is dropped.
+        let encoded_hash = account
+            .as_ref()
+            .map(|account| account.password_hash.clone());
         let password = password.to_owned();
         let valid = tokio::task::spawn_blocking(move || {
-            security::verify_password(&password, &encoded_hash)
+            let _permit = permit;
+            match encoded_hash {
+                Some(hash) => security::verify_password(&password, &hash),
+                None => security::verify_password(&password, dummy_hash()).map(|_| false),
+            }
         })
         .await
         .map_err(|error| {
@@ -121,9 +169,11 @@ impl AuthService {
             tracing::warn!(error = %error, "stored password hash is invalid");
             AuthError::Unavailable
         })?;
-        if !valid {
+        let Some(account) = account.filter(|_| valid) else {
+            self.guard.note(client.surface, Refusal::WrongCredentials);
             return Err(AuthError::InvalidCredentials);
-        }
+        };
+        reservation.release();
 
         let now_ms = now_ms();
         let device_id = self
@@ -326,6 +376,17 @@ impl AuthService {
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// What an unknown or disabled account is verified against: a hash of a
+/// password nobody knows, with the same parameters as every stored one, made
+/// once, on first use.
+fn dummy_hash() -> &'static str {
+    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DUMMY.get_or_init(|| {
+        security::hash_password(&security::generate_token("dummy_"))
+            .expect("hashing a random password cannot fail")
+    })
 }
 
 fn duration_millis(duration: std::time::Duration) -> i64 {

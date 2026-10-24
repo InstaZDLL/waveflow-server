@@ -164,6 +164,30 @@ question**: no browser comes back, so no token ever travels in a URL. See the
 | --- | --- |
 | `WAVEFLOW_PUBLIC_URL=https://music.example.com` | So a created share returns an absolute, externally usable URL |
 | `WAVEFLOW_ALLOWED_ORIGINS=…` | Browser-hosted clients such as Feishin. Listed explicitly — **wildcards are rejected**, so credential-bearing requests can never be opened to arbitrary sites |
+| `WAVEFLOW_TRUSTED_PROXIES=10.0.0.2` | The proxy's own address, or a CIDR block such as `172.16.0.0/12` for a Docker network. Without it, every client reaches the server from the proxy's address, and they all share one sign-in budget per account |
+
+### Sign-in attempts are limited per client
+
+Failed sign-ins are counted per client address and account: twenty in a sliding
+minute, on the native API, the web client and the Subsonic façade alike. Past
+that, the next attempt from that address is refused without being checked
+(`429` with `Retry-After: 60`, or Subsonic's error 40) until the minute has aged
+out. Another address keeps its own budget, so a stranger guessing at an account
+never locks its owner out. API keys are not throttled: they are random 256-bit
+secrets. [RFC-017](rfcs/RFC-017-sign-in-hardening.md) carries the reasoning.
+
+Behind a reverse proxy, name it in `WAVEFLOW_TRUSTED_PROXIES` so the server reads
+the real client from `X-Forwarded-For`. **List only a proxy that appends the
+address it received the connection from** to that header: nginx with
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, Caddy and
+Traefik by default. The header is read from the right, past the listed proxies,
+so whatever a client writes there itself is never taken for its address. A proxy
+that passes a client's header on unchanged would let each guess claim a fresh
+address; leave such a proxy out of the list.
+
+Refusals are summarised in the log once a minute at most, with the first
+throttled attempt after a quiet minute logged at once. No line names the
+account, the address or the key.
 
 Every tunable is a field on `Config` in
 [`src/config.rs`](../src/config.rs), with its environment variable documented on

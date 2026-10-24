@@ -1,10 +1,6 @@
 //! Subsonic/OpenSubsonic compatibility façade.
 
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    sync::{Mutex as StdMutex, OnceLock},
-    time::{Duration, Instant},
-};
+use std::collections::BTreeMap;
 
 use axum::{
     body::to_bytes,
@@ -61,10 +57,6 @@ const XMLNS: &str = "http://subsonic.org/restapi";
 
 const MAX_FORM_BYTES: usize = 64 * 1024;
 
-const AUTH_ATTEMPTS_PER_MINUTE: usize = 20;
-
-const MAX_AUTH_RATE_KEYS: usize = 10_000;
-
 /// How many album-less tracks a folder listing will carry.
 ///
 /// `getMusicDirectory` takes no offset, so a folder cannot be paged and the
@@ -73,8 +65,6 @@ const MAX_AUTH_RATE_KEYS: usize = 10_000;
 /// governs a listing the client can ask more of, this one governs a listing it
 /// cannot. A folder that reaches it is logged.
 const MAX_DIRECTORY_SONGS: i64 = 2_000;
-
-static AUTH_WINDOWS: OnceLock<StdMutex<HashMap<String, VecDeque<Instant>>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct Principal {
@@ -267,6 +257,12 @@ pub async fn handle(
 ) -> Response {
     let request_method = request.method().clone();
     let query = request.uri().query().unwrap_or_default().to_owned();
+    // Read before the body is: a POST's request is consumed below.
+    let address = crate::sign_in::request_bucket(
+        request.extensions(),
+        request.headers(),
+        &state.trusted_proxies,
+    );
     let range = request
         .headers()
         .get(header::RANGE)
@@ -306,6 +302,7 @@ pub async fn handle(
                 &request_method,
                 &params,
                 range.as_deref(),
+                &address,
             )
             .await
         }
@@ -354,13 +351,14 @@ async fn handle_inner(
     request_method: &Method,
     params: &Params,
     range: Option<&str>,
+    address: &str,
 ) -> Result<Response, ProtocolError> {
     let method = raw_method.strip_suffix(".view").unwrap_or(raw_method);
     let wants_json = json_requested(params);
     if is_symfonium_discovery_probe(method, request_method, params) {
         return Ok(render_protocol(ok_node(), wants_json));
     }
-    let principal = authenticate(state, params).await?;
+    let principal = authenticate(state, params, address).await?;
 
     if matches!(method, "stream" | "download") {
         return media_response(state, &principal, params, method == "download", range).await;

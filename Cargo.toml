@@ -38,6 +38,7 @@ dotenvy = "0.15"
 encoding_rs = "0.8.42"
 futures-util = "0.3"
 hex = "0.4"
+ipnet = "2"
 lofty = "0.25"
 # TTML lyrics uploads (RFC-012 decision 6). Already in the lock file through
 # the artwork renderer; named here because the server now parses XML itself.

@@ -27,6 +27,9 @@ pub enum ApiError {
     CursorExpired,
     /// The caller's previous request of the same kind is still running.
     TooManyRequests,
+    /// Too many failed sign-ins for this account from this address
+    /// (RFC-017). Answered with `Retry-After`, and nothing was checked.
+    SignInThrottled,
     Unavailable,
     NotFound,
 }
@@ -36,6 +39,7 @@ impl From<AuthError> for ApiError {
         match value {
             AuthError::InvalidCredentials | AuthError::InvalidRefreshToken => Self::Unauthorized,
             AuthError::InvalidDeviceName => Self::Validation,
+            AuthError::Throttled => Self::SignInThrottled,
             AuthError::Unavailable => Self::Unavailable,
         }
     }
@@ -43,6 +47,7 @@ impl From<AuthError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let retry_after = matches!(self, Self::SignInThrottled);
         let (status, code, message) = match self {
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
@@ -76,8 +81,21 @@ impl IntoResponse for ApiError {
                 "Authentication is temporarily unavailable",
             ),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", "Resource not found"),
+            Self::SignInThrottled => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Too many failed sign-in attempts; try again later",
+            ),
         };
-        (status, Json(ErrorResponse { code, message })).into_response()
+        let mut response = (status, Json(ErrorResponse { code, message })).into_response();
+        if retry_after {
+            // The window the limiter counts over: by then, every failure that
+            // filled it has aged out.
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+        }
+        response
     }
 }
 

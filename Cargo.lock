@@ -3654,6 +3654,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http-body-util",
+ "ipnet",
  "libc",
  "lofty",
  "md-5",

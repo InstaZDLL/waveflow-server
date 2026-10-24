@@ -441,6 +441,13 @@ pub struct Config {
     /// Metadata enrichment — RFC-011. See [`MetadataSettings`].
     pub metadata: MetadataSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
+    /// `WAVEFLOW_TRUSTED_PROXIES`: the reverse proxies whose
+    /// `X-Forwarded-For` is believed when telling one client from another
+    /// (RFC-017 decision 2). Addresses or CIDR blocks, comma-separated, empty by
+    /// default. Only a proxy that **appends** the address it received the
+    /// connection from may be listed: one that forwards a client's header
+    /// unchanged lets the client choose its address.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
     /// `WAVEFLOW_PID_ALBUM`, `WAVEFLOW_PID_TRACK`, `WAVEFLOW_PID_ARTIST`.
@@ -489,6 +496,7 @@ impl std::fmt::Debug for Config {
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("metadata", &self.metadata)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("pid", &self.pid)
             .finish()
     }
@@ -687,6 +695,8 @@ impl Config {
         };
 
         let metadata = parse_metadata_settings()?;
+        let trusted_proxies =
+            parse_trusted_proxies(&std::env::var("WAVEFLOW_TRUSTED_PROXIES").unwrap_or_default())?;
 
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
@@ -765,6 +775,7 @@ impl Config {
             outbound_allow_plaintext,
             metadata,
             allowed_origins,
+            trusted_proxies,
             pid,
         })
     }
@@ -872,6 +883,7 @@ impl Config {
             // own engine against a listener of their own.
             metadata: MetadataSettings::off(),
             allowed_origins: Vec::new(),
+            trusted_proxies: Vec::new(),
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.
             pid: default_pid_specs(),
@@ -1077,6 +1089,22 @@ fn normalize_public_url(value: &str) -> anyhow::Result<String> {
     Ok(parsed.origin().ascii_serialization())
 }
 
+/// `WAVEFLOW_TRUSTED_PROXIES`: addresses or CIDR blocks. A bare address is its
+/// own block. A typo refuses to boot rather than trusting less, or more, than
+/// the operator wrote.
+fn parse_trusted_proxies(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            entry
+                .parse::<ipnet::IpNet>()
+                .or_else(|_| entry.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
+                .map_err(|_| anyhow::anyhow!("invalid WAVEFLOW_TRUSTED_PROXIES entry {entry:?}"))
+        })
+        .collect()
+}
+
 /// Reads RFC-011 decision 3's settings.
 fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
     let defaults = MetadataSettings::off();
@@ -1247,6 +1275,7 @@ fn default_pid_specs() -> crate::pid::PidSpecs {
 mod tests {
     use super::normalize_public_url;
     use super::parse_metadata_providers;
+    use super::parse_trusted_proxies;
     use super::DEFAULT_DB_ACQUIRE_TIMEOUT_MS;
     use super::{parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
     use super::{validate_canvas, CanvasLimits};
@@ -1262,6 +1291,19 @@ mod tests {
             sessions_per_user: 2,
             session_ttl: Duration::from_secs(3600),
         }
+    }
+
+    /// RFC-017 decision 2: addresses and blocks alike, and a typo refuses to boot.
+    #[test]
+    fn trusted_proxies_are_read_strictly() {
+        assert!(parse_trusted_proxies("").unwrap().is_empty());
+        let proxies = parse_trusted_proxies(" 10.0.0.0/8, 192.168.1.5 , ::1 ").unwrap();
+        assert_eq!(proxies.len(), 3);
+        assert!(proxies[0].contains(&"10.1.2.3".parse::<std::net::IpAddr>().unwrap()));
+        assert!(proxies[1].contains(&"192.168.1.5".parse::<std::net::IpAddr>().unwrap()));
+        assert!(!proxies[1].contains(&"192.168.1.6".parse::<std::net::IpAddr>().unwrap()));
+        assert!(parse_trusted_proxies("10.0.0.0/33").is_err());
+        assert!(parse_trusted_proxies("proxy.local").is_err());
     }
 
     /// RFC-011 decision 3: empty is off, and every typo refuses to boot rather

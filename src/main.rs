@@ -70,16 +70,23 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // destination, for ever — RFC-010's retention section.
     state.services.spawn_scrobble_purge();
     state.db.spawn_authorization_pruning();
+    // Refused sign-ins, counted and logged once a minute (RFC-017).
+    state.auth.sign_in_guard().spawn_summary();
     let router = waveflow_server::app(&config, state);
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .with_context(|| format!("bind failed on {bind_addr}"))?;
     let local_addr = listener.local_addr()?;
     tracing::info!(address = %local_addr, data_dir = %config.data_dir.display(), "WaveFlow Server v2 ready");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(waveflow_server::shutdown_signal())
-        .await
-        .context("HTTP server failed")
+    // With the peer's address on every request: the sign-in limiter counts
+    // failures per client (RFC-017 decision 2).
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(waveflow_server::shutdown_signal())
+    .await
+    .context("HTTP server failed")
 }
 
 fn init_tracing() -> anyhow::Result<()> {
