@@ -6,12 +6,21 @@
   (steps 2 to 4 together: the migration, the ported detector and the FFmpeg
   pipe, the background analyser, the verdicts, the five routes, the "Needs
   attention" category, the Quality page and the track properties' "Real
-  quality" section). The *Status* field above never flips in this project;
+  quality" section), then [#320](https://github.com/InstaZDLL/waveflow-server/pull/320)
+  (the analysis state in the summary and on the page, and one write per
+  measurement). The *Status* field above never flips in this project;
   this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Revised**: 2026-10-25, with the implementation. `upsampled` stops at
   30 kHz rather than 24, as measured on FFmpeg's own resampler (decision 3),
   and decision 3 says which upsampled files it cannot see.
+- **Revised**: 2026-10-24, after the page ran on a real library and said
+  nothing for forty seconds at a time. The summary carries the analyser's
+  state (the surface), the page shows it (decision 10), and each
+  measurement is written as it finishes rather than sixteen at a time
+  (decision 4). A scan the caller cannot see changes nothing they are
+  shown, the header and the list refresh together, "Analyse again" is
+  offered only at rest, and each row shows its cover (decision 10).
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (FFmpeg, read-only
   audio, the path guard, tenancy in the queries),
@@ -352,9 +361,15 @@ that cannot be read is not retried on every wake, which would loop forever on
 one bad file; it is retried when its content changes or the detector's
 version moves.
 
-**Writes.** Results are buffered and written in batches of 16 rows in one
-transaction, under the writer gate, as every mutation is. A batch never holds
-the gate while FFmpeg runs.
+**Writes.** Each measurement is written as it finishes, in a transaction of
+its own, under the writer gate, as every mutation is. The gate is never held
+while FFmpeg runs. The first version wrote sixteen rows at a time, which on
+a debug build left the page's count still for forty seconds and then
+jumping. The count is what a reader watches, and a row a file costs one
+short transaction against a decode a hundred times longer. A restart loses
+at most the files in flight, and a row that cannot be written costs that
+file and not the pass. Decision 5's guarantees are unchanged: a row is still
+written only while the track holds the content it measured.
 
 **Paths.** Every file goes through `secure_track_path` before FFmpeg sees it,
 like a stream does. Audio files stay read-only: FFmpeg reads from the path
@@ -563,8 +578,18 @@ Folders page already uses.
 
 - **A header** gives the library's counts per verdict, as chips that filter
   the list, and the progress of the analysis: "1,204 of 3,310 lossless files
-  analysed". While anything is `pending` and the analysis is on, it refreshes
-  its counts every ten seconds; when nothing is, it stops.
+  analysed".
+- **A status line** says what the analysis is doing, from the summary's
+  `analysis`: running, with the count moving and the files in progress;
+  waiting for the scan to finish; queued; or idle, with when the last file
+  was analysed. It is a polite live region, so a screen reader hears the
+  state change without being interrupted on every file. While the analysis
+  works (running, queued or waiting), the page asks again every three
+  seconds; idle or off, it stops asking. The header and the list are one
+  answer: both are asked again on every visit, and a change of filter asks
+  for the header beside the new list, so the counts above never contradict
+  the rows below. The first version held both for the client's thirty
+  seconds of cache, and a filter fetched a list fresher than its header.
 - **The list** is the song table the other pages use, with three columns of
   its own: the container (`FLAC · 24 bit · 44.1 kHz · 1,021 kbps`, from
   `file-quality.tsx`), where the highs stop (`16.2 kHz`, or "full band"), and
@@ -576,7 +601,12 @@ Folders page already uses.
   the verdict in words, the numbers behind it, the averaged spectrum, and a
   "Show spectrogram" button.
 - **For an owner or manager**, an "Analyse again" action on the library, with
-  the second click RFC-015 already uses to confirm.
+  the second click RFC-015 already uses to confirm. It is offered only when
+  the server, asked since the page was opened, says the analysis is idle:
+  whether a pass runs is the server's to say, not something the page
+  remembers, and a page left and opened again remembers nothing.
+- **Each row shows the track's cover** before its title, as the song tables
+  do: a title alone is hard to place.
 - **The meter in `file-quality.tsx` does not change.** It grades the
   container, which is what it says it does. The track's properties put the
   measured verdict under it, so both are visible and neither pretends to be
@@ -588,11 +618,31 @@ All under `/api/v2`, tenancy-checked in the queries.
 
 | Route | What |
 | --- | --- |
-| `GET /libraries/{id}/quality` | `{ enabled, lossless, measured, verdicts: [{ verdict, count }] }`. Any member. |
+| `GET /libraries/{id}/quality` | `{ enabled, lossless, measured, verdicts: [{ verdict, count }], analysis }`. Any member. `analysis` is `{ state, in_flight, pass_started_at, last_measured_at }`, below. |
 | `GET /libraries/{id}/quality/tracks?verdict=&codec=&offset=&limit=` | The song items of `GET /libraries/{id}/tracks`, each with a `quality` object: `verdict`, `cutoff_hz`, `wall_db`, `nyquist_hz`, `effective_bits`, `analyzed_at`. Sorted as decision 10 says. `422` for an unknown verdict. Any member. |
 | `POST /libraries/{id}/quality/analysis` | Decision 5. `202`. Owner or manager; `404` for anyone else. |
 | `GET /tracks/{track_id}/quality` | One track's `quality` object, plus `spectrum`: the 256 bands as numbers in dB. `pending` with no numbers when nothing is current. Any member. |
 | `GET /tracks/{track_id}/spectrogram` | Decision 8. `image/webp`, or `image/jpeg` without libwebp. Any member; `429` when the bound is reached. |
+
+**`analysis.state`** is one of:
+
+| State | When |
+| --- | --- |
+| `off` | The operator set `WAVEFLOW_QUALITY_PARALLELISM=0`. |
+| `idle` | Nothing of this library is pending, and none of its files is being decoded. |
+| `waiting_for_scan` | Files are pending, and a scan of a library the caller belongs to holds the analysis back. |
+| `running` | Files are pending and a pass is running, including one held back by a scan the caller cannot see. |
+| `queued` | Files are pending and no pass is running yet: the analyser is between passes. |
+
+A scan holds every measurement back, of every library, but only a scan the
+caller can see is named. A scan of somebody else's library is not something
+to confirm to them, so it changes nothing they are shown: the pass still
+reads as `running`, and the file it picked as in flight, exactly as with no
+scan at all. A file counts as in flight from the moment the pass picks it,
+before any wait, for the same reason. `in_flight` counts this library's
+files picked and not yet written, `pass_started_at` is set only while
+`running`, and `last_measured_at` is the latest `analyzed_at` among this
+library's current measurements.
 
 Every read goes through `DomainServices`, so the desktop can reach the same
 answers when it chooses to, and so can a future Subsonic extension if one is

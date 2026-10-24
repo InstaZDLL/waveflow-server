@@ -8,24 +8,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   QUALITY_VERDICTS,
+  type QualityAnalysis,
   type QualityTrack,
   type QualityVerdict,
   requestQualityAnalysis,
 } from "../api";
 import { qualitySummaryQuery, qualityTracksQuery } from "../api/queries";
+import { Artwork } from "../components/artwork";
 import { containerName, kilohertz } from "../components/file-quality";
 import { Loading, PageHeader } from "../components/page-shell";
 import { VERDICT_LABEL } from "../components/quality-section";
 import { TrackProperties } from "../components/track-properties";
-import { highsStop, verdictTone } from "../lib/quality";
+import { analysisIsWorking, highsStop, verdictTone } from "../lib/quality";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 
 /** How long "Analyse again" waits for the second click, as Split does. */
 const CONFIRM_MS = 4000;
 
-/** How often the counts are asked again while files wait for analysis. */
-const REFRESH_MS = 10_000;
+/**
+ * How often the counts are asked again while the analysis works. Short
+ * enough that the count reads as moving: a file takes a fraction of a second
+ * on a release build, and the reader is watching for exactly that.
+ */
+const REFRESH_MS = 3_000;
 
 /**
  * The formats a reader filters by, as the scanner names them. ALAC is named
@@ -69,14 +75,29 @@ export function QualityPage({
   const summary = useQuery({
     ...qualitySummaryQuery(libraryId),
     enabled: active !== null,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      return data?.enabled && data.measured < data.lossless
-        ? REFRESH_MS
-        : false;
-    },
+    // Asked again on every arrival, with the list: the analysis moves in the
+    // background, and a header held from a visit thirty seconds ago would
+    // contradict the rows drawn fresh under it.
+    staleTime: 0,
+    refetchInterval: (query) =>
+      analysisIsWorking(query.state.data?.analysis?.state) ? REFRESH_MS : false,
   });
   const client = useQueryClient();
+  // And the counts follow the list: a filter asks for a list the cache does
+  // not hold yet, so the header is asked again beside it. Not on the first
+  // render, which has just asked for both.
+  const filtered = useRef(false);
+  useEffect(() => {
+    void verdict;
+    void codec;
+    if (!filtered.current) {
+      filtered.current = true;
+      return;
+    }
+    void client.invalidateQueries({
+      queryKey: ["quality", libraryId, "summary"],
+    });
+  }, [verdict, codec, libraryId, client]);
   // The list follows the counts: a file measured in the background moves. Only
   // when the count moves, not on its first answer, which the list has just
   // been asked alongside.
@@ -112,7 +133,10 @@ export function QualityPage({
       title={t("nav.quality")}
       detail={detail}
     >
-      {active && mayCorrectTracks(active) ? (
+      {active &&
+      mayCorrectTracks(active) &&
+      summary.isFetchedAfterMount &&
+      summary.data?.analysis?.state === "idle" ? (
         <AnalyseAgain libraryId={libraryId} />
       ) : null}
     </PageHeader>
@@ -130,6 +154,13 @@ export function QualityPage({
   return (
     <section className="quality-page">
       {header}
+      {summary.data?.analysis ? (
+        <AnalysisStatus
+          analysis={summary.data.analysis}
+          measured={summary.data.measured}
+          lossless={summary.data.lossless}
+        />
+      ) : null}
       <p className="muted quality-help">{t("quality.help")}</p>
       {!summary.data ? (
         <Loading error={summary.error} />
@@ -187,6 +218,61 @@ export function QualityPage({
   );
 }
 
+/**
+ * Where the analysis stands, in one line: what it is doing, and the count
+ * moving under it while it works. Announced politely, so a screen reader
+ * hears the state change without being interrupted on every file.
+ */
+function AnalysisStatus({
+  analysis,
+  measured,
+  lossless,
+}: {
+  analysis: QualityAnalysis;
+  measured: number;
+  lossless: number;
+}) {
+  const { t, locale } = useI18n();
+  const number = new Intl.NumberFormat(locale);
+  const when = (instant: number) =>
+    new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(instant);
+  const text = (() => {
+    switch (analysis.state) {
+      case "running":
+        return t("quality.status.running", {
+          measured: number.format(measured),
+          lossless: number.format(lossless),
+          inFlight: number.format(analysis.in_flight),
+        });
+      case "waiting_for_scan":
+        return t("quality.status.waitingForScan");
+      case "queued":
+        return t("quality.status.queued");
+      case "off":
+        return t("quality.disabled");
+      default:
+        return analysis.last_measured_at === null
+          ? t("quality.status.idleNever")
+          : t("quality.status.idle", { when: when(analysis.last_measured_at) });
+    }
+  })();
+  return (
+    <p
+      className={`quality-status ${analysis.state}`}
+      role="status"
+      aria-live="polite"
+    >
+      {analysisIsWorking(analysis.state) ? (
+        <span className="quality-status-dot" aria-hidden="true" />
+      ) : null}
+      {text}
+    </p>
+  );
+}
+
 function QualityList({
   libraryId,
   verdict,
@@ -197,9 +283,11 @@ function QualityList({
   codec: string | undefined;
 }) {
   const { t, locale } = useI18n();
-  const tracks = useInfiniteQuery(
-    qualityTracksQuery(libraryId, { verdict, codec }),
-  );
+  const tracks = useInfiniteQuery({
+    ...qualityTracksQuery(libraryId, { verdict, codec }),
+    // Asked again on every arrival, as the header is: see `QualityPage`.
+    staleTime: 0,
+  });
   const songs = useMemo(() => tracks.data?.pages.flat() ?? [], [tracks.data]);
   const [opened, setOpened] = useState<QualityTrack | null>(null);
   const returnTo = useRef<HTMLElement | null>(null);
@@ -249,6 +337,11 @@ function QualityList({
                       setOpened(song);
                     }}
                   >
+                    <Artwork
+                      artworkId={song.artwork_hash}
+                      title={song.title}
+                      className="song-cover"
+                    />
                     <span>
                       {song.title}
                       <small>

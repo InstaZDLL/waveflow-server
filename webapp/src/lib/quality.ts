@@ -1,4 +1,4 @@
-import type { QualityVerdict } from "../api";
+import type { AnalysisState, QualityVerdict } from "../api";
 
 /**
  * The pure half of the quality page and of a track's "Real quality" section
@@ -51,6 +51,17 @@ export function highsStop(
     verdict === "lossy_source"
     ? { kind: "fullBand" }
     : null;
+}
+
+/**
+ * Whether the analysis is at work on a library's files, so the page keeps
+ * asking how far it has got. Idle and off are answers that do not change by
+ * themselves, and asking again would only cost a request.
+ */
+export function analysisIsWorking(state: AnalysisState | undefined): boolean {
+  return (
+    state === "running" || state === "queued" || state === "waiting_for_scan"
+  );
 }
 
 /** The level the chart reaches down to, in dB under the loudest band. */

@@ -338,6 +338,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::CreditDecisionKind,
         services::CreditDecisionRecord,
         services::QualitySummary,
+        services::QualityAnalysis,
+        services::AnalysisState,
         services::QualityVerdict,
         services::QualityVerdictCount,
         services::QualityTrack,

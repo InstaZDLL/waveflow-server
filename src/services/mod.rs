@@ -1467,8 +1467,8 @@ pub use library_folders::{
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
 pub use quality::{
-    QualitySummary, QualityTrack, QualityVerdict, QualityVerdictCount, Spectrogram, TrackQuality,
-    TrackQualityDetail,
+    AnalysisState, QualityAnalysis, QualitySummary, QualityTrack, QualityVerdict,
+    QualityVerdictCount, Spectrogram, TrackQuality, TrackQualityDetail,
 };
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,

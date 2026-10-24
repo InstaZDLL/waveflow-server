@@ -496,6 +496,14 @@ const en = {
   "quality.progress": "{measured} of {lossless} lossless files analysed",
   "quality.disabled": "The analysis is turned off on this server.",
   "quality.noLossless": "No lossless file in this library.",
+  "quality.status.running":
+    "Analysing now: {measured} of {lossless} done, {inFlight} in progress.",
+  "quality.status.waitingForScan":
+    "Waiting for the scan to finish before analysing.",
+  "quality.status.queued":
+    "Queued: the analysis will reach these files shortly.",
+  "quality.status.idle": "Idle. Last file analysed {when}.",
+  "quality.status.idleNever": "Idle. No file has been analysed yet.",
   "quality.filters": "Verdicts",
   "quality.all": "All files",
   "quality.format": "Format",
@@ -1323,6 +1331,14 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "quality.progress": "{measured} fichiers sans perte analysés sur {lossless}",
   "quality.disabled": "L’analyse est désactivée sur ce serveur.",
   "quality.noLossless": "Aucun fichier sans perte dans cette bibliothèque.",
+  "quality.status.running":
+    "Analyse en cours : {measured} sur {lossless} terminés, {inFlight} en traitement.",
+  "quality.status.waitingForScan":
+    "En attente de la fin du scan avant d’analyser.",
+  "quality.status.queued":
+    "En file d’attente : l’analyse arrivera bientôt à ces fichiers.",
+  "quality.status.idle": "Au repos. Dernier fichier analysé le {when}.",
+  "quality.status.idleNever": "Au repos. Aucun fichier n’a encore été analysé.",
   "quality.filters": "Verdicts",
   "quality.all": "Tous les fichiers",
   "quality.format": "Format",

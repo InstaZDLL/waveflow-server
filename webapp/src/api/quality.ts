@@ -29,6 +29,24 @@ export const QUALITY_VERDICTS: QualityVerdict[] = [
   "not_measured",
 ];
 
+/** What the analyser is doing about one library's files. */
+export type AnalysisState =
+  | "off"
+  | "idle"
+  | "queued"
+  | "waiting_for_scan"
+  | "running";
+
+export type QualityAnalysis = {
+  state: AnalysisState;
+  /** How many of this library's files are being decoded right now. */
+  in_flight: number;
+  /** When the running pass began; `null` unless one is running. */
+  pass_started_at: number | null;
+  /** When a file of this library was last measured. */
+  last_measured_at: number | null;
+};
+
 export type QualitySummary = {
   /** `false` when the operator turned the analysis off. */
   enabled: boolean;
@@ -37,6 +55,8 @@ export type QualitySummary = {
   /** Of those, how many have a current measurement. */
   measured: number;
   verdicts: Array<{ verdict: QualityVerdict; count: number }>;
+  /** Where the analysis stands for this library. */
+  analysis: QualityAnalysis;
 };
 
 /** One file's verdict, and the numbers behind it. */
