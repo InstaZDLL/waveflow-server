@@ -1,8 +1,34 @@
 # Running a WaveFlow Server
 
-What an operator has to know once the server is up: how to back it up, what to do
-when the instance key is gone, and the one path whose query string must not reach
-a reverse proxy's access log.
+What an operator has to know once the server is up: how to create the first
+account, how to back it up, what to do when the instance key is gone, and the
+one path whose query string must not reach a reverse proxy's access log. What
+the server sends to other hosts, and how to stop it, is in
+[privacy](privacy.md).
+
+## The first account needs the setup token
+
+Until an account exists, whoever creates the first one becomes the
+administrator. So the setup screen, and `POST /api/v2/setup`, also ask for a
+one-time **setup token** ([RFC-019](rfcs/RFC-019-exposure-hardening.md)):
+
+- by default the server draws one at boot and writes it to `setup-token` in
+  the data directory, readable by its owner only. The log says where, and never
+  prints the token:
+
+  ```
+  WARN no account exists yet: the first administrator is created with the setup token stored in this file path=/data/setup-token
+  ```
+
+  With the compose file: `docker compose exec waveflow cat /data/setup-token`;
+
+- or choose it yourself with `WAVEFLOW_SETUP_TOKEN` (16 characters at least),
+  and no file is written.
+
+The token stops working, and the file is deleted, as soon as the first account
+exists. Creating it from the command line instead
+(`waveflow-server account create-admin`) needs no token: that already requires
+a shell on the host. A server that finds an account at boot asks for nothing.
 
 ## Back up two files, together
 
@@ -16,6 +42,25 @@ Subsonic credentials cannot be recovered with one without the other. The databas
 stores a non-secret fingerprint of the key, so a mismatched pair is rejected at
 startup rather than after it has replaced your data. Restore runs before SQLite
 is opened, and moves the previous pair into a timestamped recovery directory.
+
+### A copy before every upgrade
+
+When a new version has migrations to apply, the boot first copies the database
+and its key into `pre-migration-<epoch ms>/` in the data directory, in the same
+layout as `database backup` — so if the upgrade fails, the error names the copy
+and the way back is:
+
+```bash
+waveflow-server database restore --input /data/pre-migration-1761350000000
+# then start the previous release
+```
+
+The newest `WAVEFLOW_MIGRATION_BACKUPS` copies are kept (3 by default) and older
+ones made this way are deleted; nothing else in the data directory is touched.
+A fresh database, or one already up to date, is never copied. Each copy is the
+size of the database: if that is a problem, set `WAVEFLOW_MIGRATION_BACKUPS=0`
+and keep backups of your own. A copy that cannot be made — a full disk — stops
+the boot before anything is applied.
 
 ## When the key is gone, or has to change
 
@@ -190,6 +235,17 @@ throttled attempt after a quiet minute logged at once. So is the first
 `a stored password hash cannot be read` — an account whose stored hash is
 damaged answers `503` to every sign-in, and its count in the summary is
 `unreadable_hashes`. No line names the account, the address or the key.
+
+### Security headers are set by the server
+
+The web client is served with a Content-Security-Policy, `X-Frame-Options:
+SAMEORIGIN`, `X-Content-Type-Options: nosniff` and `Referrer-Policy:
+same-origin`; public shares under `/share/` with `Referrer-Policy: no-referrer`,
+since their token is the path. If your proxy adds or rewrites these headers,
+make sure it does not loosen them — above all, keep framing limited to the
+server's own origin. The policy allows
+media from any `http:` or `https:` host, because internet radio is played
+straight from the station. `/rest` carries none of these headers.
 
 Every tunable is a field on `Config` in
 [`src/config.rs`](../src/config.rs), with its environment variable documented on

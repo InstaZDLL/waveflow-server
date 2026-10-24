@@ -51,18 +51,22 @@ quietly ignored.
 ### First-run setup
 
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
-embedded browser UI can then create the first administrator. The setup write is
-unauthenticated but requires an exact same-origin `Origin` header:
+embedded browser UI can then create the first administrator. The setup write
+requires an exact same-origin `Origin` header **and the one-time setup token**
+([RFC-019](rfcs/RFC-019-exposure-hardening.md)): the content of `setup-token`
+in the data directory, or the value of `WAVEFLOW_SETUP_TOKEN` when the operator
+chose one.
 
 ```bash
 curl -X POST https://music.example.com/api/v2/setup \
   -H "Origin: https://music.example.com" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"replace-with-at-least-12-characters"}'
+  -d "{\"username\":\"admin\",\"password\":\"replace-with-at-least-12-characters\",\"setup_token\":\"$(cat data/setup-token)\"}"
 ```
 
-It returns `201` with `{"user_id":"USER_UUID"}` and is rejected after setup
-has completed. Operators may instead use the `account create-admin` CLI command
+It returns `201` with `{"user_id":"USER_UUID"}`. A missing or wrong token is
+`403` with the code `setup_token_rejected`, and once an account exists the
+request is `409`. Operators may instead use the `account create-admin` CLI command
 shown in the main README.
 
 ## Authentication choices

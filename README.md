@@ -64,6 +64,12 @@ docker exec waveflow waveflow-server library add --owner admin --name Music --pa
 
 Open `http://your-host:4533` and sign in. The scan starts on its own.
 
+You can also create the admin account from the browser instead: until one
+exists, the setup screen asks for the one-time token the server wrote to
+`setup-token` in its data directory (`docker exec waveflow cat /data/setup-token`),
+so a stranger who reaches a fresh server first cannot claim it. See
+[operations](docs/operations.md#the-first-account-needs-the-setup-token).
+
 ### From source
 
 Requires **Rust 1.98+** as well.
@@ -119,14 +125,14 @@ Point any Subsonic client at `http://your-host:4533` with that username and pass
 | **Uploads & canvas** | A library can accept files, decided server-side and received in chunks; a track can carry a looping visual with its own store and tickets | [RFC-008](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009](docs/rfcs/RFC-009-track-canvas.md) |
 | **Scrobbling** | ListenBrainz, Last.fm and Maloja, each a named instance, behind a durable queue that survives a restart, retries once and honours `Retry-After` | [RFC-010](docs/rfcs/RFC-010-external-scrobbling.md) |
 | **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive | — |
-| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers | [operations](docs/operations.md) |
-| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
+| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers, a one-time token guarding first-run setup, a Content-Security-Policy on the web client | [operations](docs/operations.md) · [RFC-019](docs/rfcs/RFC-019-exposure-hardening.md) |
+| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, an automatic copy of both before any migration, and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
 
 ## Documentation
 
 | | |
 | --- | --- |
-| **Run it** | [Operations](docs/operations.md) — backup, losing or rotating the instance key, reverse proxies, probes and logging |
+| **Run it** | [Operations](docs/operations.md) — the first account, backup, losing or rotating the instance key, reverse proxies, probes and logging · [Privacy](docs/privacy.md) — every host the server can contact, what it sends, and the setting that stops it |
 | **Integrate** | [Native API v2](docs/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/subsonic-api-guide.md) |
 | **What clients do** | [Compatibility matrix](docs/subsonic-compatibility.md) — the four replayed above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/opensubsonic-gap-analysis.md) |
 | **What changed** | [CHANGELOG](CHANGELOG.md) |
