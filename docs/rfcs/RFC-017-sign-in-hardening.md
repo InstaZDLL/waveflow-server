@@ -54,22 +54,23 @@ minute, the figure Subsonic already uses.
     lower case, exactly the folding `NOCASE` does, so the three share one
     window on every surface. Without it, each variant would bring a fresh
     budget of twenty.
-  - An API key is not an account name: it *is* the secret, and every wrong
-    guess is a different value. Keying a window on it would give each guess a
-    fresh window and a fresh budget. So every **failed** `apiKey` attempt from
-    one address counts in **one** shared window, `(address, "api-key")`.
-  - **A valid key is never refused by the limiter.** An API key is looked up by
-    its hash, through an index, before the window is consulted. A key that
-    exists succeeds whatever the window holds, so a stranger's failures behind
-    the same address or proxy never turn a working client away. An unknown key
-    is refused as today, and its failure is counted. Once the shared window is
-    full, further unknown keys from that address are refused **without the
-    lookup**, which spares the database. Their answer is the same error 40 as
-    an unknown key, so nothing distinguishes the two cases. Guessing a random
-    256-bit key is hopeless at any rate, so the window protects the server's
-    effort, not the key.
+  - **An API key is not throttled.** An API key is not an account name: it
+    *is* the secret, a random 256-bit token, and every wrong guess is a
+    different value. A window keyed on the value would give each guess a fresh
+    budget, and one shared window per address would either refuse valid keys
+    behind a busy proxy or need a lookup before it could tell them apart. So
+    neither is kept:
+    - every `apiKey` request is looked up by its hash, through the database's
+      index, exactly as today;
+    - a key that exists succeeds;
+    - a key that does not is refused with error 40, as today, and counted for
+      the aggregated log (see Logging), never in the window table.
+
+    Guessing such a key is hopeless at any rate. The cost of a guess is one
+    indexed lookup, the same as any authenticated request, so it is bounded
+    by what bounds requests in general and not by this limiter.
   - Today, `src/subsonic/auth.rs` knows no address at all; the implementation
-    PR passes it in, as decision 2 describes.
+    PR passes it in for the username path, as decision 2 describes.
 - **The address is grouped as a network would hand it out.** An IPv4 address
   counts alone. An IPv6 address counts by its `/64`, the block one host
   routinely holds, so a single machine cannot become millions of addresses.
@@ -225,9 +226,10 @@ attack in progress.
      client-prefixed `X-Forwarded-For` never yields the client's chosen
      address; an all-trusted chain falls back to the peer; invented usernames
      from one address never open more than 32 windows, the overflow included;
-     distinct invalid API keys from one address all increment the single
-     `(address, "api-key")` window, and a valid key still succeeds while that
-     window is full; `Alice` and `alice` share one window;
+     distinct invalid API keys open no window at all and a valid key always
+     succeeds; 31 accounts then a 32nd from one address leave exactly 32
+     windows, the 32nd counting in the overflow; `Alice` and `alice` share
+     one window;
    - `docs/operations.md`.
 
 ## What is still open
