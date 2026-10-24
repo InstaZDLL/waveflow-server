@@ -46,9 +46,18 @@ minute, the figure Subsonic already uses.
   is slowed only by the work each guess costs (decision 3). For a self-hosted
   server that is the right trade: the alternative hands any stranger a switch
   that turns a user's clients off.
-- **The account is what was typed**: the username for a password, or the
-  API key for Subsonic's `apiKey`. It is stored as a hash, as today, so the
-  limiter's memory never holds a key in clear.
+- **The account is what was typed, except an API key.**
+  - For a password, the account is the username, stored as a hash as today, so
+    the limiter's memory never holds a name in clear.
+  - An API key is not an account name: it *is* the secret, and every wrong
+    guess is a different value. Keying a window on it would give each guess a
+    fresh window and a fresh budget. So every `apiKey` attempt from one
+    address shares **one** window, `(address, "api-key")`. A real key is a
+    random 256-bit token, so this costs nothing to someone who holds one: their
+    first attempt succeeds.
+- **The address is grouped as a network would hand it out.** An IPv4 address
+  counts alone. An IPv6 address counts by its `/64`, the block one host
+  routinely holds, so a single machine cannot become millions of addresses.
 - **The attempt is reserved before the work, not after.** A request takes a
   slot under the lock before anything is awaited. Twenty concurrent requests
   therefore take twenty slots, and the twenty-first is refused, which closes
@@ -76,8 +85,14 @@ minute, the figure Subsonic already uses.
   as the Subsonic limiter does today, would let an attacker flush the window
   holding their own failures by sending a burst of fresh keys. So:
   - expired windows are pruned first;
+  - **one address may hold at most 32 live windows.** Past that, any further
+    account it tries shares a single overflow window for that address,
+    `(address, "*")`, rather than opening a new one. One address therefore
+    cannot fill the table, however many usernames it invents;
   - when the table still holds 65,536 live windows, a **new** key is refused
-    as throttled, while keys already in the table go on as before;
+    as throttled, while keys already in the table go on as before. Reaching
+    that point takes more than 2,000 distinct addresses or IPv6 `/64`s, all
+    failing at once;
   - the limiter fails closed for strangers before it ever forgets a window that
     is counting.
 
@@ -105,7 +120,9 @@ When the peer is trusted, the header is read **from the right**:
 - an entry that does not parse as an IP address stops the walk, and the client
   is the last trusted hop reached, the peer if none. A malformed header
   therefore never yields an address the attacker chose;
-- if every entry is a trusted proxy, the client is the left-most one.
+- if every entry is a trusted proxy, the client is **the peer**. The left-most
+  entry could be one the client wrote, so it is never taken. All such requests
+  then share the proxy's budget, which is the safe direction to be wrong in.
 
 **The contract with the operator.** Reading from the right is only sound if
 each trusted proxy **appends** the address it received the connection from:
@@ -189,7 +206,8 @@ attack in progress.
    - tests for each rule, among them: a saturated table never drops a live
      window; an abandoned verification keeps its slot; a malformed or
      client-prefixed `X-Forwarded-For` never yields the client's chosen
-     address;
+     address; an all-trusted chain falls back to the peer; invented usernames
+     and API keys from one address never open more than 32 windows;
    - `docs/operations.md`.
 
 ## What is still open
