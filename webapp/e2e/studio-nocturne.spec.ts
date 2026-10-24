@@ -6128,6 +6128,16 @@ for (const { theme, banner, portrait } of [
     ] as const) {
       expect(await lowestContrast(page, text), name).toBeGreaterThanOrEqual(4.5);
     }
+    // Where each picture came from, under the count: the chosen portrait
+    // draws one line at least, and an empty list would measure nothing.
+    const sources = hero.locator(".artist-source");
+    await expect(sources.first()).toBeVisible();
+    for (const source of await sources.all()) {
+      expect(
+        await lowestContrast(page, source),
+        `the source “${await source.innerText()}”`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
     // An empty list would measure nothing and pass.
     await expect(hero.locator(".artist-image-button").first()).toBeVisible();
     await expect(hero.locator(".artist-image-button.subtle").first()).toBeVisible();
