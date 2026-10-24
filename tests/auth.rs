@@ -1938,3 +1938,72 @@ async fn a_trusted_proxy_names_the_client_and_a_stranger_cannot() {
         StatusCode::TOO_MANY_REQUESTS
     );
 }
+
+/// A writer for the log, kept so the test can read it back.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// The log of this whole test binary, at every level: global for the reason
+/// `tests/enrichment.rs` gives, and read back only for lines no other test
+/// here writes.
+fn captured_log() -> &'static Captured {
+    static LOG: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let captured = Captured::default();
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(captured.clone())
+            .with_ansi(false)
+            .init();
+        captured
+    })
+}
+
+/// A stored hash that cannot be read is the server's fault: every attempt
+/// answers `503` and gives its slot back, so the limiter never stops a burst
+/// against that account. The log must, then — one `warn` line however many
+/// attempts, the rest counted for the minute's summary (RFC-017: nothing per
+/// attempt above `debug`).
+#[tokio::test]
+async fn an_unreadable_hash_is_not_a_line_per_attempt() {
+    let captured = captured_log();
+    let (_temp, config, state) = test_app().await;
+    state
+        .db
+        .create_account("Damaged", "not-a-phc-string", AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+
+    let password = Uuid::new_v4().to_string();
+    for _ in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW + 5 {
+        let refused = native_sign_in(&router, "Damaged", &password, "198.51.100.40", None).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let log = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    let warnings: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(" WARN ") && line.contains("password hash"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:#?}");
+}

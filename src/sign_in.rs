@@ -11,8 +11,9 @@
 //!   wait for one, so the memory a burst of guesses costs is bounded by the
 //!   gate and not by the request rate.
 //! - **The tally** counts refusals and logs them at most once a minute, plus the
-//!   first throttle after a quiet minute: a burst of guesses never becomes a
-//!   burst of log lines. No line carries a username, an address or a key.
+//!   first throttle, and the first unreadable stored hash, after a quiet minute:
+//!   a burst of guesses never becomes a burst of log lines. No line carries a
+//!   username, an address or a key.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -70,6 +71,10 @@ pub enum Refusal {
     WrongCredentials,
     /// No verification permit: the queue was full or the wait ran out.
     Busy,
+    /// The account's stored hash cannot be read. The server's fault, so the
+    /// attempt's slot goes back — which is why it is counted here, not logged
+    /// per attempt: nothing else would bound a burst against that account.
+    UnreadableHash,
 }
 
 /// The pair's budget is spent, or the table is full.
@@ -268,7 +273,8 @@ impl SignInGuard {
         self.gate.admit().await
     }
 
-    /// Counts a refusal, and logs the first throttle after a quiet minute.
+    /// Counts a refusal, and logs the first throttle, or the first unreadable
+    /// hash, after a quiet minute.
     pub fn note(&self, surface: Surface, refusal: Refusal) {
         self.tally.note(surface, refusal);
     }
@@ -404,27 +410,28 @@ impl Drop for Waiting<'_> {
 #[derive(Default)]
 struct Tally {
     /// By surface, then by refusal, in declaration order.
-    counts: [[AtomicU64; 3]; 3],
-    last_throttle_logged: Mutex<Option<Instant>>,
+    counts: [[AtomicU64; 4]; 3],
+    /// When each refusal last had a line of its own, by refusal.
+    last_logged: Mutex<[Option<Instant>; 4]>,
 }
 
 impl Tally {
     fn note(&self, surface: Surface, refusal: Refusal) {
         self.counts[surface as usize][refusal as usize].fetch_add(1, Ordering::Relaxed);
-        if refusal != Refusal::Throttled {
-            return;
-        }
+        let message = match refusal {
+            Refusal::Throttled => "sign-in attempts are being throttled",
+            Refusal::UnreadableHash => "a stored password hash cannot be read",
+            Refusal::WrongCredentials | Refusal::Busy => return,
+        };
         let now = Instant::now();
         let mut last = self
-            .last_throttle_logged
+            .last_logged
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        let last = &mut last[refusal as usize];
         if last.is_none_or(|at| now.duration_since(at) >= WINDOW) {
             *last = Some(now);
-            tracing::warn!(
-                surface = surface.as_str(),
-                "sign-in attempts are being throttled"
-            );
+            tracing::warn!(surface = surface.as_str(), "{message}");
         }
     }
 
@@ -437,16 +444,18 @@ impl Tally {
             let throttled = take(surface, Refusal::Throttled);
             let wrong = take(surface, Refusal::WrongCredentials);
             let busy = take(surface, Refusal::Busy);
-            if throttled + wrong + busy > 0 {
-                lines.push((surface, throttled, wrong, busy));
+            let unreadable = take(surface, Refusal::UnreadableHash);
+            if throttled + wrong + busy + unreadable > 0 {
+                lines.push((surface, throttled, wrong, busy, unreadable));
             }
         }
-        for (surface, throttled, wrong_credentials, busy) in lines {
+        for (surface, throttled, wrong_credentials, busy, unreadable_hashes) in lines {
             tracing::warn!(
                 surface = surface.as_str(),
                 throttled,
                 wrong_credentials,
                 busy,
+                unreadable_hashes,
                 "sign-in refusals in the last minute"
             );
         }

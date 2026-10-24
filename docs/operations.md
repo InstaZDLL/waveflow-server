@@ -186,8 +186,10 @@ that passes a client's header on unchanged would let each guess claim a fresh
 address; leave such a proxy out of the list.
 
 Refusals are summarised in the log once a minute at most, with the first
-throttled attempt after a quiet minute logged at once. No line names the
-account, the address or the key.
+throttled attempt after a quiet minute logged at once. So is the first
+`a stored password hash cannot be read` — an account whose stored hash is
+damaged answers `503` to every sign-in, and its count in the summary is
+`unreadable_hashes`. No line names the account, the address or the key.
 
 Every tunable is a field on `Config` in
 [`src/config.rs`](../src/config.rs), with its environment variable documented on

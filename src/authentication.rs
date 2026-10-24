@@ -183,8 +183,11 @@ impl AuthService {
         let valid = match valid {
             Ok(Ok(valid)) => valid,
             Ok(Err(error)) => {
-                tracing::warn!(error = %error, "stored password hash is invalid");
+                // Counted rather than logged: the slot goes back, so nothing
+                // else bounds how often this branch runs.
+                tracing::debug!(error = %error, "stored password hash is invalid");
                 reservation.release();
+                self.guard.note(client.surface, Refusal::UnreadableHash);
                 return Err(AuthError::Unavailable);
             }
             Err(error) => {
