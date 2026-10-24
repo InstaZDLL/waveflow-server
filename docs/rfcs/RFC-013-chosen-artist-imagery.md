@@ -335,8 +335,9 @@ server, and no request to Deezer is needed to show it.
 ## Decision 5 — a way back
 
 Removing a choice returns the artist to the automatic image: for the portrait,
-whatever `artist.artwork_hash` holds; for the banner, none (TheAudioDB's
-fanart once [RFC-014](RFC-014-automatic-artist-banner.md) ships). The image itself
+whatever `artist.artwork_hash` holds; for the banner, none — or, once
+[RFC-014](RFC-014-automatic-artist-banner.md) ships, TheAudioDB's fanart where
+it found one, and none otherwise. The image itself
 is not deleted by the removal; the sweep collects it when nothing names it any
 more.
 

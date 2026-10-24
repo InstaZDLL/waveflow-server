@@ -57,7 +57,13 @@ a server that is merely upgraded asks TheAudioDB nothing.
 
 TheAudioDB's search answers up to four fanarts (`strArtistFanart` to
 `strArtistFanart4`), a "wide thumb" and a "banner". The server takes **the
-first real fanart**, in TheAudioDB's own order, and nothing else:
+first real fanart**, in TheAudioDB's own order, and nothing else. "Real" means
+non-empty and accepted by the fetcher below: the fanarts are tried in that
+order, one refused for what it is — off the allowlist, not an image, too large
+— gives way to the next, and the first one stored ends the search. Only when
+none of the four is accepted is the answer a miss. A fanart whose host could
+not be reached ends it differently: the lookup is unreached, as RFC-011
+decision 5 requires, and nothing is written.
 
 - **Not `strArtistBanner` nor `strArtistWideThumb`.** Both are 1000×185 strips
   by TheAudioDB's own specification. The desktop fed its header from them and
@@ -88,7 +94,8 @@ a portrait. The outcomes are RFC-011 decision 5's:
 
 - a **hit** stores the fanart and stands for the long TTL;
 - a **miss** — TheAudioDB knows no such artist, or knows it without fanart, or
-  names a picture the fetcher refuses for what it is — stands for the short one;
+  names only pictures the fetcher refuses for what they are — stands for the
+  short one;
 - **unreached** writes nothing, and the next visit asks again.
 
 **The artist row carries it**, in a new nullable column
@@ -98,6 +105,15 @@ library, linked in the transaction that writes the cache row, only where it
 changes, and each moved row recording the **artist** library event (RFC-007),
 so a client that re-reads the artist on that event sees the banner arrive. A
 fill that fetched the same picture again changes nothing and says nothing.
+
+**A miss unlinks.** When a refresh comes back a miss — TheAudioDB has dropped
+the artist or its fanart — the rows still naming the fanart the previous cache
+row held have `artist.fanart_hash` set back to `NULL`, in the same transaction
+and with the same artist event per row. Otherwise the header would go on
+showing a picture the provider no longer offers, and the sweep would keep it
+for as long as the stale link lasted. **Unreached unlinks nothing**: a timeout
+or a `429` says nothing about the artist, writes no cache row, and leaves every
+link where it was.
 
 A column on the artist, rather than a join from the artist to the cache at
 read time, for the same reasons as the portrait: the sweep keeps what an artist
