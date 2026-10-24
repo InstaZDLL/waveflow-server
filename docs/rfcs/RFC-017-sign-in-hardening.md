@@ -226,8 +226,9 @@ attack in progress.
      client-prefixed `X-Forwarded-For` never yields the client's chosen
      address; an all-trusted chain falls back to the peer; invented usernames
      from one address never open more than 32 windows, the overflow included;
-     distinct invalid API keys open no window at all and a valid key always
-     succeeds; 31 accounts then a 32nd from one address leave exactly 32
+     more than twenty invalid API keys from one address, distinct and
+     repeated, open no window, and a valid key sent from that address
+     afterwards is not refused by the limiter; 31 accounts then a 32nd from one address leave exactly 32
      windows, the 32nd counting in the overflow; `Alice` and `alice` share
      one window;
    - `docs/operations.md`.
