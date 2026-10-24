@@ -25,16 +25,24 @@ pub struct RefreshRequest {
         (status = 200, body = crate::authentication::AuthTokens),
         (status = 401, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
+        (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
+            headers(("Retry-After" = u32, description = "Seconds until the attempt may be made again"))),
         (status = 503, body = ErrorResponse)
     )
 )]
 pub async fn login(
     State(state): State<AppState>,
+    client: SignInAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<crate::authentication::AuthTokens>, ApiError> {
     state
         .auth
-        .login(&request.username, &request.password, &request.device_name)
+        .login(
+            &request.username,
+            &request.password,
+            &request.device_name,
+            &client.on(crate::sign_in::Surface::Native),
+        )
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -99,18 +107,26 @@ pub async fn logout(
         (status = 401, body = ErrorResponse),
         (status = 403, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
+        (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
+            headers(("Retry-After" = u32, description = "Seconds until the attempt may be made again"))),
         (status = 503, body = ErrorResponse)
     )
 )]
 pub async fn web_login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    client: SignInAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     validate_web_origin(&state, &headers)?;
     let tokens = state
         .auth
-        .login(&request.username, &request.password, &request.device_name)
+        .login(
+            &request.username,
+            &request.password,
+            &request.device_name,
+            &client.on(crate::sign_in::Surface::Web),
+        )
         .await
         .map_err(ApiError::from)?;
     web_auth_response(&state, &headers, tokens)
@@ -175,4 +191,32 @@ pub async fn web_logout(
         expired_cookie(WEB_CSRF_COOKIE, false, secure),
     )?;
     Ok(response)
+}
+
+/// The address bucket a sign-in is counted under (RFC-017 decision 2): the
+/// peer from `ConnectInfo`, or the client a trusted proxy names.
+pub struct SignInAddress(String);
+
+impl SignInAddress {
+    fn on(self, surface: crate::sign_in::Surface) -> crate::authentication::SignInClient {
+        crate::authentication::SignInClient {
+            surface,
+            address: self.0,
+        }
+    }
+}
+
+impl axum::extract::FromRequestParts<AppState> for SignInAddress {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(crate::sign_in::request_bucket(
+            &parts.extensions,
+            &parts.headers,
+            &state.trusted_proxies,
+        )))
+    }
 }

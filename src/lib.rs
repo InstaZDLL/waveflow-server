@@ -21,6 +21,7 @@ pub mod scanner;
 pub mod scrobblers;
 pub mod security;
 pub mod services;
+pub mod sign_in;
 pub mod stream_ticket;
 pub mod subsonic;
 pub mod sync;
@@ -82,6 +83,9 @@ pub struct AppState {
     /// The body ceiling the canvas route carries, derived from
     /// `WAVEFLOW_CANVAS_MAX_BYTES` so the two cannot disagree.
     pub canvas_body_limit: usize,
+    /// `WAVEFLOW_TRUSTED_PROXIES`: whose `X-Forwarded-For` names the client a
+    /// sign-in is counted under (RFC-017 decision 2).
+    pub trusted_proxies: Arc<[ipnet::IpNet]>,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -781,6 +785,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         // Refused at startup if it does not fit, so this conversion cannot be
         // the place that decides what a ceiling falls back to.
         canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
+        trusted_proxies: config.trusted_proxies.clone().into(),
     })
 }
 
