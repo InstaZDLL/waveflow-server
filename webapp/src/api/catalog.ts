@@ -219,6 +219,38 @@ export const setArtistImage = (
     headers: { "content-type": "application/octet-stream" },
   });
 
+/**
+ * A Deezer artist offered as the portrait (RFC-013 decision 4). No picture
+ * URL: the preview is fetched and held by the server, and shown from it.
+ */
+export type ArtistImageCandidate = {
+  deezer_id: number;
+  name: string;
+  fans?: number;
+  /** The preview, in the artwork store. */
+  artwork_hash: string;
+};
+
+/**
+ * Deezer's artists for `query`, previewed by the server. `404` where Deezer
+ * is not configured, `429` while this account's previous search is still
+ * fetching. The same query is answered from the stored search for an hour.
+ */
+export const getArtistImageCandidates = (artistId: string, query: string) =>
+  call<ArtistImageCandidate[]>(
+    `/api/v2/artists/${artistId}/image/candidates?q=${encodeURIComponent(query)}`,
+  );
+
+/**
+ * Makes the preview a live search offered for `deezerId` the portrait. `422`
+ * once the search has expired.
+ */
+export const pickDeezerPortrait = (artistId: string, deezerId: number) =>
+  call<ArtistDetail>(`/api/v2/artists/${artistId}/image/portrait/deezer`, {
+    method: "PUT",
+    body: JSON.stringify({ deezer_id: deezerId }),
+  });
+
 /** Goes back to the automatic image: the fetched portrait, or no banner. */
 export const removeArtistImage = async (
   artistId: string,

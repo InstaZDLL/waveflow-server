@@ -187,6 +187,10 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v2/artists/{artist_id}/image/portrait/deezer",
+            put(put_artist_deezer_portrait),
+        )
+        .route(
             "/api/v2/artists/{artist_id}/top-songs",
             get(list_artist_top_songs),
         )
@@ -342,5 +346,27 @@ pub fn router(state: AppState) -> Router {
             "/api/v2/admin/users/{username}/tokens/{token_id}",
             axum::routing::delete(revoke_api_token),
         )
+        .with_state(state)
+}
+
+/// The one `/api/v2` route that may outlive the ordinary request timeout.
+///
+/// A Deezer portrait search (RFC-013) waits for the task fetching it, which
+/// runs for up to its own five-minute deadline at the provider's pace. Under
+/// the ordinary thirty seconds the client would get a `408` while the task
+/// went on, and its retry a `429` until the task ended. So it is merged beside
+/// the ordinary API rather than inside it, as the media routes are, under a
+/// timeout of its own just past that deadline: the request answers what the
+/// task did.
+pub fn search_router(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/api/v2/artists/{artist_id}/image/candidates",
+            get(list_artist_image_candidates),
+        )
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            crate::services::ARTIST_IMAGE_SEARCH_DEADLINE + Duration::from_secs(30),
+        ))
         .with_state(state)
 }

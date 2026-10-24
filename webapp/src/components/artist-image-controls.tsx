@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { artistQuery } from "../api/queries";
 import { type TranslationKey, useI18n } from "../state/i18n";
+import { DeezerPortraitPicker } from "./deezer-portrait-picker";
 import { Icon } from "./icons";
 
 /** What the server takes: recognised from the bytes, these three only. */
@@ -44,7 +45,8 @@ const LABELS: Record<
  * refuses anyone else regardless.
  *
  * A file is sent as it is: no crop, no resize. The banner is framed by the
- * page at a fixed position, as the desktop frames it.
+ * page at a fixed position, as the desktop frames it. The portrait may also
+ * come from Deezer, searched and previewed by the server.
  */
 export function ArtistImageControls({ artist }: { artist: ArtistDetail }) {
   const { t } = useI18n();
@@ -54,6 +56,7 @@ export function ArtistImageControls({ artist }: { artist: ArtistDetail }) {
     banner: useRef<HTMLInputElement>(null),
   };
   const [busy, setBusy] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
     null,
   );
@@ -119,6 +122,20 @@ export function ArtistImageControls({ artist }: { artist: ArtistDetail }) {
               <Icon name="edit" size={15} />
               {t(LABELS[kind].change)}
             </button>
+            {kind === "portrait" ? (
+              <button
+                type="button"
+                className="artist-image-button"
+                disabled={busy}
+                onClick={() => {
+                  setNotice(null);
+                  setSearching(true);
+                }}
+              >
+                <Icon name="search" size={15} />
+                {t("artistImage.searchDeezer")}
+              </button>
+            ) : null}
             {artist.image_choice?.[kind] ? (
               <button
                 type="button"
@@ -152,6 +169,16 @@ export function ArtistImageControls({ artist }: { artist: ArtistDetail }) {
         >
           {notice.text}
         </p>
+      ) : null}
+      {searching ? (
+        <DeezerPortraitPicker
+          artist={artist}
+          onPicked={async (next) => {
+            await settle(next);
+            setNotice({ error: false, text: t(LABELS.portrait.changed) });
+          }}
+          onClose={() => setSearching(false)}
+        />
       ) : null}
     </div>
   );

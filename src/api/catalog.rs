@@ -390,3 +390,60 @@ pub async fn delete_artist_image(
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(service_error)
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CandidateQuery {
+    pub q: String,
+}
+
+/// Deezer's artists for `q`, offered as this artist's portrait (RFC-013): up
+/// to 20, each with a preview the server fetched and holds, and no picture
+/// URL. Stored as a search for an hour, and the same query answered from it
+/// while it lives. Owners and managers; `404` for anyone else and where
+/// Deezer is not configured; `429` while the account's previous search is
+/// still fetching; `503` when Deezer could not be reached.
+#[utoipa::path(get, path = "/api/v2/artists/{artist_id}/image/candidates", tag = "catalog", params(("artist_id" = Uuid, Path), ("q" = String, Query)), responses((status = 200, body = [crate::services::ArtistImageCandidate]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse), (status = 429, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+pub async fn list_artist_image_candidates(
+    State(state): State<AppState>,
+    Path(artist_id): Path<Uuid>,
+    Query(query): Query<CandidateQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::services::ArtistImageCandidate>>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    state
+        .services
+        .artist_image_candidates(user.id, artist_id, &query.q)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeezerPortraitPick {
+    /// A Deezer artist id offered by a live search of this artist.
+    pub deezer_id: i64,
+}
+
+/// Chooses as the portrait the preview a live search of this artist offered
+/// for `deezer_id`, never fetched again. `422` for an id no live search of
+/// this artist offered; `404` where Deezer is not configured now.
+#[utoipa::path(put, path = "/api/v2/artists/{artist_id}/image/portrait/deezer", tag = "catalog", params(("artist_id" = Uuid, Path)), request_body = DeezerPortraitPick, responses((status = 200, body = crate::services::ArtistDetail), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn put_artist_deezer_portrait(
+    State(state): State<AppState>,
+    Path(artist_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(pick): Json<DeezerPortraitPick>,
+) -> Result<Json<crate::services::ArtistDetail>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    state
+        .services
+        .choose_deezer_portrait(user.id, artist_id, pick.deezer_id)
+        .await
+        .map_err(service_error)?;
+    state
+        .services
+        .artist_page(user.id, artist_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}

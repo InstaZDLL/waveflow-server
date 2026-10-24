@@ -25,6 +25,8 @@ pub enum ApiError {
     /// a conflict means mint a new operation id, this one means discard the
     /// local projection and take a fresh snapshot.
     CursorExpired,
+    /// The caller's previous request of the same kind is still running.
+    TooManyRequests,
     Unavailable,
     NotFound,
 }
@@ -63,6 +65,11 @@ impl IntoResponse for ApiError {
                 "cursor_expired",
                 "The cursor precedes the oldest retained event; take a fresh snapshot",
             ),
+            Self::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_requests",
+                "The previous request is still running",
+            ),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service_unavailable",
@@ -98,6 +105,7 @@ pub(super) fn service_error(error: crate::services::ServiceError) -> ApiError {
         ServiceError::NotFound | ServiceError::Forbidden => ApiError::NotFound,
         ServiceError::Invalid => ApiError::Validation,
         ServiceError::Conflict => ApiError::Conflict,
+        ServiceError::Busy => ApiError::TooManyRequests,
         ServiceError::Unavailable => ApiError::Unavailable,
         ServiceError::Database(error) => db_error(error),
         ServiceError::Security(error) => {

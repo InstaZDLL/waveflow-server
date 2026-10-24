@@ -45,7 +45,7 @@ impl ArtistImageKind {
 /// The artist's library, if the caller may choose its images: `NotFound` for
 /// an artist they cannot see and `Forbidden` for one they may only read, both
 /// answered as the same `404`.
-async fn chooser_library(
+pub(super) async fn chooser_library(
     tx: &mut Transaction<'_, Sqlite>,
     user_id: Uuid,
     artist_id: Uuid,
@@ -68,7 +68,7 @@ async fn chooser_library(
     Uuid::parse_str(row.try_get::<&str, _>("library_id")?).map_err(|_| ServiceError::Invalid)
 }
 
-async fn record_artist_change(
+pub(super) async fn record_artist_change(
     tx: &mut Transaction<'_, Sqlite>,
     library_id: Uuid,
     artist_id: Uuid,
@@ -87,6 +87,36 @@ async fn record_artist_change(
         },
     )
     .await
+}
+
+/// Writes the choice, replacing whatever was chosen before for that kind.
+/// `source` is `upload` or `deezer`, as the table's check allows.
+pub(super) async fn write_choice(
+    tx: &mut Transaction<'_, Sqlite>,
+    artist_id: Uuid,
+    kind: ArtistImageKind,
+    artwork_hash: &str,
+    source: &str,
+    user_id: Uuid,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO artist_image_choice \
+           (artist_id, kind, artwork_hash, source, set_by, set_at) \
+         VALUES (?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(artist_id, kind) DO UPDATE SET \
+           artwork_hash=excluded.artwork_hash, source=excluded.source, \
+           set_by=excluded.set_by, set_at=excluded.set_at",
+    )
+    .bind(artist_id.to_string())
+    .bind(kind.as_str())
+    .bind(artwork_hash)
+    .bind(source)
+    .bind(user_id.to_string())
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map(drop)
 }
 
 impl DomainServices {
@@ -160,20 +190,15 @@ impl DomainServices {
         .bind(now)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(
-            "INSERT INTO artist_image_choice \
-               (artist_id, kind, artwork_hash, source, set_by, set_at) \
-             VALUES (?, ?, ?, 'upload', ?, ?) \
-             ON CONFLICT(artist_id, kind) DO UPDATE SET \
-               artwork_hash=excluded.artwork_hash, source=excluded.source, \
-               set_by=excluded.set_by, set_at=excluded.set_at",
+        write_choice(
+            &mut tx,
+            artist_id,
+            kind,
+            &image.hash,
+            "upload",
+            user_id,
+            now,
         )
-        .bind(artist_id.to_string())
-        .bind(kind.as_str())
-        .bind(&image.hash)
-        .bind(user_id.to_string())
-        .bind(now)
-        .execute(&mut *tx)
         .await?;
         record_artist_change(&mut tx, library_id, artist_id, now).await?;
         tx.commit().await?;
