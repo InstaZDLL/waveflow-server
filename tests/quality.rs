@@ -23,7 +23,7 @@ use uuid::Uuid;
 use waveflow_server::authentication::now_ms;
 use waveflow_server::catalog::LibraryRecord;
 use waveflow_server::database::{LibraryRole, LibraryVisibility};
-use waveflow_server::services::{AttentionCategory, BrowsePage, QualityVerdict};
+use waveflow_server::services::{AnalysisState, AttentionCategory, BrowsePage, QualityVerdict};
 use waveflow_server::AppState;
 
 struct Shelf {
@@ -482,7 +482,7 @@ async fn a_running_scan_holds_the_analysis_back() {
     genuine(&shelf.music.join("a.flac"), 3);
     shelf.scan().await;
 
-    let scan = shelf.state.scanner.begin_scan();
+    let scan = shelf.state.scanner.begin_scan(shelf.library.id);
     let services = shelf.state.services.clone();
     let pass = tokio::spawn(async move { services.analyze_pending_quality().await.unwrap() });
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
@@ -970,4 +970,171 @@ async fn a_stranger_is_told_nothing_even_at_the_bound() {
         StatusCode::NOT_FOUND,
         "access is checked before the bound"
     );
+}
+
+/// The analysis's state, as the library's owner reads it.
+async fn analysis(shelf: &Shelf) -> waveflow_server::services::QualityAnalysis {
+    shelf
+        .state
+        .services
+        .quality_summary(shelf.owner, shelf.library.id)
+        .await
+        .unwrap()
+        .analysis
+}
+
+/// A minute of noise: long enough that a pass over a few of them can be
+/// watched while it runs.
+fn minute(path: &Path, seed: u32) {
+    ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        &noise(44_100, 60, seed),
+        "-ac",
+        "2",
+        "-sample_fmt",
+        "s16",
+        "-c:a",
+        "flac",
+        path.to_str().unwrap(),
+    ]);
+}
+
+#[tokio::test]
+async fn the_summary_says_where_the_analysis_stands() {
+    let shelf = shelf("status").await;
+    genuine(&shelf.music.join("a.flac"), 3);
+    shelf.scan().await;
+
+    let before = analysis(&shelf).await;
+    assert_eq!(
+        before.state,
+        AnalysisState::Queued,
+        "files wait, and no pass is on them"
+    );
+    assert_eq!(before.in_flight, 0);
+    assert_eq!(before.last_measured_at, None);
+
+    let scan = shelf.state.scanner.begin_scan(shelf.library.id);
+    assert_eq!(
+        analysis(&shelf).await.state,
+        AnalysisState::WaitingForScan,
+        "its own library is being scanned"
+    );
+    drop(scan);
+
+    shelf.analyze().await;
+    let after = analysis(&shelf).await;
+    assert_eq!(after.state, AnalysisState::Idle);
+    assert_eq!(after.in_flight, 0);
+    assert_eq!(after.pass_started_at, None);
+    assert!(after.last_measured_at.is_some());
+}
+
+/// A pass over three files is watched while it runs: it says it is running,
+/// names the file it is decoding, and the count moves one file at a time
+/// rather than all at once at the end.
+#[tokio::test]
+async fn a_running_pass_moves_one_file_at_a_time() {
+    let shelf = shelf("moving").await;
+    for (index, seed) in [3, 5, 7].into_iter().enumerate() {
+        minute(&shelf.music.join(format!("{index}.flac")), seed);
+    }
+    shelf.scan().await;
+
+    let services = shelf.state.services.clone();
+    let pass = tokio::spawn(async move { services.analyze_pending_quality().await.unwrap() });
+    let mut seen_running = false;
+    let mut seen_partial = false;
+    for _ in 0..2000 {
+        if pass.is_finished() {
+            break;
+        }
+        let now = analysis(&shelf).await;
+        if now.state == AnalysisState::Running && now.in_flight == 1 {
+            assert!(now.pass_started_at.is_some());
+            seen_running = true;
+        }
+        let rows = shelf.rows().await;
+        if (1..3).contains(&rows) && !pass.is_finished() {
+            seen_partial = true;
+        }
+        if seen_running && seen_partial {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        seen_running,
+        "a running pass says so, with its file in flight"
+    );
+    assert!(
+        seen_partial,
+        "a measurement is written as it finishes, not at the end of the pass"
+    );
+    assert_eq!(pass.await.unwrap(), 3);
+    assert_eq!(analysis(&shelf).await.state, AnalysisState::Idle);
+}
+
+/// A scan of somebody else's library holds every measurement back, but the
+/// page does not name it to someone who cannot see that library: their files
+/// read as queued.
+#[tokio::test]
+async fn a_scan_the_caller_cannot_see_is_not_named() {
+    let shelf = shelf("mine").await;
+    genuine(&shelf.music.join("a.flac"), 3);
+    shelf.scan().await;
+    let stranger = account(&shelf.state, "stranger").await;
+    let theirs_root = shelf.config.data_dir.join("theirs");
+    std::fs::create_dir_all(&theirs_root).unwrap();
+    let theirs = shelf
+        .state
+        .db
+        .create_library(
+            stranger,
+            "theirs",
+            &std::fs::canonicalize(&theirs_root).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+
+    let scan = shelf.state.scanner.begin_scan(theirs);
+    let services = shelf.state.services.clone();
+    let pass = tokio::spawn(async move { services.analyze_pending_quality().await.unwrap() });
+    // Long enough for the pass to have reached the scan and stopped there.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(!pass.is_finished(), "the pass waits for the scan");
+    assert_eq!(
+        analysis(&shelf).await.state,
+        AnalysisState::Queued,
+        "nothing says another library is being scanned"
+    );
+
+    drop(scan);
+    assert_eq!(pass.await.unwrap(), 1);
+    assert_eq!(analysis(&shelf).await.state, AnalysisState::Idle);
+}
+
+#[tokio::test]
+async fn the_route_carries_the_analysis() {
+    let shelf = shelf("route-status").await;
+    genuine(&shelf.music.join("a.flac"), 3);
+    shelf.scan().await;
+    let router = waveflow_server::app(&shelf.config, shelf.state.clone());
+    let token = shelf.token("route-status").await;
+    let summary = json_body(
+        send(
+            &router,
+            &token,
+            get(&format!("/api/v2/libraries/{}/quality", shelf.library.id)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(summary["analysis"]["state"], "queued");
+    assert_eq!(summary["analysis"]["in_flight"], 0);
+    assert!(summary["analysis"]["last_measured_at"].is_null());
 }

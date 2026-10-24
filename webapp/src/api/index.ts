@@ -145,6 +145,8 @@ export {
   listPlaylists,
 } from "./playlists";
 export type {
+  AnalysisState,
+  QualityAnalysis,
   QualitySummary,
   QualityTrack,
   QualityVerdict,

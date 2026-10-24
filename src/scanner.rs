@@ -89,14 +89,27 @@ pub struct ScanManager {
     /// (RFC-016 decision 4) starts no file while this is above zero, and wakes
     /// when it falls back to it.
     in_flight: Arc<watch::Sender<usize>>,
+    /// Which libraries those scans belong to, with how many of each. The
+    /// quality page says "waiting for the scan" only to someone who can see
+    /// the library being scanned.
+    scanning: Arc<DashMap<Uuid, usize>>,
 }
 
 /// One scan counted as running, for as long as this lives.
-pub struct ScanInFlight(Arc<watch::Sender<usize>>);
+pub struct ScanInFlight {
+    count: Arc<watch::Sender<usize>>,
+    scanning: Arc<DashMap<Uuid, usize>>,
+    library_id: Uuid,
+}
 
 impl Drop for ScanInFlight {
     fn drop(&mut self) {
-        self.0.send_modify(|count| *count = count.saturating_sub(1));
+        self.scanning.remove_if_mut(&self.library_id, |_, count| {
+            *count = count.saturating_sub(1);
+            *count == 0
+        });
+        self.count
+            .send_modify(|count| *count = count.saturating_sub(1));
     }
 }
 
@@ -133,14 +146,25 @@ impl ScanManager {
             events: Arc::new(DashMap::new()),
             library_locks: Arc::new(DashMap::new()),
             in_flight: Arc::new(watch::Sender::new(0)),
+            scanning: Arc::new(DashMap::new()),
         }
     }
 
-    /// Counts a scan as running until the guard is dropped. Every job takes
-    /// one for its whole run, success or failure.
-    pub fn begin_scan(&self) -> ScanInFlight {
+    /// Counts a scan of `library_id` as running until the guard is dropped.
+    /// Every job takes one for its whole run, success or failure.
+    pub fn begin_scan(&self, library_id: Uuid) -> ScanInFlight {
+        *self.scanning.entry(library_id).or_insert(0) += 1;
         self.in_flight.send_modify(|count| *count += 1);
-        ScanInFlight(Arc::clone(&self.in_flight))
+        ScanInFlight {
+            count: Arc::clone(&self.in_flight),
+            scanning: Arc::clone(&self.scanning),
+            library_id,
+        }
+    }
+
+    /// Whether a scan of this library is running.
+    pub fn is_scanning(&self, library_id: Uuid) -> bool {
+        self.scanning.contains_key(&library_id)
     }
 
     /// How many scans are running, and a way to wait for that to change.
@@ -172,7 +196,7 @@ impl ScanManager {
         let (sender, _) = broadcast::channel(128);
         self.events.insert(scan_id, sender);
         let manager = self.clone();
-        let running = self.begin_scan();
+        let running = self.begin_scan(library_id);
         tokio::spawn(async move {
             let _running = running;
             if let Err(error) = manager.run(scan_id, library).await {

@@ -19,7 +19,10 @@
 //! query here call a row current on its `full_hash` alone.
 
 use std::{
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, RwLock,
+    },
     time::Duration,
 };
 
@@ -172,6 +175,38 @@ pub struct QualitySummary {
     pub measured: i64,
     /// Every verdict, worst first, zero counts included.
     pub verdicts: Vec<QualityVerdictCount>,
+    /// Where the analysis stands for this library.
+    pub analysis: QualityAnalysis,
+}
+
+/// What the analyser is doing about one library's files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisState {
+    /// The operator turned the analysis off.
+    Off,
+    /// Nothing of this library is waiting, and nothing is being measured.
+    Idle,
+    /// Files are waiting and the analyser is not on them yet: between passes,
+    /// or held back by work the caller cannot see.
+    Queued,
+    /// Files are waiting, and a scan the caller can see holds the analysis
+    /// back until it finishes.
+    WaitingForScan,
+    /// A pass is measuring files.
+    Running,
+}
+
+/// The analyser's state, as one library's member may read it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QualityAnalysis {
+    pub state: AnalysisState,
+    /// How many of this library's files are being decoded right now.
+    pub in_flight: i64,
+    /// When the running pass began; `null` unless one is running.
+    pub pass_started_at: Option<i64>,
+    /// When a file of this library was last measured; `null` before any was.
+    pub last_measured_at: Option<i64>,
 }
 
 /// One file's verdict and the numbers behind it.
@@ -235,6 +270,18 @@ struct QualityInner {
     spectrograms: Arc<Semaphore>,
     /// One spectrogram per account at a time.
     spectrogram_users: dashmap::DashMap<Uuid, Arc<Semaphore>>,
+    /// When the running pass began, if one is running, and when the last one
+    /// ended.
+    pass: Mutex<PassState>,
+    /// How many measurements are held back by a running scan.
+    waiting: AtomicUsize,
+    /// How many files are being decoded right now, by library.
+    measuring: dashmap::DashMap<Uuid, usize>,
+}
+
+#[derive(Default)]
+struct PassState {
+    started_at: Option<i64>,
 }
 
 impl QualityRuntime {
@@ -246,7 +293,17 @@ impl QualityRuntime {
             wake: Notify::new(),
             spectrograms: Arc::new(Semaphore::new(parallelism + 1)),
             spectrogram_users: dashmap::DashMap::new(),
+            pass: Mutex::new(PassState::default()),
+            waiting: AtomicUsize::new(0),
+            measuring: dashmap::DashMap::new(),
         }))
+    }
+
+    fn pass(&self) -> std::sync::MutexGuard<'_, PassState> {
+        self.0
+            .pass
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn decoder(&self) -> Option<quality::Decoder> {
@@ -258,9 +315,61 @@ impl QualityRuntime {
     }
 }
 
+/// Marks a pass as running for as long as it lives.
+struct Passing(QualityRuntime);
+
+impl Passing {
+    fn begin(runtime: &QualityRuntime) -> Self {
+        runtime.pass().started_at = Some(now_ms());
+        Self(runtime.clone())
+    }
+}
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        self.0.pass().started_at = None;
+    }
+}
+
+/// Counts one thing for as long as it lives: a file of a library being
+/// decoded, or a measurement held back by a scan.
+enum Counting {
+    Measuring(QualityRuntime, Uuid),
+    Waiting(QualityRuntime),
+}
+
+impl Counting {
+    fn measuring(runtime: &QualityRuntime, library_id: Uuid) -> Self {
+        *runtime.0.measuring.entry(library_id).or_insert(0) += 1;
+        Self::Measuring(runtime.clone(), library_id)
+    }
+
+    fn waiting(runtime: &QualityRuntime) -> Self {
+        runtime.0.waiting.fetch_add(1, Ordering::SeqCst);
+        Self::Waiting(runtime.clone())
+    }
+}
+
+impl Drop for Counting {
+    fn drop(&mut self) {
+        match self {
+            Self::Measuring(runtime, library_id) => {
+                runtime.0.measuring.remove_if_mut(library_id, |_, count| {
+                    *count = count.saturating_sub(1);
+                    *count == 0
+                });
+            }
+            Self::Waiting(runtime) => {
+                runtime.0.waiting.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
 /// A file waiting for its measurement.
 struct Pending {
     track_id: String,
+    library_id: Uuid,
     full_hash: String,
     root_path: String,
     relative_path: String,
@@ -277,9 +386,6 @@ struct Measured {
 
 /// How many files the pass asks for at a time.
 const PAGE: i64 = 64;
-
-/// How many rows one write carries.
-const BATCH: usize = 16;
 
 /// The longest one file may take, whatever it says about itself. The deadline
 /// is a minute plus the track's duration, and the duration is read from the
@@ -352,6 +458,7 @@ impl DomainServices {
         if parallelism == 0 {
             return Ok(0);
         }
+        let _passing = Passing::begin(&self.quality);
         let mut measured = 0;
         // Keyset rather than offset: rows written behind the cursor drop out
         // of the query, and a file that keeps failing to be written cannot
@@ -363,21 +470,22 @@ impl DomainServices {
                 break;
             };
             after = (last.created_at, last.track_id.clone());
-            // Each batch is written as soon as it is complete, so a restart
-            // loses at most one batch of work, and a batch that cannot be
-            // written costs that batch and not the pass: its files are still
-            // pending and the next pass asks for them again.
-            let mut batches = stream::iter(page)
+            // Each measurement is written as soon as it finishes, so the count
+            // a reader watches moves file by file and a restart loses at most
+            // the files in flight. One that cannot be written costs that file
+            // and not the pass: it is still pending, and the next pass asks
+            // for it again.
+            let mut finished = stream::iter(page)
                 .map(|pending| self.measure_one(pending))
-                .buffer_unordered(parallelism)
-                .chunks(BATCH);
-            while let Some(batch) = batches.next().await {
-                let batch: Vec<Measured> = batch.into_iter().flatten().collect();
-                let count = batch.len();
-                match self.write_measurements(&decoder, batch).await {
-                    Ok(()) => measured += count,
+                .buffer_unordered(parallelism);
+            while let Some(done) = finished.next().await {
+                let Some((done, _measuring)) = done else {
+                    continue;
+                };
+                match self.write_measurements(&decoder, vec![done]).await {
+                    Ok(()) => measured += 1,
                     Err(error) => {
-                        tracing::warn!(error = %error, "a batch of quality measurements was not written");
+                        tracing::warn!(error = %error, "a quality measurement was not written");
                     }
                 }
             }
@@ -388,7 +496,8 @@ impl DomainServices {
     /// One page of the files with nothing current, oldest first.
     async fn pending_quality(&self, after: &(i64, String)) -> Result<Vec<Pending>, ServiceError> {
         let rows = sqlx::query(concat!(
-            "SELECT t.id, t.full_hash, l.root_path, t.relative_path, t.duration_ms, t.created_at \
+            "SELECT t.id, t.library_id, t.full_hash, l.root_path, t.relative_path, \
+               t.duration_ms, t.created_at \
              FROM track t JOIN library l ON l.id = t.library_id",
             quality_join!(),
             " WHERE t.is_available = 1 AND ",
@@ -403,8 +512,11 @@ impl DomainServices {
         .await?;
         rows.into_iter()
             .map(|row| {
+                let library_id: String = row.try_get("library_id")?;
                 Ok(Pending {
                     track_id: row.try_get("id")?,
+                    library_id: Uuid::parse_str(&library_id)
+                        .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
                     full_hash: row.try_get("full_hash")?,
                     root_path: row.try_get("root_path")?,
                     relative_path: row.try_get("relative_path")?,
@@ -419,9 +531,16 @@ impl DomainServices {
     /// Measures one file once no scan is running. `None` when the file cannot
     /// be reached at all: a drive that is not mounted says nothing about the
     /// file, so nothing is recorded and the next pass asks again.
-    async fn measure_one(&self, pending: Pending) -> Option<Measured> {
+    ///
+    /// The file counts as in flight for its library until the caller drops
+    /// the guard handed back with it, which is once its row is written.
+    async fn measure_one(&self, pending: Pending) -> Option<(Measured, Counting)> {
         let mut scans = self.scanner.scans_in_flight();
-        let _ = scans.wait_for(|running| *running == 0).await;
+        if *scans.borrow_and_update() > 0 {
+            let _waiting = Counting::waiting(&self.quality);
+            let _ = scans.wait_for(|running| *running == 0).await;
+        }
+        let measuring = Counting::measuring(&self.quality, pending.library_id);
         let path = crate::media::secure_track_path(
             std::path::Path::new(&pending.root_path),
             &pending.relative_path,
@@ -433,15 +552,18 @@ impl DomainServices {
         .min(MAX_DEADLINE);
         let measurement =
             quality::measure(&self.ffprobe_path, &self.ffmpeg_path, &path, deadline).await;
-        Some(Measured {
-            track_id: pending.track_id,
-            full_hash: pending.full_hash,
-            measurement,
-        })
+        Some((
+            Measured {
+                track_id: pending.track_id,
+                full_hash: pending.full_hash,
+                measurement,
+            },
+            measuring,
+        ))
     }
 
-    /// Writes one batch in one transaction, under the writer gate. A row is
-    /// written only while the track still holds the content it measured.
+    /// Writes measurements in one transaction, under the writer gate. A row
+    /// is written only while the track still holds the content it measured.
     async fn write_measurements(
         &self,
         decoder: &quality::Decoder,
@@ -534,10 +656,14 @@ impl DomainServices {
         let not_lossless = count(QualityVerdict::Lossy) + count(QualityVerdict::NotMeasured);
         let total: i64 = rows.iter().map(|(_, count)| count).sum();
         let lossless = total - not_lossless;
+        let analysis = self
+            .quality_analysis(user_id, library_id, count(QualityVerdict::Pending))
+            .await?;
         Ok(QualitySummary {
             enabled: self.quality.0.parallelism > 0,
             lossless,
             measured: lossless - count(QualityVerdict::Pending),
+            analysis,
             verdicts: QualityVerdict::ALL
                 .into_iter()
                 .map(|verdict| QualityVerdictCount {
@@ -720,6 +846,67 @@ impl DomainServices {
             bytes: picture.bytes,
             content_type: picture.content_type,
         })
+    }
+
+    /// Where the analysis stands for one library, as its member may read it.
+    ///
+    /// A scan holds every measurement back, of every library, but the page
+    /// says "waiting for the scan" only when the caller can see a library being
+    /// scanned: a scan of somebody else's library is not something to confirm
+    /// to them, and their files then read as merely queued.
+    async fn quality_analysis(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+        pending: i64,
+    ) -> Result<QualityAnalysis, ServiceError> {
+        let last_measured_at: Option<i64> = sqlx::query_scalar(concat!(
+            "SELECT MAX(ta.analyzed_at) FROM track t",
+            quality_join!(),
+            " WHERE t.library_id = ?"
+        ))
+        .bind(library_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        let in_flight = self
+            .quality
+            .0
+            .measuring
+            .get(&library_id)
+            .map_or(0, |count| *count) as i64;
+        let pass_started_at = self.quality.pass().started_at;
+        let waiting = self.quality.0.waiting.load(Ordering::SeqCst) > 0;
+        let state = if self.quality.0.parallelism == 0 {
+            AnalysisState::Off
+        } else if pending == 0 && in_flight == 0 {
+            AnalysisState::Idle
+        } else if self.scanner.is_scanning(library_id)
+            || (waiting && self.sees_a_scan(user_id).await?)
+        {
+            AnalysisState::WaitingForScan
+        } else if pass_started_at.is_some() && !waiting {
+            AnalysisState::Running
+        } else {
+            AnalysisState::Queued
+        };
+        Ok(QualityAnalysis {
+            state,
+            in_flight,
+            pass_started_at: pass_started_at.filter(|_| state == AnalysisState::Running),
+            last_measured_at,
+        })
+    }
+
+    /// Whether a library the caller belongs to is being scanned.
+    async fn sees_a_scan(&self, user_id: Uuid) -> Result<bool, ServiceError> {
+        let libraries: Vec<String> =
+            sqlx::query_scalar("SELECT library_id FROM library_member WHERE user_id = ?")
+                .bind(user_id.to_string())
+                .fetch_all(self.db.pool())
+                .await?;
+        Ok(libraries.iter().any(|library| {
+            Uuid::parse_str(library).is_ok_and(|library| self.scanner.is_scanning(library))
+        }))
     }
 
     /// The caller is a member of the library, in any role.

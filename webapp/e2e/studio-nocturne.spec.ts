@@ -6222,14 +6222,31 @@ async function serveQuality(page: Page) {
     asked: [] as string[],
     writes: [] as string[],
     spectrograms: 0,
+    summaries: 0,
+    /** What the summary says, one entry per ask; the last one repeats. */
+    analyses: [
+      {
+        measured: 2,
+        analysis: {
+          state: "idle",
+          in_flight: 0,
+          pass_started_at: null,
+          last_measured_at: 1_700_000_000_000,
+        },
+      },
+    ] as Array<{ measured: number; analysis: Record<string, unknown> }>,
   };
   const base = "**/api/v2/libraries/library-1";
-  await page.route(`${base}/quality`, (route) =>
-    route.fulfill({
+  await page.route(`${base}/quality`, (route) => {
+    const now =
+      state.analyses[Math.min(state.summaries, state.analyses.length - 1)];
+    state.summaries += 1;
+    return route.fulfill({
       json: {
         enabled: true,
         lossless: 3,
-        measured: 2,
+        measured: now?.measured ?? 2,
+        analysis: now?.analysis,
         verdicts: [
           { verdict: "lossy_source", count: 1 },
           { verdict: "upsampled", count: 0 },
@@ -6242,8 +6259,8 @@ async function serveQuality(page: Page) {
           { verdict: "not_measured", count: 0 },
         ],
       },
-    }),
-  );
+    });
+  });
   await page.route(`${base}/quality/tracks?*`, (route) => {
     const url = new URL(route.request().url());
     state.asked.push(url.search);
@@ -6390,4 +6407,69 @@ test("keeps the quality page readable in the light", async ({ page }) => {
   await page.goto("/quality");
   await expect(page.locator(".quality-table tbody tr")).toHaveCount(2);
   await expectNoWcagViolations(page);
+});
+
+test("shows the analysis moving, then at rest, and stops asking", async ({
+  page,
+}) => {
+  const state = await serveQuality(page);
+  const running = (measured: number) => ({
+    measured,
+    analysis: {
+      state: "running",
+      in_flight: 1,
+      pass_started_at: 1_700_000_000_000,
+      last_measured_at: 1_700_000_000_000,
+    },
+  });
+  state.analyses = [
+    running(1),
+    running(2),
+    {
+      measured: 3,
+      analysis: {
+        state: "idle",
+        in_flight: 0,
+        pass_started_at: null,
+        last_measured_at: 1_700_000_000_000,
+      },
+    },
+  ];
+  await page.goto("/quality");
+  const status = page.getByRole("status").filter({ hasText: /Analysing|Idle/ });
+  await expect(status).toHaveText(
+    "Analysing now: 1 of 3 done, 1 in progress.",
+  );
+  // The count moves under the reader while the pass runs.
+  await expect(status).toHaveText(
+    "Analysing now: 2 of 3 done, 1 in progress.",
+    { timeout: 10_000 },
+  );
+  await expect(status).toHaveText(/^Idle\. Last file analysed /, {
+    timeout: 10_000,
+  });
+  // At rest, nothing is asked again.
+  const asked = state.summaries;
+  await page.waitForTimeout(4_000);
+  expect(state.summaries).toBe(asked);
+  await expectNoWcagViolations(page);
+});
+
+test("says the analysis waits for the scan", async ({ page }) => {
+  const state = await serveQuality(page);
+  state.analyses = [
+    {
+      measured: 0,
+      analysis: {
+        state: "waiting_for_scan",
+        in_flight: 0,
+        pass_started_at: null,
+        last_measured_at: null,
+      },
+    },
+  ];
+  await page.goto("/quality");
+  await expect(
+    page.getByText("Waiting for the scan to finish before analysing."),
+  ).toBeVisible();
 });

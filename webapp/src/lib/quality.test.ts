@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analysisIsWorking,
   frequencyX,
   highsStop,
   SPECTRUM_FLOOR_DB,
@@ -52,6 +53,20 @@ describe("where the highs stop", () => {
     expect(highsStop("pending", null)).toBeNull();
     expect(highsStop("unreadable", null)).toBeNull();
     expect(highsStop("lossy", null)).toBeNull();
+  });
+});
+
+describe("whether the page keeps asking", () => {
+  it("asks while the analysis works", () => {
+    expect(analysisIsWorking("running")).toBe(true);
+    expect(analysisIsWorking("queued")).toBe(true);
+    expect(analysisIsWorking("waiting_for_scan")).toBe(true);
+  });
+
+  it("stops once it rests", () => {
+    expect(analysisIsWorking("idle")).toBe(false);
+    expect(analysisIsWorking("off")).toBe(false);
+    expect(analysisIsWorking(undefined)).toBe(false);
   });
 });
 

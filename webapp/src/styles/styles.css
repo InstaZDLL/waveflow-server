@@ -3471,6 +3471,47 @@ button.danger {
   list-style: none;
 }
 
+/* Where the analysis stands. The dot pulses while it works, and is still for
+   whoever asked the system for less motion: the words say the same thing. */
+.quality-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.quality-status.idle,
+.quality-status.off {
+  color: var(--muted);
+}
+
+.quality-status-dot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: quality-pulse 1.4s ease-in-out infinite;
+}
+
+.quality-status.waiting_for_scan .quality-status-dot,
+.quality-status.queued .quality-status-dot {
+  background: var(--muted);
+}
+
+@keyframes quality-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quality-status-dot {
+    animation: none;
+  }
+}
+
 .quality-format {
   display: inline-flex;
   align-items: center;
