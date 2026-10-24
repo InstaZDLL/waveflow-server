@@ -30,6 +30,10 @@ pub enum ApiError {
     /// Too many failed sign-ins for this account from this address
     /// (RFC-017). Answered with `Retry-After`, and nothing was checked.
     SignInThrottled,
+    /// First-run setup is open and the setup token is missing or wrong
+    /// (RFC-019 decision 1). Its own code, so the setup screen can say which
+    /// field to correct.
+    SetupTokenRejected,
     Unavailable,
     NotFound,
 }
@@ -55,6 +59,11 @@ impl IntoResponse for ApiError {
                 "Authentication failed",
             ),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden", "Request rejected"),
+            Self::SetupTokenRejected => (
+                StatusCode::FORBIDDEN,
+                "setup_token_rejected",
+                "The setup token is missing or wrong",
+            ),
             Self::Validation => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation_error",

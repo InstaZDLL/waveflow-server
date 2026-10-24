@@ -305,6 +305,8 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
         .await
         .unwrap();
     assert_eq!(public_share.status(), StatusCode::OK);
+    // RFC-019: the token in this path must not leave as a referrer.
+    assert_eq!(public_share.headers()["referrer-policy"], "no-referrer");
 
     let listed_shares = router
         .clone()
