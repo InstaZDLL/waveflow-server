@@ -1,7 +1,8 @@
 # RFC-018 — An incremental scan that reads only what changed, and survives one bad folder
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in this
+- **Implemented by**: in progress: [#322](https://github.com/InstaZDLL/waveflow-server/pull/322)
+  (this RFC). The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
