@@ -5,10 +5,14 @@
   below: [#308](https://github.com/InstaZDLL/waveflow-server/pull/308) (this
   RFC), [#309](https://github.com/InstaZDLL/waveflow-server/pull/309)
   (serving the choice: `artist_image_choice`, the effective portrait,
-  `banner_hash`, the upload and removal routes) and
+  `banner_hash`, the upload and removal routes),
   [#310](https://github.com/InstaZDLL/waveflow-server/pull/310) (drawing it in
   the web client: the banner behind the artist header, and "Change
-  portrait" / "Change banner" for owners and managers). The
+  portrait" / "Change banner" for owners and managers) and
+  [#311](https://github.com/InstaZDLL/waveflow-server/pull/311) (Deezer
+  candidates: the search and candidate tables, the candidates route with
+  server-held previews, the pick checked against a live search, and "Search
+  Deezer" in the web client). The
   *Status* field above never flips in this project; this line is the one that
   says what is running.
 - **Date**: 2026-10-23
