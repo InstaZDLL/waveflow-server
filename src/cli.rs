@@ -478,7 +478,7 @@ async fn rotate_key(config: &crate::Config, args: KeyArgs) -> anyhow::Result<()>
     let moved = install_new_key(config, connection, Rekey::Reencrypt(&old_key)).await?;
     println!(
         "Done. {} Subsonic credential(s) and {} scrobbling link(s) moved to the new key; {} share(s) re-addressed.",
-        moved.subsonic_logins, moved.scrobble_links, moved.shares
+        moved.subsonic_credentials, moved.scrobble_links, moved.shares
     );
     report_done(&recovery);
     Ok(())
@@ -505,7 +505,7 @@ async fn adopt_key(config: &crate::Config, args: KeyArgs) -> anyhow::Result<()> 
     let moved = install_new_key(config, connection, Rekey::Discard).await?;
     println!(
         "Done. {} Subsonic credential(s) and {} scrobbling link(s) deleted, with {} queued listen(s); {} share(s) re-addressed.",
-        moved.subsonic_logins, moved.scrobble_links, moved.queued_listens, moved.shares
+        moved.subsonic_credentials, moved.scrobble_links, moved.queued_listens, moved.shares
     );
     report_done(&recovery);
     Ok(())
@@ -546,7 +546,7 @@ fn print_inventory(intent: Intent, database: &Path, material: &KeyMaterial) {
             println!();
             println!(
                 "  {} Subsonic credential(s) — moved to the new key; password and API key both keep working",
-                material.subsonic_logins
+                material.subsonic_credentials
             );
             println!(
                 "  {} scrobbling link(s) — moved to the new key, unchanged",
@@ -569,7 +569,7 @@ fn print_inventory(intent: Intent, database: &Path, material: &KeyMaterial) {
             // their clients locked out too.
             println!(
                 "  {} Subsonic credential(s) — deleted, password and `wfsk_` API key together; `credential set` mints a new pair to hand to each client",
-                material.subsonic_logins
+                material.subsonic_credentials
             );
             println!(
                 "  {} scrobbling link(s) — deleted, and the {} queued listen(s) behind them",
