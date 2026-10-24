@@ -6096,6 +6096,9 @@ for (const { theme, banner, portrait } of [
   }) => {
     const { state } = await serveArtistImages(page);
     if (banner) state.banner = "c".repeat(64);
+    // A portrait chosen by hand, so the quiet "Automatic portrait" button is
+    // drawn too and measured with the others.
+    state.portrait = "d".repeat(64);
     const fill = banner ? "#ffffff" : portrait;
     await page.route("**/api/v2/artwork/*", (route) =>
       route.fulfill({
@@ -6127,6 +6130,7 @@ for (const { theme, banner, portrait } of [
     }
     // An empty list would measure nothing and pass.
     await expect(hero.locator(".artist-image-button").first()).toBeVisible();
+    await expect(hero.locator(".artist-image-button.subtle").first()).toBeVisible();
     for (const button of await hero.locator(".artist-image-button").all()) {
       if (!(await button.isVisible())) continue;
       expect(

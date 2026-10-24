@@ -3349,12 +3349,13 @@ button.danger {
   backdrop-filter: blur(6px);
 }
 
+/* A bare outline is text straight on the picture — white on a pale sky or a
+   pale portrait, ink on a dark one — so the quiet button keeps a lighter
+   glass than the others instead of none. */
 .artist-hero.has-backdrop .artist-image-button.subtle {
-  background: transparent;
+  background: color-mix(in srgb, var(--fe-on-wash-tone) 85%, transparent);
 }
 
-/* A bare outline over a pale banner is white on white: the quiet button keeps
-   a lighter glass than the others instead of none. */
 .artist-hero.has-banner .artist-image-button.subtle {
   background: rgb(0 0 0 / 42%);
 }
@@ -3423,13 +3424,20 @@ button.danger {
     flex-wrap: wrap;
   }
 
-  /* Stacked, the controls go under the name and the hero doubles in height:
-     the kicker then sits at a quarter of it, where the wash had barely
-     begun. The wash reaches its middle strength there instead. */
+  /* Stacked, the controls go under the name and the hero doubles in height
+     or more, as their rows wrap: the kicker then sits a fifth of the way down,
+     where the wash had barely begun. It reaches its middle strength there
+     instead — and, where the text is held to the stronger wash, starts at it,
+     since how far down the kicker lands depends on how many rows wrap. */
   .artist-hero,
   :root:not(.dark) .artist-hero,
   .artist-hero.has-banner {
     --hero-wash-at: 22%;
+  }
+
+  :root:not(.dark) .artist-hero,
+  .artist-hero.has-banner {
+    --hero-wash-from: var(--hero-wash-mid);
   }
 
   .artist-image-controls {
