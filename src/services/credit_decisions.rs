@@ -710,16 +710,18 @@ impl DomainServices {
 }
 
 /// The derivations a scan reruns at its end, rerun because the credits they
-/// are derived from moved: album credits, per-role counts, the artist sweep
-/// and the search index, then the sort names.
+/// are derived from moved, and in the scan's order: the sort names first,
+/// because the second pass closes by indexing every artist name together with
+/// its sort name; then album credits, per-role counts, the artist sweep and
+/// the search index.
 ///
 /// In the decision's own transaction, under the writer gate it already holds:
 /// a decision recorded while its derivations failed would leave an artist row
 /// the feed has already announced as deleted, and a retry would only answer
 /// `409`. Together, the two land or neither does.
 async fn rederive(tx: &mut Transaction<'_, Sqlite>, library_id: Uuid) -> Result<(), sqlx::Error> {
-    crate::database::Database::consolidate_catalog_derivations_in(tx, library_id).await?;
-    crate::database::Database::consolidate_sort_names_in(tx, library_id).await
+    crate::database::Database::consolidate_sort_names_in(tx, library_id).await?;
+    crate::database::Database::consolidate_catalog_derivations_in(tx, library_id).await
 }
 
 /// Whether anything still credits an artist: a participant, or an album that

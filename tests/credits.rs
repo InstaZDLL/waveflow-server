@@ -117,15 +117,17 @@ impl Shelf {
             .unwrap();
     }
 
+    /// The end of a scan, in the scanner's order: sort names first, because
+    /// the derivations index each artist with its sort name.
     async fn settle(&self) {
         self.state
             .db
-            .consolidate_catalog_derivations(self.library)
+            .consolidate_sort_names(self.library)
             .await
             .unwrap();
         self.state
             .db
-            .consolidate_sort_names(self.library)
+            .consolidate_catalog_derivations(self.library)
             .await
             .unwrap();
     }
@@ -467,6 +469,24 @@ async fn a_split_keeps_each_parts_sort_form() {
             ("A".to_owned(), Some("a".to_owned())),
             ("B".to_owned(), Some("b".to_owned())),
             ("C".to_owned(), Some("c".to_owned())),
+        ]
+    );
+    // And the artists themselves carry them, in the search index as well:
+    // the index is rebuilt from the artist rows, so the sort names have to be
+    // voted before it is, as at the end of a scan.
+    let indexed: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT ar.name, COALESCE(ar.sort_name, ''), fts.sort_name FROM artist ar          JOIN artist_fts fts ON fts.artist_id = ar.id          WHERE ar.library_id = ? ORDER BY ar.name",
+    )
+    .bind(shelf.library.to_string())
+    .fetch_all(shelf.state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed,
+        vec![
+            ("A".to_owned(), "a".to_owned(), "a".to_owned()),
+            ("B".to_owned(), "b".to_owned(), "b".to_owned()),
+            ("C".to_owned(), "c".to_owned(), "c".to_owned()),
         ]
     );
 }
