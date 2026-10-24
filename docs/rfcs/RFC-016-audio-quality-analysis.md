@@ -1,10 +1,13 @@
 # RFC-016 — The real quality of a file, measured from its audio
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#317](https://github.com/InstaZDLL/waveflow-server/pull/317) (this
-  RFC). The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+- **Implemented by**: [#317](https://github.com/InstaZDLL/waveflow-server/pull/317)
+  (this RFC) and [#319](https://github.com/InstaZDLL/waveflow-server/pull/319)
+  (steps 2 to 4 together: the migration, the ported detector and the FFmpeg
+  pipe, the background analyser, the verdicts, the five routes, the "Needs
+  attention" category, the Quality page and the track properties' "Real
+  quality" section). The *Status* field above never flips in this project;
+  this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Revised**: 2026-10-25, with the implementation. `upsampled` stops at
   30 kHz rather than 24, as measured on FFmpeg's own resampler (decision 3),
