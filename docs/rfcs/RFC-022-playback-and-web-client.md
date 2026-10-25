@@ -245,10 +245,22 @@ each:
 
 ## What is still open
 
-- **`savePlayQueue` above 400 tracks.** `MAX_QUEUE_TRACKS` bounds the native
-  and the Subsonic queue alike, and its comment ties it to the native API's
-  16 KiB JSON limit. Raising it is a domain decision for both surfaces, with
-  its own cost under the writer gate, and is not made here.
+The follow-up pull request named in *Implemented by* closed three of the items
+below; each says what was decided.
+
+- **`savePlayQueue` above 400 tracks — done.** `MAX_QUEUE_TRACKS` is now
+  `MAX_PLAYLIST_TRACKS`, ten thousand, for both surfaces: the common way to
+  fill a queue is to play a playlist whole, and a queue smaller than the
+  playlist it came from lost its end on the next save. The cost under the
+  writer gate is a playlist's — one `DELETE` and one `INSERT … SELECT` over
+  `json_each` — and the tracks are checked with one count instead of a
+  hydrated song per id. On the wire, the native queue route carries its own
+  body bound, `MAX_QUEUE_TRACKS × 64 + 4 KiB`, as the import route does, and a
+  `savePlayQueue` of ten thousand `id=<uuid>&` pairs is 400,000 bytes, inside
+  the `formPost` bound of decision 7. The four hundred stays where it bounds
+  something else, as `MAX_REQUEST_IDENTIFIERS`: a share, whose opening mints a
+  pass per track, and Subsonic `star`/`scrobble`, each identifier a mutation
+  of its own.
 - **A playlist cannot hold a track twice.** Found while writing the test for
   decision 7: `playlist_track` is keyed on `(playlist_id, track_id)`, so a
   `createPlaylist` or `updatePlaylist` naming one track twice fails on the
@@ -256,8 +268,66 @@ each:
   the duplicate or refusing it cleanly. The domain's lenient lookup expands
   duplicates, so the refusal comes from the schema alone. A migration, or a
   domain decision to refuse duplicates with error 10, is its own change.
-- **ReplayGain on Subsonic `stream`.** Applying gain server-side would mean a
-  transcode for every play; clients apply it themselves from `replayGain`.
-- **Offline playback** and the service worker it would need.
+- **ReplayGain on Subsonic `stream` — done, on a transcode only.** Most
+  clients apply it from `replayGain`; for those that cannot, a Subsonic
+  `stream` that is transcoded anyway carries the gain into FFmpeg's `volume`
+  filter. Opt-in twice over: `WAVEFLOW_SUBSONIC_REPLAYGAIN` sets the
+  operator's default (`off`, `track` or `album`; `off` unless set), and
+  `replayGain=off|track|album` on the request overrides it either way, an
+  unknown mode being error 10. **The original is never re-encoded to apply
+  it**: that would turn every direct play into a transcode, which is the
+  objection this item recorded. The rules are decision 1's, without the
+  preamp — a server-wide preamp would be one listener's preference made for
+  all — in `src/replay_gain.rs`: album falls back to track and track to album,
+  an untagged track plays at unity, the peak caps the gain at full scale, the
+  total is held to [−60, +18] dB. The gain, rounded to a hundredth of a
+  decibel, is part of the transcode cache key only when there is one, so every
+  key written before stays the key of the same encode, and a levelled encode is
+  never handed to a request that did not ask for it. The native routes are
+  unchanged: the web player levels through Web Audio.
+- **Offline playback — done, with a service worker.** Decision 4 shipped no
+  worker because a worker is the one piece of a PWA that can serve stale or
+  private data. The worker that now ships, `/sw.js`, is built around that
+  objection:
+  - **it never answers or stores anything of the server's**: every request
+    under `/api/`, `/rest/` and `/share/`, the probes, the reference, any
+    request carrying a query string, any request that is not a GET and any
+    request to another origin goes to the network untouched. No API response,
+    token, stream ticket or share pass reaches a cache through it;
+  - **it keeps the application shell**: a page is fetched from the network
+    first, and the one shell every client route answers is kept for when there
+    is none; the content-hashed files are kept by their name, and those a new
+    shell no longer names are let go, so the cache holds one build;
+  - **a track is kept only when the listener asks** ("Keep for offline" in a
+    track's menu): the page fetches the original once through a stream ticket
+    and stores it under `/offline/tracks/{id}`, an address of the client's
+    own that names the track and carries no credential, beside the song's
+    descriptive fields under `/offline/meta/{id}`. The worker answers that
+    address with byte ranges, so the player seeks. The ticket's address is
+    never a key;
+  - **the copies are one account's, and a sign-out deletes them.** Each
+    account keeps its copies in a cache named after its id, and an owner
+    marker in Cache Storage — read by the page and by the worker alike — names
+    the account whose copies are current: the one whose session this browser
+    holds, or last held. A **sign-out deletes every copy** and the marker; a
+    **different account signing in** deletes the previous one's before it is
+    shown anything, then becomes the owner; an expiry or a renewal that fails
+    for want of a network deletes nothing, since that is not the account
+    leaving. The worker answers `/offline/tracks/{id}` only from the cache the
+    marker names, and nothing with no marker. Deleting rather than hiding is
+    the safer default on a shared or family computer, where hidden copies
+    would still be one storage inspector away; the offline page says that
+    signing out deletes them. What stays reachable without a session is
+    therefore only what the account that last signed in kept and did not sign
+    out of — the reach its open session already had;
+  - **`/offline` plays them with no server**: a page beside the sign-in page,
+    outside the signed-in shell, with its own `<audio>`, as the share page
+    has; the sign-in page links to it when something is kept, and the signed-in
+    player plays a kept track from this browser.
+
+  `/sw.js` is an asset-only path, never answered with the shell. The kept
+  copies live in that browser only, and are the listener's to remove; a track
+  later removed from the library, or from the listener's reach, stays playable
+  there until they are, which is what keeping a copy means.
 - **A per-device default for ReplayGain** once the lock-screen behaviour of
   Web Audio has been measured on real phones rather than inferred.
