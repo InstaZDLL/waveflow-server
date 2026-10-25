@@ -2077,6 +2077,68 @@ impl Database {
     /// earlier — the requests that produced `answer` are over, and the
     /// portrait's file is already in the store, so no network or file I/O
     /// ever runs under it.
+    /// What one lyrics provider said for one lookup key (RFC-024 decision
+    /// 4), if it said anything.
+    pub async fn lyrics_lookup_row(
+        &self,
+        provider: &str,
+        lookup_key: &str,
+    ) -> Result<Option<crate::lrclib::CachedLyrics>, sqlx::Error> {
+        let Some(row) = sqlx::query(
+            "SELECT outcome, synced_lyrics, plain_lyrics, fetched_at, expires_at \
+             FROM lyrics_lookup WHERE provider = ? AND lookup_key = ?",
+        )
+        .bind(provider)
+        .bind(lookup_key)
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        let outcome: String = row.try_get("outcome")?;
+        let outcome = crate::lrclib::LyricsOutcome::parse(&outcome).ok_or_else(|| {
+            sqlx::Error::Decode(format!("unknown lyrics outcome {outcome:?}").into())
+        })?;
+        Ok(Some(crate::lrclib::CachedLyrics {
+            outcome,
+            synced: row.try_get("synced_lyrics")?,
+            plain: row.try_get("plain_lyrics")?,
+            fetched_at: row.try_get("fetched_at")?,
+            expires_at: row.try_get("expires_at")?,
+        }))
+    }
+
+    /// Records what a lyrics provider answered, replacing what it said
+    /// before. Taken under the writer gate, after the request is over.
+    pub(crate) async fn write_lyrics_lookup(
+        &self,
+        provider: &str,
+        lookup_key: &str,
+        answer: &crate::lrclib::CachedLyrics,
+    ) -> Result<(), sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let mut tx = self.begin_write(&_writer).await?;
+        sqlx::query(
+            "INSERT INTO lyrics_lookup \
+                (provider, lookup_key, outcome, synced_lyrics, plain_lyrics, fetched_at, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT (provider, lookup_key) DO UPDATE SET \
+                outcome = excluded.outcome, synced_lyrics = excluded.synced_lyrics, \
+                plain_lyrics = excluded.plain_lyrics, fetched_at = excluded.fetched_at, \
+                expires_at = excluded.expires_at",
+        )
+        .bind(provider)
+        .bind(lookup_key)
+        .bind(answer.outcome.as_str())
+        .bind(answer.synced.as_deref())
+        .bind(answer.plain.as_deref())
+        .bind(answer.fetched_at)
+        .bind(answer.expires_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
+
     pub(crate) async fn write_metadata_artist(
         &self,
         provider: crate::enrichment::Provider,

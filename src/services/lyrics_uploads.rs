@@ -126,6 +126,18 @@ impl DomainServices {
         }
 
         candidates.sort_by_key(|candidate| (candidate.rank, candidate.tie, candidate.position));
+        // Last, and only into an empty answer: LRCLIB never stands beside a
+        // sheet of the track's own (RFC-024 decision 2).
+        if candidates.is_empty() {
+            if let Some(sheet) = self.remote_sheet(user_id, track_id, true).await? {
+                candidates.push(Candidate {
+                    rank: 6,
+                    tie: 0,
+                    position: 0,
+                    sheet,
+                });
+            }
+        }
         Ok(LyricsList {
             track_id,
             structured_lyrics: candidates

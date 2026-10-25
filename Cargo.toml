@@ -188,3 +188,7 @@ path = "tests/credits.rs"
 [[test]]
 name = "quality"
 path = "tests/quality.rs"
+
+[[test]]
+name = "discovery"
+path = "tests/discovery.rs"

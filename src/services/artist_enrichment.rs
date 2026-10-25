@@ -155,10 +155,12 @@ impl DomainServices {
     /// one track each at random, and a name that runs out leaves its turns
     /// to the others, so `limit` is still reached while tracks remain.
     ///
-    /// With enrichment disabled — the default — the answer is the empty
-    /// container these methods always gave, rather than a draw from the
-    /// artist alone: no operator switched anything on, so nothing on the wire
-    /// moves. Enabled but not yet answered, the artist alone is drawn.
+    /// **The neighbours come from a configured provider first**, and from the
+    /// catalogue when it names none the caller can see — no provider, the
+    /// default; one that has not answered yet; or one that knows nobody here
+    /// (RFC-024 decision 8, [`Self::local_neighbours`]). A seed with no
+    /// neighbour of either kind draws from its own tracks alone. Until
+    /// RFC-024 the default was the empty container.
     pub async fn similar_songs(
         &self,
         user_id: Uuid,
@@ -177,26 +179,41 @@ impl DomainServices {
             .read()
             .unwrap_or_else(|poison| poison.into_inner())
             .clone();
-        if limit == 0 || !engine.is_enabled() {
+        if limit == 0 {
             return Ok(Vec::new());
         }
         let canonical = waveflow_core::scanner::canonical_name(&artist.artist.name);
-        let rows = engine.artist(&artist.artist.name).await?;
         let mut names = vec![canonical.clone()];
-        if let Some(similar) = self
-            .neighbours(user_id, &rows, &canonical, usize::MAX)
-            .await?
-        {
-            names.extend(
-                similar.artists.iter().map(|neighbour| {
+        // A configured provider's neighbours first (RFC-011 decision 7)...
+        if engine.is_enabled() {
+            let rows = engine.artist(&artist.artist.name).await?;
+            if let Some(similar) = self
+                .neighbours(user_id, &rows, &canonical, usize::MAX)
+                .await?
+            {
+                names.extend(similar.artists.iter().map(|neighbour| {
                     waveflow_core::scanner::canonical_name(&neighbour.artist.name)
-                }),
+                }));
+            }
+        }
+        let mut connection = self.db.pool().acquire().await?;
+        // ...and the catalogue's own when there are none: no provider, one
+        // that has not answered yet, or one that knows nobody the caller can
+        // see (RFC-024 decision 8).
+        if names.len() == 1 {
+            names.extend(
+                self.local_neighbours(
+                    &mut connection,
+                    user_id,
+                    &canonical,
+                    super::local_similar::LOCAL_NEIGHBOURS,
+                )
+                .await?,
             );
         }
         let names = serde_json::to_string(&names).map_err(|_| ServiceError::Invalid)?;
         // No library narrowing: every library the caller reaches.
         let folders = folder_filter(&[]);
-        let mut connection = self.db.pool().acquire().await?;
         // Innermost, the pool: every visible track credited to one of the
         // names. Each is filed under the name that put it there — its first
         // track artist among the names, else its album's first album artist

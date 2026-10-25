@@ -398,7 +398,21 @@ impl DomainServices {
         .bind(track_id.to_string())
         .fetch_all(self.db.pool())
         .await?;
-        lyrics_list_from_rows(track_id, rows)
+        let mut list = lyrics_list_from_rows(track_id, rows)?;
+        // A track whose scanned sheets say nothing may be looked up on
+        // LRCLIB, once an operator switched it on; the sheet carries no
+        // source, since the frozen element has no field for one (RFC-024
+        // decision 5). Disabled, this is the answer it always was.
+        if !list
+            .structured_lyrics
+            .iter()
+            .any(|sheet| lyrics::has_text(&sheet.lines))
+        {
+            if let Some(sheet) = self.remote_sheet(user_id, track_id, false).await? {
+                list.structured_lyrics = vec![sheet];
+            }
+        }
+        Ok(list)
     }
 
     /// Legacy Subsonic lookup by metadata. Matching stays tenant-scoped and
@@ -434,8 +448,45 @@ impl DomainServices {
             .transpose()?;
         match track_id {
             Some(track_id) => self.lyrics(user_id, track_id).await.map(Some),
+            None if self.looks_up_lyrics() => {
+                self.looked_up_lyrics_by_metadata(user_id, artist, title)
+                    .await
+            }
             None => Ok(None),
         }
+    }
+
+    /// `getLyrics` when no exactly matching track carries lyrics of its own:
+    /// the first exactly matching track, looked up on LRCLIB (RFC-024
+    /// decision 5). Only reached with a lookup configured.
+    async fn looked_up_lyrics_by_metadata(
+        &self,
+        user_id: Uuid,
+        artist: Option<&str>,
+        title: Option<&str>,
+    ) -> Result<Option<LyricsList>, ServiceError> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT t.id FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND (? IS NULL OR t.artist_display = ? COLLATE NOCASE) \
+               AND (? IS NULL OR t.title = ? COLLATE NOCASE) \
+             ORDER BY t.title COLLATE NOCASE, t.id LIMIT 1",
+        )
+        .bind(user_id.to_string())
+        .bind(artist)
+        .bind(artist)
+        .bind(title)
+        .bind(title)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let Some(track_id) = row else {
+            return Ok(None);
+        };
+        let track_id = Uuid::parse_str(&track_id)
+            .map_err(|error| ServiceError::Database(sqlx::Error::Decode(error.into())))?;
+        let list = self.lyrics(user_id, track_id).await?;
+        Ok((!list.structured_lyrics.is_empty()).then_some(list))
     }
 
     pub(super) async fn songs_by_ids_on(

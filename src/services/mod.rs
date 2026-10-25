@@ -1454,6 +1454,9 @@ pub struct DomainServices {
     /// The quality analysis (RFC-016): its bound, the FFmpeg it measures with,
     /// and the spectrograms in flight.
     quality: quality::QualityRuntime,
+    /// Lyrics from LRCLIB — RFC-024. Disabled at construction and placed by
+    /// [`Self::use_lyrics_lookup`], like enrichment and for the same reason.
+    lyrics_lookup: Arc<std::sync::RwLock<crate::lrclib::LyricsLookup>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1517,11 +1520,16 @@ mod playback;
 mod playlists;
 mod quality;
 mod radio;
+mod remote_lyrics;
+// RFC-024: what the listening history and the catalogue suggest.
+mod local_similar;
+mod mixes;
 mod scan;
 mod scrobbling;
 mod search;
 mod shares;
 mod songs;
+mod statistics;
 mod sync;
 mod track_metadata;
 pub(crate) mod uploads;
@@ -1558,6 +1566,7 @@ pub use library_lifecycle::{
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
+pub use mixes::{Mix, MixQuery, MixSummary, DEFAULT_MIX_SIZE, MAX_MIX_SIZE};
 pub use quality::{
     AnalysisState, QualityAnalysis, QualitySummary, QualityTrack, QualityVerdict,
     QualityVerdictCount, Spectrogram, TrackQuality, TrackQualityDetail,
@@ -1565,6 +1574,10 @@ pub use quality::{
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
     ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
+};
+pub use statistics::{
+    ListeningStats, PlayMoment, StatsBucket, StatsBucketSize, StatsQuery, StatsTotals, TopAlbum,
+    TopArtist, TopGenre, TopTrack,
 };
 
 impl DomainServices {
@@ -1621,6 +1634,9 @@ impl DomainServices {
                 config.quality_parallelism,
                 config.request_timeout,
             ),
+            lyrics_lookup: Arc::new(std::sync::RwLock::new(
+                crate::lrclib::LyricsLookup::disabled(),
+            )),
         }
     }
 

@@ -8,6 +8,7 @@ pub mod config;
 pub mod credit_split;
 pub mod database;
 pub mod enrichment;
+pub mod lrclib;
 pub mod lyrics;
 pub mod media;
 pub mod migration_backup;
@@ -198,6 +199,10 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::search_catalog,
         api::list_songs,
         api::list_random_songs,
+        api::get_listening_stats,
+        api::list_mixes,
+        api::get_mix,
+        api::list_similar_songs,
         api::list_songs_by_genre,
         api::list_playlists,
         api::create_playlist,
@@ -316,6 +321,17 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::EnrichedBio,
         services::EnrichedImage,
         services::EnrichedSimilar,
+        services::ListeningStats,
+        services::StatsBucketSize,
+        services::StatsTotals,
+        services::StatsBucket,
+        services::TopTrack,
+        services::TopAlbum,
+        services::TopArtist,
+        services::TopGenre,
+        services::PlayMoment,
+        services::MixSummary,
+        services::Mix,
         services::SearchResult,
         services::PlaylistItem,
         services::QueueItem,
@@ -809,6 +825,10 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         &config.metadata,
         config.artwork_dir.clone(),
     )?);
+    // Off unless the operator named `lrclib`, and then it still asks nothing
+    // until somebody asks for the lyrics of a track that has none (RFC-024
+    // decisions 1 and 3).
+    services.use_lyrics_lookup(lrclib::LyricsLookup::new(db.clone(), &config.lyrics)?);
     // Before anything reads `track_quality`: a measurement another analyser or
     // another FFmpeg made is deleted here, so every read can call a row current
     // on its content hash alone (RFC-016 decision 5).
