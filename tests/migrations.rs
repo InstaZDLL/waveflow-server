@@ -775,6 +775,55 @@ async fn a_copy_that_cannot_be_made_leaves_nothing_behind() {
     );
 }
 
+/// A database bound to a key is copied only with that key: missing or wrong,
+/// the pair would be no way back, so the boot refuses before migrating — and
+/// before minting a key of its own beside a database that has one. A
+/// database never bound to a key is still copied alone; the released-schema
+/// test above stands on that.
+#[tokio::test]
+async fn a_bound_database_is_not_copied_without_its_own_key() {
+    for (case, damage) in [
+        ("missing", None),
+        ("wrong", Some(*uuid::Uuid::new_v4().as_bytes())),
+    ] {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let config = Config::for_data_dir(temp.path().join("data"));
+        let (_, behind) = an_installation_behind(&config, None).await;
+        match damage {
+            None => std::fs::remove_file(&config.instance_key_path).unwrap(),
+            Some(other) => {
+                std::fs::write(&config.instance_key_path, [other, other].concat()).unwrap()
+            }
+        }
+
+        let error = match waveflow_server::initialize(&config).await {
+            Ok(_) => panic!("{case}: a boot with no matching key went ahead"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(
+            error.contains("nothing has been applied"),
+            "{case}: {error}"
+        );
+        assert!(
+            pre_migration_copies(&config).is_empty(),
+            "{case}: a pair restore would refuse was kept: {:?}",
+            pre_migration_copies(&config)
+        );
+        assert_eq!(
+            applied_in(&config.database_path).await,
+            behind,
+            "{case}: migrated a database whose key is not there"
+        );
+        if damage.is_none() {
+            assert!(error.contains("key adopt"), "{error}");
+            assert!(
+                !config.instance_key_path.exists(),
+                "a key was minted beside a database bound to another"
+            );
+        }
+    }
+}
+
 /// The copy a boot has just made is kept even when its name sorts below the
 /// others — a clock that went back, or copies dated in the future.
 #[tokio::test]

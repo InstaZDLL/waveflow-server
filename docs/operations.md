@@ -61,7 +61,9 @@ ones made this way are deleted; nothing else in the data directory is touched.
 A fresh database, or one already up to date, is never copied. Each copy is the
 size of the database: if that is a problem, set `WAVEFLOW_MIGRATION_BACKUPS=0`
 and keep backups of your own. A copy that cannot be made — a full disk — stops
-the boot before anything is applied.
+the boot before anything is applied. So does a missing or mismatched
+`instance.key` beside a database that was bound to one: restore the pair, or
+see the commands for a lost key below.
 
 ## When the key is gone, or has to change
 

@@ -184,7 +184,14 @@ them (`src/migration_backup.rs`):
   the database without its key restores to a server that refuses to start. The
   copy goes to `<data dir>/pre-migration-<epoch ms>/` in the layout
   `database backup` writes, so `database restore --input <copy>` takes it as it
-  is. A database no server has opened has no key yet, and is copied alone.
+  is. A database bound to a key is copied only with that key, checked against
+  the stored fingerprint the way `database restore` checks it
+  (`check_file_instance_key`): a key that is missing or does not match stops
+  the boot before anything is applied, since such a pair is no way back and
+  the boot would refuse it after migrating anyway. The schema is then left as
+  it was for `key adopt` or a restore. Only a database never bound to a key —
+  no server has finished a boot on it, so nothing in it was encrypted — is
+  copied alone.
 - **The newest `WAVEFLOW_MIGRATION_BACKUPS` are kept**, three by default; `0`
   takes none. Older copies made this way are deleted. Pruning recognises only
   `pre-migration-` followed by digits, so a restore's `pre-restore-` copy, a

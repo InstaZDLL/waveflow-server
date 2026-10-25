@@ -12,7 +12,10 @@
 //! - **The database and the key together**, in the bundle layout
 //!   `database backup` writes, so `database restore --input <copy>` takes it as
 //!   it is. `waveflow.db` and `instance.key` are one unit: a database copied
-//!   without its key restores to a server that refuses to start.
+//!   without its key restores to a server that refuses to start. So a
+//!   database bound to a key that is missing, or that does not match, is
+//!   refused before anything is applied; only a database never bound to a key
+//!   is copied alone.
 //! - **`VACUUM INTO`**, through [`Database::backup_to`], which reads one
 //!   consistent snapshot, the write-ahead log included.
 //! - **The last `WAVEFLOW_MIGRATION_BACKUPS`**, three by default, are kept;
@@ -99,23 +102,61 @@ pub fn restore_hint(copy: &Path) -> String {
     )
 }
 
-/// The database and its key, into `directory`.
+/// The database and its key, into `directory`, as a pair `database restore`
+/// will take.
+///
+/// A database bound to a key must have that key beside it, and the copy is
+/// checked the way a restore checks it. A pair that fails that check is no
+/// way back, and the boot would refuse it anyway once the migrations had run —
+/// so it is refused here, before they do, leaving the schema as it was for
+/// the commands that deal with a lost or wrong key.
+///
+/// The one database allowed no key is one never bound to any: no server has
+/// finished a boot on it, so nothing in it was ever encrypted.
 async fn copy_pair(
     db: &Database,
     config: &Config,
     directory: &Path,
     refused: &impl Fn(&str) -> String,
 ) -> anyhow::Result<()> {
-    db.backup_to(&directory.join("waveflow.db"))
+    let copied_database = directory.join("waveflow.db");
+    let copied_key = directory.join("instance.key");
+    db.backup_to(&copied_database)
         .await
         .with_context(|| refused("database"))?;
-    match tokio::fs::copy(&config.instance_key_path, directory.join("instance.key")).await {
-        Ok(_) => Ok(()),
-        // A database no server has opened yet has no key beside it, and there
-        // is nothing to pair the copy with.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| refused("instance key")),
+    let bound = {
+        let mut connection = db.pool().acquire().await?;
+        Database::stored_key_fingerprint(&mut connection)
+            .await?
+            .is_some()
+    };
+    match tokio::fs::copy(&config.instance_key_path, &copied_key).await {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !bound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
+            "{} is bound to an instance key and there is none at {}; nothing has been \
+             applied. Restore the database and key from the same backup bundle, or, if \
+             the key is gone for good, run `waveflow-server key adopt`",
+            config.database_path.display(),
+            config.instance_key_path.display()
+        ),
+        Err(error) => return Err(error).with_context(|| refused("instance key")),
     }
+    if bound {
+        let key = tokio::fs::read(&copied_key)
+            .await
+            .with_context(|| refused("instance key"))?;
+        if !Database::check_file_instance_key(&copied_database, &crate::security::bytes_hash(&key))
+            .await
+            .with_context(|| refused("database"))?
+        {
+            anyhow::bail!(
+                "instance.key does not match waveflow.db; nothing has been applied. \
+                 Restore the database and key from the same backup bundle"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Deletes the oldest copies made here, keeping `keep` with `current` among
