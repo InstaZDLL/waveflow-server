@@ -297,8 +297,9 @@ pub fn normalize_content(content: &str) -> String {
 
 pub fn lines(content: &str, synced: bool) -> Vec<LyricsLine> {
     if synced {
-        let parsed = parse_lrc(content);
-        if !parsed.is_empty() {
+        // A sheet over the expansion budget is shown as the text it is, one
+        // line per line of the file, rather than expanded (RFC-023 decision 5).
+        if let Some(parsed) = parse_lrc(content).filter(|parsed| !parsed.is_empty()) {
             return parsed;
         }
     }
@@ -311,28 +312,72 @@ pub fn lines(content: &str, synced: bool) -> Vec<LyricsLine> {
         .collect()
 }
 
+/// Whether `content` is a synced LRC sheet: at least one timed line, and a
+/// sheet that fits [`MAX_EXPANDED_LRC_BYTES`] once its timestamps are
+/// expanded. One that does not is read as the text it is, so it is stored as
+/// unsynced and never expanded on a later read either.
 pub fn has_lrc_timestamps(content: &str) -> bool {
-    normalize_content(content)
-        .lines()
-        .any(|line| timestamps_and_value(line).0.into_iter().next().is_some())
+    let mut timed = false;
+    let mut expanded = 0usize;
+    for line in normalize_content(content).lines() {
+        let (timestamps, value) = timestamps_and_value(line);
+        timed |= !timestamps.is_empty();
+        expanded = expanded.saturating_add(
+            timestamps
+                .len()
+                .saturating_mul(EXPANDED_LINE_COST.saturating_add(value.len())),
+        );
+        if expanded > MAX_EXPANDED_LRC_BYTES {
+            return false;
+        }
+    }
+    timed
 }
 
-fn parse_lrc(content: &str) -> Vec<LyricsLine> {
+/// The most an LRC sheet may grow to once its timestamps are expanded
+/// (RFC-023 decision 5), counted as [`EXPANDED_LINE_COST`] per line plus the
+/// line's text.
+///
+/// A line `[00:12][01:30]chorus` is two lines once read, each carrying the
+/// text, and nothing bounded how many timestamps one line may carry. A
+/// mebibyte of upload — 100,000 timestamps of five bytes before half a
+/// mebibyte of text — expanded to some fifty gigabytes, on the upload and on
+/// every read of the stored sheet, and the process died of it. A real sheet
+/// repeats a chorus a handful of times: eight mebibytes is eight times the
+/// largest sheet the server accepts, and no real sheet comes near it.
+pub const MAX_EXPANDED_LRC_BYTES: usize = 8 * 1024 * 1024;
+
+/// What one expanded line costs beyond its text: the line itself, so that
+/// a sheet of bare timestamps is bounded too.
+const EXPANDED_LINE_COST: usize = 32;
+
+/// The timed lines of an LRC sheet, or `None` when expanding its timestamps
+/// would outgrow [`MAX_EXPANDED_LRC_BYTES`].
+fn parse_lrc(content: &str) -> Option<Vec<LyricsLine>> {
     let mut parsed = Vec::<(i64, usize, String)>::new();
+    let mut expanded = 0usize;
     for (order, raw) in normalize_content(content).lines().enumerate() {
         let (timestamps, value) = timestamps_and_value(raw);
         for start in timestamps {
+            expanded = expanded
+                .saturating_add(EXPANDED_LINE_COST)
+                .saturating_add(value.len());
+            if expanded > MAX_EXPANDED_LRC_BYTES {
+                return None;
+            }
             parsed.push((start, order, value.to_owned()));
         }
     }
     parsed.sort_by_key(|(start, order, _)| (*start, *order));
-    parsed
-        .into_iter()
-        .map(|(start, _, value)| LyricsLine {
-            start: Some(start),
-            value,
-        })
-        .collect()
+    Some(
+        parsed
+            .into_iter()
+            .map(|(start, _, value)| LyricsLine {
+                start: Some(start),
+                value,
+            })
+            .collect(),
+    )
 }
 
 fn timestamps_and_value(mut input: &str) -> (Vec<i64>, &str) {
@@ -580,5 +625,31 @@ mod tests {
         assert_eq!(parse_timestamp("-1:00"), None);
         assert_eq!(parse_timestamp("00:-01"), None);
         assert_eq!(parse_timestamp(&format!("{}:00", i64::MAX)), None);
+    }
+
+    /// A line may carry several timestamps, and each is a line once read; a
+    /// sheet that piles them up is read as the text it is instead of being
+    /// expanded without end (RFC-023 decision 5).
+    ///
+    /// Sized to be told apart cheaply: twenty thousand timestamps before a
+    /// kilobyte of text is 120 KB of file and twenty megabytes expanded, so a
+    /// parser without the budget passes neither assertion and allocates
+    /// nothing a test run would notice.
+    #[test]
+    fn a_sheet_that_piles_up_timestamps_is_not_expanded() {
+        let sheet = format!("{}{}", "[0:0]".repeat(20_000), "la".repeat(512));
+        assert!(!has_lrc_timestamps(&sheet), "over the budget is not synced");
+        assert_eq!(lines(&sheet, true).len(), 1, "read as the one line it is");
+        let upload = parse_upload(UploadFormat::Lrc, &sheet).expect("still a sheet");
+        assert!(!upload.synced);
+        assert_eq!(upload.lines.len(), 1);
+
+        // A chorus repeated, as real sheets do, is still expanded.
+        let chorus = lines(
+            "[00:10.00][01:10.00][02:10.00]chorus\n[00:20.00]verse",
+            true,
+        );
+        assert_eq!(chorus.len(), 4);
+        assert_eq!(chorus[1].value, "verse");
     }
 }

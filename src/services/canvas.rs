@@ -623,12 +623,15 @@ impl DomainServices {
     ) -> Result<Option<CanvasBlob>, ServiceError> {
         // Membership in the track's library, re-read on this request as on
         // every other. A track id is guessed no worse than a hash, so the alias
-        // is no more an authorisation than the fingerprint is.
+        // is no more an authorisation than the fingerprint is. And of an
+        // account that is not disabled: a canvas ticket is sealed rather than
+        // looked up, so this read is what stops it (RFC-023 decision 4).
         let row = sqlx::query(
             "SELECT c.hash, c.format, c.byte_size FROM track_canvas tc \
              JOIN canvas c ON c.hash=tc.canvas_hash \
              JOIN library_member m ON m.library_id=tc.library_id \
-             WHERE tc.track_id=? AND m.user_id=?",
+             JOIN account a ON a.id=m.user_id \
+             WHERE tc.track_id=? AND m.user_id=? AND a.disabled=0",
         )
         .bind(track_id.to_string())
         .bind(user_id.to_string())
@@ -904,30 +907,31 @@ impl DomainServices {
         let silent = staging.with_extension("silent");
         let output = tokio::time::timeout(
             PROBE_TIMEOUT,
-            tokio::process::Command::new(&self.ffmpeg_path)
-                .arg("-hide_banner")
-                .arg("-loglevel")
-                .arg("error")
-                .arg("-y")
-                .arg("-fflags")
-                .arg("+bitexact")
-                .arg("-i")
-                .arg(staging)
-                .arg("-map")
-                .arg("0:v")
-                .arg("-c")
-                .arg("copy")
-                .arg("-an")
-                .arg("-map_metadata")
-                .arg("-1")
-                .arg("-fflags")
-                .arg("+bitexact")
-                .arg("-f")
-                .arg(format)
-                .arg(&silent)
-                .stdin(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .output(),
+            crate::media::file_input(
+                tokio::process::Command::new(&self.ffmpeg_path)
+                    .arg("-hide_banner")
+                    .arg("-loglevel")
+                    .arg("error")
+                    .arg("-y")
+                    .arg("-fflags")
+                    .arg("+bitexact"),
+                staging,
+            )
+            .arg("-map")
+            .arg("0:v")
+            .arg("-c")
+            .arg("copy")
+            .arg("-an")
+            .arg("-map_metadata")
+            .arg("-1")
+            .arg("-fflags")
+            .arg("+bitexact")
+            .arg("-f")
+            .arg(format)
+            .arg(&silent)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
         )
         .await
         .map_err(|_| {
@@ -964,17 +968,19 @@ impl DomainServices {
     async fn probe_canvas(&self, path: &std::path::Path) -> Result<Probed, ServiceError> {
         let output = tokio::time::timeout(
             PROBE_TIMEOUT,
-            tokio::process::Command::new(&self.ffprobe_path)
-                .arg("-v")
-                .arg("error")
-                .arg("-print_format")
-                .arg("json")
-                .arg("-show_format")
-                .arg("-show_streams")
-                .arg(path)
-                .stdin(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .output(),
+            crate::media::file_input(
+                tokio::process::Command::new(&self.ffprobe_path)
+                    .arg("-v")
+                    .arg("error")
+                    .arg("-print_format")
+                    .arg("json")
+                    .arg("-show_format")
+                    .arg("-show_streams"),
+                path,
+            )
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
         )
         .await
         .map_err(|_| {

@@ -205,21 +205,15 @@ pub async fn fetch_bounded(
     max_bytes: usize,
 ) -> Result<Vec<u8>, FetchError> {
     let within = async {
-        let mut response = open(url, policy).await?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err(FetchError::TooLarge);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| FetchError::Unreached)? {
-            if bytes.len() + chunk.len() > max_bytes {
-                return Err(FetchError::TooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
+        let response = open(url, policy).await?;
+        // The shared bounded read (RFC-023 decision 1): the same two checks,
+        // written once for every fetcher.
+        crate::outbound::read_bounded_body(response, max_bytes)
+            .await
+            .map_err(|error| match error {
+                crate::outbound::BodyError::TooLarge => FetchError::TooLarge,
+                crate::outbound::BodyError::Unread => FetchError::Unreached,
+            })
     };
     tokio::time::timeout(policy.timeout, within)
         .await

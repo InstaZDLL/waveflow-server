@@ -21,3 +21,6 @@
 # doesn't see noisy diffs against Windows contributors.
 Cargo.lock  text eol=lf
 bun.lock    text eol=lf
+
+# Vendored, pre-compressed assets (assets/scalar/): bytes, never text.
+*.gz        binary

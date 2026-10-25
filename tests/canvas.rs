@@ -1408,3 +1408,82 @@ async fn the_library_list_says_whether_a_library_takes_canvases() {
         .unwrap();
     assert_eq!(listed().await[0]["accepts_canvas"], false);
 }
+
+/// RFC-023 decision 4: a canvas ticket minted before its account was disabled
+/// stops opening the canvas, as an audio ticket stops playing. The ticket is
+/// sealed rather than looked up, so the redemption's own read is what asks.
+#[tokio::test]
+async fn a_disabled_account_s_canvas_ticket_opens_nothing() {
+    let (temp, config, state) = canvas_app(|_| {}).await;
+    let (owner, _token) = admin_with_api_token(&state, "canvas-disabled").await;
+    let music = config.data_dir.join("canvas-disabled");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Looped.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "canvas-disabled",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library,
+            name: "canvas-disabled".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    state
+        .db
+        .set_library_accepts_canvas(owner, library, true, now_ms())
+        .await
+        .unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+    state
+        .services
+        .place_canvas(
+            owner,
+            track,
+            &canvas_bytes(temp.path(), "loop.mp4", "1", "black"),
+            None,
+        )
+        .await
+        .unwrap();
+    let ticket = waveflow_server::stream_ticket::mint(
+        &state.secret_box,
+        waveflow_server::stream_ticket::TicketKind::Canvas,
+        owner,
+        track,
+        now_ms() + 60_000,
+    )
+    .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let open = || {
+        let router = router.clone();
+        let ticket = ticket.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(format!("/api/v2/canvas-stream/{ticket}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(open().await, StatusCode::OK);
+    set_disabled(&state, owner, true).await;
+    assert_eq!(open().await, StatusCode::NOT_FOUND);
+    set_disabled(&state, owner, false).await;
+    assert_eq!(open().await, StatusCode::OK);
+}

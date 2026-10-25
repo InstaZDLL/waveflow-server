@@ -519,3 +519,47 @@ pub fn song_ids(songs: &serde_json::Value) -> Vec<String> {
         .map(|song| song["id"].as_str().expect("a song id").to_owned())
         .collect()
 }
+
+/// An administrator inserted as a row, and an API token that reaches every
+/// route as it.
+///
+/// No password exists anywhere: the row's hash verifies nothing, and the
+/// token is minted by the server itself. A test that needs an account behind
+/// HTTP but is not about signing in needs nothing more.
+pub async fn admin_with_api_token(
+    state: &waveflow_server::AppState,
+    username: &str,
+) -> (uuid::Uuid, String) {
+    let id = uuid::Uuid::new_v4();
+    let now = waveflow_server::authentication::now_ms();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(username)
+    .bind(now)
+    .bind(now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let (_record, secret) = state
+        .services
+        .create_api_token(id, &[], username, "test fixture", &[])
+        .await
+        .unwrap();
+    (id, secret)
+}
+
+/// Disables or re-enables an account, as the admin route does, without one.
+///
+/// A single statement with nothing else running, so the writer gate the
+/// server's own mutations take has nothing to order it against.
+pub async fn set_disabled(state: &waveflow_server::AppState, account: uuid::Uuid, disabled: bool) {
+    sqlx::query("UPDATE account SET disabled=? WHERE id=?")
+        .bind(i64::from(disabled))
+        .bind(account.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+}

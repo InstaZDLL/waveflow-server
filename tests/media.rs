@@ -1407,3 +1407,124 @@ async fn a_share_stops_opening_at_its_visit_cap_and_its_last_visit_still_plays()
         StatusCode::NOT_FOUND
     );
 }
+
+/// RFC-023 decision 4: a disabled account plays nothing it handed out — not a
+/// stream ticket it minted, and not a share it created, by its page, its JSON
+/// or its stream.
+///
+/// The bearer routes already refused a disabled account; these did not. A
+/// ticket is sealed rather than looked up and lives an hour, and a share is
+/// opened by nobody at all, so the account was never asked. Each now answers
+/// 404, exactly as for a ticket or a share that does not exist, and opening the
+/// share counts no visit. Re-enabling the account at the end proves the cause.
+#[tokio::test]
+async fn a_disabled_account_plays_nothing_it_handed_out() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_token) = admin_with_api_token(&state, "disabled-sharer").await;
+    let music = config.data_dir.join("disabled-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Handed.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Handed out",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Handed out".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track: String = sqlx::query_scalar("SELECT id FROM track WHERE library_id=?")
+        .bind(library_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    let track_id: uuid::Uuid = track.parse().unwrap();
+    let share = state
+        .services
+        .create_share(owner, &[track_id], Some("Handed out"), None)
+        .await
+        .unwrap();
+    let share_url = format!("/share/{}", share.url_token.clone().unwrap());
+    let router = waveflow_server::app(&config, state.clone());
+    let get = |uri: String, accept: Option<&'static str>| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::get(uri);
+            if let Some(accept) = accept {
+                request = request.header("accept", accept);
+            }
+            router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let navigation = Some("text/html,application/xhtml+xml,*/*;q=0.8");
+    let visits = || async { state.services.shares(owner).await.unwrap()[0].visit_count };
+
+    // Before: the ticket plays, and the share opens and plays.
+    let minted = send_json(
+        &router,
+        "POST",
+        &format!("/api/v2/tracks/{track_id}/stream-ticket"),
+        &api_token,
+        None,
+    )
+    .await;
+    assert_eq!(minted.status(), StatusCode::OK);
+    let ticket_url = json_body(minted).await["url"].as_str().unwrap().to_owned();
+    assert_eq!(get(ticket_url.clone(), None).await.status(), StatusCode::OK);
+    assert_eq!(
+        get(share_url.clone(), navigation).await.status(),
+        StatusCode::OK
+    );
+    let opened = get(share_url.clone(), None).await;
+    assert_eq!(opened.status(), StatusCode::OK);
+    let stream_url = json_body(opened).await["tracks"][0]["streamUrl"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(get(stream_url.clone(), None).await.status(), StatusCode::OK);
+    assert_eq!(visits().await, 1);
+
+    set_disabled(&state, owner, true).await;
+    assert_eq!(
+        get(ticket_url.clone(), None).await.status(),
+        StatusCode::NOT_FOUND,
+        "a ticket minted before the account was disabled must stop playing"
+    );
+    assert_eq!(
+        get(share_url.clone(), navigation).await.status(),
+        StatusCode::NOT_FOUND,
+        "the share page"
+    );
+    assert_eq!(
+        get(share_url.clone(), None).await.status(),
+        StatusCode::NOT_FOUND,
+        "the share document"
+    );
+    assert_eq!(
+        get(stream_url.clone(), None).await.status(),
+        StatusCode::NOT_FOUND,
+        "a pass handed out before the account was disabled"
+    );
+    assert_eq!(visits().await, 1, "a refused opening is not a visit");
+
+    set_disabled(&state, owner, false).await;
+    assert_eq!(get(ticket_url, None).await.status(), StatusCode::OK);
+    assert_eq!(get(share_url, None).await.status(), StatusCode::OK);
+    assert_eq!(get(stream_url, None).await.status(), StatusCode::OK);
+}
