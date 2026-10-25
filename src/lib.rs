@@ -17,6 +17,7 @@ pub mod outbound;
 pub mod pid;
 pub mod playlist_file;
 pub mod portrait;
+pub mod public_share;
 pub mod quality;
 pub mod scanner;
 pub mod scrobblers;
@@ -910,6 +911,7 @@ pub fn app(config: &Config, state: AppState) -> Router {
         // Media bodies can outlive the ordinary API timeout. FFmpeg and
         // disconnected consumers are bounded by MediaService itself.
         .merge(media::router(state.clone()))
+        .merge(public_share::router(state.clone(), config.request_timeout))
         .merge(subsonic::router(state))
         .layer(DefaultBodyLimit::max(16 * 1024));
 

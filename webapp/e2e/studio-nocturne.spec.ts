@@ -316,6 +316,8 @@ let stations: Array<{
 const playlists = [
   {
     id: "playlist-1",
+    owner_id: "user-1",
+    owner_username: "listener",
     name: "Evening",
     comment: null,
     public: false,
@@ -2105,7 +2107,9 @@ test("saves a playlist as an .m3u8 the next player can read", async ({
 test("shows the same track twice in a playlist, each with its rating", async ({
   page,
 }) => {
-  await page.route("**/api/v2/playlists", (route) =>
+  // `?*`: the page asks for the public playlists of other accounts too
+  // (RFC-020), and a pattern without it matches no address with a query.
+  await page.route("**/api/v2/playlists?*", (route) =>
     route.fulfill({
       json: [
         {
@@ -2130,6 +2134,114 @@ test("shows the same track twice in a playlist, each with its rating", async ({
   await expect(
     copies.last().getByRole("radio", { name: "5 stars" }),
   ).toBeChecked();
+});
+
+/**
+ * Another account's public playlist is listed apart from this account's own,
+ * under its owner's name, and offers nothing that would change it: the server
+ * answers anyone but the owner 404 (RFC-020 decision 2).
+ */
+test("lists another account's public playlist apart, and read-only", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/playlists?*", (route) =>
+    route.fulfill({
+      json: [
+        playlists[0],
+        {
+          ...playlists[0],
+          id: "playlist-2",
+          owner_id: "user-2",
+          owner_username: "guest",
+          name: "Guest picks",
+          public: true,
+        },
+      ],
+    }),
+  );
+  await page.goto("/playlists");
+  const others = page.getByRole("region", { name: "From other accounts" });
+  await expect(others.getByRole("heading", { name: "Guest picks" })).toBeVisible();
+  await expect(others.getByText("By guest")).toBeVisible();
+  await expect(others.getByRole("button", { name: "Delete" })).toHaveCount(0);
+  await expect(others.getByRole("checkbox")).toHaveCount(0);
+  // The account's own keeps every control, the publishing switch included.
+  await expect(
+    page.getByRole("checkbox", { name: "Visible to every account" }),
+  ).toHaveCount(1);
+});
+
+/**
+ * A share link opens a player for somebody with no account (RFC-020
+ * decision 3). The server hands a browser this page; the page asks the same
+ * address for the share, and plays from the addresses it is given.
+ */
+test("a share link opens a player that plays what the share hands out", async ({
+  page,
+}) => {
+  const shareAsks: Array<string | null> = [];
+  await page.route("**/share/wfs_e2e", async (route) => {
+    // The navigation itself is the page, which `vite preview` serves.
+    if (route.request().resourceType() === "document") {
+      await route.fallback();
+      return;
+    }
+    shareAsks.push(await route.request().headerValue("authorization"));
+    await route.fulfill({
+      json: {
+        id: "share-1",
+        description: "For the drive",
+        expiresAt: null,
+        visitCount: 1,
+        tracks: [
+          {
+            ...song(1, "Hidden Place", 5, true),
+            streamUrl: "/share/wfs_e2e/tracks/song-1/stream?visit=pass-1",
+          },
+          {
+            ...song(1, "Hidden Place", 5, true),
+            streamUrl: "/share/wfs_e2e/tracks/song-1/stream?visit=pass-2",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/share/wfs_e2e/tracks/**", (route) =>
+    route.fulfill({ status: 204, body: "" }),
+  );
+  await page.goto("/share/wfs_e2e");
+  await expect(
+    page.getByRole("heading", { name: "For the drive" }),
+  ).toBeVisible();
+  // No rail and no sign-in: the visitor has neither.
+  await expect(page.getByRole("navigation")).toHaveCount(0);
+  // Named by what the row shows, which axe holds a label to.
+  const plays = page.getByRole("button", { name: /^Hidden Place/ });
+  await expect(plays).toHaveCount(2);
+  await plays.last().click();
+  await expect(page.getByLabel("Player")).toHaveAttribute(
+    "src",
+    /\/share\/wfs_e2e\/tracks\/song-1\/stream\?visit=pass-2/,
+  );
+  // Asked once, and without the session a signed-in visitor holds: the share
+  // route reads none, and every ask is a visit.
+  expect(shareAsks).toEqual([null]);
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test("a share link that opens nothing says so", async ({ page }) => {
+  await page.route("**/share/wfs_gone", async (route) => {
+    if (route.request().resourceType() === "document") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ status: 404, body: "" });
+  });
+  await page.goto("/share/wfs_gone");
+  await expect(
+    page.getByRole("heading", { name: "This link opens nothing" }),
+  ).toBeVisible();
 });
 
 /**

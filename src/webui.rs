@@ -78,13 +78,12 @@ pub async fn handler(uri: Uri) -> Response {
 fn policy() -> &'static HeaderValue {
     static POLICY: OnceLock<HeaderValue> = OnceLock::new();
     POLICY.get_or_init(|| {
-        let shell = Assets::get(INDEX)
-            .map(|file| String::from_utf8_lossy(&file.data).into_owned())
-            .unwrap_or_default();
-        HeaderValue::from_str(&crate::security_headers::web_client_policy(&shell))
-            // A digest is base64 and every directive is ASCII, so this cannot
-            // fail; if it ever did, the strictest policy is the safe answer.
-            .unwrap_or(HeaderValue::from_static("default-src 'none'"))
+        HeaderValue::from_str(&crate::security_headers::web_client_policy(
+            &embedded_shell(),
+        ))
+        // A digest is base64 and every directive is ASCII, so this cannot
+        // fail; if it ever did, the strictest policy is the safe answer.
+        .unwrap_or(HeaderValue::from_static("default-src 'none'"))
     })
 }
 
@@ -106,7 +105,42 @@ fn respond(path: &str) -> Response {
     if asset_only {
         return not_found();
     }
+    shell()
+}
+
+/// The client's shell, for a route the client renders.
+fn shell() -> Response {
     asset(INDEX).unwrap_or_else(missing_client)
+}
+
+/// The shell as `/share/{token}` hands it to a browser (RFC-020 decision 3).
+///
+/// `share/` stays reserved above, so nothing under it falls through to the
+/// client by accident, and the one address that does is chosen by its own
+/// route. It carries the client's policy, which the shell's inline blocks need
+/// to run, with framing refused as on every share response
+/// ([`crate::security_headers::share_page_policy`]); the share route's own
+/// layer adds the rest of the share headers.
+pub fn share_page() -> Response {
+    static POLICY: OnceLock<HeaderValue> = OnceLock::new();
+    let policy = POLICY.get_or_init(|| {
+        HeaderValue::from_str(&crate::security_headers::share_page_policy(
+            &embedded_shell(),
+        ))
+        .unwrap_or(HeaderValue::from_static("default-src 'none'"))
+    });
+    let mut response = shell();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, policy.clone());
+    response
+}
+
+/// The shell this binary embeds, as text, for the digests of its inline blocks.
+fn embedded_shell() -> String {
+    Assets::get(INDEX)
+        .map(|file| String::from_utf8_lossy(&file.data).into_owned())
+        .unwrap_or_default()
 }
 
 fn asset(path: &str) -> Option<Response> {

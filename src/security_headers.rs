@@ -40,6 +40,18 @@ use sha2::{Digest, Sha256};
 /// - **no plugins, no `<base>`, forms posted only here, and framed only by
 ///   this origin**.
 pub fn web_client_policy(html: &str) -> String {
+    client_policy(html, "'self'")
+}
+
+/// The policy of the share page (RFC-020 decision 3): the web client's, since
+/// it is the web client that renders a share, but **framed by nobody**, as
+/// every other share response is. A share's token is its address, and a page
+/// that could be framed could be dressed up by whoever framed it.
+pub fn share_page_policy(html: &str) -> String {
+    client_policy(html, "'none'")
+}
+
+fn client_policy(html: &str, frame_ancestors: &str) -> String {
     let scripts = inline_digests(html, "script");
     let styles = inline_digests(html, "style");
     format!(
@@ -54,7 +66,7 @@ pub fn web_client_policy(html: &str) -> String {
          object-src 'none'; \
          base-uri 'none'; \
          form-action 'self'; \
-         frame-ancestors 'self'"
+         frame-ancestors {frame_ancestors}"
     )
 }
 
@@ -86,15 +98,20 @@ pub fn apply_web_client(headers: &mut HeaderMap, policy: &HeaderValue) {
 
 /// The headers a public share response carries.
 ///
-/// A share is JSON and audio, never a page, so it is framed by nobody and its
-/// policy names framing only: a `default-src` here would stop a browser from
-/// playing the stream it was opened on.
+/// The JSON and the audio are framed by nobody, and their policy names framing
+/// only: a `default-src` there would stop a browser from playing the stream it
+/// was opened on. **The page is the one exception** (RFC-020 decision 3): it
+/// is the web client, and runs only under the client's own policy, so a
+/// response that already carries one — [`share_page_policy`], which frames by
+/// nobody too — keeps it. Every other header is the same on all three.
 pub async fn share(mut response: Response) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("frame-ancestors 'none'"),
-    );
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'none'"),
+        );
+    }
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -183,5 +200,37 @@ mod tests {
         assert!(policy.contains("script-src 'self';"), "{policy}");
         assert!(policy.contains("style-src 'self';"), "{policy}");
         assert!(policy.ends_with("frame-ancestors 'self'"), "{policy}");
+    }
+
+    /// The share page runs the client under the client's own policy, and is
+    /// framed by nobody (RFC-020 decision 3).
+    #[test]
+    fn the_share_page_is_the_client_policy_framed_by_nobody() {
+        let html = "<html><head><style>p{}</style></head></html>";
+        let page = share_page_policy(html);
+        assert_eq!(
+            page,
+            web_client_policy(html).replace("frame-ancestors 'self'", "frame-ancestors 'none'")
+        );
+    }
+
+    /// The share layer keeps the page's policy and gives every other share
+    /// response the framing-only one.
+    #[tokio::test]
+    async fn the_share_layer_keeps_the_page_policy_and_sets_the_rest() {
+        let page_policy = HeaderValue::from_static("default-src 'self'; frame-ancestors 'none'");
+        let mut page = Response::new(axum::body::Body::empty());
+        page.headers_mut()
+            .insert(header::CONTENT_SECURITY_POLICY, page_policy.clone());
+        let page = share(page).await;
+        assert_eq!(page.headers()[header::CONTENT_SECURITY_POLICY], page_policy);
+        assert_eq!(page.headers()[header::REFERRER_POLICY], "no-referrer");
+
+        let document = share(Response::new(axum::body::Body::empty())).await;
+        assert_eq!(
+            document.headers()[header::CONTENT_SECURITY_POLICY],
+            "frame-ancestors 'none'"
+        );
+        assert_eq!(document.headers()[header::X_FRAME_OPTIONS], "DENY");
     }
 }

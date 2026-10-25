@@ -897,7 +897,294 @@ async fn internet_radio_stations_are_kept_per_account_and_handed_out_never_fetch
     assert_eq!(state.services.radio_stations(owner).await.unwrap().len(), 1);
 }
 
-/// A playlist as long as the domain allows fits in one form POST, and the body
+// An account with a Subsonic API key drawn at run time, so no credential is
+/// ever written into the source.
+async fn subsonic_account(state: &waveflow_server::AppState, username: &str) -> (Uuid, String) {
+    let hash = security::hash_password(&Uuid::new_v4().to_string()).unwrap();
+    let account = state
+        .db
+        .create_account(username, &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4().simple());
+    state
+        .db
+        .set_subsonic_credential(
+            account,
+            account,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    (account, api_key)
+}
+
+fn entry_ids(playlist: &serde_json::Value) -> Vec<String> {
+    playlist["entry"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `createPlaylist` and `updatePlaylist` take a track more than once, and
+/// `songIndexToRemove` names a position in the list the client was shown
+/// (RFC-020 decision 1).
+///
+/// The second half is what makes the first usable. With duplicates, a
+/// position is the only way to say which copy goes — and the positions a
+/// client sees skip every track it can no longer read, while the stored list
+/// still holds them. Applying the index to the stored list removed the wrong
+/// entry, and the one the listener pointed at stayed.
+#[tokio::test]
+async fn subsonic_playlists_take_duplicates_and_remove_by_the_position_shown() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_key) = subsonic_account(&state, "dup-subsonic").await;
+    let titles = ["Gone Soon", "Again", "Beside"];
+    let (library, ids) = seed_titles(&state, &config, owner, "dup-sub", 4_000, &titles).await;
+    let (gone, a, b) = (ids[0], ids[1], ids[2]);
+    let router = waveflow_server::app(&config, state.clone());
+
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!("&name=Twice&songId={a}&songId={a}"),
+    )
+    .await;
+    let created = &created["subsonic-response"]["playlist"];
+    assert_eq!(created["songCount"], 2, "{created}");
+    let id = created["id"].as_str().unwrap().to_owned();
+
+    let updated = subsonic_json(
+        &router,
+        "updatePlaylist",
+        &api_key,
+        &format!("&playlistId={id}&songIdToAdd={b}&songIdToAdd={a}"),
+    )
+    .await;
+    assert_eq!(updated["subsonic-response"]["status"], "ok", "{updated}");
+    let read = subsonic_json(&router, "getPlaylist", &api_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&read["subsonic-response"]["playlist"]),
+        vec![a.to_string(), a.to_string(), b.to_string(), a.to_string()]
+    );
+
+    subsonic_json(
+        &router,
+        "updatePlaylist",
+        &api_key,
+        &format!("&playlistId={id}&songIndexToRemove=1"),
+    )
+    .await;
+    let read = subsonic_json(&router, "getPlaylist", &api_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&read["subsonic-response"]["playlist"]),
+        vec![a.to_string(), b.to_string(), a.to_string()]
+    );
+
+    // A playlist whose first track then goes missing from disk: the client
+    // is shown two entries and removes the first of those.
+    let hidden_first = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!("&name=Hidden%20first&songId={gone}&songId={a}&songId={b}"),
+    )
+    .await;
+    let hidden_first = hidden_first["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rescan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(rescan, 2, false).await.unwrap();
+    // The rescan sees the other two files and not the first.
+    for track in [a, b] {
+        state.db.mark_track_seen(track, rescan).await.unwrap();
+    }
+    assert_eq!(
+        state
+            .db
+            .mark_unseen_unavailable(library, rescan)
+            .await
+            .unwrap(),
+        1
+    );
+    state.db.finish_scan_job(rescan, 0).await.unwrap();
+    let shown = subsonic_json(
+        &router,
+        "getPlaylist",
+        &api_key,
+        &format!("&id={hidden_first}"),
+    )
+    .await;
+    assert_eq!(
+        entry_ids(&shown["subsonic-response"]["playlist"]),
+        vec![a.to_string(), b.to_string()]
+    );
+    subsonic_json(
+        &router,
+        "updatePlaylist",
+        &api_key,
+        &format!("&playlistId={hidden_first}&songIndexToRemove=0"),
+    )
+    .await;
+    let shown = subsonic_json(
+        &router,
+        "getPlaylist",
+        &api_key,
+        &format!("&id={hidden_first}"),
+    )
+    .await;
+    assert_eq!(
+        entry_ids(&shown["subsonic-response"]["playlist"]),
+        vec![b.to_string()],
+        "the entry the client pointed at is the one that goes"
+    );
+    // And the track it could not see is still held, for when it comes back.
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM playlist_track WHERE playlist_id=? ORDER BY position",
+    )
+    .bind(&hidden_first)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, vec![gone.to_string(), b.to_string()]);
+}
+
+/// `getPlaylists` and `getPlaylist` answer the public playlists of other
+/// accounts, with `owner` and `public` saying whose they are, and every write
+/// to one answers error 70 for anyone but its owner (RFC-020 decision 2).
+#[tokio::test]
+async fn subsonic_lists_public_playlists_of_other_accounts_under_their_owner() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, owner_key) = subsonic_account(&state, "pub-owner").await;
+    let (viewer, viewer_key) = subsonic_account(&state, "pub-viewer").await;
+    let (shared, open) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "pub-shared",
+        4_100,
+        &["Heard One", "Heard Two"],
+    )
+    .await;
+    let (_private, kept) =
+        seed_titles(&state, &config, owner, "pub-private", 4_200, &["Unheard"]).await;
+    state
+        .db
+        .add_library_member(owner, shared, viewer, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &owner_key,
+        &format!(
+            "&name=Open&songId={}&songId={}&songId={}",
+            open[0], kept[0], open[1]
+        ),
+    )
+    .await;
+    let id = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let listed = subsonic_json(&router, "getPlaylists", &viewer_key, "").await;
+    assert!(
+        listed["subsonic-response"]["playlists"]["playlist"]
+            .as_array()
+            .is_none_or(|playlists| playlists.is_empty()),
+        "a private playlist is not listed to another account: {listed}"
+    );
+
+    subsonic_json(
+        &router,
+        "updatePlaylist",
+        &owner_key,
+        &format!("&playlistId={id}&public=true"),
+    )
+    .await;
+
+    let listed = subsonic_json(&router, "getPlaylists", &viewer_key, "").await;
+    let listed = listed["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["id"], id.as_str());
+    assert_eq!(listed[0]["owner"], "pub-owner");
+    assert_eq!(listed[0]["public"], true);
+    // Counted over what the viewer can play, and nothing else.
+    assert_eq!(listed[0]["songCount"], 2);
+    assert_eq!(listed[0]["duration"], 240);
+
+    let read = subsonic_json(&router, "getPlaylist", &viewer_key, &format!("&id={id}")).await;
+    let read = &read["subsonic-response"]["playlist"];
+    assert_eq!(read["owner"], "pub-owner");
+    assert_eq!(
+        entry_ids(read),
+        vec![open[0].to_string(), open[1].to_string()]
+    );
+    assert!(!read.to_string().contains(&kept[0].to_string()));
+
+    // The owner's own list says the playlist is theirs.
+    let own = subsonic_json(&router, "getPlaylists", &owner_key, "").await;
+    assert_eq!(
+        own["subsonic-response"]["playlists"]["playlist"][0]["owner"],
+        "pub-owner"
+    );
+
+    for (method, extra) in [
+        ("updatePlaylist", format!("&playlistId={id}&name=Taken")),
+        (
+            "updatePlaylist",
+            format!("&playlistId={id}&songIdToAdd={}", open[0]),
+        ),
+        (
+            "createPlaylist",
+            format!("&playlistId={id}&songId={}", open[0]),
+        ),
+        ("deletePlaylist", format!("&id={id}")),
+    ] {
+        let refused = subsonic_json(&router, method, &viewer_key, &extra).await;
+        assert_eq!(
+            refused["subsonic-response"]["error"]["code"], 70,
+            "{method} by a non-owner: {refused}"
+        );
+    }
+    let intact = subsonic_json(&router, "getPlaylist", &owner_key, &format!("&id={id}")).await;
+    let intact = &intact["subsonic-response"]["playlist"];
+    assert_eq!(intact["name"], "Open");
+    assert_eq!(intact["songCount"], 3);
+
+    subsonic_json(
+        &router,
+        "updatePlaylist",
+        &owner_key,
+        &format!("&playlistId={id}&public=false"),
+    )
+    .await;
+    let withdrawn = subsonic_json(&router, "getPlaylist", &viewer_key, &format!("&id={id}")).await;
+    assert_eq!(withdrawn["subsonic-response"]["error"]["code"], 70);
+}
+
+// A playlist as long as the domain allows fits in one form POST, and the body
 /// is still bounded (RFC-022 decision 7).
 ///
 /// `formPost` exists for requests too long for a URL, and the longest one a

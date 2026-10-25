@@ -761,8 +761,25 @@ Playlist updates remove zero-based positions first, then append `add`:
 ```
 
 Omitting an optional field leaves it unchanged. To erase a playlist comment,
-name `comment` in `clear`. Shares use the same rule for `description` and
-`expires_at`.
+name `comment` in `clear`. Shares use the same rule for `description`,
+`expires_at` and `max_visits`.
+
+A playlist holds a track as many times as it is given, in one request or
+across several ([RFC-020](rfcs/RFC-020-playlists-and-shares.md) decision 1), so
+a position is the only way to say which copy goes. **A position in
+`remove_indexes` is a position in the list the playlist answers**, which leaves
+out the tracks the account cannot currently read — a file gone from disk, a
+library it left. Those entries are kept, and come back with the track.
+
+**Public playlists.** `"public": true` makes a playlist readable by every other
+account (decision 2). Another account reads it **through its own libraries**: a
+track in a library it is not a member of is not listed, and nothing in the
+answer names it. Only the owner may change or delete it; anyone else is answered
+`404`, as for a playlist that does not exist. Every playlist carries `owner_id`
+and `owner_username`. `GET /api/v2/playlists` lists the caller's own;
+`GET /api/v2/playlists?include_public=true` adds everyone else's public ones
+after them. `GET /api/v2/playlists/{id}` and its export answer a public playlist
+to any account.
 
 ### Playlists from another player
 
@@ -818,7 +835,7 @@ back with its line in the file, its text as written and one of four reasons:
 | `no-match` | No path and no credit in this catalogue matched. A track in a library the account cannot see answers this too — identically to one that does not exist. |
 | `ambiguous` | Several tracks matched and nothing in the entry chooses between them. |
 | `not-a-path` | The target is not a path into a library — a web radio, most often. |
-| `duplicate` | It resolved to a track the playlist already holds; a playlist carries a track once. |
+| `duplicate` | No longer produced: a file naming a track twice is imported with both copies (RFC-020). Listed because it stays in the schema. |
 
 `dry_run=true` answers the same report and creates nothing, which is what lets
 a client show the losses before they happen: it answers `200` with
@@ -869,12 +886,28 @@ Other user-data routes:
 | Ratings | `GET /api/v2/ratings`, `PUT /api/v2/ratings/{track|album|artist}/{id}` with `rating` 0–5 |
 | Playback activity | `POST /api/v2/scrobbles`, `GET /api/v2/history`, `GET /api/v2/now-playing` |
 | Queue | `GET/PUT /api/v2/queue` (`track_ids` allows repeated tracks; maximum 400) |
-| Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks) |
+| Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks, repeats allowed; optional `max_visits` ≥ 1) |
 
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
 idempotent replay. Later list, snapshot and update responses omit it because
 only its hash is stored. Preserve the first response if the URL must be shown
 again. Public access uses `GET /share/{token}` and needs no account credential.
+
+What `/share/{token}` answers depends on who asks
+([RFC-020](rfcs/RFC-020-playlists-and-shares.md)):
+
+- **A browser** — a request whose `Accept` names `text/html` — is handed the web
+  client, which plays the share. That costs no visit, so a link preview never
+  spends one.
+- **Anyone else** gets the JSON document: `id`, `description`, `expiresAt`,
+  `visitCount` and `tracks`. **That request is the visit**, counted once. A
+  share that has expired, been deleted or reached its `max_visits` answers
+  `404`.
+- Each track's `streamUrl` carries a `visit` pass valid for twelve hours. Use
+  it as given: a stream address without it answers `404`. Streaming counts no
+  visit, and stops at once if the share is deleted or expires. The stream
+  takes `format=mp3` for MP3 at 192 kbit/s and otherwise serves the original;
+  any other parameter answers `400`.
 
 ## Synchronization
 

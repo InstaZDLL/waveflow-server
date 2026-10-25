@@ -78,6 +78,23 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > what Subsonic and Airsonic answer, so a client that could not read it would
 > already fail against them — but "in principle" is what a campaign is for.
 >
+> **And playlists changed in two observable ways with
+> [RFC-020](rfcs/RFC-020-playlists-and-shares.md).** Every row below predates
+> both. First, **a playlist may hold a track more than once**: DSub's cycle
+> above records two additions "without duplicates" because none were sent, and
+> a client that sends one is now given it, where it was answered a database
+> failure. Second, **`getPlaylists` lists every other account's public
+> playlists** after the caller's own, each under its real `owner`, with its
+> tracks read through the caller's libraries; `getPlaylist` answers one, and
+> every write to one answers error 70 to anyone but its owner. Until then the
+> `public` flag this façade accepted had no effect at all. **To check in the
+> next campaign**: that Feishin, which reads `owner` to decide what it may
+> edit, offers no edit on someone else's playlist, and that a client which
+> caches playlists by id copes with one it may read and not write. The share
+> link handed out by `createShare` now opens a player in a browser, and its
+> stream addresses carry a visit pass — neither is a `/rest` answer, and
+> `getShares` is unchanged.
+>
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names
 > its sender. Each run is bounded by a burst in the request rate, corroborated

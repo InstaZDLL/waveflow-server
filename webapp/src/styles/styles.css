@@ -558,6 +558,68 @@ h3 {
   line-height: 1;
 }
 
+/* What a share link opens (RFC-020): one column, no shell around it. */
+.share-page {
+  display: grid;
+  width: min(100%, 44rem);
+  gap: var(--space-6);
+  margin: 0 auto;
+  padding: clamp(var(--space-6), 6vw, var(--space-16)) var(--space-4);
+}
+
+.share-header h1 {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: clamp(var(--text-2xl), 6vw, var(--text-5xl));
+  line-height: 1;
+}
+
+.share-audio {
+  width: 100%;
+}
+
+.share-tracks {
+  display: grid;
+  gap: var(--space-1);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.share-tracks button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+
+.share-tracks li[aria-current="true"] button {
+  border-color: var(--accent);
+}
+
+.share-track-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-track-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .account-chip {
   display: flex;
   align-items: center;

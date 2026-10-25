@@ -233,7 +233,7 @@ with Subsonic error code `0`, like every other protocol failure.
 | Album information | `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the release identifier when the album has one; notes are not enriched. |
 | Album discovery | `getAlbumList`, `getAlbumList2`, `getRandomSongs`, `getSongsByGenre` | Both legacy and ID3 album-list containers are supported. |
 | Search | `search3`, `search2` | Independent artist, album and song pagination. `search2` is the same payload in the `searchResult2` container. |
-| Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. |
+| Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. A playlist may hold a track more than once. `getPlaylists` lists the caller's playlists, then every other account's public ones under their real `owner`, read through the caller's libraries; only the owner may change one (RFC-020). |
 | Media | `stream`, `download`, `getCoverArt` | Tenant-authorized streaming and artwork. |
 | Lyrics | `getLyrics`, `getLyricsBySongId` | OpenSubsonic `songLyrics` v1 plus legacy lookup. |
 | Favorites and ratings | `star`, `unstar`, `getStarred2`, `getStarred`, `setRating` | Track, album and artist IDs are tenant scoped. `getStarred` is the same payload in the `starred` container. |
@@ -407,7 +407,9 @@ types are ordered and paged in SQL; the same vocabulary is available natively as
 Repeated parameters such as `songId`, `songIdToAdd`, `songIndexToRemove`,
 `musicFolderId`, scrobble `id`/`time`, queue `id` and share IDs retain wire
 order. Playlist removals are applied from the highest index downward before
-additions.
+additions. A `songIndexToRemove` is a position in the list `getPlaylist`
+answers, which leaves out the tracks the account cannot currently read; those
+entries are kept rather than shifting the index onto a neighbour.
 
 ## Advertised OpenSubsonic extensions
 
@@ -466,3 +468,12 @@ native `/api/v2` caller that supplied an operation ID can recover the same URL
 by replaying the identical creation operation, but the Subsonic method has no
 operation-ID parameter. The public metadata payload contains token-scoped
 stream URLs and cannot stream tracks outside the share.
+
+The URL is meant to be opened in a browser: a request that asks for HTML is
+handed the web client, which plays the share, and every other caller keeps the
+JSON document. Opening the document counts one visit; streaming counts none.
+Each `streamUrl` carries the visit's pass and must be used as given, and offers
+the original or, with `format=mp3`, a fixed 192 kbit/s MP3 — nothing else. A
+visit cap can be set from the native API and the web client; `createShare` and
+`updateShare` have no parameter for one. See
+[RFC-020](rfcs/RFC-020-playlists-and-shares.md).

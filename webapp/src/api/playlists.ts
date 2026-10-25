@@ -3,6 +3,13 @@ import { call, request } from "./client";
 
 export type Playlist = {
   id: string;
+  /**
+   * Whose playlist it is. Another account's public playlist is listed beside
+   * this account's own (RFC-020), and only its owner may change it: the
+   * server answers anyone else 404.
+   */
+  owner_id: string;
+  owner_username: string;
   name: string;
   comment: string | null;
   public: boolean;
@@ -40,10 +47,28 @@ export type UnresolvedEntry = {
   line: number;
   entry: string;
   title: string | null;
+  /**
+   * `duplicate` is no longer produced: a file naming a track twice is
+   * imported with both copies. It stays here because the schema keeps it.
+   */
   reason: "no-match" | "ambiguous" | "not-a-path" | "duplicate";
 };
 
 export const listPlaylists = () => call<Playlist[]>("/api/v2/playlists");
+
+/**
+ * This account's playlists, then every other account's public ones, each with
+ * its tracks read through this account's libraries.
+ */
+export const listVisiblePlaylists = () =>
+  call<Playlist[]>("/api/v2/playlists?include_public=true");
+
+/** Publishes a playlist to every account on the server, or withdraws it. */
+export const setPlaylistPublic = (id: string, isPublic: boolean) =>
+  call<Playlist>(`/api/v2/playlists/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ public: isPublic }),
+  });
 
 export const createPlaylist = (name: string, trackIds: string[] = []) =>
   call<Playlist>("/api/v2/playlists", {
