@@ -123,7 +123,7 @@ impl DomainServices {
         cutoff: i64,
     ) -> Result<(u64, usize), ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
 
         // What is eligible, measured before it is gone. `changes()` after the
         // delete would give the count and not the highest cursor, and reading
@@ -228,7 +228,7 @@ impl DomainServices {
             return Ok(false);
         }
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
 
         // A cursor beyond what the feed has written would let a client mark
         // itself caught up with events that do not exist yet, and then be

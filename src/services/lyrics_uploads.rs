@@ -157,7 +157,7 @@ impl DomainServices {
         let parsed = lyrics::parse_upload(format, &content).ok_or(ServiceError::Invalid)?;
         {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             let library_id = self
                 .lyrics_writer_library(&mut tx, user_id, track_id)
                 .await?;
@@ -192,7 +192,7 @@ impl DomainServices {
         format: UploadFormat,
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         self.lyrics_writer_library(&mut tx, user_id, track_id)
             .await?;
         let removed = sqlx::query("DELETE FROM track_lyrics_upload WHERE track_id=? AND format=?")

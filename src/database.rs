@@ -342,7 +342,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<Option<Uuid>, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let id = Uuid::new_v4();
         let inserted = sqlx::query(
             "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
@@ -547,7 +547,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         sqlx::query(
             "INSERT INTO instance_metadata (singleton, key_fingerprint, created_at) \
              VALUES (1, ?, ?) ON CONFLICT (singleton) DO NOTHING",
@@ -929,6 +929,28 @@ impl Database {
         Arc::clone(&self.writer).lock_owned().await
     }
 
+    /// A write transaction, opened `BEGIN IMMEDIATE` under the writer gate.
+    ///
+    /// The gate is not the whole of the lock. A transaction dropped on an
+    /// error path does not roll back where it is dropped: sqlx queues the
+    /// `ROLLBACK` to its connection's worker thread, the gate is given back at
+    /// once, and the next writer — on another connection — can find SQLite's
+    /// write lock still held for as long as that thread takes to run it.
+    ///
+    /// A deferred `BEGIN` cannot wait that out. Its first read opens a read
+    /// transaction, and SQLite never calls the busy handler to upgrade one, so
+    /// the first write fails at once with `SQLITE_BUSY` — a 503, whatever
+    /// `busy_timeout` says. `BEGIN IMMEDIATE` takes the write lock before
+    /// anything is read, where the busy handler does apply. A read-only
+    /// transaction keeps a plain `begin()`: it needs no lock, and must not
+    /// take one.
+    pub(crate) async fn begin_write(
+        &self,
+        _writer_guard: &OwnedMutexGuard<()>,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
+        self.pool.begin_with("BEGIN IMMEDIATE").await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn reserve_sync_operation(
         &self,
@@ -1001,7 +1023,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<Uuid, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO account (id, username, password_hash, role, created_at, updated_at) \
@@ -1049,7 +1071,7 @@ impl Database {
         grant: NewAuthorization<'_>,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         sqlx::query(
             "INSERT INTO oauth_authorization \
                (code_hash, user_id, client_id, redirect_uri, code_challenge, device_name, \
@@ -1379,7 +1401,7 @@ impl Database {
         // `expires_at` has been a column, and honoured by the lookup, since
         // the table existed — and never written. Nothing minted a bounded
         // token, so every one of them outlived whatever asked for it.
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let row = sqlx::query(
             "INSERT INTO api_token \
                (id, user_id, name, token_hash, scopes_json, expires_at, created_at) \
@@ -1465,7 +1487,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let result = sqlx::query(
             "UPDATE api_token SET revoked_at = ? \
              WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
@@ -1499,7 +1521,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<Uuid, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let id = Uuid::new_v4();
         let root_path = root_path.to_string_lossy();
         sqlx::query(
@@ -1538,7 +1560,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         sqlx::query(
             "INSERT INTO library_member (library_id, user_id, role, created_at) VALUES (?, ?, ?, ?) \
              ON CONFLICT (library_id, user_id) DO UPDATE SET role = excluded.role",
@@ -1569,7 +1591,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let removed = sqlx::query(
             "DELETE FROM library_member \
              WHERE library_id=? AND user_id=? AND role!='owner'",
@@ -1608,7 +1630,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let changed = sqlx::query("UPDATE library SET accepts_uploads=? WHERE id=?")
             .bind(i64::from(accepts))
             .bind(library_id.to_string())
@@ -1652,7 +1674,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let changed = sqlx::query("UPDATE library SET accepts_canvas=? WHERE id=?")
             .bind(i64::from(accepts))
             .bind(library_id.to_string())
@@ -1687,7 +1709,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         sqlx::query(
             "INSERT INTO subsonic_credential \
              (user_id, password_nonce, password_ciphertext, api_key_hash, created_at, updated_at) \
@@ -1724,7 +1746,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let result = sqlx::query("DELETE FROM subsonic_credential WHERE user_id = ?")
             .bind(user_id.to_string())
             .execute(&mut *tx)
@@ -1799,7 +1821,7 @@ impl Database {
         now_ms: i64,
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let result = sqlx::query(
             "UPDATE subsonic_credential SET \
                password_nonce = ?, password_ciphertext = ?, api_key_hash = ?, updated_at = ? \
@@ -2003,7 +2025,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         link_portrait_in(
             &mut tx,
             name_canonical,
@@ -2034,7 +2056,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         link_fanart_in(
             &mut tx,
             name_canonical,
@@ -2064,7 +2086,7 @@ impl Database {
         expires_at: i64,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         // What this provider's row named before, read before it is replaced:
         // a refresh without the banner unlinks it (RFC-014 decision 3).
         let previous_fanart: Option<String> = sqlx::query_scalar(

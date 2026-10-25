@@ -495,7 +495,7 @@ impl DomainServices {
             .is_some_and(|follow| follow != before.follow_links);
         let scan_id = {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             let written = sqlx::query(
                 "UPDATE library SET name = COALESCE(?, name), \
                    root_path = COALESCE(?, root_path), \
@@ -636,7 +636,7 @@ impl DomainServices {
         let canvases: Vec<String>;
         {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             let (tracks, albums, artists): (i64, i64, i64) = sqlx::query_as(
                 "SELECT (SELECT COUNT(*) FROM track WHERE library_id = ?1), \
                         (SELECT COUNT(*) FROM album WHERE library_id = ?1), \
@@ -818,7 +818,7 @@ impl DomainServices {
             .ok_or(ServiceError::Conflict)?;
         let purged = {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             if !standing_on(&mut tx, actor, library_id).await?.curates() {
                 return Err(ServiceError::Forbidden);
             }
@@ -856,7 +856,7 @@ impl DomainServices {
             };
             let purged = {
                 let _writer = self.db.writer_guard().await;
-                let mut tx = self.db.pool().begin().await?;
+                let mut tx = self.db.begin_write(&_writer).await?;
                 let purged = purge_in(&mut tx, library.id, &Selection::OlderThan(cutoff)).await?;
                 if purged.tracks > 0 {
                     audit(

@@ -613,6 +613,42 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
 /// The round trip below is the only way to see which id the server actually
 /// used: `PropagateRequestIdLayer` puts it on the response, which is also what
 /// keeps correlation possible — an upstream records the name it was given.
+/// A boot that is refused closes the database before it says so.
+///
+/// Dropping a pool is not closing it: sqlx closes each connection on its own
+/// thread after the drop has returned, and the last of them checkpoints the
+/// WAL under an exclusive lock. A refusal that only dropped left whoever opens
+/// the file next — the operator retrying, or a test right after the refusal —
+/// racing that close, and losing it as `database is locked`. A zero
+/// `busy_timeout` makes the next open fail rather than wait, so a lock still
+/// held is seen however briefly it lasts.
+#[tokio::test]
+async fn a_refused_boot_gives_the_database_back_before_it_returns() {
+    let (_temp, config, state) = test_app().await;
+    state.db.pool().close().await;
+    drop(state);
+    std::fs::write(&config.instance_key_path, [7u8; 32]).unwrap();
+    let mut impatient = config.clone();
+    impatient.sqlite_busy_timeout = std::time::Duration::ZERO;
+
+    for attempt in 0..30 {
+        let refusal = match waveflow_server::initialize(&config).await {
+            Ok(_) => panic!("a key that is not the database's must stop the boot"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(
+            refusal.contains("instance.key does not match"),
+            "attempt {attempt}: refused for another reason: {refusal}"
+        );
+        let next = waveflow_server::database::Database::open(&impatient)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("attempt {attempt}: the refused boot still held the database: {error}")
+            });
+        next.pool().close().await;
+    }
+}
+
 #[tokio::test]
 async fn a_caller_cannot_name_its_own_request() {
     let (_temp, config, state) = test_app().await;

@@ -90,7 +90,7 @@ impl DomainServices {
         let id = Uuid::new_v4();
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         // **The writer gate is what makes the count safe**, not the
         // transaction: a deferred SQLite transaction takes no write lock until
         // its first write, so two creations reading 499 inside their own

@@ -305,7 +305,7 @@ impl DomainServices {
     ) -> Result<FiledFolder, ServiceError> {
         let (name, key) = folder_name(name).ok_or(ServiceError::Invalid)?;
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         may_file(library_role(&mut tx, user_id, library_id).await?)?;
         let library = library_id.to_string();
         let parent = parent_id.map(|parent| parent.to_string());
@@ -363,7 +363,7 @@ impl DomainServices {
             None => None,
         };
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let (library, role) = folder_access(&mut tx, user_id, folder_id).await?;
         may_file(role)?;
         let id = folder_id.to_string();
@@ -424,7 +424,7 @@ impl DomainServices {
         folder_id: Uuid,
     ) -> Result<FolderRemoved, ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let (_, role) = folder_access(&mut tx, user_id, folder_id).await?;
         may_file(role)?;
         let id = folder_id.to_string();
@@ -546,7 +546,7 @@ impl DomainServices {
         let tracks: BTreeSet<String> = track_ids.iter().map(Uuid::to_string).collect();
         let listed = serde_json::to_string(&tracks).map_err(|_| ServiceError::Invalid)?;
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         may_file(library_role(&mut tx, user_id, library_id).await?)?;
         let library = library_id.to_string();
         if let Some(folder) = folder_id {

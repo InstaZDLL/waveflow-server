@@ -176,7 +176,7 @@ impl DomainServices {
         let (asked, key) = query_key(query).ok_or(ServiceError::Invalid)?;
         let (search_id, deadline_ms, deadline) = {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             chooser_library(&mut tx, user_id, artist_id).await?;
             let now = now_ms();
             let task_deadline = self.image_search_deadline();
@@ -266,7 +266,7 @@ impl DomainServices {
         candidates: &[DeezerCandidate],
     ) -> Result<Vec<ArtistImageCandidate>, ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let now = now_ms();
         if now > deadline_ms {
             sqlx::query("DELETE FROM artist_image_search WHERE id=?")
@@ -370,7 +370,7 @@ impl DomainServices {
             return Err(ServiceError::NotFound);
         }
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let library_id = chooser_library(&mut tx, user_id, artist_id).await?;
         let now = now_ms();
         // The most recent search that offered it: the previews are the same

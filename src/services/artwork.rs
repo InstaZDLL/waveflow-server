@@ -221,7 +221,7 @@ impl DomainServices {
     /// on; there is only asking.
     async fn forget_unreferenced_artwork(&self) -> Result<usize, ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         // The spent portrait searches first (RFC-013), in the same
         // transaction: their previews become unreferenced here, and a preview
         // a choice already names is kept by the clause below.

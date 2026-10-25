@@ -185,7 +185,7 @@ impl DomainServices {
             .await
             .map_err(|_| ServiceError::Unavailable)?;
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let library_id = chooser_library(&mut tx, user_id, artist_id).await?;
         let now = now_ms();
         sqlx::query(
@@ -224,7 +224,7 @@ impl DomainServices {
         kind: ArtistImageKind,
     ) -> Result<(), ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let library_id = chooser_library(&mut tx, user_id, artist_id).await?;
         let removed = sqlx::query("DELETE FROM artist_image_choice WHERE artist_id=? AND kind=?")
             .bind(artist_id.to_string())

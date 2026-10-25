@@ -237,7 +237,7 @@ impl DomainServices {
         kind: CreditDecisionKind,
     ) -> Result<CreditDecisionRecord, ServiceError> {
         let writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&writer).await?;
         curated_library(&mut tx, user_id, library_id).await?;
         let name: String =
             sqlx::query_scalar("SELECT name FROM artist WHERE id = ? AND library_id = ?")
@@ -360,7 +360,7 @@ impl DomainServices {
         decision_id: Uuid,
     ) -> Result<(), ServiceError> {
         let writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&writer).await?;
         curated_library(&mut tx, user_id, library_id).await?;
         let row: (String, String, Option<String>) = sqlx::query_as(
             "SELECT credit, decision, parts FROM artist_credit_decision \

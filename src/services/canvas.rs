@@ -304,7 +304,7 @@ impl DomainServices {
     ) -> Result<Option<String>, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
 
         // Authoritative, unlike the check that let this call get this far.
         let row = sqlx::query(
@@ -464,7 +464,7 @@ impl DomainServices {
         let removed = {
             let now = now_ms();
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             let row = sqlx::query(
                 "SELECT t.library_id, t.full_hash, m.role FROM track t \
                  JOIN library_member m ON m.library_id=t.library_id \
@@ -561,7 +561,7 @@ impl DomainServices {
         hash: &str,
     ) -> Result<Option<CanvasBlob>, ServiceError> {
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let remaining: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM track_canvas WHERE canvas_hash=?")
                 .bind(hash)

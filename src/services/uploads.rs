@@ -126,7 +126,7 @@ impl DomainServices {
         self.sweep_expired_sessions(now).await?;
 
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
 
         // Membership and the flag are read under the gate, like every other
         // authorisation this server writes behind: a role revoked while this
@@ -848,7 +848,7 @@ impl DomainServices {
         };
 
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         // A track may already sit at this name — the same bytes uploaded again
         // after their track went unavailable. Reviving it is what keeps a
         // second row from claiming a path the schema makes unique anyway.
