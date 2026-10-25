@@ -56,10 +56,50 @@ impl DomainServices {
             artist: summary.artist,
             album_count: summary.album_count,
             albums,
+            appears_on: None,
             enrichment: None,
             banner_hash,
             image_choice,
         })
+    }
+
+    /// The albums an artist appears on without being one of their artists
+    /// (RFC-022 decision 3), in the order [`Self::artist`] lists its own.
+    ///
+    /// A credit in the track's `artist` role, on an available track: a
+    /// composer, producer or performer credit is a different relation, and a
+    /// page listing every record someone engineered would be a credits page,
+    /// not a discography. An album the artist is album artist of is never
+    /// listed here, however many of its tracks also name them.
+    ///
+    /// The caller has resolved the artist for this user already, so an artist
+    /// in another library never reaches this query; `album_select!` still
+    /// binds the user first and passes every album through `library_member`.
+    pub(super) async fn artist_appearances(
+        &self,
+        user_id: Uuid,
+        artist_id: Uuid,
+    ) -> Result<Vec<AlbumItem>, ServiceError> {
+        let mut albums = sqlx::query(concat!(
+            album_select!(),
+            " AND al.id IN (SELECT t.album_id FROM track_participant tp \
+                 JOIN track t ON t.id=tp.track_id \
+                 WHERE tp.artist_id=? AND tp.role='artist' \
+                   AND t.is_available=1 AND t.album_id IS NOT NULL) \
+              AND NOT EXISTS (SELECT 1 FROM album_participant ap \
+                 WHERE ap.album_id=al.id AND ap.artist_id=? AND ap.role='albumartist') \
+              ORDER BY al.year NULLS LAST, al.title COLLATE NOCASE, al.id"
+        ))
+        .bind(user_id.to_string())
+        .bind(artist_id.to_string())
+        .bind(artist_id.to_string())
+        .fetch_all(self.db.pool())
+        .await?
+        .into_iter()
+        .map(album_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        attach_album_relations(&mut *self.db.pool().acquire().await?, user_id, &mut albums).await?;
+        Ok(albums)
     }
 
     /// One artist the user can see, or [`ServiceError::NotFound`] — for one

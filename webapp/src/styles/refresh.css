@@ -497,6 +497,41 @@ main > section {
   max-width: 25rem;
 }
 
+/* ReplayGain (RFC-022): the mode is a picker like the theme; the preamp is a
+   slider beside it, labelled like the pickers so the panel reads as one form,
+   with its value in ordinary case — "+3 dB", not "+3 DB". */
+.replay-gain-picker {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.replay-gain-preamp {
+  display: grid;
+  max-width: 25rem;
+  gap: var(--space-1);
+}
+
+.replay-gain-preamp-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.replay-gain-preamp-heading label {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.replay-gain-preamp-heading output {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-page .settings-panel > a {
   justify-self: start;
   color: var(--accent);

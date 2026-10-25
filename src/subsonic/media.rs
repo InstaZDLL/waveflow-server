@@ -24,15 +24,25 @@ pub(super) async fn media_response(
         .transpose()
         .map_err(|_| invalid("Invalid bitrate"))?
         .filter(|bitrate| *bitrate > 0);
+    // A format this server cannot produce — `flac`, `wav`, `alac`, a typo — is
+    // read as no format at all rather than refused (RFC-022 decision 6): the
+    // original when the cap admits it, MP3 at the cap when it does not. The
+    // `Content-Type` names what was sent, which is how every client learns it.
+    // A refusal plays nothing, and it was the one answer no other server gave.
+    let named =
+        params
+            .first("format")
+            .and_then(|format| match format.to_ascii_lowercase().as_str() {
+                "raw" => Some(OutputFormat::Raw),
+                "mp3" => Some(OutputFormat::Mp3),
+                "opus" | "ogg" => Some(OutputFormat::Opus),
+                "aac" | "m4a" | "adts" => Some(OutputFormat::Aac),
+                _ => None,
+            });
     let format = if download {
         OutputFormat::Raw
-    } else if let Some(format) = params.first("format") {
-        match format {
-            "raw" => OutputFormat::Raw,
-            "mp3" => OutputFormat::Mp3,
-            "opus" | "ogg" => OutputFormat::Opus,
-            _ => return Err(invalid("Unsupported format")),
-        }
+    } else if let Some(format) = named {
+        format
     } else if requested_bitrate.is_some_and(|limit| {
         track
             .bitrate

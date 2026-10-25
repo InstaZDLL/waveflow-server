@@ -22,7 +22,10 @@ import {
 
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
+import { connectWhenRunning, needsWaking } from "../lib/audio-graph";
+import { replayGainFactor, routableThroughWebAudio } from "../lib/replay-gain";
 import { useI18n } from "../state/i18n";
+import { useReplayGainPreference } from "../state/preferences";
 
 const VOLUME_KEY = "waveflow.volume";
 
@@ -297,6 +300,130 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     new Map<string, { url: string; expiresAt: number }>(),
   );
   const preloader = useRef<HTMLAudioElement | null>(null);
+  const replayGain = useReplayGainPreference();
+  const replayGainOn = replayGain.mode !== "off";
+  // The Web Audio graph ReplayGain plays through (RFC-022 decision 1): the
+  // element, one GainNode, the speakers. Built once and never torn down — an
+  // element cannot be detached from its source node — so turning ReplayGain
+  // off afterwards sets the gain to one, and a reload restores the plain path.
+  const graph = useRef<{ context: AudioContext; gain: GainNode } | null>(null);
+  // A context created but not yet running, so the element is not yet claimed.
+  // Kept so a later gesture resumes this one rather than making another.
+  const candidate = useRef<AudioContext | null>(null);
+  const [gainNode, setGainNode] = useState<GainNode | null>(null);
+  // Whether the provider is mounted, for a graph whose wiring finishes after
+  // a resume: signing out unmounts the player, possibly while one is pending.
+  const graphMounted = useRef(false);
+
+  // Signing out unmounts the player, and an open AudioContext holds the audio
+  // device until it is closed — browsers cap how many a page may have. Both
+  // the candidate and the graph are closed on the way out. The marker is set
+  // again on every mount, because StrictMode and Fast Refresh replay effects
+  // on an instance that stays mounted.
+  useEffect(() => {
+    graphMounted.current = true;
+    return () => {
+      graphMounted.current = false;
+      const pending = candidate.current;
+      candidate.current = null;
+      if (pending) void pending.close().catch(() => undefined);
+      const active = graph.current;
+      if (!active) return;
+      graph.current = null;
+      setGainNode(null);
+      void active.context.close().catch(() => undefined);
+      // The element stays claimed by the context just closed, and would play
+      // as silence on an instance that remounts with its refs kept. It is
+      // dropped, and the mount effect makes a fresh one.
+      const element = audio.current;
+      if (element) {
+        element.pause();
+        element.removeAttribute("src");
+        element.load();
+        audio.current = null;
+      }
+    };
+  }, []);
+
+  /**
+   * Asks a stopped graph to run again. A play that starts by itself — the
+   * next track, repeat-one — is not a gesture, and a browser may refuse; but
+   * Safari's `interrupted` state, after a call or a timer, resumes this way.
+   */
+  const wakeGraph = useCallback(() => {
+    const context = graph.current?.context;
+    if (context && context.state !== "running") {
+      void context.resume().catch(() => undefined);
+    }
+  }, []);
+
+  /**
+   * Builds the graph if ReplayGain wants it, and wakes it if it sleeps.
+   *
+   * Called from the plays a listener starts, which are always a gesture: a
+   * browser creates a context suspended outside one, and refuses to resume it
+   * there. Never on page load, so a listener who never asked for ReplayGain
+   * keeps the element exactly as it was. The element is claimed only once the
+   * context runs (`connectWhenRunning`): claimed by a suspended context, it
+   * would play as silence.
+   */
+  const prepareGraph = useCallback(() => {
+    const element = audio.current;
+    if (!element) return;
+    if (graph.current) {
+      wakeGraph();
+      return;
+    }
+    if (!replayGainOn) return;
+    if (candidate.current) {
+      // Still waiting to run: this gesture may be the one it needed.
+      void candidate.current.resume().catch(() => undefined);
+      return;
+    }
+    // A cross-origin source would play as silence through the graph. The
+    // tickets are relative, so this holds by construction; checked anyway.
+    const source = element.currentSrc || element.src;
+    if (source && !routableThroughWebAudio(source, window.location.href))
+      return;
+    const Context =
+      window.AudioContext ??
+      (window as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Context) return;
+    let context: AudioContext;
+    try {
+      context = new Context();
+    } catch {
+      return;
+    }
+    candidate.current = context;
+    void connectWhenRunning(context, () => {
+      const gain = context.createGain();
+      // Last, because it is the step that cannot be undone.
+      context
+        .createMediaElementSource(element)
+        .connect(gain)
+        .connect(context.destination);
+      return gain;
+    }).then((gain) => {
+      if (candidate.current === context) candidate.current = null;
+      if (!graphMounted.current) {
+        // Unmounted while it waited: nobody will ever close it otherwise.
+        void context.close().catch(() => undefined);
+        return;
+      }
+      // No graph: the element keeps playing as it did, unlevelled.
+      if (!gain) return;
+      graph.current = { context, gain };
+      setGainNode(gain);
+      // Stopped under a playing element — Safari interrupts a context for a
+      // call or a timer — it is asked to run again rather than left silent.
+      context.addEventListener("statechange", () => {
+        if (needsWaking(context.state, audio.current?.paused ?? true))
+          wakeGraph();
+      });
+    });
+  }, [replayGainOn, wakeGraph]);
 
   const current = queue[index] ?? null;
   orderRef.current =
@@ -377,6 +504,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // would not restart the element. Rewind and play it again by hand.
         element.currentTime = 0;
         submitted.current = null;
+        wakeGraph();
         void element.play().catch(() => undefined);
         return;
       }
@@ -414,7 +542,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
     };
-  }, [hydrated, persistQueue]);
+  }, [hydrated, persistQueue, wakeGraph]);
 
   // Loading a track needs a round-trip for its ticket, so guard against a
   // stale response overwriting a newer selection.
@@ -459,6 +587,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           resumeTrack.current = null;
         }
         if (!shouldAutoplay) return;
+        wakeGraph();
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
       } catch {
@@ -473,7 +602,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       element.removeEventListener("error", onError);
     };
-  }, [current, resolveStream]);
+  }, [current, resolveStream, wakeGraph]);
 
   useEffect(() => {
     const upcoming = queue[index + 1];
@@ -503,24 +632,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [position, duration, current]);
 
-  const play = useCallback((next: Song[], at: number) => {
-    localMutation.current = true;
-    const sameSelection = next === queueRef.current && at === indexRef.current;
-    if (sameSelection) {
-      const element = audio.current;
-      const selected = next[at];
-      if (element && selected) {
-        void element
-          .play()
-          .then(() => scrobble(selected.id, false))
-          .catch(() => undefined);
+  const play = useCallback(
+    (next: Song[], at: number) => {
+      // First, inside the gesture that asked for the music.
+      prepareGraph();
+      localMutation.current = true;
+      const sameSelection =
+        next === queueRef.current && at === indexRef.current;
+      if (sameSelection) {
+        const element = audio.current;
+        const selected = next[at];
+        if (element && selected) {
+          void element
+            .play()
+            .then(() => scrobble(selected.id, false))
+            .catch(() => undefined);
+        }
+        return;
       }
-      return;
-    }
-    autoplay.current = true;
-    setQueue(next);
-    setIndex(at);
-  }, []);
+      autoplay.current = true;
+      setQueue(next);
+      setIndex(at);
+    },
+    [prepareGraph],
+  );
 
   useEffect(() => {
     if (!hydrated || !localMutation.current) return;
@@ -537,11 +672,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const startPlayback = useCallback(() => {
     const element = audio.current;
     if (!element || !current || !element.paused) return;
+    prepareGraph();
     void element
       .play()
       .then(() => scrobble(current.id, false))
       .catch(() => undefined);
-  }, [current]);
+  }, [current, prepareGraph]);
+
+  // Turned on mid-track: the change came from the settings control, which is
+  // a gesture, so the graph can be built while the browser still counts it as
+  // one. Paused, it waits for the next play instead.
+  useEffect(() => {
+    if (replayGainOn && audio.current && !audio.current.paused) prepareGraph();
+  }, [replayGainOn, prepareGraph]);
+
+  // The level of the track now playing. Set when the track changes, before
+  // its first sample, and again when the preference does; off is a gain of 1.
+  useEffect(() => {
+    if (!gainNode) return;
+    const factor = current ? replayGainFactor(current, replayGain) : 1;
+    gainNode.gain.setValueAtTime(factor, gainNode.context.currentTime);
+  }, [gainNode, current, replayGain]);
 
   const pausePlayback = useCallback(() => {
     const element = audio.current;
@@ -615,7 +766,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     else pausePlayback();
   }, [pausePlayback, startPlayback]);
 
+  // Both are pressed, so both are a gesture the graph can be built in.
   const next = useCallback(() => {
+    prepareGraph();
     localMutation.current = true;
     setIndex((value) => {
       // Pressed, not ended: `repeat: "one"` must not trap the button here.
@@ -624,9 +777,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       autoplay.current = target !== value;
       return target;
     });
-  }, []);
+  }, [prepareGraph]);
 
   const previous = useCallback(() => {
+    prepareGraph();
     localMutation.current = true;
     setIndex((value) => {
       const target = retreat(orderRef.current, value, repeatRef.current);
@@ -634,7 +788,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       autoplay.current = target !== value;
       return target;
     });
-  }, []);
+  }, [prepareGraph]);
 
   const seek = useCallback(
     (seconds: number) => {

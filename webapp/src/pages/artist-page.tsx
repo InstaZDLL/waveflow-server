@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import type { ArtistEnrichment } from "../api";
+import type { Album, ArtistEnrichment } from "../api";
 import {
   artistQuery,
   artistTopSongsQuery,
@@ -14,7 +14,11 @@ import { Artwork } from "../components/artwork";
 import { Loading } from "../components/page-shell";
 import { SongTable } from "../components/song-table";
 import { isSplitCandidate } from "../lib/credit-fragments";
-import { useI18n } from "../state/i18n";
+import {
+  type DiscographySection,
+  discographySections,
+} from "../lib/discography";
+import { type TranslationKey, useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
 
 /** A provider as a reader knows it, rather than as the setting spells it. */
@@ -209,7 +213,48 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <SongTable songs={played} />
         </section>
       ) : null}
-      <AlbumGrid albums={value.albums} />
+      <ArtistDiscography albums={value.albums} appearsOn={value.appears_on} />
     </section>
+  );
+}
+
+const SECTION_TITLES: Record<DiscographySection, TranslationKey> = {
+  album: "artists.section.album",
+  ep: "artists.section.ep",
+  single: "artists.section.single",
+  live: "artists.section.live",
+  compilation: "artists.section.compilation",
+  appearsOn: "artists.section.appearsOn",
+};
+
+/**
+ * The albums, in the sections the server filed them under (RFC-022): Albums,
+ * EPs, Singles, Live, Compilations, then what the artist appears on. A section
+ * with nothing in it is left out rather than drawn empty, and an artist with
+ * nothing at all keeps the grid's own "no albums" line.
+ */
+function ArtistDiscography({
+  albums,
+  appearsOn,
+}: {
+  albums: Album[];
+  appearsOn: Album[] | undefined;
+}) {
+  const { t } = useI18n();
+  const sections = discographySections(albums, appearsOn ?? []);
+  if (sections.length === 0) return <AlbumGrid albums={[]} />;
+  return (
+    <>
+      {sections.map(({ section, albums: listed }) => (
+        <section
+          key={section}
+          className="artist-discography"
+          aria-labelledby={`discography-${section}`}
+        >
+          <h3 id={`discography-${section}`}>{t(SECTION_TITLES[section])}</h3>
+          <AlbumGrid albums={listed} />
+        </section>
+      ))}
+    </>
   );
 }

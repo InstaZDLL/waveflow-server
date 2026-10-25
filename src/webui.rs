@@ -54,6 +54,18 @@ const RESERVED_EXACT: [&str; 5] = [
     "favicon.ico",
 ];
 
+/// Files the installed client is made of (RFC-022 decision 4), answered as
+/// themselves or not at all.
+///
+/// Unlike [`RESERVED_EXACT`], these are looked up among the assets first: they
+/// are the client's, and a real build ships them. What they must never get is
+/// the fallback. A browser reading the manifest expects JSON and an icon an
+/// image; handed the shell, it fails to parse it and the client is not
+/// installable, with nothing in the response to say why. A build without them
+/// — the placeholder `build.rs` embeds — answers a JSON 404 instead.
+const ASSET_ONLY_EXACT: [&str; 2] = ["manifest.webmanifest", "apple-touch-icon.png"];
+const ASSET_ONLY_PREFIXES: [&str; 1] = ["icons/"];
+
 pub async fn handler(uri: Uri) -> Response {
     let mut response = respond(uri.path().trim_start_matches('/'));
     crate::security_headers::apply_web_client(response.headers_mut(), policy());
@@ -86,6 +98,13 @@ fn respond(path: &str) -> Response {
     }
     if let Some(response) = asset(path) {
         return response;
+    }
+    let asset_only = ASSET_ONLY_EXACT.contains(&path)
+        || ASSET_ONLY_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix));
+    if asset_only {
+        return not_found();
     }
     asset(INDEX).unwrap_or_else(missing_client)
 }

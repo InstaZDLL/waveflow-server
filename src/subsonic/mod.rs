@@ -55,7 +55,23 @@ const SUBSONIC_VERSION: &str = "1.16.1";
 
 const XMLNS: &str = "http://subsonic.org/restapi";
 
-const MAX_FORM_BYTES: usize = 64 * 1024;
+/// The most a `formPost` body may hold (RFC-022 decision 7).
+///
+/// Sized for the largest request the domain accepts: a playlist of
+/// [`MAX_PLAYLIST_TRACKS`](crate::services::MAX_PLAYLIST_TRACKS) identifiers in
+/// one call. Sixty-four bytes an identifier covers the longest pair the façade
+/// takes, `songIdToAdd=<uuid>&` at forty-nine, and UUIDs never need percent
+/// encoding; the sixty-four kibibytes on top, the whole of the old limit, are
+/// for the credentials, a name, a comment and whatever else rides beside them.
+///
+/// Derived rather than written down, like the playlist import limit: raising
+/// the playlist ceiling must not quietly start refusing the requests it has
+/// just permitted. The old fixed 64 KiB stopped `createPlaylist` short of
+/// 1,490 tracks and `updatePlaylist` short of 1,338, against a ceiling of ten
+/// thousand.
+/// Still a bound: one request is buffered once, up to this, and a byte more is
+/// refused with error 10.
+pub const MAX_FORM_BYTES: usize = crate::services::MAX_PLAYLIST_TRACKS * 64 + 64 * 1024;
 
 /// How many album-less tracks a folder listing will carry.
 ///

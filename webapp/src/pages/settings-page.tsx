@@ -11,7 +11,7 @@ import {
 import { ownApiTokensQuery, ownSubsonicCredentialQuery } from "../api/queries";
 import { Loading, PageHeader, useReload } from "../components/page-shell";
 import { LanguagePicker, type Locale, useI18n } from "../state/i18n";
-import { ThemePicker } from "../state/preferences";
+import { ReplayGainPicker, ThemePicker } from "../state/preferences";
 
 /**
  * Settings, and the clients allowed to read the library.
@@ -364,6 +364,10 @@ export function SettingsPage() {
           <h3>{t("settings.appearance")}</h3>
           <ThemePicker />
           <LanguagePicker />
+        </article>
+        <article className="settings-panel">
+          <h3>{t("settings.playback")}</h3>
+          <ReplayGainPicker />
         </article>
         <article className="settings-panel">
           <h3>{t("nav.scrobbling")}</h3>

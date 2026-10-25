@@ -5584,3 +5584,232 @@ async fn chosen_artist_images_lead_every_reader_and_outlive_the_portrait_fill() 
         StatusCode::NOT_FOUND
     );
 }
+
+/// An artist page groups the discography by release type and lists what the
+/// artist appears on (RFC-022 decisions 2 and 3).
+///
+/// The fixture holds one album per group, one album with no type at all, and
+/// two albums by someone else: one with a guest track by the artist, which is
+/// an appearance, and one crediting the artist only as composer, which is not.
+/// An album the artist is album artist of credits them on every track as
+/// well, so those six are the case that proves the exclusion.
+#[tokio::test]
+async fn an_artist_page_groups_its_discography_and_lists_its_appearances() {
+    let (_temp, config, state) = test_app().await;
+    // Drawn at run time: a literal reaching the hash is a hard-coded
+    // credential to CodeQL.
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("discography-owner", &hash, AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("discography-outsider", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let root = config.data_dir.join("discography");
+    std::fs::create_dir_all(&root).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Discography",
+            &std::fs::canonicalize(&root).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan_id = state
+        .db
+        .create_scan_job(library_id, Some(owner), "manual")
+        .await
+        .unwrap();
+    // (title, album, album artist, track artist, release types, year)
+    let fixture = [
+        (
+            "One",
+            "Long Player",
+            "Disco Artist",
+            "Disco Artist",
+            Some("album"),
+            2001,
+        ),
+        (
+            "Two",
+            "Short Player",
+            "Disco Artist",
+            "Disco Artist",
+            Some("EP"),
+            2002,
+        ),
+        (
+            "Three",
+            "Lone Song",
+            "Disco Artist",
+            "Disco Artist",
+            Some("single"),
+            2003,
+        ),
+        (
+            "Four",
+            "On Stage",
+            "Disco Artist",
+            "Disco Artist",
+            Some("album/live"),
+            2004,
+        ),
+        (
+            "Five",
+            "Best Of",
+            "Disco Artist",
+            "Disco Artist",
+            Some("album; compilation"),
+            2005,
+        ),
+        ("Six", "Untyped", "Disco Artist", "Disco Artist", None, 2006),
+        (
+            "Seven",
+            "Guest Spot",
+            "Host Artist",
+            "Host Artist; Disco Artist",
+            Some("album"),
+            2010,
+        ),
+        (
+            "Eight",
+            "Guest Spot",
+            "Host Artist",
+            "Host Artist",
+            Some("album"),
+            2010,
+        ),
+        (
+            "Nine",
+            "Written For",
+            "Host Artist",
+            "Host Artist",
+            Some("album"),
+            2011,
+        ),
+    ];
+    state
+        .db
+        .start_scan_job(scan_id, fixture.len() as i64, false)
+        .await
+        .unwrap();
+    for (index, (title, album, album_artist, artist, types, year)) in
+        fixture.into_iter().enumerate()
+    {
+        let mut input = browse_input(index + 3_000, title, album, album_artist, Some(1), Some(1));
+        input.artist = Some(artist.into());
+        input.release_types = types.map(str::to_owned);
+        input.year = Some(year);
+        input.track_number = Some(index as i64 + 1);
+        if title == "Nine" {
+            input.roles = vec![(
+                waveflow_server::tags::Role::Composer,
+                vec!["Disco Artist".into()],
+            )];
+        }
+        state
+            .db
+            .apply_catalog_track(library_id, scan_id, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state
+        .db
+        .consolidate_catalog_derivations(library_id)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan_id, 0).await.unwrap();
+
+    let router = waveflow_server::app(&config, state);
+    let owner_token = login_token(&router, "discography-owner", &password).await;
+    let outsider_token = login_token(&router, "discography-outsider", &password).await;
+    let get = |uri: String, token: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let artists = json_body(get("/api/v2/artists".into(), owner_token.clone()).await).await;
+    let artist_id = artists
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artist| artist["name"] == "Disco Artist")
+        .expect("the artist is listed")["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let page = get(format!("/api/v2/artists/{artist_id}"), owner_token.clone()).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = json_body(page).await;
+    let groups = page["albums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|album| {
+            (
+                album["title"].as_str().unwrap().to_owned(),
+                album["release_group"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        groups,
+        [
+            ("Long Player", "album"),
+            ("Short Player", "ep"),
+            ("Lone Song", "single"),
+            ("On Stage", "live"),
+            ("Best Of", "compilation"),
+            ("Untyped", "album"),
+        ]
+        .map(|(title, group)| (title.to_owned(), group.to_owned()))
+    );
+    // What the files said is still carried beside the decision about it.
+    assert_eq!(
+        page["albums"][3]["release_types"],
+        serde_json::json!(["album/live"])
+    );
+
+    // The guest track's album, and only it: not the albums whose every track
+    // credits the artist, and not the one that credits them as composer.
+    let appears_on = page["appears_on"]
+        .as_array()
+        .expect("the native page lists appearances");
+    assert_eq!(appears_on.len(), 1, "{appears_on:?}");
+    assert_eq!(appears_on[0]["title"], "Guest Spot");
+    assert_eq!(appears_on[0]["artist"], "Host Artist");
+
+    // The album-artist list on its own is unchanged: appearances are the
+    // page's, not the artist's albums.
+    let albums_of = json_body(
+        get(
+            format!("/api/v2/artists/{artist_id}/albums"),
+            owner_token.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(albums_of, page["albums"]);
+
+    // Someone outside the library is told nothing, appearances included.
+    let hidden = get(format!("/api/v2/artists/{artist_id}"), outsider_token).await;
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+}
