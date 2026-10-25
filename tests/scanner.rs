@@ -2560,4 +2560,78 @@ async fn a_move_whose_scan_cannot_be_queued_is_not_stored() {
         root,
         "the new root was stored without the scan it owes"
     );
+    // Nor the record of a move that did not happen: the audit row is written
+    // in the same transaction, and goes with it.
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_event WHERE kind = 'library.moved' AND subject_id = ?",
+    )
+    .bind(library.id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 0, "a move that was refused was audited as made");
+}
+
+/// RFC-021 decision 5: a job a previous run committed and never started — it
+/// stopped between the commit and the start — runs when the server boots, and
+/// its library is not scanned a second time for the boot.
+#[tokio::test]
+async fn a_scan_a_previous_run_left_queued_runs_at_boot() {
+    let (temp, state, owner, library, _root) = library_with_albums("left-queued").await;
+    let other_root = temp.path().join("left-queued-other");
+    std::fs::create_dir_all(&other_root).unwrap();
+    let other = state
+        .db
+        .create_library(
+            owner,
+            "other",
+            &std::fs::canonicalize(&other_root).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let left = state
+        .db
+        .create_scan_job(library.id, Some(owner), "library_moved")
+        .await
+        .unwrap();
+
+    state.scanner.boot().await;
+
+    assert_eq!(
+        settled(&state, owner, left).await.status,
+        "completed",
+        "the queued job was never run"
+    );
+    let boots = |library: uuid::Uuid| {
+        let state = state.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM scan_job WHERE library_id = ? AND trigger = 'boot'",
+            )
+            .bind(library.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        boots(library.id).await,
+        0,
+        "the resumed library was scanned twice"
+    );
+    assert_eq!(
+        boots(other).await,
+        1,
+        "the other library missed its boot scan"
+    );
+    // Let the other library's boot scan finish before the directory goes.
+    let other_job: String =
+        sqlx::query_scalar("SELECT id FROM scan_job WHERE library_id = ? AND trigger = 'boot'")
+            .bind(other.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    settled(&state, owner, other_job.parse().unwrap()).await;
 }

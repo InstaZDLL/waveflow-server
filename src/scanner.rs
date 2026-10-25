@@ -270,21 +270,68 @@ impl ScanManager {
     pub fn spawn_background(&self, interval: Option<std::time::Duration>) {
         let manager = self.clone();
         tokio::spawn(async move {
-            manager.trigger_all("boot").await;
+            manager.boot().await;
             let Some(interval) = interval else { return };
             let mut ticker = tokio::time::interval(interval);
             ticker.tick().await;
             loop {
                 ticker.tick().await;
-                manager.trigger_all("scheduled").await;
+                manager.trigger_all("scheduled", &HashSet::new()).await;
             }
         });
     }
 
-    async fn trigger_all(&self, trigger: &'static str) {
+    /// What the server does with its libraries when it starts: the jobs a
+    /// previous run left queued are run, and every other library gets the
+    /// boot scan. Public so a test can run it rather than restart a server.
+    pub async fn boot(&self) {
+        let resumed = self.resume_queued().await;
+        self.trigger_all("boot", &resumed).await;
+    }
+
+    /// Runs the jobs a previous run queued and never started, and answers the
+    /// libraries they belong to.
+    ///
+    /// A job is queued in the transaction of the change that owes it (RFC-021
+    /// decision 5: a library moved, or its links setting changed), and started
+    /// after the commit. A process that stops in between leaves a `queued` row
+    /// no task holds — one that would also have Subsonic's `scanStatus` answer
+    /// "scanning" for good. Running it is what the row promised. A library
+    /// whose job resumes needs no boot scan of its own; one whose job cannot
+    /// be resumed still gets it.
+    pub async fn resume_queued(&self) -> HashSet<Uuid> {
+        let mut resumed = HashSet::new();
+        let queued = match self.db.queued_scan_jobs().await {
+            Ok(queued) => queued,
+            Err(error) => {
+                tracing::warn!(error = %error, "could not list the scans a previous run left queued");
+                return resumed;
+            }
+        };
+        for (scan_id, library_id) in queued {
+            match self.db.library_scan_settings(library_id).await {
+                Ok(Some(settings)) => {
+                    tracing::info!(%scan_id, %library_id, "resuming a scan a previous run left queued");
+                    self.spawn(scan_id, settings.library);
+                    resumed.insert(library_id);
+                }
+                // The job went with its library.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%scan_id, error = %error, "could not resume a queued scan")
+                }
+            }
+        }
+        resumed
+    }
+
+    async fn trigger_all(&self, trigger: &'static str, skip: &HashSet<Uuid>) {
         match self.db.all_libraries().await {
             Ok(libraries) => {
                 for library in libraries {
+                    if skip.contains(&library.id) {
+                        continue;
+                    }
                     if let Err(error) = self.trigger(library, None, trigger).await {
                         tracing::warn!(error = %error, "could not queue background scan");
                     }

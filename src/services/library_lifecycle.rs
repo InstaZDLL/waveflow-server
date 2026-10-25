@@ -578,12 +578,18 @@ impl DomainServices {
         let Some(scan_id) = scan_id else {
             return Ok(LibraryUpdated { scan_id: None });
         };
-        let after = self
-            .db
-            .library_scan_settings(library_id)
-            .await?
-            .ok_or(ServiceError::NotFound)?;
-        self.scanner.spawn(scan_id, after.library);
+        // Started from what this call already knows, with nothing that can
+        // fail between the commit and the start: the scan reads the library
+        // again when it runs anyway. A process that stops right here leaves
+        // the job queued, and the next boot runs it (`ScanManager::boot`).
+        self.scanner.spawn(
+            scan_id,
+            crate::catalog::LibraryRecord {
+                id: library_id,
+                name: name.unwrap_or(before.library.name),
+                root_path: root.unwrap_or(before.library.root_path),
+            },
+        );
         Ok(LibraryUpdated {
             scan_id: Some(scan_id),
         })

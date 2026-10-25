@@ -620,6 +620,19 @@ impl Database {
         Ok(id)
     }
 
+    /// Every job still `queued`, oldest first, with its library: what a
+    /// previous run committed and never started.
+    pub async fn queued_scan_jobs(&self) -> Result<Vec<(Uuid, Uuid)>, sqlx::Error> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, library_id FROM scan_job WHERE status = 'queued' ORDER BY created_at, id",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        rows.into_iter()
+            .map(|(id, library)| Ok((parse_uuid(id)?, parse_uuid(library)?)))
+            .collect()
+    }
+
     /// A queued job, in a transaction the caller holds under the writer gate:
     /// for a change that owes a scan and must not commit without it (RFC-021
     /// decision 5).
