@@ -7760,6 +7760,10 @@ test("shows this account's listening, period by period", async ({ page }) => {
   await expect(
     columns.getByRole("link", { name: "Art Pop" }).locator(".stats-art"),
   ).toHaveCount(0);
+  // A top track is a button, and a button holds phrasing content only: the
+  // lettered placeholder inside it must not be a `div`.
+  await expect(columns.locator("button .cover-fallback")).toHaveCount(2);
+  await expect(columns.locator("button div")).toHaveCount(0);
   await expectNoWcagViolations(page);
 
   await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
