@@ -583,9 +583,10 @@ function LibrarySettingsPanel({
                   required
                 />
               </label>
-              <label className="control checkbox">
+              <label className="toggle-row">
                 <input
                   type="checkbox"
+                  className="toggle-box"
                   checked={follow ?? settings.follow_links}
                   onChange={(event) => setFollow(event.target.checked)}
                 />

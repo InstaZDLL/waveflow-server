@@ -3668,8 +3668,18 @@ button.danger {
   font-size: var(--text-sm);
 }
 
-.control.checkbox {
+/* A setting that is on or off, said in a sentence beside its box. */
+.toggle-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.toggle-box {
+  flex: none;
+  width: 1.1rem;
+  min-height: 1.1rem;
+  padding: 0;
 }
