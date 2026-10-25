@@ -111,8 +111,25 @@ pub enum LibraryCommand {
     Delete(DeleteLibraryArgs),
     /// List the tracks whose file the scans can no longer find.
     Unavailable(UnavailableArgs),
-    /// Remove missing tracks from the catalogue, for good.
+    /// Purge missing tracks: out of sight at once, and removed from the
+    /// catalogue for good once the grace window (`WAVEFLOW_PURGE_GRACE_HOURS`)
+    /// has passed, or at once when it is zero.
     Purge(PurgeArgs),
+    /// Take a purge back, for tracks still within the grace window.
+    Restore(PurgeArgs),
+    /// Watch the library for changes, or stop watching it.
+    SetWatch(SetWatchArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SetWatchArgs {
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    library_id: uuid::Uuid,
+    /// `true` to watch, `false` to leave the library to the periodic scan.
+    #[arg(long, action = clap::ArgAction::Set)]
+    watch: bool,
 }
 
 #[derive(Debug, Args)]
@@ -461,6 +478,8 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
             LibraryCommand::Delete(args) => delete_library(state, args).await,
             LibraryCommand::Unavailable(args) => list_unavailable(state, args).await,
             LibraryCommand::Purge(args) => purge_unavailable(state, args).await,
+            LibraryCommand::Restore(args) => restore_purged(state, args).await,
+            LibraryCommand::SetWatch(args) => set_library_watch(state, args).await,
         },
         Command::Credential { command } => match command {
             CredentialCommand::Set(args) => set_credential(db, &state.secret_box, args).await,
@@ -1216,7 +1235,60 @@ async fn purge_unavailable(state: &AppState, args: PurgeArgs) -> anyhow::Result<
         )
         .await
         .map_err(|error| library_refusal(error, args.library_id))?;
-    println!("Purged {} missing track(s)", outcome.purged);
+    match outcome.restorable_until {
+        Some(until) => println!(
+            "Purged {} missing track(s); restorable until {until} (epoch ms) with `library restore`",
+            outcome.purged
+        ),
+        None => println!("Purged {} missing track(s)", outcome.purged),
+    }
+    Ok(())
+}
+
+async fn restore_purged(state: &AppState, args: PurgeArgs) -> anyhow::Result<()> {
+    let actor = require_admin(&state.db, &args.actor).await?;
+    if !args.all && args.track_id.is_empty() {
+        anyhow::bail!("name the tracks to restore with --track-id, or pass --all");
+    }
+    let outcome = state
+        .services
+        .restore_purged_tracks(
+            crate::services::LibraryActor::operator(actor.id),
+            args.library_id,
+            crate::services::PurgeRequest {
+                track_ids: (!args.all).then_some(args.track_id),
+                all: args.all,
+            },
+        )
+        .await
+        .map_err(|error| library_refusal(error, args.library_id))?;
+    println!("Restored {} purged track(s)", outcome.restored);
+    Ok(())
+}
+
+async fn set_library_watch(state: &AppState, args: SetWatchArgs) -> anyhow::Result<()> {
+    let actor = require_admin(&state.db, &args.actor).await?;
+    state
+        .services
+        .update_library(
+            crate::services::LibraryActor::operator(actor.id),
+            args.library_id,
+            crate::services::LibraryUpdate {
+                watch: Some(args.watch),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| library_refusal(error, args.library_id))?;
+    println!(
+        "Library {} is {}",
+        args.library_id,
+        if args.watch {
+            "watched for changes"
+        } else {
+            "left to the periodic scan"
+        }
+    );
     Ok(())
 }
 

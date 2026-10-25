@@ -13,15 +13,37 @@ use super::*;
 /// said, so the flag this façade accepted had no effect anywhere. A client
 /// reads `owner` to decide what it may edit, which is why the field has to be
 /// the owner's and not the caller's; the writes stay refused to anyone else.
+///
+/// **`username`** names another account, and is an administrator's (the
+/// specification: "The user must be admin in order to use this parameter").
+/// An administrator naming someone else is answered that account's own
+/// playlists, private ones included, each read through the administrator's
+/// libraries. Anyone else naming another account — and anyone naming an
+/// account that does not exist — is answered error 70, the not-found every
+/// other refusal here gives: a 50 would confirm the name belongs to someone.
+/// Naming oneself is the ordinary listing.
 pub(super) async fn playlists(
     state: &AppState,
     principal: &Principal,
+    params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let playlists = state
-        .services
-        .visible_playlists(principal.id)
-        .await
-        .map_err(internal)?;
+    let named = params
+        .first("username")
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case(&principal.username));
+    let playlists = match named {
+        None => state
+            .services
+            .visible_playlists(principal.id)
+            .await
+            .map_err(internal)?,
+        Some(_) if principal.role != AccountRole::Admin => return Err(not_found()),
+        Some(name) => state
+            .services
+            .administered_playlists(principal.id, name)
+            .await
+            .map_err(service_protocol)?,
+    };
     Ok(Node::new("playlists").children(playlists.iter().map(playlist_node)))
 }
 
@@ -30,11 +52,16 @@ pub(super) async fn get_playlist(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let playlist = state
-        .services
-        .playlist(principal.id, params.uuid("id")?)
-        .await
-        .map_err(service_protocol)?;
+    let id = params.uuid("id")?;
+    // An administrator opens what `getPlaylists?username=` listed for them;
+    // everyone else reads their own and the public ones, as before.
+    let playlist = match state.services.playlist(principal.id, id).await {
+        Err(crate::services::ServiceError::NotFound) if principal.role == AccountRole::Admin => {
+            state.services.administered_playlist(principal.id, id).await
+        }
+        other => other,
+    }
+    .map_err(service_protocol)?;
     Ok(playlist_node(&playlist).children(
         playlist
             .songs

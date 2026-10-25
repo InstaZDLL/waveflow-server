@@ -343,6 +343,19 @@ pub struct Config {
     /// `0`, the default, never purges on its own: a purge is not reversible,
     /// and a share that stays unmounted for a week is not a deletion.
     pub unavailable_retention: Option<Duration>,
+    /// How long a purge of missing tracks can be taken back before their rows
+    /// are deleted for good (RFC-021, undoing a purge).
+    /// `WAVEFLOW_PURGE_GRACE_HOURS`, a week by default; `0` deletes at once,
+    /// as a purge did before there was a way back.
+    pub purge_grace: Duration,
+    /// Folders outside every library that a followed symbolic link may point
+    /// into (RFC-021, links outside the root), for a link farm whose files
+    /// live elsewhere — a beets `link: yes` import, say.
+    /// `WAVEFLOW_LINK_ROOTS`, absolute paths separated as `PATH` is (`:` on
+    /// Unix, `;` on Windows); empty by default. Read only by a library whose
+    /// links setting is on, and resolved again at every scan, so a mount that
+    /// appears later is honoured and one that vanished is skipped.
+    pub link_roots: Vec<PathBuf>,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
@@ -509,6 +522,8 @@ impl std::fmt::Debug for Config {
             .field("watch", &self.watch)
             .field("watch_delay", &self.watch_delay)
             .field("unavailable_retention", &self.unavailable_retention)
+            .field("purge_grace", &self.purge_grace)
+            .field("link_roots", &self.link_roots)
             .field("ffmpeg_path", &self.ffmpeg_path)
             .field("ffprobe_path", &self.ffprobe_path)
             .field("transcode_cache_dir", &self.transcode_cache_dir)
@@ -594,6 +609,13 @@ impl Config {
             })?;
         let unavailable_retention = (unavailable_retention_days > 0)
             .then(|| Duration::from_secs(unavailable_retention_days.saturating_mul(24 * 60 * 60)));
+        // Zero is a setting too: no way back, as before.
+        let purge_grace_hours = std::env::var("WAVEFLOW_PURGE_GRACE_HOURS")
+            .unwrap_or_else(|_| "168".to_owned())
+            .parse::<u64>()
+            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_PURGE_GRACE_HOURS: {error}"))?;
+        let purge_grace = Duration::from_secs(purge_grace_hours.saturating_mul(60 * 60));
+        let link_roots = parse_link_roots(std::env::var_os("WAVEFLOW_LINK_ROOTS"))?;
         let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("ffmpeg"));
@@ -825,6 +847,8 @@ impl Config {
             watch,
             watch_delay,
             unavailable_retention,
+            purge_grace,
+            link_roots,
             ffmpeg_path,
             ffprobe_path,
             transcode_cache_dir,
@@ -885,6 +909,9 @@ impl Config {
             watch: false,
             watch_delay: Duration::from_millis(200),
             unavailable_retention: None,
+            // Production's default: the suite purges the way a server does.
+            purge_grace: Duration::from_secs(168 * 60 * 60),
+            link_roots: Vec::new(),
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             transcode_cache_dir,
@@ -1299,6 +1326,33 @@ fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
         "0" | "false" | "no" | "off" => Ok(false),
         other => anyhow::bail!("invalid {name}: expected a boolean, found {other:?}"),
     }
+}
+
+/// `WAVEFLOW_LINK_ROOTS`: absolute folders, separated as `PATH` is.
+///
+/// Absolute because a relative one would be read against whatever directory
+/// the server happens to start in, which is not a decision about the file
+/// system an operator means to make. Not canonicalised here: a root on a
+/// mount that is not there yet must not stop the boot, so the scan resolves
+/// each one when it runs and skips one it cannot.
+fn parse_link_roots(raw: Option<std::ffi::OsString>) -> anyhow::Result<Vec<PathBuf>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let mut roots = Vec::new();
+    for root in std::env::split_paths(&raw) {
+        if root.as_os_str().is_empty() {
+            continue;
+        }
+        if !root.is_absolute() {
+            anyhow::bail!(
+                "invalid WAVEFLOW_LINK_ROOTS: {} is not an absolute path",
+                root.display()
+            );
+        }
+        roots.push(root);
+    }
+    Ok(roots)
 }
 
 /// The acquire budget a deployment gets unless it says otherwise.

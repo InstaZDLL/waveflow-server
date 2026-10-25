@@ -1493,3 +1493,161 @@ async fn a_format_the_facade_cannot_produce_falls_back_and_aac_is_produced() {
     assert_eq!(kind, "audio/wav");
     assert!(bytes.starts_with(b"RIFF"));
 }
+
+/// `getPlaylists?username=` is an administrator's view of another account's
+/// playlists, private ones included and read through the administrator's own
+/// libraries; to anyone else, and for a name no account carries, it answers
+/// error 70, the not-found every other refusal here gives. The writes stay
+/// the owner's.
+#[tokio::test]
+async fn subsonic_username_is_an_administrators_view_and_blurred_for_everyone_else() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, owner_key) = subsonic_account(&state, "named-owner").await;
+    let (admin, admin_key) = subsonic_account(&state, "named-admin").await;
+    let (_outsider, outsider_key) = subsonic_account(&state, "named-outsider").await;
+    sqlx::query("UPDATE account SET role='admin' WHERE id=?")
+        .bind(admin.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (shared, seen) =
+        seed_titles(&state, &config, owner, "named-shared", 4_300, &["Seen"]).await;
+    let (_kept, unseen) =
+        seed_titles(&state, &config, owner, "named-kept", 4_400, &["Unseen"]).await;
+    state
+        .db
+        .add_library_member(owner, shared, admin, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &owner_key,
+        &format!("&name=Private&songId={}&songId={}", seen[0], unseen[0]),
+    )
+    .await;
+    let id = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let listed = subsonic_json(&router, "getPlaylists", &admin_key, "&username=named-owner").await;
+    let listed = listed["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["id"], id.as_str());
+    assert_eq!(listed[0]["owner"], "named-owner");
+    assert_eq!(listed[0]["public"], false);
+    assert_eq!(
+        listed[0]["songCount"], 1,
+        "counted through the administrator's libraries"
+    );
+    let opened = subsonic_json(&router, "getPlaylist", &admin_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&opened["subsonic-response"]["playlist"]),
+        vec![seen[0].to_string()]
+    );
+    // Its own listing is unchanged by the parameter naming itself.
+    let own = subsonic_json(&router, "getPlaylists", &admin_key, "&username=NAMED-ADMIN").await;
+    assert!(own["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .is_none_or(|playlists| playlists.is_empty()));
+
+    for (key, extra, who) in [
+        (
+            &outsider_key,
+            "&username=named-owner",
+            "a non-administrator",
+        ),
+        (&outsider_key, "&username=nobody-here", "an unknown name"),
+        (
+            &admin_key,
+            "&username=nobody-here",
+            "an unknown name to an admin",
+        ),
+    ] {
+        let refused = subsonic_json(&router, "getPlaylists", key, extra).await;
+        assert_eq!(
+            refused["subsonic-response"]["error"]["code"], 70,
+            "{who}: {refused}"
+        );
+    }
+    let outsider_open =
+        subsonic_json(&router, "getPlaylist", &outsider_key, &format!("&id={id}")).await;
+    assert_eq!(outsider_open["subsonic-response"]["error"]["code"], 70);
+    let outsider_self = subsonic_json(
+        &router,
+        "getPlaylists",
+        &outsider_key,
+        "&username=named-outsider",
+    )
+    .await;
+    assert_eq!(outsider_self["subsonic-response"]["status"], "ok");
+
+    let renamed = subsonic_json(
+        &router,
+        "updatePlaylist",
+        &admin_key,
+        &format!("&playlistId={id}&name=Taken"),
+    )
+    .await;
+    assert_eq!(
+        renamed["subsonic-response"]["error"]["code"], 70,
+        "the administrator reads, and writes nothing"
+    );
+}
+
+/// Subsonic has no move verb, so a client reorders by sending the whole list
+/// again through `createPlaylist?playlistId=` — which replaces the track list
+/// in the order given (RFC-020, what was still open).
+#[tokio::test]
+async fn subsonic_reorders_a_playlist_by_sending_it_again() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_key) = subsonic_account(&state, "reorder-subsonic").await;
+    let (_library, ids) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "reorder-sub",
+        4_500,
+        &["One", "Two", "Three"],
+    )
+    .await;
+    let router = waveflow_server::app(&config, state.clone());
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!(
+            "&name=Order&songId={}&songId={}&songId={}",
+            ids[0], ids[1], ids[2]
+        ),
+    )
+    .await;
+    let id = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let reordered = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!(
+            "&playlistId={id}&songId={}&songId={}&songId={}",
+            ids[2], ids[0], ids[1]
+        ),
+    )
+    .await;
+    assert_eq!(
+        entry_ids(&reordered["subsonic-response"]["playlist"]),
+        vec![ids[2].to_string(), ids[0].to_string(), ids[1].to_string()]
+    );
+    let read = subsonic_json(&router, "getPlaylist", &api_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&read["subsonic-response"]["playlist"]),
+        vec![ids[2].to_string(), ids[0].to_string(), ids[1].to_string()]
+    );
+}

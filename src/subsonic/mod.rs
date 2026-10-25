@@ -417,7 +417,7 @@ async fn dispatch(
         "search2" => search(state, principal, params)
             .await
             .map(|node| node.renamed("searchResult2")),
-        "getPlaylists" => playlists(state, principal).await,
+        "getPlaylists" => playlists(state, principal, params).await,
         "getPlaylist" => get_playlist(state, principal, params).await,
         "createPlaylist" => create_playlist(state, principal, params).await,
         "updatePlaylist" => update_playlist(state, principal, params).await,

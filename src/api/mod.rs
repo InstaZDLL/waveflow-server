@@ -33,6 +33,7 @@ mod folders;
 mod libraries;
 mod oauth;
 mod playback;
+mod playlist_moves;
 mod playlists;
 mod probes;
 mod quality;
@@ -59,6 +60,7 @@ pub use folders::*;
 pub use libraries::*;
 pub use oauth::*;
 pub use playback::*;
+pub use playlist_moves::*;
 pub use playlists::*;
 pub use probes::*;
 pub use quality::*;
@@ -123,6 +125,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/libraries/{library_id}/unavailable-tracks/purge",
             post(purge_unavailable_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/purged-tracks",
+            get(purged_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/purged-tracks/restore",
+            post(restore_purged_tracks),
         )
         .route(
             "/api/v2/libraries/{library_id}/members",
@@ -274,6 +284,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/playlists/{playlist_id}/export",
             get(export_playlist),
+        )
+        .route(
+            "/api/v2/playlists/{playlist_id}/move",
+            post(move_playlist_entry),
         )
         .route(
             "/api/v2/playlists/{playlist_id}",

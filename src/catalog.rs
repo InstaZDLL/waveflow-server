@@ -22,6 +22,9 @@ pub struct LibraryScanSettings {
     pub library: LibraryRecord,
     /// Follow symbolic links that stay inside the root (RFC-021 decision 3).
     pub follow_links: bool,
+    /// Whether the watcher observes this library (RFC-021 decision 6, and the
+    /// per-library switch it left open).
+    pub watch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -288,18 +291,40 @@ impl Database {
         &self,
         library_id: Uuid,
     ) -> Result<Option<LibraryScanSettings>, sqlx::Error> {
-        let row = sqlx::query("SELECT id, name, root_path, follow_links FROM library WHERE id = ?")
-            .bind(library_id.to_string())
-            .fetch_optional(self.pool())
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, root_path, follow_links, watch FROM library WHERE id = ?",
+        )
+        .bind(library_id.to_string())
+        .fetch_optional(self.pool())
+        .await?;
         row.map(|row| {
             let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
+            let watch = row.try_get::<i64, _>("watch")? != 0;
             Ok(LibraryScanSettings {
                 library: library_from_row(row)?,
                 follow_links,
+                watch,
             })
         })
         .transpose()
+    }
+
+    /// The libraries the watcher observes: those whose `watch` switch is on,
+    /// and the links setting each is walked with, which decides whether a
+    /// watched change may be scanned folder by folder.
+    pub async fn watched_libraries(&self) -> Result<Vec<(LibraryRecord, bool)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id, name, root_path, follow_links FROM library WHERE watch = 1 \
+             ORDER BY created_at",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
+                Ok((library_from_row(row)?, follow_links))
+            })
+            .collect()
     }
 
     /// Whether any library the user can see is being scanned, and how many
@@ -1303,7 +1328,10 @@ impl Database {
         let now = now_ms();
         for track_id in track_ids {
             sqlx::query(
-                "UPDATE track SET is_available = 1, last_seen_scan_id = ?, updated_at = ? WHERE id = ?",
+                // A file found again takes back a purge still within its
+                // grace window: the track is there, so nothing is to go.
+                "UPDATE track SET is_available = 1, purged_at = NULL, last_seen_scan_id = ?, \
+                 updated_at = ? WHERE id = ?",
             )
             .bind(scan_id.to_string())
             .bind(now)
@@ -1551,7 +1579,7 @@ impl Database {
                explicit_status=excluded.explicit_status, \
                lyrics_hash=excluded.lyrics_hash, disc_subtitle=excluded.disc_subtitle, \
                pid=excluded.pid, \
-               is_available=1, unavailable_since=NULL, \
+               is_available=1, unavailable_since=NULL, purged_at=NULL, \
                last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )

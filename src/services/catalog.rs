@@ -222,6 +222,30 @@ impl DomainServices {
         })
     }
 
+    /// A track's cover, or its album's when the track has none, as `user_id`
+    /// may read it. The share page's cover (RFC-020): the one cover a share
+    /// visitor's pass names, read through the owner's libraries.
+    pub async fn track_cover_for_user(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+    ) -> Result<Option<(String, String)>, ServiceError> {
+        let row = sqlx::query(
+            "SELECT a.hash, a.format FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             LEFT JOIN album al ON al.id=t.album_id \
+             JOIN artwork a ON a.hash=COALESCE(t.artwork_hash, al.artwork_hash) \
+             WHERE t.id=? AND m.user_id=? AND t.is_available=1",
+        )
+        .bind(track_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?;
+        row.map(|row| Ok::<_, sqlx::Error>((row.try_get("hash")?, row.try_get("format")?)))
+            .transpose()
+            .map_err(Into::into)
+    }
+
     pub async fn artwork_for_user(
         &self,
         user_id: Uuid,

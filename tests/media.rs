@@ -1147,6 +1147,11 @@ struct SharedFile {
 }
 
 async fn shared_file(name: &str, share: serde_json::Value) -> SharedFile {
+    shared_file_with(name, share, false).await
+}
+
+/// `shared_file`, with a cover beside the track when `cover` says so.
+async fn shared_file_with(name: &str, share: serde_json::Value, cover: bool) -> SharedFile {
     let (temp, config, state) = test_app().await;
     let password = uuid::Uuid::new_v4().to_string();
     let hash = security::hash_password(&password).unwrap();
@@ -1158,6 +1163,9 @@ async fn shared_file(name: &str, share: serde_json::Value) -> SharedFile {
     let music = config.data_dir.join(format!("{name}-music"));
     std::fs::create_dir_all(&music).unwrap();
     write_test_wav(&music.join("Shared.wav"));
+    if cover {
+        write_test_png(&music.join("cover.png"));
+    }
     let root = std::fs::canonicalize(&music).unwrap();
     let library = state
         .db
@@ -1405,5 +1413,107 @@ async fn a_share_stops_opening_at_its_visit_cap_and_its_last_visit_still_plays()
     assert_eq!(
         anonymous(&shared.router, &stream, None).await.status(),
         StatusCode::NOT_FOUND
+    );
+}
+
+/// The share page shows each track's cover through a route of the share's
+/// own, authorised by the visit's pass like the stream: the session-only
+/// artwork route stays closed to a visitor, a pass for another track or none
+/// at all opens nothing, and a deleted share stops answering at once. A track
+/// with no cover is handed no address for one.
+#[tokio::test]
+async fn a_share_page_shows_covers_through_the_visit_and_nothing_else() {
+    let bare = shared_file("coverless-owner", serde_json::json!({})).await;
+    let opened = open_share(&bare.router, &bare.share_url).await;
+    assert!(
+        opened["tracks"][0].get("coverUrl").is_none(),
+        "a track with no cover is handed no address for one: {opened}"
+    );
+
+    let shared = shared_file_with("cover-owner", serde_json::json!({}), true).await;
+    let opened = open_share(&shared.router, &shared.share_url).await;
+    let cover = opened["tracks"][0]["coverUrl"]
+        .as_str()
+        .expect("a track with a cover is handed its address")
+        .to_owned();
+    let stream = opened["tracks"][0]["streamUrl"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(cover.contains("visit="), "{cover}");
+    let served = anonymous(&shared.router, &cover, None).await;
+    assert_eq!(served.status(), StatusCode::OK);
+    assert_eq!(served.headers()["content-type"], "image/png");
+    assert_eq!(served.headers()["cache-control"], "private, no-cache");
+    // A share response like the others (RFC-019 decision 2).
+    assert_eq!(served.headers()["referrer-policy"], "no-referrer");
+    let etag = served.headers()["etag"].to_str().unwrap().to_owned();
+    let bytes = served.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[1..4], b"PNG");
+    let revalidated = shared
+        .router
+        .clone()
+        .oneshot(
+            Request::get(cover.as_str())
+                .header("if-none-match", etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+    // Opening the cover counted nothing.
+    assert_eq!(listed_share(&shared).await["visit_count"], 1);
+
+    let without_pass = cover.split('?').next().unwrap().to_owned();
+    assert_eq!(
+        anonymous(&shared.router, &without_pass, None)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        anonymous(&shared.router, &with_query(&cover, "size=64"), None)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST,
+        "nothing but the pass is accepted"
+    );
+    // The stream's pass is the same pass, so a pass is bound to its track and
+    // its share, not to which of the two routes it is presented on; another
+    // track id under it opens nothing.
+    let pass = stream.split("visit=").nth(1).unwrap();
+    let elsewhere = format!(
+        "{}/tracks/{}/cover?visit={pass}",
+        shared.share_url,
+        uuid::Uuid::new_v4()
+    );
+    assert_eq!(
+        anonymous(&shared.router, &elsewhere, None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    // The session-only route stays session-only.
+    assert_eq!(
+        anonymous(
+            &shared.router,
+            &format!("/api/v2/artwork/{}", shared.track),
+            None
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let uri = format!("/api/v2/shares/{}", shared.share_id);
+    assert_eq!(
+        send_json(&shared.router, "DELETE", &uri, &shared.token, None)
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        anonymous(&shared.router, &cover, None).await.status(),
+        StatusCode::NOT_FOUND,
+        "a deleted share stops answering its covers at once"
     );
 }

@@ -26,7 +26,7 @@ macro_rules! playlist_columns {
 /// answers. The predicate is written once per reach, in SQL, rather than
 /// checked after the read: tenancy lives in the queries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reach {
+pub(super) enum Reach {
     Owned,
     Visible,
 }
@@ -157,7 +157,7 @@ impl DomainServices {
             .await
     }
 
-    async fn playlist_on(
+    pub(super) async fn playlist_on(
         &self,
         connection: &mut SqliteConnection,
         user_id: Uuid,
@@ -879,7 +879,7 @@ impl DomainServices {
 
 /// A playlist read through `playlist_columns!`, with the songs already
 /// resolved for whoever is reading it.
-fn playlist_from_row(
+pub(super) fn playlist_from_row(
     row: &sqlx::sqlite::SqliteRow,
     id: Uuid,
     songs: Vec<SongItem>,
@@ -901,7 +901,7 @@ fn playlist_from_row(
 ///
 /// Behind the same reach as a read, the wider of the two: a writer has already
 /// proved ownership by the time it asks, and asking here again costs a join.
-async fn playlist_track_ids_on(
+pub(super) async fn playlist_track_ids_on(
     connection: &mut SqliteConnection,
     user_id: Uuid,
     playlist_id: Uuid,

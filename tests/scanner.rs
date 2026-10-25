@@ -1906,6 +1906,17 @@ async fn a_purge_removes_only_what_is_still_missing() {
         .await
         .unwrap();
     assert_eq!(purged.purged, 1, "a track that came back must be kept");
+    // Out of sight at once, deleted once the grace window has passed.
+    assert!(purged.restorable_until.is_some());
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM track WHERE is_available = 0 AND purged_at IS NULL"
+        )
+        .await,
+        0
+    );
+    assert_eq!(state.services.finish_purges(now_ms()).await.unwrap(), 1);
     assert_eq!(
         count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
         0
@@ -2067,8 +2078,13 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
         1
     );
     assert_eq!(
-        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
-        1
+        count(
+            &state,
+            "SELECT COUNT(*) FROM track WHERE is_available = 0 AND purged_at IS NULL"
+        )
+        .await,
+        1,
+        "the retention purges like anyone else, behind the same grace window"
     );
 }
 
@@ -2634,4 +2650,239 @@ async fn a_scan_a_previous_run_left_queued_runs_at_boot() {
             .await
             .unwrap();
     settled(&state, owner, other_job.parse().unwrap()).await;
+}
+
+/// The journal entries one account was written, as `(entity_type, entity_id,
+/// action)`, oldest first.
+async fn journal_of(
+    state: &waveflow_server::AppState,
+    user: uuid::Uuid,
+) -> Vec<(String, String, String, serde_json::Value)> {
+    sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT entity_type, entity_id, action, payload_json FROM sync_event \
+         WHERE user_id = ? ORDER BY cursor",
+    )
+    .bind(user.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(kind, id, action, payload)| (kind, id, action, serde_json::from_str(&payload).unwrap()))
+    .collect()
+}
+
+/// RFC-021, what was still open: a purge can be taken back within its grace
+/// window — explicitly, or by the file coming back — and when it does land,
+/// every account that held a favourite, a rating or a playlist entry of what
+/// went is told through its own sync journal, as a library deletion tells
+/// them too.
+#[tokio::test]
+async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
+    use waveflow_server::services::{LibraryActor, PurgeRequest};
+
+    let (_temp, state, owner, library, root) = library_with_albums("undo").await;
+    let actor = LibraryActor::operator(owner);
+    let listener = insert_account(&state, "undo-listener", "user").await;
+    state
+        .db
+        .add_library_member(
+            owner,
+            library.id,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let doomed = track_id(&state, "Second/2.flac").await;
+    let kept = track_id(&state, "First/1.flac").await;
+    let doomed_album: String = sqlx::query_scalar("SELECT album_id FROM track WHERE id = ?")
+        .bind(&doomed)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    for (statement, user, entity) in [
+        (
+            "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+             VALUES (?, 'track', ?, 1)",
+            listener,
+            doomed.clone(),
+        ),
+        (
+            "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+             VALUES (?, 'album', ?, 1)",
+            listener,
+            doomed_album.clone(),
+        ),
+        (
+            "INSERT INTO user_rating (user_id, entity_type, entity_id, rating, updated_at) \
+             VALUES (?, 'track', ?, 4, 1)",
+            owner,
+            doomed.clone(),
+        ),
+    ] {
+        sqlx::query(statement)
+            .bind(user.to_string())
+            .bind(entity)
+            .execute(state.db.pool())
+            .await
+            .unwrap();
+    }
+    let playlist = state
+        .services
+        .create_playlist(
+            listener,
+            "Mixed",
+            &[kept.parse().unwrap(), doomed.parse().unwrap()],
+        )
+        .await
+        .unwrap();
+    let journalled = |entries: &[(String, String, String, serde_json::Value)]| entries.len();
+    let listener_before = journalled(&journal_of(&state, listener).await);
+    let owner_before = journalled(&journal_of(&state, owner).await);
+
+    let bytes = std::fs::read(root.join("Second/2.flac")).unwrap();
+    std::fs::remove_file(root.join("Second/2.flac")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    let only_doomed = || PurgeRequest {
+        track_ids: Some(vec![doomed.parse().unwrap()]),
+        all: false,
+    };
+
+    // Purged: out of the missing listing, into the purged one, nothing gone.
+    let purged = state
+        .services
+        .purge_unavailable_tracks(actor, library.id, only_doomed())
+        .await
+        .unwrap();
+    assert_eq!(purged.purged, 1);
+    let until = purged.restorable_until.expect("a grace window by default");
+    let missing = state
+        .services
+        .unavailable_tracks(actor, library.id, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(missing.total, 0);
+    let held = state
+        .services
+        .purged_tracks(actor, library.id, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(held.total, 1);
+    assert_eq!(held.tracks[0].id.to_string(), doomed);
+    assert_eq!(held.tracks[0].deleted_after, Some(until));
+    assert_eq!(held.tracks[0].favorites, 1, "nothing is lost yet");
+
+    // Taken back explicitly.
+    let restored = state
+        .services
+        .restore_purged_tracks(actor, library.id, only_doomed())
+        .await
+        .unwrap();
+    assert_eq!(restored.restored, 1);
+    assert_eq!(
+        state
+            .services
+            .unavailable_tracks(actor, library.id, Default::default())
+            .await
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        state.services.finish_purges(i64::MAX).await.unwrap(),
+        0,
+        "a restored track is no longer due"
+    );
+
+    // Taken back by the file coming back within the window.
+    state
+        .services
+        .purge_unavailable_tracks(actor, library.id, only_doomed())
+        .await
+        .unwrap();
+    std::fs::write(root.join("Second/2.flac"), &bytes).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM track WHERE purged_at IS NOT NULL"
+        )
+        .await,
+        0,
+        "a track found again is not purged any more"
+    );
+    assert_eq!(state.services.finish_purges(i64::MAX).await.unwrap(), 0);
+    assert_eq!(track_id(&state, "Second/2.flac").await, doomed);
+    assert_eq!(
+        journalled(&journal_of(&state, listener).await),
+        listener_before,
+        "nothing reached a journal while the purge could be taken back"
+    );
+
+    // Purged for good: the window passes.
+    std::fs::remove_file(root.join("Second/2.flac")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    state
+        .services
+        .purge_unavailable_tracks(actor, library.id, only_doomed())
+        .await
+        .unwrap();
+    assert_eq!(state.services.finish_purges(now_ms()).await.unwrap(), 1);
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
+        0
+    );
+
+    let listener_journal = journal_of(&state, listener).await;
+    let told = &listener_journal[listener_before..];
+    assert!(
+        told.iter()
+            .any(|(kind, id, action, payload)| kind == "favorite"
+                && *id == doomed
+                && action == "delete"
+                && payload["entity_type"] == "track"),
+        "the listener's favourite of the track: {told:?}"
+    );
+    assert!(
+        told.iter()
+            .any(|(kind, id, action, payload)| kind == "favorite"
+                && *id == doomed_album
+                && action == "delete"
+                && payload["entity_type"] == "album"),
+        "the listener's favourite of the album left empty: {told:?}"
+    );
+    let playlist_entry = told
+        .iter()
+        .find(|(kind, id, ..)| kind == "playlist" && *id == playlist.id.to_string())
+        .expect("the listener's playlist that lost an entry");
+    assert_eq!(playlist_entry.2, "upsert");
+    assert_eq!(playlist_entry.3["track_ids"], serde_json::json!([kept]));
+    assert_eq!(playlist_entry.3["name"], "Mixed");
+    let owner_told = journal_of(&state, owner).await;
+    assert!(
+        owner_told[owner_before..]
+            .iter()
+            .any(|(kind, id, action, _)| kind == "rating" && *id == doomed && action == "delete"),
+        "the owner's rating: {owner_told:?}"
+    );
+
+    // A deletion tells them the same way.
+    let before_deletion = journal_of(&state, listener).await.len();
+    state
+        .services
+        .delete_library(actor, library.id, "undo")
+        .await
+        .unwrap();
+    let after = journal_of(&state, listener).await;
+    let emptied = after[before_deletion..]
+        .iter()
+        .find(|(kind, ..)| kind == "playlist")
+        .expect("the playlist the deletion emptied");
+    assert_eq!(emptied.3["track_ids"], serde_json::json!([]));
+    let violations = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap();
+    assert!(violations.is_empty());
 }

@@ -487,8 +487,11 @@ pub async fn unavailable_tracks(
 
 /// Purges missing tracks: those named in `track_ids`, or every one with
 /// `"all": true`, and never neither (`422`). Only tracks still unavailable are
-/// removed. Not reversible: see RFC-021 decision 4 for what is lost. `409`
-/// while the library is being scanned.
+/// purged. With a grace window (`WAVEFLOW_PURGE_GRACE_HOURS`, a week by
+/// default) they leave the listing at once and are deleted once it has
+/// passed, and `restorable_until` says when; until then the purge can be taken
+/// back. Without one they are deleted now. See RFC-021 decision 4 for what a
+/// deletion loses. `409` while the library is being scanned.
 #[utoipa::path(post, path = "/api/v2/libraries/{library_id}/unavailable-tracks/purge", tag = "catalog", params(("library_id" = Uuid, Path)), request_body = crate::services::PurgeRequest, responses((status = 200, body = crate::services::PurgeOutcome), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn purge_unavailable_tracks(
     State(state): State<AppState>,
@@ -500,6 +503,46 @@ pub async fn purge_unavailable_tracks(
     state
         .services
         .purge_unavailable_tracks(library_actor(&user), library_id, request)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// The tracks purged from a library and still restorable, soonest deleted
+/// first, each with `deleted_after`. For those who may purge them.
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/purged-tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::UnavailableTracks), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn purged_tracks(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    Query(query): Query<UnavailableTracksQuery>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::UnavailableTracks>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .purged_tracks(library_actor(&user), library_id, page)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Takes a purge back: the tracks named in `track_ids`, or every purged one
+/// with `"all": true`, and never neither (`422`), return to the missing-tracks
+/// listing with everything that hangs off them. Only within the grace window;
+/// a track already deleted is not counted.
+#[utoipa::path(post, path = "/api/v2/libraries/{library_id}/purged-tracks/restore", tag = "catalog", params(("library_id" = Uuid, Path)), request_body = crate::services::PurgeRequest, responses((status = 200, body = crate::services::RestoreOutcome), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn restore_purged_tracks(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<crate::services::PurgeRequest>,
+) -> Result<Json<crate::services::RestoreOutcome>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    state
+        .services
+        .restore_purged_tracks(library_actor(&user), library_id, request)
         .await
         .map(Json)
         .map_err(service_error)
