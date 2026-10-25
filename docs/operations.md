@@ -321,6 +321,55 @@ next visit asks again.
 **What it logs.** The provider and a verdict, such as `answered HTTP 503` —
 never the request URL, which carries your key.
 
+## Switching lyrics from LRCLIB on
+
+**Off by default, and an upgrade leaves it off.**
+[LRCLIB](https://lrclib.net) is a free lyrics database that needs no key. With
+it switched on, a track that has no lyrics of its own — no embedded lyrics, no
+`.lrc` or `.txt` beside the file, no uploaded sheet — is looked up the first
+time somebody asks for its lyrics. Lyrics from the files and uploads always win;
+LRCLIB only fills an empty answer.
+[RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md) carries the reasoning.
+
+```bash
+WAVEFLOW_LYRICS_PROVIDERS=lrclib
+```
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WAVEFLOW_LYRICS_PROVIDERS` | empty | The switch. Empty is off; `lrclib` is the only provider. A name the server does not know refuses to start |
+| `WAVEFLOW_LYRICS_TTL_DAYS` | 30 | How long lyrics found are kept before LRCLIB is asked again |
+| `WAVEFLOW_LYRICS_MISS_TTL_DAYS` | 7 | How long "LRCLIB has nothing for this track" is kept |
+| `WAVEFLOW_LYRICS_RATE_PER_SEC` | 2 | Requests per second |
+| `WAVEFLOW_LYRICS_REQUEST_TIMEOUT_SECS` | 10 | How long one request may take before it counts as unanswered |
+
+**It is not the metadata switch.** Naming `lastfm` or `deezer` in
+`WAVEFLOW_METADATA_PROVIDERS` does not turn lyrics on, and the reverse: a lyrics
+lookup sends a track's title, album and duration at the moment it is played,
+which is a different thing to agree to than asking about an artist's name.
+
+**What the server starts contacting.** `lrclib.net`, over https, and only when
+somebody opens the lyrics of a track without any — the playing screen, a track's
+properties, a Subsonic client calling `getLyricsBySongId` or `getLyrics`. Never
+at scan time. Each request carries the artist, the title, the album and the
+duration, and a User-Agent naming this project; no redirect is followed, and an
+answer over 1 MiB is refused. Simultaneous asks for one track share one request.
+The person asking waits at most four seconds; a slower answer is kept for the
+next listen. [`privacy.md`](privacy.md) lists exactly what is sent.
+
+**What clients see.** The native API and the web client credit the sheet to
+LRCLIB (`source: "lrclib"`); Subsonic clients get the sheet, synced when LRCLIB
+has timings, with no credit, because the frozen `structuredLyrics` element has
+no field for one.
+
+**What it stores.** In `waveflow.db`, keyed by a digest of what was sent: the
+synced and plain lyrics, or that LRCLIB had none or called the track an
+instrumental, and when to ask again. A failed request stores nothing, so the
+next ask tries again.
+
+**What it logs.** A verdict, such as `answered HTTP 503` — never the request
+URL, which carries the title and the artist.
+
 ## Scanning
 
 A scan reads only what changed. A file whose size and modification time are

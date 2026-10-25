@@ -185,8 +185,10 @@ It returns:
 - **top tracks, albums, artists and genres**, by listens, ties broken by the
   most recent listen and then by name;
 - **a timeline**: listens and listening time per day for `7d` and `30d`, per
-  month for `365d` and `all`, with empty buckets filled in for the two
-  bounded periods so a chart has every day;
+  month for `365d` and `all`, with empty buckets filled in for the three
+  bounded periods so a chart has every day or month — `7d` and `30d` start at
+  the listener's midnight six and twenty-nine days back, `365d` at the first
+  of the month eleven months back;
 - **the first and the last listen** of the period, with their track.
 
 **A listen** is a `play_event` row with `submission = 1`: what scrobbling and
@@ -286,9 +288,9 @@ catalogue, scored against the seed artist:
 
 | Signal | Score |
 | --- | --- |
-| credited on the same track or album (a duet, a feature, a split album) | 3 per shared track or album, at most 9 |
+| credited on one of the seed's tracks, on the track itself or through its album (a duet, a feature, a guest) | 3 per such track, at most 9 |
 | sharing genres | 2 per shared canonical genre, at most 6 |
-| close era, by median year | 2 within five years, 1 within ten |
+| close era, by average year | 2 within five years, 1 within ten |
 | listened to by the caller within 30 minutes after the seed, in the seed's last 500 listens | 1 per such listen, at most 5 |
 
 An artist with neither a shared credit, a shared genre nor a co-listen is not
