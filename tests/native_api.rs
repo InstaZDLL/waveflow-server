@@ -5847,3 +5847,120 @@ async fn the_library_lifecycle_routes_answer_by_standing() {
     .await;
     assert_eq!(again.status(), StatusCode::NOT_FOUND);
 }
+
+/// An administrator's account is not enough: a token whose scopes stop short
+/// of `admin` acts with the account's memberships only, so it cannot rename,
+/// purge or delete a library its account is not a member of — while the same
+/// account on an unrestricted credential can.
+#[tokio::test]
+async fn a_narrowed_admin_token_has_no_say_over_a_foreign_library() {
+    let (_temp, config, state) = test_app().await;
+    let (admin, full_token) = account_with_token(&state, "scoped-admin", "admin").await;
+    let (owner, _) = account_with_token(&state, "scoped-owner", "user").await;
+    let write_token = security::generate_token("wfapi_");
+    state
+        .db
+        .create_api_token(
+            waveflow_server::database::NewApiToken {
+                actor_id: admin,
+                user_id: admin,
+                name: "write only",
+                token_hash: &security::token_hash(&write_token),
+                scopes: &["write".to_owned()],
+                expires_at: None,
+            },
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("scoped-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Foreign",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let library = format!("/api/v2/libraries/{library_id}");
+    let send = |request: Request<Body>| {
+        let router = router.clone();
+        async move { router.oneshot(request).await.unwrap().status() }
+    };
+
+    assert_eq!(
+        send(bearer_json(
+            "PATCH",
+            &library,
+            &write_token,
+            serde_json::json!({"name": "Taken"}),
+        ))
+        .await,
+        StatusCode::NOT_FOUND,
+        "a narrowed token renamed a library its account is not a member of"
+    );
+    assert_eq!(
+        send(bearer_json(
+            "POST",
+            &format!("{library}/unavailable-tracks/purge"),
+            &write_token,
+            serde_json::json!({"all": true}),
+        ))
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(bearer_json(
+            "GET",
+            &format!("{library}/unavailable-tracks"),
+            &write_token,
+            serde_json::json!({}),
+        ))
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(bearer_json(
+            "DELETE",
+            &library,
+            &write_token,
+            serde_json::json!({"confirm": "Foreign"}),
+        ))
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    let name: String = sqlx::query_scalar("SELECT name FROM library WHERE id = ?")
+        .bind(library_id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(name, "Foreign");
+
+    // The same account, unrestricted: its authority is an administrator's.
+    assert_eq!(
+        send(bearer_json(
+            "PATCH",
+            &library,
+            &full_token,
+            serde_json::json!({"name": "Renamed by the operator"}),
+        ))
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(bearer_json(
+            "DELETE",
+            &library,
+            &full_token,
+            serde_json::json!({"confirm": "Renamed by the operator"}),
+        ))
+        .await,
+        StatusCode::OK
+    );
+}

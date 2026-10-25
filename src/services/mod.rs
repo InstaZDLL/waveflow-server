@@ -1469,8 +1469,8 @@ pub use library_folders::{
     MAX_FOLDER_DEPTH, MAX_PLACEMENTS,
 };
 pub use library_lifecycle::{
-    LibraryDeleted, LibrarySettings, LibraryUpdate, LibraryUpdated, PurgeOutcome, PurgeRequest,
-    UnavailableTrack, UnavailableTracks,
+    LibraryActor, LibraryDeleted, LibrarySettings, LibraryUpdate, LibraryUpdated, PurgeOutcome,
+    PurgeRequest, UnavailableTrack, UnavailableTracks,
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};

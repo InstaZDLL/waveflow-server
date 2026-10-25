@@ -415,7 +415,7 @@ pub async fn update_library(
     let actor = authenticated(&state, &headers, access).await?;
     state
         .services
-        .update_library(actor.id, library_id, request)
+        .update_library(library_actor(&actor), library_id, request)
         .await
         .map(Json)
         .map_err(service_error)
@@ -435,7 +435,7 @@ pub async fn delete_library(
     let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
-        .delete_library(actor.id, library_id, &request.confirm)
+        .delete_library(library_actor(&actor), library_id, &request.confirm)
         .await
         .map(Json)
         .map_err(service_error)
@@ -451,7 +451,7 @@ pub async fn library_settings(
     let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
-        .library_settings(actor.id, library_id)
+        .library_settings(library_actor(&actor), library_id)
         .await
         .map(Json)
         .map_err(service_error)
@@ -479,7 +479,7 @@ pub async fn unavailable_tracks(
         crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
     state
         .services
-        .unavailable_tracks(user.id, library_id, page)
+        .unavailable_tracks(library_actor(&user), library_id, page)
         .await
         .map(Json)
         .map_err(service_error)
@@ -499,7 +499,7 @@ pub async fn purge_unavailable_tracks(
     let user = authenticated(&state, &headers, Access::Write).await?;
     state
         .services
-        .purge_unavailable_tracks(user.id, library_id, request)
+        .purge_unavailable_tracks(library_actor(&user), library_id, request)
         .await
         .map(Json)
         .map_err(service_error)

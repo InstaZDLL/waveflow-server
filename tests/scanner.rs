@@ -1703,7 +1703,7 @@ async fn links_are_followed_only_inside_the_library() {
     let updated = state
         .services
         .update_library(
-            owner,
+            waveflow_server::services::LibraryActor::operator(owner),
             library.id,
             waveflow_server::services::LibraryUpdate {
                 follow_links: Some(true),
@@ -1872,7 +1872,7 @@ async fn a_purge_removes_only_what_is_still_missing() {
     let listed = state
         .services
         .unavailable_tracks(
-            owner,
+            waveflow_server::services::LibraryActor::operator(owner),
             library.id,
             waveflow_server::services::BrowsePage::default(),
         )
@@ -1896,7 +1896,7 @@ async fn a_purge_removes_only_what_is_still_missing() {
     let purged = state
         .services
         .purge_unavailable_tracks(
-            owner,
+            waveflow_server::services::LibraryActor::operator(owner),
             library.id,
             waveflow_server::services::PurgeRequest {
                 track_ids: Some(vec![first.parse().unwrap(), second.parse().unwrap()]),
@@ -1955,7 +1955,11 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
 
     let neither = state
         .services
-        .purge_unavailable_tracks(owner, library.id, PurgeRequest::default())
+        .purge_unavailable_tracks(
+            waveflow_server::services::LibraryActor::operator(owner),
+            library.id,
+            PurgeRequest::default(),
+        )
         .await;
     assert!(matches!(neither, Err(ServiceError::Invalid)), "{neither:?}");
 
@@ -1978,14 +1982,22 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
     assert!(matches!(
         state
             .services
-            .purge_unavailable_tracks(listener, library.id, all())
+            .purge_unavailable_tracks(
+                waveflow_server::services::LibraryActor::operator(listener),
+                library.id,
+                all()
+            )
             .await,
         Err(ServiceError::Forbidden)
     ));
     assert!(matches!(
         state
             .services
-            .unavailable_tracks(listener, library.id, Default::default())
+            .unavailable_tracks(
+                waveflow_server::services::LibraryActor::operator(listener),
+                library.id,
+                Default::default()
+            )
             .await,
         Err(ServiceError::Forbidden)
     ));
@@ -1994,7 +2006,11 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
     assert!(matches!(
         state
             .services
-            .purge_unavailable_tracks(owner, library.id, all())
+            .purge_unavailable_tracks(
+                waveflow_server::services::LibraryActor::operator(owner),
+                library.id,
+                all()
+            )
             .await,
         Err(ServiceError::Conflict)
     ));
@@ -2044,7 +2060,7 @@ async fn a_moved_root_keeps_every_identity() {
     let updated = state
         .services
         .update_library(
-            owner,
+            waveflow_server::services::LibraryActor::operator(owner),
             library.id,
             waveflow_server::services::LibraryUpdate {
                 path: Some(moved.to_string_lossy().into_owned()),
@@ -2115,7 +2131,11 @@ async fn the_lifecycle_follows_the_role_model() {
 
     state
         .services
-        .update_library(owner, library.id, rename("  Renamed  "))
+        .update_library(
+            waveflow_server::services::LibraryActor::operator(owner),
+            library.id,
+            rename("  Renamed  "),
+        )
         .await
         .unwrap();
     let name: String = sqlx::query_scalar("SELECT name FROM library WHERE id = ?")
@@ -2127,14 +2147,22 @@ async fn the_lifecycle_follows_the_role_model() {
     assert!(matches!(
         state
             .services
-            .update_library(listener, library.id, rename("Mine now"))
+            .update_library(
+                waveflow_server::services::LibraryActor::operator(listener),
+                library.id,
+                rename("Mine now")
+            )
             .await,
         Err(ServiceError::Forbidden)
     ));
     assert!(matches!(
         state
             .services
-            .update_library(owner, library.id, rename(" "))
+            .update_library(
+                waveflow_server::services::LibraryActor::operator(owner),
+                library.id,
+                rename(" ")
+            )
             .await,
         Err(ServiceError::Invalid)
     ));
@@ -2147,14 +2175,22 @@ async fn the_lifecycle_follows_the_role_model() {
     assert!(matches!(
         state
             .services
-            .update_library(owner, library.id, repath.clone())
+            .update_library(
+                waveflow_server::services::LibraryActor::operator(owner),
+                library.id,
+                repath.clone()
+            )
             .await,
         Err(ServiceError::Forbidden)
     ));
     assert!(matches!(
         state
             .services
-            .delete_library(owner, library.id, "Renamed")
+            .delete_library(
+                waveflow_server::services::LibraryActor::operator(owner),
+                library.id,
+                "Renamed"
+            )
             .await,
         Err(ServiceError::Forbidden)
     ));
@@ -2162,14 +2198,22 @@ async fn the_lifecycle_follows_the_role_model() {
     assert!(matches!(
         state
             .services
-            .update_library(admin, library.id, repath)
+            .update_library(
+                waveflow_server::services::LibraryActor::operator(admin),
+                library.id,
+                repath
+            )
             .await,
         Err(ServiceError::Conflict)
     ));
     assert!(matches!(
         state
             .services
-            .delete_library(admin, library.id, "Renamed")
+            .delete_library(
+                waveflow_server::services::LibraryActor::operator(admin),
+                library.id,
+                "Renamed"
+            )
             .await,
         Err(ServiceError::Conflict)
     ));
@@ -2178,7 +2222,7 @@ async fn the_lifecycle_follows_the_role_model() {
         state
             .services
             .update_library(
-                admin,
+                waveflow_server::services::LibraryActor::operator(admin),
                 library.id,
                 LibraryUpdate {
                     path: Some(temp.path().join("absent").to_string_lossy().into_owned()),
@@ -2193,7 +2237,11 @@ async fn the_lifecycle_follows_the_role_model() {
     assert!(matches!(
         state
             .services
-            .update_library(outsider, library.id, rename("Ours"))
+            .update_library(
+                waveflow_server::services::LibraryActor::operator(outsider),
+                library.id,
+                rename("Ours")
+            )
             .await,
         Err(ServiceError::NotFound)
     ));
@@ -2246,7 +2294,11 @@ async fn a_deleted_library_leaves_no_row_behind() {
     assert!(matches!(
         state
             .services
-            .delete_library(admin, library.id, "Deleted")
+            .delete_library(
+                waveflow_server::services::LibraryActor::operator(admin),
+                library.id,
+                "Deleted"
+            )
             .await,
         Err(ServiceError::Invalid)
     ));
@@ -2254,7 +2306,11 @@ async fn a_deleted_library_leaves_no_row_behind() {
 
     let deleted = state
         .services
-        .delete_library(admin, library.id, "deleted")
+        .delete_library(
+            waveflow_server::services::LibraryActor::operator(admin),
+            library.id,
+            "deleted",
+        )
         .await
         .unwrap();
     assert_eq!(deleted.tracks, 3);

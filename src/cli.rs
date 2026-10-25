@@ -1055,7 +1055,7 @@ async fn rename_library(state: &AppState, args: RenameLibraryArgs) -> anyhow::Re
     state
         .services
         .update_library(
-            actor.id,
+            crate::services::LibraryActor::operator(actor.id),
             args.library_id,
             crate::services::LibraryUpdate {
                 name: Some(args.name.clone()),
@@ -1077,7 +1077,7 @@ async fn set_library_path(state: &AppState, args: SetPathArgs) -> anyhow::Result
     let updated = state
         .services
         .update_library(
-            actor.id,
+            crate::services::LibraryActor::operator(actor.id),
             args.library_id,
             crate::services::LibraryUpdate {
                 path: Some(args.path.to_string_lossy().into_owned()),
@@ -1109,7 +1109,7 @@ async fn set_library_links(state: &AppState, args: SetLinksArgs) -> anyhow::Resu
     let updated = state
         .services
         .update_library(
-            actor.id,
+            crate::services::LibraryActor::operator(actor.id),
             args.library_id,
             crate::services::LibraryUpdate {
                 follow_links: Some(args.follow),
@@ -1137,7 +1137,11 @@ async fn delete_library(state: &AppState, args: DeleteLibraryArgs) -> anyhow::Re
     let actor = require_admin(&state.db, &args.actor).await?;
     let deleted = state
         .services
-        .delete_library(actor.id, args.library_id, &args.confirm)
+        .delete_library(
+            crate::services::LibraryActor::operator(actor.id),
+            args.library_id,
+            &args.confirm,
+        )
         .await
         .map_err(|error| match error {
             crate::services::ServiceError::Invalid => {
@@ -1161,7 +1165,11 @@ async fn list_unavailable(state: &AppState, args: UnavailableArgs) -> anyhow::Re
             .map_err(|error| library_refusal(error, args.library_id))?;
         let listed = state
             .services
-            .unavailable_tracks(actor.id, args.library_id, page)
+            .unavailable_tracks(
+                crate::services::LibraryActor::operator(actor.id),
+                args.library_id,
+                page,
+            )
             .await
             .map_err(|error| library_refusal(error, args.library_id))?;
         if offset == 0 {
@@ -1188,7 +1196,7 @@ async fn purge_unavailable(state: &AppState, args: PurgeArgs) -> anyhow::Result<
     let outcome = state
         .services
         .purge_unavailable_tracks(
-            actor.id,
+            crate::services::LibraryActor::operator(actor.id),
             args.library_id,
             crate::services::PurgeRequest {
                 track_ids: (!args.all).then_some(args.track_id),

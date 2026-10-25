@@ -124,14 +124,42 @@ impl Standing {
     }
 }
 
+/// Who is asking, and with what authority.
+///
+/// An administrator's account is not enough to act as one: the credential the
+/// request came in on must carry administrative authority too. A token whose
+/// scopes stop short of `admin` holds only what its account's memberships
+/// give it, as `AuthUser::scopes` says a narrowed credential must.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LibraryActor {
+    pub id: Uuid,
+    /// Whether the credential grants administrative authority. The account's
+    /// role is checked again on every operation; this can only narrow it.
+    pub admin_credential: bool,
+}
+
+impl LibraryActor {
+    /// The operator at the CLI, whose authority is the account's own.
+    pub fn operator(id: Uuid) -> Self {
+        Self {
+            id,
+            admin_credential: true,
+        }
+    }
+}
+
 /// The caller's standing on a library, read on the connection the operation
 /// runs on. A library that does not exist, and one the caller is neither a
 /// member of nor an administrator over, are the same answer: not found.
+///
+/// Administrative standing needs both halves: an active administrator's
+/// account, and a credential that carries that authority.
 async fn standing_on(
     connection: &mut SqliteConnection,
-    actor_id: Uuid,
+    actor: LibraryActor,
     library_id: Uuid,
 ) -> Result<Standing, ServiceError> {
+    let actor_id = actor.id;
     let row = sqlx::query(
         "SELECT (SELECT role FROM library_member WHERE library_id = l.id AND user_id = ?) AS role, \
                 EXISTS (SELECT 1 FROM account a WHERE a.id = ? AND a.role = 'admin' \
@@ -144,7 +172,7 @@ async fn standing_on(
     .fetch_optional(&mut *connection)
     .await?
     .ok_or(ServiceError::NotFound)?;
-    if row.try_get::<i64, _>("admin")? != 0 {
+    if actor.admin_credential && row.try_get::<i64, _>("admin")? != 0 {
         return Ok(Standing::Admin);
     }
     match row.try_get::<Option<String>, _>("role")?.as_deref() {
@@ -384,10 +412,13 @@ impl DomainServices {
     /// The settings an administrator manages, the root included.
     pub async fn library_settings(
         &self,
-        actor_id: Uuid,
+        actor: LibraryActor,
         library_id: Uuid,
     ) -> Result<LibrarySettings, ServiceError> {
-        self.require_admin(actor_id).await?;
+        if !actor.admin_credential {
+            return Err(ServiceError::Forbidden);
+        }
+        self.require_admin(actor.id).await?;
         let settings = self
             .db
             .library_scan_settings(library_id)
@@ -411,7 +442,7 @@ impl DomainServices {
     /// Either refuses while the library is being scanned.
     pub async fn update_library(
         &self,
-        actor_id: Uuid,
+        actor: LibraryActor,
         library_id: Uuid,
         update: LibraryUpdate,
     ) -> Result<LibraryUpdated, ServiceError> {
@@ -420,7 +451,7 @@ impl DomainServices {
         }
         let standing = {
             let mut connection = self.db.pool().acquire().await?;
-            standing_on(&mut connection, actor_id, library_id).await?
+            standing_on(&mut connection, actor, library_id).await?
         };
         let allowed = if update.is_administrative() {
             standing == Standing::Admin
@@ -493,7 +524,7 @@ impl DomainServices {
             if let Some(name) = name.as_deref().filter(|name| *name != before.library.name) {
                 audit(
                     &mut tx,
-                    Some(actor_id),
+                    Some(actor.id),
                     "library.renamed",
                     library_id,
                     serde_json::json!({ "name": name }),
@@ -503,7 +534,7 @@ impl DomainServices {
             if moved {
                 audit(
                     &mut tx,
-                    Some(actor_id),
+                    Some(actor.id),
                     "library.moved",
                     library_id,
                     serde_json::json!({}),
@@ -513,7 +544,7 @@ impl DomainServices {
             if relinked {
                 audit(
                     &mut tx,
-                    Some(actor_id),
+                    Some(actor.id),
                     "library.follow_links_set",
                     library_id,
                     serde_json::json!({ "follow_links": update.follow_links }),
@@ -538,7 +569,7 @@ impl DomainServices {
             .db
             .create_scan_job(
                 library_id,
-                Some(actor_id),
+                Some(actor.id),
                 if moved { "library_moved" } else { "manual" },
             )
             .await?;
@@ -560,13 +591,13 @@ impl DomainServices {
     /// the commit.
     pub async fn delete_library(
         &self,
-        actor_id: Uuid,
+        actor: LibraryActor,
         library_id: Uuid,
         confirm: &str,
     ) -> Result<LibraryDeleted, ServiceError> {
         let standing = {
             let mut connection = self.db.pool().acquire().await?;
-            standing_on(&mut connection, actor_id, library_id).await?
+            standing_on(&mut connection, actor, library_id).await?
         };
         if standing != Standing::Admin {
             return Err(ServiceError::Forbidden);
@@ -639,7 +670,7 @@ impl DomainServices {
             }
             audit(
                 &mut tx,
-                Some(actor_id),
+                Some(actor.id),
                 "library.deleted",
                 library_id,
                 serde_json::json!({
@@ -678,12 +709,12 @@ impl DomainServices {
     /// first, with what purging each would cost (RFC-021 decision 4).
     pub async fn unavailable_tracks(
         &self,
-        actor_id: Uuid,
+        actor: LibraryActor,
         library_id: Uuid,
         page: BrowsePage,
     ) -> Result<UnavailableTracks, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        if !standing_on(&mut connection, actor_id, library_id)
+        if !standing_on(&mut connection, actor, library_id)
             .await?
             .curates()
         {
@@ -741,7 +772,7 @@ impl DomainServices {
     /// scan may be about to relocate one of these onto a file it just found.
     pub async fn purge_unavailable_tracks(
         &self,
-        actor_id: Uuid,
+        actor: LibraryActor,
         library_id: Uuid,
         request: PurgeRequest,
     ) -> Result<PurgeOutcome, ServiceError> {
@@ -760,14 +791,14 @@ impl DomainServices {
         let purged = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.pool().begin().await?;
-            if !standing_on(&mut tx, actor_id, library_id).await?.curates() {
+            if !standing_on(&mut tx, actor, library_id).await?.curates() {
                 return Err(ServiceError::Forbidden);
             }
             let purged = purge_in(&mut tx, library_id, &selection).await?;
             if purged.tracks > 0 {
                 audit(
                     &mut tx,
-                    Some(actor_id),
+                    Some(actor.id),
                     "library.tracks_purged",
                     library_id,
                     serde_json::json!({ "tracks": purged.tracks }),
