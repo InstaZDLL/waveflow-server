@@ -1,23 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useState } from "react";
 
 import {
   ApiError,
-  deleteBookmark,
   deletePodcastEpisode,
   downloadPodcastEpisode,
   formatDuration,
   type PodcastChannel,
   type PodcastEpisode,
   refreshPodcasts,
-  setBookmark,
-  streamUrl,
   subscribePodcast,
   unsubscribePodcast,
 } from "../api";
@@ -29,42 +20,25 @@ import {
   PageHeader,
   useReload,
 } from "../components/page-shell";
+import { resumeSeconds } from "../lib/aside";
 import { usePlayer } from "../player/player";
 import { type TranslationKey, useI18n } from "../state/i18n";
-
-/** How often a playing episode's position is written to its bookmark. */
-const SAVE_EVERY_MS = 15_000;
-
-/**
- * The position an episode resumes from: its bookmark, unless it was left
- * within the last few seconds, which is an episode heard to the end.
- */
-export function resumeSeconds(episode: {
-  position_ms: number | null;
-  duration_ms: number | null;
-}): number {
-  const position = episode.position_ms ?? 0;
-  if (position <= 0) return 0;
-  if (episode.duration_ms && episode.duration_ms - position < 5_000) return 0;
-  return position / 1000;
-}
 
 const statusKey = (status: PodcastEpisode["status"]) =>
   `podcasts.status.${status}` as TranslationKey;
 
 /**
- * Podcasts (RFC-025): the channels this server is subscribed to, their
- * episodes, and a player of the page's own.
+ * Podcasts (RFC-025): the channels this server is subscribed to and their
+ * episodes.
  *
  * An episode is not a track: it has no album, it is not scrobbled, and the
- * queue the server keeps holds tracks only. So it plays from an element of
- * its own, as a radio station does, and the music player is paused when it
- * starts. Its position is the bookmark the server keeps for it, written while
- * it plays and read back to resume.
+ * queue the server keeps holds tracks only. So the player plays it aside from
+ * the queue, as it does a radio station, and pauses the music under it. Its
+ * position is the bookmark the server keeps for it, which the player writes
+ * while it plays and this page reads back to say where it resumes.
  */
 export function PodcastsPage() {
   const { t } = useI18n();
-  const player = usePlayer();
   const { data: overview, error } = useQuery(podcastsQuery());
   const reload = useReload(podcastsQuery().queryKey);
   const [url, setUrl] = useState("");
@@ -202,15 +176,11 @@ export function PodcastsPage() {
       )}
       {selected ? (
         <ChannelEpisodes
-          // Another channel is another player: the previous one unmounts,
-          // which pauses its episode and saves its place.
+          // Another channel is another list. The episode playing is the
+          // player's, and carries on whichever list is open.
           key={selected}
           channelId={selected}
           canManage={overview.can_manage}
-          pauseMusic={() => {
-            if (player.playing) player.toggle();
-          }}
-          musicPlaying={player.playing}
         />
       ) : null}
     </section>
@@ -220,111 +190,18 @@ export function PodcastsPage() {
 function ChannelEpisodes({
   channelId,
   canManage,
-  pauseMusic,
-  musicPlaying,
 }: {
   channelId: string;
   canManage: boolean;
-  pauseMusic: () => void;
-  musicPlaying: boolean;
 }) {
   const { t } = useI18n();
+  const player = usePlayer();
   const { data: channel, error } = useQuery(podcastChannelQuery(channelId));
   const reload = useReload(podcastChannelQuery(channelId).queryKey);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const [playing, setPlaying] = useState<PodcastEpisode | null>(null);
-  const playingRef = useRef<PodcastEpisode | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const lastSaved = useRef(0);
-
-  const savePosition = useCallback(async () => {
-    const episode = playingRef.current;
-    const element = audio.current;
-    if (!episode || !element) return;
-    const position = Math.round(element.currentTime * 1000);
-    lastSaved.current = Date.now();
-    try {
-      if (element.ended) await deleteBookmark(episode.id);
-      else await setBookmark(episode.id, position);
-    } catch {
-      // A position that did not save is the previous one; nothing is lost
-      // that the next save will not write.
-    }
-  }, []);
-
-  const stop = useCallback(() => {
-    const element = audio.current;
-    if (element && playingRef.current) {
-      element.pause();
-      void savePosition().then(reload);
-    }
-    playingRef.current = null;
-    setPlaying(null);
-  }, [reload, savePosition]);
-
-  // The music player and an episode must not sound at once.
-  useEffect(() => {
-    if (musicPlaying && playingRef.current) stop();
-  }, [musicPlaying, stop]);
-
-  useEffect(
-    () => () => {
-      // Leaving the page stops the episode, with its place kept: this page
-      // owns the only control that could stop it.
-      if (audio.current && playingRef.current) {
-        audio.current.pause();
-        void savePosition();
-      }
-    },
-    [savePosition],
-  );
-
-  async function play(episode: PodcastEpisode) {
-    setMessage(null);
-    pauseMusic();
-    try {
-      const { url } = await streamUrl(episode.id);
-      const element = audio.current ?? new Audio();
-      audio.current = element;
-      element.ontimeupdate = () => {
-        if (Date.now() - lastSaved.current >= SAVE_EVERY_MS)
-          void savePosition();
-      };
-      element.onpause = () => void savePosition();
-      element.onended = () => {
-        void savePosition().then(reload);
-        playingRef.current = null;
-        setPlaying(null);
-      };
-      element.onerror = () => {
-        playingRef.current = null;
-        setPlaying(null);
-        setMessage(t("podcasts.playbackError"));
-      };
-      element.src = url;
-      const resume = resumeSeconds(episode);
-      if (resume > 0) {
-        element.addEventListener(
-          "loadedmetadata",
-          () => {
-            element.currentTime = resume;
-          },
-          { once: true },
-        );
-      }
-      playingRef.current = episode;
-      lastSaved.current = Date.now();
-      setPlaying(episode);
-      await element.play();
-    } catch (failure) {
-      if (failure instanceof DOMException && failure.name === "AbortError") {
-        return;
-      }
-      playingRef.current = null;
-      setPlaying(null);
-      setMessage(t("podcasts.playbackError"));
-    }
-  }
+  // The episode in the bar, if it is one; whether it plays is the player's.
+  const current =
+    player.aside?.kind === "episode" ? player.aside.episode : null;
 
   async function act(action: () => Promise<void>) {
     setMessage(null);
@@ -358,10 +235,13 @@ function ChannelEpisodes({
         ) : null}
       </header>
       {message ? <p className="error">{message}</p> : null}
+      {current?.channel_id === channelId && player.asideError ? (
+        <p className="error">{t("podcasts.playbackError")}</p>
+      ) : null}
       {episodes.length ? (
         <ul className="resource-list">
           {episodes.map((episode) => {
-            const isPlaying = playing?.id === episode.id;
+            const isPlaying = current?.id === episode.id && player.asidePlaying;
             const resume = resumeSeconds(episode);
             return (
               <li key={episode.id}>
@@ -391,7 +271,11 @@ function ChannelEpisodes({
                         ? t("podcasts.pause", { title: episode.title })
                         : t("podcasts.play", { title: episode.title })
                     }
-                    onClick={() => (isPlaying ? stop() : void play(episode))}
+                    onClick={() =>
+                      isPlaying
+                        ? player.toggleAside()
+                        : player.playEpisode(episode)
+                    }
                   >
                     <Icon name={isPlaying ? "pause" : "play"} />
                   </button>
@@ -412,7 +296,8 @@ function ChannelEpisodes({
                     type="button"
                     className="danger"
                     onClick={() => {
-                      if (isPlaying) stop();
+                      // Out of the bar, playing or paused: its file is going.
+                      player.stopAside(episode.id);
                       void act(() => deletePodcastEpisode(episode.id));
                     }}
                   >

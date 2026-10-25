@@ -1,11 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useState } from "react";
 
 import {
   ApiError,
@@ -60,27 +54,6 @@ export function isBlockedAsMixedContent(
   return pageProtocol === "https:" && streamUrl.trim().startsWith("http:");
 }
 
-/**
- * Whether a failed play attempt is still worth telling the reader about.
- *
- * Two ways it is not, both reachable by ordinary use of the list. **A stale
- * attempt**: starting a second station replaces the `src` of the one element
- * every station plays from, which rejects the first station's pending
- * `play()` — and that rejection lands after the second station is already on
- * screen, so reporting it would blame a station that is playing perfectly
- * well. **An interruption**: pressing stop while a station is still loading
- * rejects the same promise with `AbortError`, which is the page doing what it
- * was asked rather than a station that cannot be reached.
- */
-export function reportsPlaybackFailure(
-  attempt: number,
-  current: number,
-  failure?: unknown,
-): boolean {
-  if (attempt !== current) return false;
-  return !(failure instanceof DOMException && failure.name === "AbortError");
-}
-
 type Draft = { name: string; stream_url: string; homepage_url: string };
 
 const emptyDraft: Draft = { name: "", stream_url: "", homepage_url: "" };
@@ -94,8 +67,11 @@ export function RadioPage() {
   /** The station the form is replacing, or `null` when it is adding one. */
   const [editing, setEditing] = useState<RadioStation | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [playing, setPlaying] = useState<RadioStation | null>(null);
-  const [playbackError, setPlaybackError] = useState(false);
+  // The station is the player's, not this page's: it plays in the bar, and
+  // carries on when the reader goes elsewhere. What this page shows of it is
+  // read from there.
+  const live = player.aside?.kind === "live" ? player.aside.station : null;
+  const playingId = live && player.asidePlaying ? live.id : null;
   /**
    * True while a write is in flight, which closes the form and the two
    * per-station writes.
@@ -111,77 +87,8 @@ export function RadioPage() {
    * hearing.
    */
   const [busy, setBusy] = useState(false);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  /**
-   * Which play attempt the page is showing.
-   *
-   * One element serves every station, so starting a second one — or stopping
-   * the first — rejects the pending `play()` of the first. That rejection
-   * arrives *after* the new state is set, and without this counter it would
-   * report a failure about a station nobody is waiting for any more.
-   */
-  const attempt = useRef(0);
-  /**
-   * The same station as `playing`, readable after an `await`.
-   *
-   * `playing` is a render value, so a callback that resumes after a request
-   * sees whatever was playing when the request *left*. Deleting a station and
-   * then starting one during the round trip is enough to tell the two apart:
-   * the state says nothing is playing, and a stream is. Playback is not a
-   * mutation and stays available while a write is in flight, which is why
-   * this one needs a ref where the form below needs only `busy`.
-   */
-  const playingRef = useRef<RadioStation | null>(null);
-
-  const silence = useCallback(() => {
-    // Invalidated before the pause, because the pause is what rejects the
-    // attempt's promise.
-    attempt.current += 1;
-    audio.current?.pause();
-    playingRef.current = null;
-    setPlaying(null);
-  }, []);
-
-  // A station is not a track: it has no duration to seek in, no id the queue
-  // could persist and nothing to scrobble, so it plays from its own element
-  // rather than through the queue player. The two must not sound at once,
-  // which is what these two effects keep.
-  useEffect(() => {
-    if (playing && player.playing) silence();
-  }, [player.playing, playing, silence]);
-
-  useEffect(
-    () => () => {
-      // Stopped on the way out, deliberately. This page owns the only stop
-      // button there is, so audio that survived it could not be stopped at
-      // all. Carrying a station into the player bar instead would mean a
-      // transport that has no position, no next and nothing to submit.
-      audio.current?.pause();
-    },
-    [],
-  );
 
   if (!stations) return <Loading error={error} />;
-
-  function startPlaying(station: RadioStation) {
-    setPlaybackError(false);
-    if (player.playing) player.toggle();
-    const element = audio.current ?? new Audio();
-    audio.current = element;
-    attempt.current += 1;
-    const mine = attempt.current;
-    const failed = (failure?: unknown) => {
-      if (!reportsPlaybackFailure(mine, attempt.current, failure)) return;
-      setPlaybackError(true);
-      playingRef.current = null;
-      setPlaying(null);
-    };
-    element.onerror = () => failed();
-    element.src = station.stream_url;
-    playingRef.current = station;
-    setPlaying(station);
-    void element.play().catch(failed);
-  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -220,12 +127,11 @@ export function RadioPage() {
     setMutationError(null);
     try {
       await deleteRadioStation(station.id);
-      // Read from the ref, not from `playing`: the station playing now is not
-      // necessarily the one that was playing when this request left, and
-      // stopping on the stale value would either leave a deleted station
-      // sounding with no button to stop it, or stop a station the reader had
-      // just started.
-      if (playingRef.current?.id === station.id) silence();
+      // Asked of the player by id, and not decided here from `live`: the
+      // station playing now is not necessarily the one that was playing when
+      // this request left, and stopping on that stale value would either leave
+      // a deleted station sounding or stop one the reader had just started.
+      player.stopAside(station.id);
       if (editing?.id === station.id) {
         setEditing(null);
         setDraft(emptyDraft);
@@ -319,7 +225,7 @@ export function RadioPage() {
         {editing ? <p className="muted">{t("radio.replacing")}</p> : null}
       </form>
       {mutationError ? <p className="error">{mutationError}</p> : null}
-      {playbackError ? (
+      {live && player.asideError ? (
         <p className="error">{t("radio.playbackError")}</p>
       ) : null}
       {stations.length ? (
@@ -349,15 +255,15 @@ export function RadioPage() {
               <button
                 type="button"
                 onClick={() =>
-                  playing?.id === station.id ? silence() : startPlaying(station)
+                  playingId === station.id
+                    ? player.toggleAside()
+                    : player.playLive(station)
                 }
                 aria-label={
-                  playing?.id === station.id
-                    ? t("radio.stop")
-                    : t("radio.listen")
+                  playingId === station.id ? t("radio.stop") : t("radio.listen")
                 }
               >
-                <Icon name={playing?.id === station.id ? "pause" : "play"} />
+                <Icon name={playingId === station.id ? "stop" : "play"} />
               </button>
               <button
                 type="button"

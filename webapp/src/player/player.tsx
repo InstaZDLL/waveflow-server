@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type CSSProperties,
@@ -12,16 +13,30 @@ import {
 } from "react";
 import {
   artworkUrl,
+  deleteBookmark,
   formatDuration,
   getQueue,
+  type PodcastEpisode,
+  type RadioStation,
   type Song,
   saveQueue,
   scrobble,
+  setBookmark,
   streamUrl,
 } from "../api";
-
+import { podcastChannelQuery } from "../api/queries";
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
+import {
+  type Aside,
+  asideMetadata,
+  asideTransport,
+  bookmarkWrite,
+  dueForSave,
+  reportsPlaybackFailure,
+  resumeSeconds,
+  shownDuration,
+} from "../lib/aside";
 import { connectWhenRunning, needsWaking } from "../lib/audio-graph";
 import { isKeptOffline, keptSongs, offlineTrackUrl } from "../lib/offline";
 import { replayGainFactor, routableThroughWebAudio } from "../lib/replay-gain";
@@ -218,6 +233,36 @@ type PlayerState = {
   next: () => void;
   previous: () => void;
   seek: (seconds: number) => void;
+  /**
+   * What plays beside the queue — a station or an episode — or `null`.
+   *
+   * Everything above is the queue's and keeps meaning the queue: `playing` is
+   * whether a track sounds, `toggle` plays or pauses the track. The members
+   * below are the aside's. Starting an aside pauses the queue without clearing
+   * it; starting a track — `play`, `next`, `previous`, or `toggle` — drops the
+   * aside. Only ever one of the two is audible.
+   */
+  aside: Aside | null;
+  asidePlaying: boolean;
+  asideError: boolean;
+  /** Starts a station, live. Already playing it, does nothing. */
+  playLive: (station: RadioStation) => void;
+  /**
+   * Starts an episode from its bookmark, or carries on with it if it is the
+   * one already loaded.
+   */
+  playEpisode: (episode: PodcastEpisode) => void;
+  /** Pauses or resumes the aside. A station stops, and resumes live. */
+  toggleAside: () => void;
+  /** Seeks in an episode. A station has nowhere to seek to. */
+  seekAside: (seconds: number) => void;
+  /**
+   * Stops the aside and takes it out of the bar, saving an episode's place.
+   * Given an id, only if the aside is that station or that episode — read when
+   * called, so a caller resuming after a request cannot stop something that
+   * started in the meantime.
+   */
+  stopAside: (only?: string) => void;
 };
 
 type PlayerProgress = {
@@ -227,6 +272,9 @@ type PlayerProgress = {
 
 const PlayerContext = createContext<PlayerState | null>(null);
 const PlayerProgressContext = createContext<PlayerProgress | null>(null);
+// The aside's clock, apart from the queue's: the playing screen follows the
+// track's position (lyrics, the scrubber), and must not follow an episode's.
+const AsideProgressContext = createContext<PlayerProgress | null>(null);
 
 export function setDirectionalMediaSessionHandlers(
   mediaSession: Pick<MediaSession, "setActionHandler">,
@@ -252,6 +300,13 @@ export function usePlayer(): PlayerState {
 export function usePlayerProgress(): PlayerProgress {
   const progress = useContext(PlayerProgressContext);
   if (!progress) throw new Error("usePlayerProgress requires PlayerProvider");
+  return progress;
+}
+
+/** Position and duration in seconds of the aside; a station's are zero. */
+export function useAsideProgress(): PlayerProgress {
+  const progress = useContext(AsideProgressContext);
+  if (!progress) throw new Error("useAsideProgress requires PlayerProvider");
   return progress;
 }
 
@@ -478,6 +533,292 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return ticket.url;
   }, []);
 
+  // ── The aside: a station or an episode, beside the queue ──────────────
+  //
+  // Its own element, and deliberately so. The queue's element is the one the
+  // ReplayGain graph claims, and once claimed its sound reaches the speakers
+  // only through the context: a station on another origin without CORS
+  // headers would play there as silence. Nothing below ever hands this one to
+  // `createMediaElementSource`, so a station plays as any `<audio>` does.
+  const queryClient = useQueryClient();
+  const side = useRef<HTMLAudioElement | null>(null);
+  const [aside, setAside] = useState<Aside | null>(null);
+  const asideRef = useRef<Aside | null>(null);
+  const [asidePlaying, setAsidePlaying] = useState(false);
+  const [asideError, setAsideError] = useState(false);
+  const [asidePosition, setAsidePosition] = useState(0);
+  const [asideDuration, setAsideDuration] = useState(0);
+  const asidePositionRef = useRef(0);
+  // Which play attempt the aside is showing, as the radio page counted them:
+  // one element serves every station and episode, so starting another rejects
+  // the pending `play()` of the last, after the new one is on screen.
+  const sideAttempt = useRef(0);
+  const lastBookmark = useRef(0);
+
+  /**
+   * Writes the place of the episode playing aside to its bookmark — the same
+   * route the podcasts page used, under the episode's id. `refresh` asks the
+   * page to read the episode again, so the place it shows is the one kept.
+   */
+  const saveEpisode = useCallback(
+    (refresh: boolean) => {
+      const current = asideRef.current;
+      const element = side.current;
+      if (current?.kind !== "episode" || !element) return;
+      // No source yet — its ticket is on its way — or no longer: there is no
+      // place to keep. Once it has one, `currentTime` is the place even before
+      // the metadata, because the resume was set as its start position.
+      if (!element.getAttribute("src")) return;
+      const { id, channel_id: channel } = current.episode;
+      const write = bookmarkWrite(element.currentTime, element.ended);
+      lastBookmark.current = Date.now();
+      void (
+        write.kind === "delete"
+          ? deleteBookmark(id)
+          : setBookmark(id, write.positionMs)
+      )
+        .then(() => {
+          if (refresh)
+            void queryClient.invalidateQueries({
+              queryKey: podcastChannelQuery(channel).queryKey,
+            });
+        })
+        // A place that did not save is the previous one; the next save
+        // writes what this one would have.
+        .catch(() => undefined);
+    },
+    [queryClient],
+  );
+
+  /** Silences the aside's element and lets go of its source. */
+  const silenceSide = useCallback(() => {
+    // Moved before the pause, because the pause is what rejects the pending
+    // attempt, and that rejection must not report a failure.
+    sideAttempt.current += 1;
+    // Said here rather than left to the `pause` event: `load()` below drops
+    // the events the element still had queued, that one among them, and the
+    // bar would go on offering to stop a station that has stopped.
+    setAsidePlaying(false);
+    const element = side.current;
+    if (!element) return;
+    element.pause();
+    element.removeAttribute("src");
+    element.load();
+  }, []);
+
+  const stopAside = useCallback(
+    (only?: string) => {
+      const current = asideRef.current;
+      if (!current) return;
+      const id =
+        current.kind === "live" ? current.station.id : current.episode.id;
+      if (only !== undefined && only !== id) return;
+      saveEpisode(true);
+      silenceSide();
+      asideRef.current = null;
+      setAside(null);
+      setAsidePlaying(false);
+      setAsideError(false);
+      asidePositionRef.current = 0;
+      setAsidePosition(0);
+      setAsideDuration(0);
+    },
+    [saveEpisode, silenceSide],
+  );
+
+  /** The queue goes quiet under an aside; it is paused, never cleared. */
+  const pauseQueue = useCallback(() => {
+    const element = audio.current;
+    if (element && !element.paused) element.pause();
+  }, []);
+
+  /** Puts an aside in the bar, before its first sample. */
+  const showAside = useCallback((next: Aside, at: number, length: number) => {
+    asideRef.current = next;
+    setAside(next);
+    setAsideError(false);
+    asidePositionRef.current = at;
+    setAsidePosition(at);
+    setAsideDuration(length);
+  }, []);
+
+  useEffect(() => {
+    const element = new Audio();
+    element.preload = "auto";
+    side.current = element;
+    const onPlay = () => {
+      setAsidePlaying(true);
+      // One audible source. Started from anywhere — the bar, a page, the
+      // Media Session — the aside silences the queue.
+      const queue = audio.current;
+      if (queue && !queue.paused) queue.pause();
+    };
+    // Ending is a pause too, fired with `ended` set, so this one write also
+    // forgets the bookmark of an episode heard to the end.
+    const onPause = () => {
+      setAsidePlaying(false);
+      saveEpisode(true);
+    };
+    const onTime = () => {
+      asidePositionRef.current = element.currentTime;
+      setAsidePosition(element.currentTime);
+      if (!element.paused && dueForSave(Date.now(), lastBookmark.current))
+        saveEpisode(false);
+    };
+    const onDuration = () => setAsideDuration(shownDuration(element.duration));
+    const onError = () => {
+      // Letting go of a source is not a failure of it.
+      if (!element.getAttribute("src")) return;
+      setAsidePlaying(false);
+      setAsideError(true);
+    };
+    element.addEventListener("play", onPlay);
+    element.addEventListener("pause", onPause);
+    element.addEventListener("timeupdate", onTime);
+    element.addEventListener("loadedmetadata", onDuration);
+    element.addEventListener("durationchange", onDuration);
+    element.addEventListener("error", onError);
+    return () => {
+      element.removeEventListener("play", onPlay);
+      element.removeEventListener("pause", onPause);
+      element.removeEventListener("timeupdate", onTime);
+      element.removeEventListener("loadedmetadata", onDuration);
+      element.removeEventListener("durationchange", onDuration);
+      element.removeEventListener("error", onError);
+      // Signing out unmounts the player, and a station or an episode stops
+      // with it, as the music does (#329, #330). The listeners go first: the
+      // session that could write a bookmark is already gone, and the place
+      // kept is the last periodic save.
+      element.pause();
+      element.removeAttribute("src");
+      element.load();
+      if (side.current === element) side.current = null;
+      asideRef.current = null;
+    };
+  }, [saveEpisode]);
+
+  const playLive = useCallback(
+    (station: RadioStation) => {
+      const element = side.current;
+      if (!element) return;
+      const previous = asideRef.current;
+      if (
+        previous?.kind === "live" &&
+        previous.station.id === station.id &&
+        !element.paused
+      )
+        return;
+      if (previous?.kind === "episode") saveEpisode(true);
+      pauseQueue();
+      sideAttempt.current += 1;
+      const mine = sideAttempt.current;
+      showAside({ kind: "live", station }, 0, 0);
+      // Set afresh on every start, including a resume: a station stopped and
+      // started again joins the broadcast where it is now, not where the
+      // browser stopped buffering it.
+      element.src = station.stream_url;
+      void element.play().catch((failure: unknown) => {
+        if (!reportsPlaybackFailure(mine, sideAttempt.current, failure)) return;
+        setAsidePlaying(false);
+        setAsideError(true);
+      });
+    },
+    [pauseQueue, saveEpisode, showAside],
+  );
+
+  const playEpisode = useCallback(
+    (episode: PodcastEpisode) => {
+      const element = side.current;
+      if (!element) return;
+      const previous = asideRef.current;
+      if (
+        previous?.kind === "episode" &&
+        previous.episode.id === episode.id &&
+        element.getAttribute("src") &&
+        !element.error
+      ) {
+        // Already loaded: carry on from where it is, and not from the
+        // bookmark the page read before it was last paused.
+        if (element.paused) {
+          pauseQueue();
+          void element.play().catch(() => undefined);
+        }
+        return;
+      }
+      if (previous?.kind === "episode") saveEpisode(true);
+      pauseQueue();
+      // Whatever played aside goes quiet now, not when the ticket arrives.
+      silenceSide();
+      const mine = sideAttempt.current;
+      const resume = resumeSeconds(episode);
+      showAside(
+        { kind: "episode", episode },
+        resume,
+        episode.duration_ms ? episode.duration_ms / 1000 : 0,
+      );
+      lastBookmark.current = Date.now();
+      void (async () => {
+        try {
+          const { url } = await streamUrl(episode.id);
+          if (mine !== sideAttempt.current) return;
+          element.src = url;
+          // Before any metadata, this sets where playback will start, and is
+          // what `currentTime` answers until then: a pause in that window
+          // keeps the bookmark it resumed from rather than writing zero.
+          if (resume > 0) element.currentTime = resume;
+          await element.play();
+        } catch (failure) {
+          if (!reportsPlaybackFailure(mine, sideAttempt.current, failure))
+            return;
+          setAsidePlaying(false);
+          setAsideError(true);
+        }
+      })();
+    },
+    [pauseQueue, saveEpisode, showAside, silenceSide],
+  );
+
+  const toggleAside = useCallback(() => {
+    const element = side.current;
+    const current = asideRef.current;
+    if (!element || !current) return;
+    if (!element.paused) {
+      if (current.kind === "live") {
+        // Stopped rather than paused: a live stream left paused keeps its
+        // connection, and resuming it would play the past.
+        silenceSide();
+      } else {
+        element.pause();
+      }
+      return;
+    }
+    if (current.kind === "live") {
+      playLive(current.station);
+      return;
+    }
+    if (element.error || !element.getAttribute("src")) {
+      playEpisode(current.episode);
+      return;
+    }
+    pauseQueue();
+    setAsideError(false);
+    void element.play().catch(() => undefined);
+  }, [pauseQueue, playEpisode, playLive, silenceSide]);
+
+  const seekAside = useCallback(
+    (seconds: number) => {
+      const element = side.current;
+      if (!element || asideRef.current?.kind !== "episode") return;
+      const length = shownDuration(element.duration);
+      const bounded = Math.max(0, length ? Math.min(seconds, length) : seconds);
+      element.currentTime = bounded;
+      asidePositionRef.current = bounded;
+      setAsidePosition(bounded);
+      saveEpisode(false);
+    },
+    [saveEpisode],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void getQueue()
@@ -538,6 +879,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onPlay = () => {
       suppressedPauseEvents.current = 0;
       setPlaying(true);
+      // A track sounding takes over from a station or an episode, however it
+      // was started: there is only ever one audible source.
+      stopAside();
     };
     const onPause = () => {
       setPlaying(false);
@@ -566,7 +910,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
     };
-  }, [hydrated, persistQueue, wakeGraph]);
+  }, [hydrated, persistQueue, stopAside, wakeGraph]);
 
   // Loading a track needs a round-trip for its ticket, so guard against a
   // stale response overwriting a newer selection.
@@ -611,6 +955,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           resumeTrack.current = null;
         }
         if (!shouldAutoplay) return;
+        // A station or an episode started while this ticket was on its way
+        // is the later choice, and keeps the speakers.
+        if (asideRef.current) return;
         wakeGraph();
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
@@ -660,6 +1007,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (next: Song[], at: number) => {
       // First, inside the gesture that asked for the music.
       prepareGraph();
+      stopAside();
       localMutation.current = true;
       const sameSelection =
         next === queueRef.current && at === indexRef.current;
@@ -678,7 +1026,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setQueue(next);
       setIndex(at);
     },
-    [prepareGraph],
+    [prepareGraph, stopAside],
   );
 
   useEffect(() => {
@@ -724,11 +1072,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // The element is the authority on level; state mirrors it for the control.
+  // One level for both elements: the bar has one slider, whatever it plays.
   useEffect(() => {
-    const element = audio.current;
-    if (!element) return;
-    element.volume = volume;
-    element.muted = muted;
+    for (const element of [audio.current, side.current]) {
+      if (!element) continue;
+      element.volume = volume;
+      element.muted = muted;
+    }
   }, [volume, muted]);
 
   const setVolume = useCallback((next: number) => {
@@ -793,6 +1143,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Both are pressed, so both are a gesture the graph can be built in.
   const next = useCallback(() => {
     prepareGraph();
+    stopAside();
     localMutation.current = true;
     setIndex((value) => {
       // Pressed, not ended: `repeat: "one"` must not trap the button here.
@@ -801,10 +1152,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       autoplay.current = target !== value;
       return target;
     });
-  }, [prepareGraph]);
+  }, [prepareGraph, stopAside]);
 
   const previous = useCallback(() => {
     prepareGraph();
+    stopAside();
     localMutation.current = true;
     setIndex((value) => {
       const target = retreat(orderRef.current, value, repeatRef.current);
@@ -812,7 +1164,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       autoplay.current = target !== value;
       return target;
     });
-  }, [prepareGraph]);
+  }, [prepareGraph, stopAside]);
 
   const seek = useCallback(
     (seconds: number) => {
@@ -833,21 +1185,43 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [persistQueue],
   );
 
+  // The system's controls drive whatever the bar shows: the queue, or the
+  // aside — which has no next or previous, and a station nowhere to seek.
+  const asideKind = aside?.kind ?? null;
   useEffect(() => {
     const mediaSession = navigator.mediaSession;
-    const element = audio.current;
+    const element = asideKind ? side.current : audio.current;
     if (!mediaSession || !element) return;
-    setDirectionalMediaSessionHandlers(
-      mediaSession,
-      element,
-      startPlayback,
-      pausePlayback,
-    );
-    mediaSession.setActionHandler("previoustrack", previous);
-    mediaSession.setActionHandler("nexttrack", next);
-    mediaSession.setActionHandler("seekto", (details) => {
-      if (details.seekTime !== undefined) seek(details.seekTime);
-    });
+    if (asideKind) {
+      setDirectionalMediaSessionHandlers(
+        mediaSession,
+        element,
+        toggleAside,
+        toggleAside,
+      );
+      mediaSession.setActionHandler("previoustrack", null);
+      mediaSession.setActionHandler("nexttrack", null);
+      mediaSession.setActionHandler(
+        "seekto",
+        asideTransport(asideKind).seek
+          ? (details) => {
+              if (details.seekTime !== undefined) seekAside(details.seekTime);
+            }
+          : null,
+      );
+    } else {
+      setDirectionalMediaSessionHandlers(
+        mediaSession,
+        element,
+        startPlayback,
+        pausePlayback,
+      );
+      mediaSession.setActionHandler("previoustrack", previous);
+      mediaSession.setActionHandler("nexttrack", next);
+      mediaSession.setActionHandler("seekto", (details) => {
+        if (details.seekTime !== undefined) seek(details.seekTime);
+      });
+    }
     return () => {
       for (const action of [
         "play",
@@ -859,10 +1233,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         mediaSession.setActionHandler(action, null);
       }
     };
-  }, [next, pausePlayback, previous, seek, startPlayback]);
+  }, [
+    asideKind,
+    next,
+    pausePlayback,
+    previous,
+    seek,
+    seekAside,
+    startPlayback,
+    toggleAside,
+  ]);
 
   useEffect(() => {
     if (!navigator.mediaSession) return;
+    if (aside) {
+      navigator.mediaSession.playbackState = asidePlaying
+        ? "playing"
+        : "paused";
+      navigator.mediaSession.metadata = new MediaMetadata({
+        ...asideMetadata(aside, {
+          live: t("player.liveRadio"),
+          podcasts: t("nav.podcasts"),
+        }),
+        artwork: [],
+      });
+      return;
+    }
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
     if (!current) {
       navigator.mediaSession.metadata = null;
@@ -881,7 +1277,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [current, playing, t]);
+  }, [aside, asidePlaying, current, playing, t]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -896,20 +1292,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ) {
         return;
       }
+      // The keys act on what the bar shows, as its buttons do.
+      const showing = asideRef.current;
       if (event.code === "Space") {
         event.preventDefault();
-        toggle();
-      } else if (event.code === "ArrowRight") {
+        if (showing) toggleAside();
+        else toggle();
+      } else if (event.code === "ArrowRight" || event.code === "ArrowLeft") {
+        const step = event.code === "ArrowRight" ? 5 : -5;
+        if (showing && !asideTransport(showing.kind).seek) return;
         event.preventDefault();
-        seek(positionRef.current + 5);
-      } else if (event.code === "ArrowLeft") {
-        event.preventDefault();
-        seek(positionRef.current - 5);
+        if (showing) seekAside(asidePositionRef.current + step);
+        else seek(positionRef.current + step);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [seek, toggle]);
+  }, [seek, seekAside, toggle, toggleAside]);
 
   const value = useMemo<PlayerState>(
     () => ({
@@ -970,8 +1369,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       muted,
       toggleMute,
+      aside,
+      asidePlaying,
+      asideError,
+      playLive,
+      playEpisode,
+      toggleAside,
+      seekAside,
+      stopAside,
     }),
     [
+      aside,
+      asidePlaying,
+      asideError,
+      playLive,
+      playEpisode,
+      toggleAside,
+      seekAside,
+      stopAside,
       queue,
       index,
       current,
@@ -999,26 +1414,200 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [position, duration],
   );
 
+  const asideProgress = useMemo(
+    () => ({ position: asidePosition, duration: asideDuration }),
+    [asidePosition, asideDuration],
+  );
+
   return (
     <PlayerContext.Provider value={value}>
       <PlayerProgressContext.Provider value={progress}>
-        {children}
+        <AsideProgressContext.Provider value={asideProgress}>
+          {children}
+        </AsideProgressContext.Provider>
       </PlayerProgressContext.Provider>
     </PlayerContext.Provider>
+  );
+}
+
+/**
+ * The line under the transport: where playback is, and a range to move it.
+ * Shared by the queue and an episode, each with its own clock.
+ */
+function Scrubber({
+  position,
+  duration,
+  onSeek,
+}: {
+  position: number;
+  duration: number;
+  onSeek: (seconds: number) => void;
+}) {
+  const { t } = useI18n();
+  const [scrubbing, setScrubbing] = useState<number | null>(null);
+  const commit = (value: number) => {
+    onSeek(value);
+    setScrubbing(null);
+  };
+  return (
+    // `--played` is the share already heard. The dark themes draw that part
+    // of the line as the mark's wave and leave the rest straight, beneath a
+    // range input that keeps every interaction.
+    <div
+      className="player-progress"
+      style={
+        {
+          "--played":
+            duration > 0 ? Math.min(1, (scrubbing ?? position) / duration) : 0,
+        } as CSSProperties
+      }
+    >
+      <span>{formatDuration((scrubbing ?? position) * 1000)}</span>
+      <span className="progress-wave" aria-hidden="true" />
+      <input
+        type="range"
+        min={0}
+        max={duration || 0}
+        step={0.5}
+        value={scrubbing ?? position}
+        onChange={(event) => setScrubbing(Number(event.target.value))}
+        onMouseUp={(event) => commit(Number(event.currentTarget.value))}
+        onTouchEnd={(event) => commit(Number(event.currentTarget.value))}
+        onKeyUp={(event) => commit(Number(event.currentTarget.value))}
+        aria-label={t("player.seek")}
+      />
+      <span>{formatDuration(duration * 1000)}</span>
+    </div>
+  );
+}
+
+function QueueScrubber() {
+  const player = usePlayer();
+  const progress = usePlayerProgress();
+  return (
+    <Scrubber
+      position={progress.position}
+      duration={progress.duration}
+      onSeek={player.seek}
+    />
+  );
+}
+
+function AsideScrubber() {
+  const player = usePlayer();
+  const progress = useAsideProgress();
+  return (
+    <Scrubber
+      position={progress.position}
+      duration={progress.duration}
+      onSeek={player.seekAside}
+    />
+  );
+}
+
+/** The level, which is the same for the queue and for an aside. */
+function LevelControls() {
+  const player = usePlayer();
+  const { t } = useI18n();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={player.toggleMute}
+        aria-label={player.muted ? t("player.unmute") : t("player.mute")}
+        aria-pressed={player.muted}
+      >
+        <Icon name={player.muted ? "muted" : "volume"} size={18} />
+      </button>
+      <input
+        type="range"
+        className="volume"
+        min={0}
+        max={1}
+        step={0.01}
+        value={player.muted ? 0 : player.volume}
+        onChange={(event) => player.setVolume(Number(event.target.value))}
+        aria-label={t("player.volume")}
+      />
+      <Link className="nav-action" to="/queue">
+        <Icon name="queue" size={18} />
+        <span>{t("nav.queue")}</span>
+      </Link>
+    </>
+  );
+}
+
+/**
+ * The bar while a station or an episode plays aside from the queue.
+ *
+ * A station is live: a badge says so, and there is nothing to seek in and no
+ * next to go to. An episode has its position and a scrubber, and no next
+ * either, because an episode that ends stops. Shuffle and repeat are the
+ * queue's and are not offered. The second button takes the aside out of the
+ * bar, which leaves the queue's track there, paused where it was.
+ */
+function AsideBar({ aside }: { aside: Aside }) {
+  const player = usePlayer();
+  const { t } = useI18n();
+  const live = aside.kind === "live";
+  const transport = asideTransport(aside.kind);
+  const primaryLabel = player.asidePlaying
+    ? live
+      ? t("player.stopLive")
+      : t("player.pause")
+    : t("player.play");
+  return (
+    <footer className="player player-with-aside" data-aside={aside.kind}>
+      <span className="cover player-cover cover-fallback" aria-hidden="true">
+        <Icon name={live ? "radio" : "podcasts"} size={26} />
+      </span>
+      <div className="player-track">
+        <strong>{live ? aside.station.name : aside.episode.title}</strong>
+        {live ? (
+          <span className="badge live-badge">{t("player.live")}</span>
+        ) : (
+          <span>{aside.episode.channel_title}</span>
+        )}
+        {player.asideError ? (
+          <small role="alert">
+            {live ? t("player.liveError") : t("podcasts.playbackError")}
+          </small>
+        ) : null}
+      </div>
+      <div className="player-controls">
+        <button
+          type="button"
+          className="primary"
+          onClick={player.toggleAside}
+          aria-label={primaryLabel}
+        >
+          <Icon
+            name={player.asidePlaying ? (live ? "stop" : "pause") : "play"}
+            size={24}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => player.stopAside()}
+          aria-label={t("player.closeAside")}
+        >
+          <Icon name="close" />
+        </button>
+      </div>
+      {transport.progress ? <AsideScrubber /> : null}
+      <div className="player-aside">
+        <LevelControls />
+      </div>
+    </footer>
   );
 }
 
 /** Render the persistent controls for the currently selected track. */
 export function PlayerBar() {
   const player = usePlayer();
-  const progress = usePlayerProgress();
   const { t } = useI18n();
-  const [scrubbing, setScrubbing] = useState<number | null>(null);
+  if (player.aside) return <AsideBar aside={player.aside} />;
   if (!player.current) return null;
-  const commit = (value: number) => {
-    player.seek(value);
-    setScrubbing(null);
-  };
   const cover = (
     <Artwork
       artworkId={player.current.artwork_hash}
@@ -1100,62 +1689,9 @@ export function PlayerBar() {
           />
         </button>
       </div>
-      {/* `--played` is the share already heard. The dark themes draw that part
-          of the line as the mark's wave and leave the rest straight, beneath a
-          range input that keeps every interaction. */}
-      <div
-        className="player-progress"
-        style={
-          {
-            "--played":
-              progress.duration > 0
-                ? Math.min(
-                    1,
-                    (scrubbing ?? progress.position) / progress.duration,
-                  )
-                : 0,
-          } as CSSProperties
-        }
-      >
-        <span>{formatDuration((scrubbing ?? progress.position) * 1000)}</span>
-        <span className="progress-wave" aria-hidden="true" />
-        <input
-          type="range"
-          min={0}
-          max={progress.duration || 0}
-          step={0.5}
-          value={scrubbing ?? progress.position}
-          onChange={(event) => setScrubbing(Number(event.target.value))}
-          onMouseUp={(event) => commit(Number(event.currentTarget.value))}
-          onTouchEnd={(event) => commit(Number(event.currentTarget.value))}
-          onKeyUp={(event) => commit(Number(event.currentTarget.value))}
-          aria-label={t("player.seek")}
-        />
-        <span>{formatDuration(progress.duration * 1000)}</span>
-      </div>
+      <QueueScrubber />
       <div className="player-aside">
-        <button
-          type="button"
-          onClick={player.toggleMute}
-          aria-label={player.muted ? t("player.unmute") : t("player.mute")}
-          aria-pressed={player.muted}
-        >
-          <Icon name={player.muted ? "muted" : "volume"} size={18} />
-        </button>
-        <input
-          type="range"
-          className="volume"
-          min={0}
-          max={1}
-          step={0.01}
-          value={player.muted ? 0 : player.volume}
-          onChange={(event) => player.setVolume(Number(event.target.value))}
-          aria-label={t("player.volume")}
-        />
-        <Link className="nav-action" to="/queue">
-          <Icon name="queue" size={18} />
-          <span>{t("nav.queue")}</span>
-        </Link>
+        <LevelControls />
       </div>
     </footer>
   );

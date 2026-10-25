@@ -340,10 +340,17 @@ async function mockApi(page: Page) {
     }
     const bookmark = path.match(/^\/api\/v2\/bookmarks\/([^/]+)$/);
     if (bookmark) {
-      bookmarkWrites.push({
-        id: bookmark[1],
-        body: method === "PUT" ? request.postDataJSON() : method,
-      });
+      const body = method === "PUT" ? request.postDataJSON() : method;
+      bookmarkWrites.push({ id: bookmark[1], body });
+      // Kept, as the server keeps it: the episode reads back where it was
+      // left, so a resume can be told from a start.
+      for (const channel of channels) {
+        for (const item of channel.episodes) {
+          if (item.id === bookmark[1]) {
+            item.position_ms = method === "PUT" ? body.position_ms : null;
+          }
+        }
+      }
       await route.fulfill({ status: 204, body: "" });
       return;
     }
@@ -584,27 +591,157 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   expect(podcastWrites).toContain("refresh");
 });
 
-test("stops an episode, keeping its place, when another channel is opened", async ({
+/**
+ * Every media element asked to play, kept on the window: the player's
+ * elements are never in the document, so this is the only way to reach them.
+ */
+async function recordPlayedElements(page: Page) {
+  await page.addInitScript(() => {
+    const played = new Set<HTMLMediaElement>();
+    (window as unknown as { __played: Set<HTMLMediaElement> }).__played =
+      played;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      played.add(this);
+      return play.call(this);
+    };
+  });
+}
+
+/** The element playing the episode served under this ticket, as seen now. */
+function episodeElement(page: Page, ticket: string) {
+  return page.evaluate((ticket) => {
+    const element = [
+      ...(window as unknown as { __played: Set<HTMLMediaElement> }).__played,
+    ].find((candidate) => candidate.currentSrc.endsWith(`/${ticket}`));
+    return element
+      ? { paused: element.paused, currentTime: element.currentTime }
+      : null;
+  }, ticket);
+}
+
+/**
+ * Moves within the client, as a click on its navigation does — never by
+ * loading a page, which would start the player over and prove nothing about
+ * what survives a navigation.
+ */
+async function navigateWithin(page: Page, name: string) {
+  const sidebar = page.locator(".sidebar");
+  if (await sidebar.isVisible()) {
+    await sidebar.getByRole("link", { name, exact: true }).click();
+    return;
+  }
+  const bar = page.locator(".mobile-navigation");
+  const direct = bar.getByRole("link", { name, exact: true });
+  if (await direct.count()) {
+    await direct.click();
+    return;
+  }
+  await bar.getByRole("button", { name: "More" }).click();
+  await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+}
+
+const ready = { status: "completed" as const, suffix: "wav", size: 8044 };
+
+const channelOf = (id: string, title: string, episodes: Episode[]) => ({
+  id,
+  url: null,
+  title,
+  description: null,
+  site_url: null,
+  image_url: null,
+  status: "completed",
+  error: null,
+  created_at: 1,
+  refreshed_at: 1,
+  episode_count: episodes.length,
+  episodes,
+});
+
+/**
+ * An episode plays in the player bar and not on the page (the page used to
+ * own a private element and pause it on the way out). So it survives leaving
+ * the page, the bar shows where it is and seeks in it, and the bookmark is
+ * written from the bar as it was from the page — then read back to resume.
+ */
+test("plays an episode in the bar, across pages, and resumes it from its bookmark", async ({
   page,
 }) => {
-  const ready = { status: "completed" as const, suffix: "wav", size: 8044 };
-  const channel = (id: string, title: string, episodes: Episode[]) => ({
-    id,
-    url: null,
-    title,
-    description: null,
-    site_url: null,
-    image_url: null,
-    status: "completed",
-    error: null,
-    created_at: 1,
-    refreshed_at: 1,
-    episode_count: episodes.length,
-    episodes,
-  });
+  await recordPlayedElements(page);
   channels = [
-    channel("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
-    channel("channel-2", "Day Shift", [
+    channelOf("channel-1", "Night Shift", [
+      // Thirty seconds of sound, as the route serves it: the duration the
+      // feed announced is replaced by the file's once it loads.
+      episode("episode-1", "First night", { ...ready, duration_ms: 30_000 }),
+    ]),
+  ];
+  await page.goto("/podcasts");
+  await page.getByRole("button", { name: "Episodes" }).click();
+  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  await first.getByRole("button", { name: "Play First night" }).click();
+
+  const bar = page.locator(".player");
+  await expect(bar.locator(".player-track strong")).toHaveText("First night");
+  await expect(bar.locator(".player-track")).toContainText("Night Shift");
+  await expect(bar.getByRole("button", { name: "Pause" })).toBeVisible();
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+
+  // Away from the page that started it: still playing, still in the bar.
+  await navigateWithin(page, "Playlists");
+  await expect(page.locator(".smart-playlists")).toBeVisible();
+  await expect(bar.locator(".player-track strong")).toHaveText("First night");
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0)
+    .toBeGreaterThan(0.2);
+  expect((await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+  // An episode has a line and a scrubber, and nothing the queue has: no next,
+  // no previous, no shuffle, no repeat.
+  const seek = bar.getByRole("slider", { name: "Seek" });
+  await expect(seek).toBeVisible();  await expect(bar.getByRole("button", { name: "Next track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Shuffle" })).toHaveCount(0);
+  await expectNoWcagViolations(page);
+
+  // Seeking from the bar moves the episode, not a track.
+  await seek.fill("12");
+  await seek.dispatchEvent("mouseup");
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0)
+    .toBeGreaterThanOrEqual(12);
+
+  // Pausing from the bar writes the place, under the episode's id.
+  await bar.getByRole("button", { name: "Pause" }).click();
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
+  await expect
+    .poll(() =>
+      bookmarkWrites.some(
+        (write) =>
+          write.id === "episode-1" &&
+          typeof write.body === "object" &&
+          (write.body as { position_ms: number }).position_ms >= 12_000,
+      ),
+    )
+    .toBe(true);
+
+  // Taken out of the bar, then started again from its page: it resumes where
+  // the bookmark says, which the page now shows too.
+  await bar.getByRole("button", { name: "Stop and close" }).click();
+  await expect(bar).toHaveCount(0);
+  await navigateWithin(page, "Podcasts");
+  await page.getByRole("button", { name: "Episodes" }).click();
+  await expect(first).toContainText("resumes at 0:1");
+  await first.getByRole("button", { name: "Play First night" }).click();
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+  expect((await episodeElement(page, "ticket-episode-1"))?.currentTime).toBeGreaterThanOrEqual(12);
+});
+
+test("keeps an episode playing when another channel is opened", async ({
+  page,
+}) => {
+  await recordPlayedElements(page);
+  channels = [
+    channelOf("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
+    channelOf("channel-2", "Day Shift", [
       { ...episode("episode-9", "First day", ready), channel_id: "channel-2" },
     ]),
   ];
@@ -614,14 +751,14 @@ test("stops an episode, keeping its place, when another channel is opened", asyn
   const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
   await first.getByRole("button", { name: "Play First night" }).click();
   await expect(first.getByRole("button", { name: "Pause First night" })).toBeVisible();
-  expect(bookmarkWrites).toEqual([]);
 
-  // Opening the other channel stops what was playing, and saves its place.
+  // Another channel's list is only a list: the episode is the player's, and
+  // the bar goes on showing it.
   const day = page.locator(".podcast-channels li").filter({ hasText: "Day Shift" });
   await day.getByRole("button", { name: "Episodes" }).click();
   await expect(page.getByRole("heading", { name: "Day Shift" })).toBeVisible();
-  await expect.poll(() => bookmarkWrites.map((write) => write.id)).toContain("episode-1");
-  await expect(page.getByRole("button", { name: /^Pause / })).toHaveCount(0);
+  await expect(page.locator(".player .player-track strong")).toHaveText("First night");
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
 });
 
 test("offers a listener no podcast control it may not use", async ({ page }) => {

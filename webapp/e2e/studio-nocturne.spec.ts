@@ -5370,6 +5370,271 @@ test("closes the form while a station is saving, and leaves listening alone", as
 });
 
 /**
+ * Moves within the client, as a click on its navigation does — never by
+ * loading a page, which would start the player over and prove nothing about
+ * what survives a navigation.
+ */
+async function navigateWithin(page: Page, name: string) {
+  const sidebar = page.locator(".sidebar");
+  if (await sidebar.isVisible()) {
+    await sidebar.getByRole("link", { name, exact: true }).click();
+    return;
+  }
+  const bar = page.locator(".mobile-navigation");
+  const direct = bar.getByRole("link", { name, exact: true });
+  if (await direct.count()) {
+    await direct.click();
+    return;
+  }
+  await bar.getByRole("button", { name: "More" }).click();
+  await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+}
+
+const NOVA = "https://nova.example.org/live";
+
+/**
+ * A station on another origin that plays, a queue whose tracks play, and a
+ * record of every element asked to play and every element the ReplayGain
+ * graph claimed — none of them is in the document, so this is the only way
+ * to reach them. ReplayGain is on, so the graph exists to claim something.
+ */
+async function serveStationAndQueue(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "waveflow.replayGain",
+      JSON.stringify({ mode: "album", preampDb: 0 }),
+    );
+    const record = window as unknown as {
+      __played: Set<HTMLMediaElement>;
+      __claimed: Set<HTMLMediaElement>;
+    };
+    record.__played = new Set();
+    record.__claimed = new Set();
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      record.__played.add(this);
+      return play.call(this);
+    };
+    const claim = AudioContext.prototype.createMediaElementSource;
+    AudioContext.prototype.createMediaElementSource = function (element) {
+      record.__claimed.add(element);
+      return claim.call(this, element);
+    };
+  });
+  stations = [
+    {
+      id: "station-1",
+      name: "Radio Nova",
+      stream_url: NOVA,
+      homepage_url: null,
+      created_at: 1_700_000_000_000,
+      updated_at: 1_700_000_000_000,
+    },
+  ];
+  const audio = silentWav(60);
+  // Served with no CORS header at all, as most stations are: an element plays
+  // it, and a MediaElementSource would turn it to silence.
+  await page.route(`${NOVA}**`, (route) =>
+    route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
+  );
+  await page.route("**/api/v2/tracks/*/stream-ticket", (route) => {
+    const trackId = new URL(route.request().url()).pathname.split("/")[4];
+    return route.fulfill({
+      json: {
+        url: `/api/v2/stream/ticket-${trackId}`,
+        expires_at: Date.now() + 60_000,
+      },
+    });
+  });
+  await page.route("**/api/v2/stream/*", (route) =>
+    route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
+  );
+}
+
+/** What the station's element and the queue's are doing, as seen now. */
+function elements(page: Page) {
+  return page.evaluate((nova) => {
+    const record = window as unknown as {
+      __played: Set<HTMLMediaElement>;
+      __claimed: Set<HTMLMediaElement>;
+      __station?: HTMLMediaElement;
+    };
+    const played = [...record.__played];
+    // Found by its source while it has one, and kept: stopping a station lets
+    // go of its source, and the element must still be found afterwards.
+    record.__station ??= played.find((element) => element.currentSrc === nova);
+    const station = record.__station;
+    const queue = played.find((element) =>
+      element.currentSrc.includes("/api/v2/stream/ticket-"),
+    );
+    return {
+      station: station
+        ? {
+            paused: station.paused,
+            time: station.currentTime,
+            source: station.currentSrc,
+            claimed: record.__claimed.has(station),
+          }
+        : null,
+      queue: queue
+        ? {
+            paused: queue.paused,
+            source: queue.currentSrc,
+            claimed: record.__claimed.has(queue),
+          }
+        : null,
+      claims: record.__claimed.size,
+    };
+  }, NOVA);
+}
+
+/**
+ * A station plays in the player bar, not on the radio page: the page used to
+ * own a private element and pause it on the way out, because it held the only
+ * stop button there was. Now the bar is that button, and the station carries
+ * on wherever the listener goes.
+ *
+ * **And it never goes through the ReplayGain graph.** A station is an address
+ * on another origin, and a cross-origin stream without CORS headers routed
+ * through a `MediaElementSource` plays as silence while the element reports
+ * it playing. ReplayGain is on here and a track has built the graph, so the
+ * graph exists and has claimed the queue's element; the station's must not be
+ * that element, nor be claimed by it.
+ */
+test("carries a live station in the bar across pages, off the ReplayGain graph", async ({
+  page,
+}) => {
+  await serveStationAndQueue(page);
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  const bar = page.locator(".player");
+  await expect(bar.locator(".player-track strong")).toHaveText("Hidden Place");
+  // The graph is built, and holds the queue's element.
+  await expect.poll(async () => (await elements(page)).queue?.claimed).toBe(true);
+
+  await navigateWithin(page, "Radio");
+  const station = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
+  await station.getByRole("button", { name: "Listen" }).click();
+
+  await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
+  await expect(bar.locator(".live-badge")).toHaveText("Live");
+  await expect(station.getByRole("button", { name: "Stop" })).toBeVisible();
+  await expect
+    .poll(async () => (await elements(page)).station?.time ?? 0)
+    .toBeGreaterThan(0.2);
+  const playing = await elements(page);
+  expect(playing.station).toMatchObject({ paused: false, source: NOVA, claimed: false });
+  // Its own element: the queue's is paused under it, still the graph's, and
+  // still holding its track.
+  expect(playing.queue).toMatchObject({ paused: true, claimed: true });
+  expect(playing.claims).toBe(1);
+  // A station has nothing to seek in and nothing to go to next.
+  await expect(bar.getByRole("slider", { name: "Seek" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Next track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Shuffle" })).toHaveCount(0);
+  await expectNoWcagViolations(page);
+
+  // Away from the radio page, which used to stop it: still live, still heard.
+  await navigateWithin(page, "Albums");
+  await expect(page.locator(".grid li").first()).toBeVisible();
+  await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
+  await expect(bar.locator(".live-badge")).toHaveText("Live");  const before = (await elements(page)).station?.time ?? 0;
+  await expect
+    .poll(async () => (await elements(page)).station?.time ?? 0)
+    .toBeGreaterThan(before);
+  expect((await elements(page)).station?.paused).toBe(false);
+
+  // The bar is the stop button now.
+  await bar.getByRole("button", { name: "Stop the station" }).click();
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect(bar.getByRole("button", { name: "Play" })).toBeVisible();
+  await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
+});
+
+/**
+ * Starting a station pauses the music and keeps the queue; playing a track
+ * afterwards takes the speakers back. One audible source, always.
+ */
+test("pauses the queue under a station, keeps it, and gives it back to a track", async ({
+  page,
+}) => {
+  await serveStationAndQueue(page);
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  const bar = page.locator(".player");
+  await expect(bar.getByRole("button", { name: "Pause" })).toBeVisible();
+
+  await navigateWithin(page, "Radio");
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(bar.locator(".live-badge")).toHaveText("Live");
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  expect((await elements(page)).queue?.paused).toBe(true);
+
+  // Paused, not cleared: the queue is all there.
+  await navigateWithin(page, "Queue");
+  const rows = page.locator(".queue-list li");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toHaveClass("active");
+  expect((await elements(page)).station?.paused).toBe(false);
+
+  // A track takes over from the station, in the bar and in the speakers.
+  await rows.filter({ hasText: "Cocoon" }).locator(".queue-track").click();
+  await expect(bar.locator(".player-track strong")).toHaveText("Cocoon");
+  await expect(bar.locator(".live-badge")).toHaveCount(0);
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).queue)
+    .toMatchObject({ paused: false, source: expect.stringContaining("ticket-song-2") });
+  // And the radio page no longer calls the station playing.
+  await navigateWithin(page, "Radio");
+  await expect(page.getByRole("button", { name: "Listen" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
+});
+
+/**
+ * Taking a station out of the bar leaves the queue's track there, paused
+ * where it was, and the light theme keeps the live badge readable.
+ */
+test("keeps a live station readable in the light, and closes back to the queue", async ({
+  page,
+}) => {
+  await chooseLightTheme(page);
+  await serveStationAndQueue(page);
+  await page.goto("/radio");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await page.getByRole("button", { name: "Listen" }).click();
+  const bar = page.locator(".player");
+  await expect(bar.locator(".live-badge")).toHaveText("Live");
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  await expectNoWcagViolations(page);
+  await bar.getByRole("button", { name: "Stop and close" }).click();
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  // The saved queue's track, still where the listener left it.
+  await expect(bar.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expect(bar.getByRole("button", { name: "Play" })).toBeVisible();
+});
+
+/**
+ * Signing out stops a station too, as it stops the music (#329, #330): the
+ * station's element is the player's, and the player goes with the session.
+ */
+test("stops a live station when the listener signs out", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await serveStationAndQueue(page);
+  await page.goto("/radio");
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  // Dispatched rather than clicked, as in the cache test: the sidebar's
+  // footer sits under the fixed player bar at this viewport.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+});
+
+/**
  * A stand-in for the filed-folder routes (RFC-012 decision 2), with state: the
  * screen re-reads after every write, and the point is that it shows what the
  * write did. Names collide case-insensitively, as on the server.
