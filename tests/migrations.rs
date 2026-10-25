@@ -81,6 +81,7 @@ const ALBUM: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000a5";
 const TRACK: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000a6";
 const GENRE: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000a7";
 const PLAYLIST: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000a8";
+const SCAN: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000a9";
 
 /// One account, one library, and a catalogue with every shape a later
 /// migration might have to carry.
@@ -164,13 +165,36 @@ async fn seed_an_installation(connection: &mut SqliteConnection) {
             vec![GENRE, LIBRARY],
         ),
         (
+            // The scan that last saw the track, with an error of its own: the
+            // two rows that point at `scan_job`, which RFC-021 rebuilds.
+            "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, total_files, \
+                                   processed_files, added, errors, created_at, started_at, \
+                                   completed_at) \
+               VALUES (?, ?, ?, 'boot', 'completed', 1, 1, 1, 1, 1000, 1000, 1000)",
+            vec![SCAN, LIBRARY, ACCOUNT],
+        ),
+        (
+            "INSERT INTO scan_error (scan_id, relative_path, message, created_at) \
+               VALUES (?, 'convergence/02.flac', 'unreadable', 1000)",
+            vec![SCAN],
+        ),
+        (
             "INSERT INTO track (id, library_id, album_id, relative_path, file_size, \
                                 file_modified_at, quick_hash, full_hash, title, album_title, \
                                 artist_display, genre_display, year, track_number, disc_number, \
-                                duration_ms, is_available, created_at, updated_at) \
+                                duration_ms, is_available, last_seen_scan_id, created_at, \
+                                updated_at) \
                VALUES (?, ?, ?, 'convergence/01.flac', 4096, 1000, ?, ?, 'Zenith', \
-                       'Convergence', 'Nova Kern', 'Ambient', 2026, 1, 1, 210000, 1, 1000, 1000)",
-            vec![TRACK, LIBRARY, ALBUM, &"1".repeat(64), &"2".repeat(64)],
+                       'Convergence', 'Nova Kern', 'Ambient', 2026, 1, 1, 210000, 1, ?, 1000, \
+                       1000)",
+            vec![
+                TRACK,
+                LIBRARY,
+                ALBUM,
+                &"1".repeat(64),
+                &"2".repeat(64),
+                SCAN,
+            ],
         ),
         (
             "INSERT INTO track_participant (track_id, artist_id, library_id, role, sub_role, \
@@ -437,6 +461,44 @@ async fn every_released_schema_upgrades_with_the_rows_it_was_holding() {
             "{tag}: the play history did not survive the upgrade"
         );
         assert_eq!(top[0].title, "Zenith", "{tag}");
+
+        // The scan history, through the table RFC-021 rebuilt to admit two
+        // more triggers: the job, its error, and the track that names it as
+        // the scan that last saw it. A rebuild run with foreign keys on would
+        // have cascaded the error away and nulled the track's reference — and
+        // a null there makes the next scan treat the track as never seen.
+        let scan: uuid::Uuid = SCAN.parse().expect("scan id");
+        let job = state
+            .db
+            .scan_job(scan)
+            .await
+            .expect("read the job")
+            .unwrap_or_else(|| panic!("{tag}: the scan history did not survive"));
+        assert_eq!(
+            (job.status.as_str(), job.added, job.errors),
+            ("completed", 1, 1),
+            "{tag}"
+        );
+        assert_eq!((job.excluded, job.skipped_links), (0, 0), "{tag}");
+        let mut connection = state.db.pool().acquire().await.expect("connection");
+        assert_eq!(
+            count(
+                &mut connection,
+                "SELECT COUNT(*) FROM scan_error WHERE scan_id = '6f1d1b6e-0f1a-4a3d-9c21-0000000000a9'"
+            )
+            .await,
+            1,
+            "{tag}: the scan's error did not survive"
+        );
+        assert_eq!(
+            count(
+                &mut connection,
+                "SELECT COUNT(*) FROM track WHERE last_seen_scan_id = '6f1d1b6e-0f1a-4a3d-9c21-0000000000a9'"
+            )
+            .await,
+            1,
+            "{tag}: the track lost the scan that last saw it"
+        );
     }
 }
 

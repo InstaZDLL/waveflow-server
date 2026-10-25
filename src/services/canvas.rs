@@ -522,7 +522,7 @@ impl DomainServices {
     /// names, and [`DomainServices::sweep_canvas_store`] is what collects those
     /// — the store is content-addressed and therefore enumerable, which is what
     /// made the sweep writable at all.
-    async fn release_canvas_blob(&self, hash: &str) {
+    pub(super) async fn release_canvas_blob(&self, hash: &str) {
         // Scoped for the same reason as the placing path: the entry goes back
         // to the map only once this call holds nothing.
         {

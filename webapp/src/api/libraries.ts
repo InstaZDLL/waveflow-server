@@ -17,9 +17,87 @@ export type Library = {
    * A library closed to files may be open to loops, and the reverse.
    */
   accepts_canvas: boolean;
+  /**
+   * Whether the scan follows symbolic links that stay inside the library
+   * (RFC-021). An administrator's setting; shown to every member because it
+   * explains what the library holds.
+   */
+  follow_links: boolean;
 };
 
 export const listLibraries = () => call<Library[]>("/api/v2/libraries");
+
+/** A library as an administrator manages it, its root on the server included. */
+export type LibrarySettings = {
+  id: string;
+  name: string;
+  path: string;
+  follow_links: boolean;
+};
+
+export const getLibrarySettings = (libraryId: string) =>
+  call<LibrarySettings>(`/api/v2/libraries/${libraryId}/settings`);
+
+/**
+ * Renames a library, moves it, or changes whether its scan follows links. A
+ * name is its owner's to change; the path and the links setting are an
+ * administrator's. A new path or links setting queues a scan.
+ */
+export const updateLibrary = (
+  libraryId: string,
+  update: { name?: string; path?: string; follow_links?: boolean },
+) =>
+  call<{ scan_id: string | null }>(`/api/v2/libraries/${libraryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(update),
+  });
+
+/**
+ * Removes a library from the catalogue, for every member, and nothing from the
+ * disk. `confirm` must be its current name, or nothing is deleted.
+ */
+export const deleteLibrary = (libraryId: string, confirm: string) =>
+  call<{ tracks: number; albums: number; artists: number }>(
+    `/api/v2/libraries/${libraryId}`,
+    { method: "DELETE", body: JSON.stringify({ confirm }) },
+  );
+
+/** A track whose file the scans can no longer find, with what a purge costs. */
+export type UnavailableTrack = {
+  id: string;
+  relative_path: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  duration_ms: number;
+  unavailable_since: number;
+  playlist_entries: number;
+  favorites: number;
+  plays: number;
+};
+
+export const UNAVAILABLE_PAGE = 100;
+
+export const listUnavailableTracks = (
+  libraryId: string,
+  offset: number,
+  limit: number,
+  signal?: AbortSignal,
+) =>
+  call<{ total: number; tracks: UnavailableTrack[] }>(
+    `/api/v2/libraries/${libraryId}/unavailable-tracks?offset=${offset}&limit=${limit}`,
+    { signal },
+  );
+
+/** Purges named missing tracks, or all of them. Never neither. */
+export const purgeUnavailableTracks = (
+  libraryId: string,
+  selection: { track_ids: string[] } | { all: true },
+) =>
+  call<{ purged: number }>(
+    `/api/v2/libraries/${libraryId}/unavailable-tracks/purge`,
+    { method: "POST", body: JSON.stringify(selection) },
+  );
 
 export const addLibrary = (
   name: string,
@@ -43,6 +121,10 @@ export type ScanJob = {
   skipped: number;
   unavailable: number;
   errors: number;
+  /** Entries the scan left out: built-in exclusions and `.waveflowignore`. */
+  excluded: number;
+  /** Symbolic links the scan did not follow. */
+  skipped_links: number;
   current_path: string | null;
   message: string | null;
 };

@@ -64,6 +64,7 @@ import { GenrePage } from "./pages/genre-page";
 import { GenresPage } from "./pages/genres-page";
 import { HistoryPage } from "./pages/history-page";
 import { LoginPage } from "./pages/login-page";
+import { MissingPage } from "./pages/missing-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { PlayingPage } from "./pages/playing-page";
 import { PlaylistsPage } from "./pages/playlists-page";
@@ -120,6 +121,7 @@ const navigation: Array<{
     | "/songs"
     | "/folders"
     | "/attention"
+    | "/missing"
     | "/quality"
     | "/genres"
     | "/search"
@@ -166,6 +168,13 @@ const navigation: Array<{
     to: "/attention",
     labelKey: "nav.attention",
     icon: "info",
+    curate: true,
+    group: "library",
+  },
+  {
+    to: "/missing",
+    labelKey: "nav.missing",
+    icon: "inbox",
     curate: true,
     group: "library",
   },
@@ -320,6 +329,7 @@ async function prepareTab(
     case "/folders":
     // Its lists are asked for once the page knows the active library.
     case "/attention":
+    case "/missing":
     case "/quality":
       break;
     // A fresh draw on every ask, held for no time at all: a draw made here
@@ -913,6 +923,12 @@ const attentionRoute = createRoute({
   },
 });
 
+const missingRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/missing",
+  component: MissingPage,
+});
+
 // The verdict filter is a search parameter, so a filtered list can be linked
 // to, as the lists of "Needs attention" can.
 const qualityRoute = createRoute({
@@ -957,6 +973,7 @@ const routeTree = rootRoute.addChildren([
     songsRoute,
     foldersRoute,
     attentionRoute,
+    missingRoute,
     qualityRoute,
     artistsRoute,
     artistRoute,

@@ -39,6 +39,11 @@ encoding_rs = "0.8.42"
 futures-util = "0.3"
 hex = "0.4"
 ipnet = "2"
+# `.waveflowignore` (RFC-021 decision 1): gitignore rules through the matcher
+# ripgrep uses. Only its `gitignore` module is used, beside the `walkdir` walk
+# the scanner already has; `globset` and `walkdir` it builds on are in the
+# tree already.
+ignore = "0.4"
 lofty = "0.25"
 # TTML lyrics uploads (RFC-012 decision 6). Already in the lock file through
 # the artwork renderer; named here because the server now parses XML itself.
@@ -46,6 +51,10 @@ lofty = "0.25"
 roxmltree = "0.21"
 libc = "0.2"
 md-5 = "0.11"
+# The library watcher (RFC-021 decision 6). Default features only, which is the
+# FSEvents backend on macOS and nothing else: inotify on Linux and
+# ReadDirectoryChangesW on Windows need no feature.
+notify = "8"
 # Already in the tree through `url`; declared because `playlist_file` reads
 # percent escapes out of playlist entries and a transitive dependency is not a
 # promise.

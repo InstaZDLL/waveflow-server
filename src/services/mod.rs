@@ -1301,6 +1301,9 @@ pub struct DomainServices {
     scanner: crate::scanner::ScanManager,
     uploads: crate::config::UploadLimits,
     library_event_retention: crate::config::LibraryEventRetention,
+    /// How long a missing track is kept before the retention pass purges it,
+    /// or `None`, the default, for never (RFC-021 decision 4).
+    unavailable_retention: Option<std::time::Duration>,
     /// Bounds a credential an account mints for itself. See the field on
     /// [`crate::config::Config`] for why the administrative path is not
     /// bounded by it.
@@ -1423,6 +1426,7 @@ mod favorites;
 mod lastfm;
 mod library_events;
 mod library_folders;
+mod library_lifecycle;
 mod library_tree;
 mod lyrics_uploads;
 mod playback;
@@ -1464,6 +1468,10 @@ pub use library_folders::{
     FiledFolder, FiledTree, FolderPatch, FolderRemoved, Placed, MAX_FOLDERS_PER_LIBRARY,
     MAX_FOLDER_DEPTH, MAX_PLACEMENTS,
 };
+pub use library_lifecycle::{
+    LibraryDeleted, LibrarySettings, LibraryUpdate, LibraryUpdated, PurgeOutcome, PurgeRequest,
+    UnavailableTrack, UnavailableTracks,
+};
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
 pub use quality::{
@@ -1493,6 +1501,7 @@ impl DomainServices {
             scanner,
             uploads: config.uploads,
             library_event_retention: config.library_event_retention,
+            unavailable_retention: config.unavailable_retention,
             api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,

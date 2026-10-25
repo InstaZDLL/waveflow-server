@@ -16,6 +16,14 @@ pub struct LibraryRecord {
     pub root_path: PathBuf,
 }
 
+/// A library and the one setting that changes how it is walked.
+#[derive(Debug, Clone)]
+pub struct LibraryScanSettings {
+    pub library: LibraryRecord,
+    /// Follow symbolic links that stay inside the root (RFC-021 decision 3).
+    pub follow_links: bool,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LibraryAccess {
     pub id: Uuid,
@@ -36,6 +44,10 @@ pub struct LibraryAccess {
     /// read `accepts_uploads` for both would hide the canvas exactly where the
     /// flag was split to allow it.
     pub accepts_canvas: bool,
+    /// Whether the walk follows symbolic links that stay inside the library
+    /// (RFC-021 decision 3). An administrator's setting, shown to every
+    /// member because it explains what the library holds.
+    pub follow_links: bool,
 }
 
 /// What an incremental scan compares before reading a file (RFC-018
@@ -196,6 +208,12 @@ pub struct ScanJobRecord {
     pub skipped: i64,
     pub unavailable: i64,
     pub errors: i64,
+    /// Entries the walk left out by an exclusion or an ignore file, a folder
+    /// counting once whatever it holds (RFC-021 decision 2).
+    pub excluded: i64,
+    /// Symbolic links the walk did not follow, for whatever reason
+    /// (RFC-021 decision 3).
+    pub skipped_links: i64,
     pub current_path: Option<String>,
     pub message: Option<String>,
 }
@@ -227,7 +245,8 @@ impl Database {
     ) -> Result<Vec<LibraryAccess>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT l.id, l.name, l.visibility, m.role, l.last_scan_started_at, \
-                    l.last_scan_completed_at, l.accepts_uploads, l.accepts_canvas \
+                    l.last_scan_completed_at, l.accepts_uploads, l.accepts_canvas, \
+                    l.follow_links \
              FROM library l JOIN library_member m ON m.library_id=l.id \
              WHERE m.user_id=? ORDER BY l.name COLLATE NOCASE, l.id",
         )
@@ -249,6 +268,7 @@ impl Database {
                     last_scan_completed_at: row.try_get("last_scan_completed_at")?,
                     accepts_uploads: row.try_get::<i64, _>("accepts_uploads")? != 0,
                     accepts_canvas: row.try_get::<i64, _>("accepts_canvas")? != 0,
+                    follow_links: row.try_get::<i64, _>("follow_links")? != 0,
                 })
             })
             .collect()
@@ -259,6 +279,27 @@ impl Database {
             .fetch_all(self.pool())
             .await?;
         rows.into_iter().map(library_from_row).collect()
+    }
+
+    /// One library as a scan needs it, read when the scan starts rather than
+    /// when it was queued: its root may have moved and its links setting
+    /// changed in between, and it may be gone (RFC-021 decision 5).
+    pub async fn library_scan_settings(
+        &self,
+        library_id: Uuid,
+    ) -> Result<Option<LibraryScanSettings>, sqlx::Error> {
+        let row = sqlx::query("SELECT id, name, root_path, follow_links FROM library WHERE id = ?")
+            .bind(library_id.to_string())
+            .fetch_optional(self.pool())
+            .await?;
+        row.map(|row| {
+            let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
+            Ok(LibraryScanSettings {
+                library: library_from_row(row)?,
+                follow_links,
+            })
+        })
+        .transpose()
     }
 
     /// Whether any library the user can see is being scanned, and how many
@@ -629,14 +670,29 @@ impl Database {
         total: i64,
         full: bool,
     ) -> Result<(), sqlx::Error> {
+        self.start_walked_scan_job(scan_id, total, full, 0, 0).await
+    }
+
+    /// Marks a job running, with what its walk found: how many files it will
+    /// look at, and what it left out (RFC-021 decision 7).
+    pub async fn start_walked_scan_job(
+        &self,
+        scan_id: Uuid,
+        total: i64,
+        full: bool,
+        excluded: i64,
+        skipped_links: i64,
+    ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let now = now_ms();
         sqlx::query(
             "UPDATE scan_job SET status = 'running', total_files = ?, full_scan = ?, \
-             started_at = ? WHERE id = ?",
+             excluded = ?, skipped_links = ?, started_at = ? WHERE id = ?",
         )
         .bind(total)
         .bind(i64::from(full))
+        .bind(excluded)
+        .bind(skipped_links)
         .bind(now)
         .bind(scan_id.to_string())
         .execute(self.pool())
@@ -1017,6 +1073,16 @@ impl Database {
         .bind(user_id.to_string())
         .fetch_optional(self.pool())
         .await?;
+        row.map(scan_job_from_row).transpose()
+    }
+
+    /// A scan job by its id alone, for the operator's CLI, which acts as the
+    /// instance rather than as a member of the library.
+    pub async fn scan_job(&self, scan_id: Uuid) -> Result<Option<ScanJobRecord>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM scan_job WHERE id = ?")
+            .bind(scan_id.to_string())
+            .fetch_optional(self.pool())
+            .await?;
         row.map(scan_job_from_row).transpose()
     }
 
@@ -1448,7 +1514,8 @@ impl Database {
                explicit_status=excluded.explicit_status, \
                lyrics_hash=excluded.lyrics_hash, disc_subtitle=excluded.disc_subtitle, \
                pid=excluded.pid, \
-               is_available=1, last_seen_scan_id=excluded.last_seen_scan_id, \
+               is_available=1, unavailable_since=NULL, \
+               last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
         .bind(track_id.to_string()).bind(library_id.to_string())
@@ -1632,7 +1699,7 @@ impl Database {
         // scan to walk past a received file stamps it, and it rejoins the
         // ordinary case for good.
         let gone: Vec<String> = sqlx::query_scalar(
-            "UPDATE track SET is_available = 0, updated_at = ? \
+            "UPDATE track SET is_available = 0, unavailable_since = ?, updated_at = ? \
              WHERE library_id = ? AND is_available = 1 \
                AND ((last_seen_scan_id IS NOT NULL AND last_seen_scan_id <> ?) \
                  OR (last_seen_scan_id IS NULL \
@@ -1640,6 +1707,7 @@ impl Database {
                        (SELECT started_at FROM scan_job WHERE id = ?), ?))) \
              RETURNING id",
         )
+        .bind(now)
         .bind(now)
         .bind(library_id.to_string())
         .bind(scan_id.to_string())
@@ -2353,6 +2421,8 @@ fn scan_job_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScanJobRecord, sqlx
         skipped: row.try_get("skipped")?,
         unavailable: row.try_get("unavailable")?,
         errors: row.try_get("errors")?,
+        excluded: row.try_get("excluded")?,
+        skipped_links: row.try_get("skipped_links")?,
         current_path: row.try_get("current_path")?,
         message: row.try_get("message")?,
     })

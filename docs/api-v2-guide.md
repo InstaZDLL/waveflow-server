@@ -1135,6 +1135,7 @@ Admin Bearer tokens can manage:
 | Users | `GET/POST /api/v2/admin/users`, `PATCH/DELETE /api/v2/admin/users/{username}` |
 | Subsonic credential | `PUT/DELETE /api/v2/admin/users/{username}/subsonic-credential` |
 | Libraries | `GET/POST /api/v2/libraries` |
+| A library's name, folder and links setting, and its deletion | `GET /api/v2/libraries/{library_id}/settings`, `PATCH/DELETE /api/v2/libraries/{library_id}` |
 | Membership | `PUT/DELETE /api/v2/libraries/{library_id}/members/{user_id}` |
 | Scans | `POST /api/v2/libraries/{library_id}/scans`, `GET /api/v2/scans/{scan_id}`, `GET /api/v2/scans/{scan_id}/events` |
 | API tokens | `GET/POST /api/v2/admin/users/{username}/tokens`, `DELETE /api/v2/admin/users/{username}/tokens/{token_id}` |
@@ -1149,6 +1150,24 @@ takes the instance's write lock, so `POST /api/v2/libraries/{library_id}/scans`
 is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
 same answer as for a library that does not exist. Reading the catalogue is
 unaffected.
+
+A library's lifecycle ([RFC-021](rfcs/RFC-021-library-lifecycle-and-scan.md)
+decision 5) splits the same way. `PATCH /api/v2/libraries/{library_id}` with a
+`name` is open to the library's owner; with a `path` or `follow_links` it needs
+an administrator on an administrative credential, and it queues a scan whose id
+it answers. `DELETE` is an administrator's, and its body must carry
+`{"confirm": "<the library's current name>"}` or nothing is deleted (`422`).
+Every one of them answers `409` while the library is being scanned.
+
+The tracks a library's scans can no longer find are listed, oldest first and
+with what purging each would cost, by
+`GET /api/v2/libraries/{library_id}/unavailable-tracks`, and purged by
+`POST /api/v2/libraries/{library_id}/unavailable-tracks/purge` with
+`{"track_ids": […]}` or `{"all": true}`. Both are for the library's owners,
+managers and administrators; a purge is not reversible (RFC-021 decision 4).
+
+A scan job also says what its walk left out: `excluded` (built-in exclusions
+and `.waveflowignore`) and `skipped_links` (symbolic links not followed).
 | FFmpeg status and transcode headroom | `GET /api/v2/transcode/status` |
 | Library change feed | `GET /api/v2/libraries/{library_id}/events` |
 
@@ -1166,7 +1185,7 @@ tell the two apart.
 event: snapshot
 data: {"id":"…","library_id":"…","status":"running","total_files":164,"processed_files":0,
        "added":0,"updated":0,"moved":0,"skipped":0,"unavailable":0,"errors":0,
-       "current_path":null,"message":null}
+       "excluded":0,"skipped_links":0,"current_path":null,"message":null}
 
 event: progress
 data: {"id":"…","library_id":"…","status":"running","total_files":164,"processed_files":61, …}

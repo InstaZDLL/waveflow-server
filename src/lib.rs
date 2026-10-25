@@ -26,6 +26,7 @@ pub mod stream_ticket;
 pub mod subsonic;
 pub mod sync;
 pub mod tags;
+pub mod watcher;
 pub mod webui;
 
 use std::{sync::Arc, time::Duration};
@@ -134,6 +135,11 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::start_scan,
         api::list_libraries,
         api::create_library,
+        api::update_library,
+        api::delete_library,
+        api::library_settings,
+        api::unavailable_tracks,
+        api::purge_unavailable_tracks,
         api::list_library_members,
         api::set_library_member,
         api::remove_library_member,
@@ -272,6 +278,15 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         catalog::ScanJobRecord,
         catalog::TrackRecord,
         catalog::LibraryAccess,
+        api::DeleteLibraryRequest,
+        services::LibraryUpdate,
+        services::LibraryUpdated,
+        services::LibrarySettings,
+        services::LibraryDeleted,
+        services::UnavailableTrack,
+        services::UnavailableTracks,
+        services::PurgeRequest,
+        services::PurgeOutcome,
         services::AlbumItem,
         services::ArtistItem,
         services::GenreItem,

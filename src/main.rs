@@ -53,6 +53,16 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
         }
     }
     state.scanner.spawn_background(config.scan_interval);
+    // A change scanned once it settles, on top of the interval (RFC-021).
+    if config.watch {
+        waveflow_server::watcher::spawn(
+            state.scanner.clone(),
+            state.db.clone(),
+            config.watch_delay,
+        );
+    }
+    // Off unless WAVEFLOW_UNAVAILABLE_RETENTION_DAYS says otherwise.
+    state.services.spawn_unavailable_purge();
     // At boot, then whenever a scan finishes or a library is asked to be
     // analysed again; one core at most by default, and off at zero (RFC-016).
     state.services.spawn_quality_analyzer();

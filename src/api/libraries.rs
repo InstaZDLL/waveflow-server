@@ -84,6 +84,7 @@ pub async fn create_library(
         )
         .await
         .map_err(db_error)?;
+    state.scanner.libraries_changed();
     let scan_id = state
         .scanner
         .trigger(
@@ -380,6 +381,125 @@ pub async fn library_tree(
             query.path.as_deref().unwrap_or(""),
             page,
         )
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// What deleting a library must carry: its current name, exactly. A body that
+/// lacks it, or names anything else, deletes nothing and answers `422`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeleteLibraryRequest {
+    #[serde(default)]
+    pub confirm: String,
+}
+
+/// Renames a library, moves its root or changes whether its walk follows
+/// links (RFC-021 decision 5). A name is the owner's or an administrator's to
+/// change; the path and `follow_links` are an administrator's, on a credential
+/// that carries administrative authority. A new root or links setting queues a
+/// scan, whose id is answered. `409` while the library is being scanned, or
+/// when another library already has that root.
+#[utoipa::path(patch, path = "/api/v2/libraries/{library_id}", tag = "administration", params(("library_id" = Uuid, Path)), request_body = crate::services::LibraryUpdate, responses((status = 200, body = crate::services::LibraryUpdated), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn update_library(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<crate::services::LibraryUpdate>,
+) -> Result<Json<crate::services::LibraryUpdated>, ApiError> {
+    let access = if request.is_administrative() {
+        Access::Admin
+    } else {
+        Access::Write
+    };
+    let actor = authenticated(&state, &headers, access).await?;
+    state
+        .services
+        .update_library(actor.id, library_id, request)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Deletes a library from the catalogue, and nothing from the disk (RFC-021
+/// decision 5): every track, album and artist, with everything that cascades
+/// from them for every member. The body must carry `confirm`, equal to the
+/// library's current name. `409` while the library is being scanned.
+#[utoipa::path(delete, path = "/api/v2/libraries/{library_id}", tag = "administration", params(("library_id" = Uuid, Path)), request_body = DeleteLibraryRequest, responses((status = 200, body = crate::services::LibraryDeleted), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn delete_library(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<DeleteLibraryRequest>,
+) -> Result<Json<crate::services::LibraryDeleted>, ApiError> {
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
+    state
+        .services
+        .delete_library(actor.id, library_id, &request.confirm)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// A library as an administrator manages it, its root included.
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/settings", tag = "administration", params(("library_id" = Uuid, Path)), responses((status = 200, body = crate::services::LibrarySettings), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn library_settings(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::LibrarySettings>, ApiError> {
+    let actor = authenticated(&state, &headers, Access::Admin).await?;
+    state
+        .services
+        .library_settings(actor.id, library_id)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnavailableTracksQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+/// The tracks a library's scans can no longer find, oldest first, with what
+/// purging each would cost (RFC-021 decision 4). For the library's owners and
+/// managers, and administrators; anyone else gets the `404` a library they are
+/// not in would.
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/unavailable-tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = crate::services::UnavailableTracks), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn unavailable_tracks(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    Query(query): Query<UnavailableTracksQuery>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::UnavailableTracks>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Read).await?;
+    let page =
+        crate::services::BrowsePage::new(query.offset, query.limit).map_err(service_error)?;
+    state
+        .services
+        .unavailable_tracks(user.id, library_id, page)
+        .await
+        .map(Json)
+        .map_err(service_error)
+}
+
+/// Purges missing tracks: those named in `track_ids`, or every one with
+/// `"all": true`, and never neither (`422`). Only tracks still unavailable are
+/// removed. Not reversible: see RFC-021 decision 4 for what is lost. `409`
+/// while the library is being scanned.
+#[utoipa::path(post, path = "/api/v2/libraries/{library_id}/unavailable-tracks/purge", tag = "catalog", params(("library_id" = Uuid, Path)), request_body = crate::services::PurgeRequest, responses((status = 200, body = crate::services::PurgeOutcome), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+pub async fn purge_unavailable_tracks(
+    State(state): State<AppState>,
+    Path(library_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<crate::services::PurgeRequest>,
+) -> Result<Json<crate::services::PurgeOutcome>, ApiError> {
+    let user = authenticated(&state, &headers, Access::Write).await?;
+    state
+        .services
+        .purge_unavailable_tracks(user.id, library_id, request)
         .await
         .map(Json)
         .map_err(service_error)

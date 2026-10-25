@@ -1024,6 +1024,8 @@ fn scan_progress_converts_into_the_shape_the_stream_sends() {
         skipped: 4,
         unavailable: 5,
         errors: 6,
+        excluded: 7,
+        skipped_links: 8,
         current_path: Some("Rue Delacour/Nocturne.flac".into()),
         message: Some("still reading".into()),
     }
@@ -1045,6 +1047,8 @@ fn scan_progress_converts_into_the_shape_the_stream_sends() {
     assert_eq!(record.skipped, 4);
     assert_eq!(record.unavailable, 5);
     assert_eq!(record.errors, 6);
+    assert_eq!(record.excluded, 7);
+    assert_eq!(record.skipped_links, 8);
     assert_eq!(
         record.current_path.as_deref(),
         Some("Rue Delacour/Nocturne.flac")
@@ -1052,7 +1056,7 @@ fn scan_progress_converts_into_the_shape_the_stream_sends() {
     assert_eq!(record.message.as_deref(), Some("still reading"));
 
     // And the names themselves, since they are the whole point: a client binds
-    // these thirteen and nothing else.
+    // these fifteen and nothing else — the last two RFC-021's.
     let json = serde_json::to_value(&record).unwrap();
     let mut keys: Vec<&str> = json
         .as_object()
@@ -1067,12 +1071,14 @@ fn scan_progress_converts_into_the_shape_the_stream_sends() {
             "added",
             "current_path",
             "errors",
+            "excluded",
             "id",
             "library_id",
             "message",
             "moved",
             "processed_files",
             "skipped",
+            "skipped_links",
             "status",
             "total_files",
             "unavailable",
@@ -1443,4 +1449,894 @@ async fn a_fifo_beside_an_audio_file_does_not_hang_the_scan() {
     );
     let second = job(&state, owner, scan_once(&state, owner, library).await).await;
     assert_eq!(second.skipped, 1);
+}
+
+// ── Libraries and scanning: exclusions, links, missing tracks (RFC-021) ──
+
+/// An account inserted straight into the table: these tests need an owner, a
+/// manager or a listener, never a login.
+async fn insert_account(state: &waveflow_server::AppState, name: &str, role: &str) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-never-authenticates', ?, 0, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(name)
+    .bind(role)
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    id
+}
+
+async fn count(state: &waveflow_server::AppState, query: &'static str) -> i64 {
+    sqlx::query_scalar(query)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap()
+}
+
+async fn available_paths(state: &waveflow_server::AppState) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT relative_path FROM track WHERE is_available = 1 ORDER BY relative_path",
+    )
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap()
+}
+
+/// Waits for one job to end, whichever way.
+async fn settled(
+    state: &waveflow_server::AppState,
+    owner: uuid::Uuid,
+    scan: uuid::Uuid,
+) -> waveflow_server::catalog::ScanJobRecord {
+    for _ in 0..500 {
+        let record = job(state, owner, scan).await;
+        if record.status == "completed" || record.status == "failed" {
+            return record;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("scan timed out");
+}
+
+/// RFC-021 decision 1: the built-in exclusions and `.waveflowignore`, with its
+/// gitignore rules, its empty-file rule and its `!`. Received files are kept,
+/// and the ignore files themselves are not counted as left out.
+#[tokio::test]
+async fn built_in_exclusions_and_ignore_files_leave_files_out() {
+    let (_temp, state, owner, library, _root) = incremental_library("exclusions", |music| {
+        for (index, path) in [
+            "Album/One.wav",
+            "@eaDir/Thumb.wav",
+            ".hidden/Two.wav",
+            "._One.wav",
+            "Skip/Three.wav",
+            "Nested/Four.wav",
+            "Keep/Unwanted.wav",
+            "Keep/Wanted.wav",
+            ".waveflow-managed/Received.wav",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = music.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            write_test_wav_of_len(&path, 800 + index * 10);
+        }
+        std::fs::write(music.join(".waveflowignore"), "# not these\n/Skip/\n").unwrap();
+        std::fs::write(music.join("Nested/.waveflowignore"), "").unwrap();
+        std::fs::write(music.join("Keep/.waveflowignore"), "*.wav\n!Wanted.wav\n").unwrap();
+    })
+    .await;
+    let scan = job(&state, owner, scan_once(&state, owner, library).await).await;
+    assert_eq!(
+        available_paths(&state).await,
+        [
+            ".waveflow-managed/Received.wav",
+            "Album/One.wav",
+            "Keep/Wanted.wav"
+        ]
+    );
+    // @eaDir, .hidden, ._One.wav, Skip, Nested, Keep/Unwanted.wav.
+    assert_eq!(scan.excluded, 6);
+    assert_eq!(scan.errors, 0);
+}
+
+/// RFC-021 decision 2: an excluded file counts as not discovered. Its track
+/// becomes unavailable like a deleted one, with the time it went, and comes
+/// back under the same identifier when the rule is lifted.
+#[tokio::test]
+async fn an_excluded_track_becomes_unavailable_like_a_deleted_one() {
+    let (_temp, state, owner, library, root) = incremental_library("excluded-later", |music| {
+        std::fs::create_dir_all(music.join("Live")).unwrap();
+        write_test_wav(&music.join("Live/One.wav"));
+        write_test_wav_of_len(&music.join("Studio.wav"), 900);
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    let id = track_id(&state, "Live/One.wav").await;
+
+    std::fs::write(root.join(".waveflowignore"), "Live/\n").unwrap();
+    let excluded = job(
+        &state,
+        owner,
+        scan_once(&state, owner, library.clone()).await,
+    )
+    .await;
+    assert_eq!(
+        excluded.unavailable, 1,
+        "an excluded file must count as missing, not as unseen"
+    );
+    let (available, since): (i64, Option<i64>) =
+        sqlx::query_as("SELECT is_available, unavailable_since FROM track WHERE id = ?")
+            .bind(&id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(available, 0);
+    assert!(since.is_some(), "the time it went missing is recorded");
+
+    std::fs::remove_file(root.join(".waveflowignore")).unwrap();
+    scan_once(&state, owner, library).await;
+    let (available, since): (i64, Option<i64>) =
+        sqlx::query_as("SELECT is_available, unavailable_since FROM track WHERE id = ?")
+            .bind(&id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!((available, since), (1, None));
+}
+
+/// RFC-021 decision 1: a folder whose ignore file cannot be used is an
+/// unreadable folder — reported, and its tracks left as they are — while the
+/// same failure at the root fails the scan.
+#[tokio::test]
+async fn an_ignore_file_that_cannot_be_used_keeps_its_tracks() {
+    let (_temp, state, owner, library, root) = incremental_library("ignore-unusable", |music| {
+        std::fs::create_dir_all(music.join("Sub")).unwrap();
+        write_test_wav(&music.join("Sub/One.wav"));
+        write_test_wav_of_len(&music.join("Two.wav"), 900);
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+
+    std::fs::write(root.join("Sub/.waveflowignore"), "[z-a]\n").unwrap();
+    let scan = scan_once(&state, owner, library.clone()).await;
+    let record = job(&state, owner, scan).await;
+    assert_eq!(record.errors, 1);
+    assert_eq!(
+        record.unavailable, 0,
+        "a track under a folder whose rules are unknown was marked missing"
+    );
+    assert_eq!(available_paths(&state).await, ["Sub/One.wav", "Two.wav"]);
+    let message: String = sqlx::query_scalar("SELECT message FROM scan_error WHERE scan_id = ?")
+        .bind(scan.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(message.contains(".waveflowignore"), "{message}");
+
+    std::fs::write(root.join(".waveflowignore"), "[z-a]\n").unwrap();
+    let failing = state
+        .scanner
+        .trigger(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    assert_eq!(
+        settled(&state, owner, failing).await.status,
+        "failed",
+        "a root whose ignore file cannot be used must fail the scan"
+    );
+    assert_eq!(available_paths(&state).await, ["Sub/One.wav", "Two.wav"]);
+}
+
+/// A symbolic link to `target` at `link`, or `false` where this system will
+/// not let the test make one (Windows without the privilege).
+fn make_link(target: &std::path::Path, link: &std::path::Path, directory: bool) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = directory;
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        if directory {
+            std::os::windows::fs::symlink_dir(target, link).is_ok()
+        } else {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+    }
+}
+
+/// RFC-021 decision 3: links are skipped and counted unless the library
+/// follows them, and then only those whose target stays inside the root; a
+/// followed file is one track under its canonical path, however many links
+/// name it.
+#[tokio::test]
+async fn links_are_followed_only_inside_the_library() {
+    let outside = tempfile::tempdir().unwrap();
+    write_test_wav_of_len(&outside.path().join("Elsewhere.wav"), 950);
+    let mut linked = true;
+    let (_temp, state, owner, library, _root) = incremental_library("links", |music| {
+        std::fs::create_dir_all(music.join("store")).unwrap();
+        std::fs::create_dir_all(music.join("Album")).unwrap();
+        write_test_wav(&music.join("store/a.wav"));
+        // The store is reached through the links only.
+        std::fs::write(music.join(".waveflowignore"), "/store/\n").unwrap();
+        linked &= make_link(
+            &music.join("store/a.wav"),
+            &music.join("Album/a.wav"),
+            false,
+        );
+        linked &= make_link(&music.join("store"), &music.join("Mirror"), true);
+        linked &= make_link(
+            &outside.path().join("Elsewhere.wav"),
+            &music.join("Outside.wav"),
+            false,
+        );
+        linked &= make_link(&music.join("missing.wav"), &music.join("Broken.wav"), false);
+        linked &= make_link(music, &music.join("Loop"), true);
+    })
+    .await;
+    if !linked {
+        eprintln!("skipped: this system will not let the test make a symbolic link");
+        return;
+    }
+
+    let unfollowed = job(
+        &state,
+        owner,
+        scan_once(&state, owner, library.clone()).await,
+    )
+    .await;
+    assert_eq!(unfollowed.added, 0);
+    assert_eq!(
+        unfollowed.skipped_links, 5,
+        "every link must be counted, not skipped in silence"
+    );
+
+    let updated = state
+        .services
+        .update_library(
+            owner,
+            library.id,
+            waveflow_server::services::LibraryUpdate {
+                follow_links: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let scan = updated
+        .scan_id
+        .expect("changing the links setting queues a scan");
+    let followed = settled(&state, owner, scan).await;
+    assert_eq!(followed.status, "completed", "{:?}", followed.message);
+    assert_eq!(
+        available_paths(&state).await,
+        ["store/a.wav"],
+        "one file, under its canonical path, whatever links name it"
+    );
+    // Outside the root, broken, and a loop back to the root.
+    assert_eq!(followed.skipped_links, 3);
+}
+
+/// A FLAC file tagged with a title, an album and an artist, its tone chosen by
+/// `frequency` so no two fixtures share their bytes.
+fn write_tagged_flac(path: &std::path::Path, title: &str, album: &str, frequency: usize) {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("sine=frequency={frequency}:duration=0.1"),
+            "-metadata",
+            &format!("title={title}"),
+            "-metadata",
+            &format!("album={album}"),
+            "-metadata",
+            "artist=Lifecycle Artist",
+            "-c:a",
+            "flac",
+        ])
+        .arg(path)
+        .output()
+        .expect("FFmpeg is required for tagged fixtures");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Two tracks in an album, one in another, scanned.
+async fn library_with_albums(
+    name: &str,
+) -> (
+    tempfile::TempDir,
+    waveflow_server::AppState,
+    uuid::Uuid,
+    LibraryRecord,
+    std::path::PathBuf,
+) {
+    let fixture = incremental_library(name, |music| {
+        for (index, album) in ["First", "First", "Second"].into_iter().enumerate() {
+            std::fs::create_dir_all(music.join(album)).unwrap();
+            write_tagged_flac(
+                &music.join(format!("{album}/{index}.flac")),
+                &format!("Track {index}"),
+                album,
+                300 + index * 110,
+            );
+        }
+    })
+    .await;
+    scan_once(&fixture.1, fixture.2, fixture.3.clone()).await;
+    fixture
+}
+
+async fn track_id(state: &waveflow_server::AppState, path: &str) -> String {
+    sqlx::query_scalar("SELECT id FROM track WHERE relative_path = ?")
+        .bind(path)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap()
+}
+
+/// RFC-021 decision 4: the listing says what a purge would cost, and the
+/// purge removes only what is still missing, with what hangs off it, and
+/// leaves no album, favourite or search row behind with nothing to stand on.
+#[tokio::test]
+async fn a_purge_removes_only_what_is_still_missing() {
+    let (temp, state, owner, library, root) = library_with_albums("purge").await;
+    let first = track_id(&state, "First/0.flac").await;
+    let second = track_id(&state, "Second/2.flac").await;
+    // A loop on the track that goes: its link cascades, and the blob it was
+    // the last to name must go with it rather than sit in the store for ever.
+    let canvas = "c".repeat(64);
+    let canvas_file = temp
+        .path()
+        .join("data/canvas")
+        .join(format!("{canvas}.mp4"));
+    std::fs::create_dir_all(canvas_file.parent().unwrap()).unwrap();
+    std::fs::write(&canvas_file, b"mp4").unwrap();
+    sqlx::query("INSERT INTO canvas (hash, format, byte_size, created_at) VALUES (?, 'mp4', 3, 1)")
+        .bind(&canvas)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO track_canvas (track_id, library_id, canvas_hash, created_at) \
+         VALUES (?, ?, ?, 1)",
+    )
+    .bind(&second)
+    .bind(library.id.to_string())
+    .bind(&canvas)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let second_album: String = sqlx::query_scalar("SELECT album_id FROM track WHERE id = ?")
+        .bind(&second)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    let playlist = uuid::Uuid::new_v4().to_string();
+    for (statement, binds) in [
+        (
+            "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+             VALUES (?, 'track', ?, 1)",
+            vec![owner.to_string(), second.clone()],
+        ),
+        (
+            "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+             VALUES (?, 'album', ?, 1)",
+            vec![owner.to_string(), second_album.clone()],
+        ),
+        (
+            "INSERT INTO playlist (id, owner_user_id, name, public, created_at, updated_at) \
+             VALUES (?, ?, 'Kept', 0, 1, 1)",
+            vec![playlist.clone(), owner.to_string()],
+        ),
+        (
+            "INSERT INTO playlist_track (playlist_id, track_id, position, added_at) \
+             VALUES (?, ?, 0, 1)",
+            vec![playlist.clone(), second.clone()],
+        ),
+        (
+            "INSERT INTO play_event (user_id, track_id, submission, played_at) \
+             VALUES (?, ?, 1, 1)",
+            vec![owner.to_string(), second.clone()],
+        ),
+    ] {
+        let mut query = sqlx::query(statement);
+        for bind in binds {
+            query = query.bind(bind);
+        }
+        query.execute(state.db.pool()).await.unwrap();
+    }
+
+    let first_bytes = std::fs::read(root.join("First/0.flac")).unwrap();
+    std::fs::remove_file(root.join("First/0.flac")).unwrap();
+    std::fs::remove_file(root.join("Second/2.flac")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+
+    let listed = state
+        .services
+        .unavailable_tracks(
+            owner,
+            library.id,
+            waveflow_server::services::BrowsePage::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listed.total, 2);
+    let costly = listed
+        .tracks
+        .iter()
+        .find(|track| track.id.to_string() == second)
+        .unwrap();
+    assert_eq!(
+        (costly.playlist_entries, costly.favorites, costly.plays),
+        (1, 1, 1)
+    );
+
+    // One of them comes back between the listing and the purge.
+    std::fs::write(root.join("First/0.flac"), first_bytes).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+
+    let purged = state
+        .services
+        .purge_unavailable_tracks(
+            owner,
+            library.id,
+            waveflow_server::services::PurgeRequest {
+                track_ids: Some(vec![first.parse().unwrap(), second.parse().unwrap()]),
+                all: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(purged.purged, 1, "a track that came back must be kept");
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
+        0
+    );
+    assert_eq!(
+        available_paths(&state).await,
+        ["First/0.flac", "First/1.flac"]
+    );
+    for (query, what) in [
+        ("SELECT COUNT(*) FROM playlist_track", "the playlist entry"),
+        ("SELECT COUNT(*) FROM play_event", "the play"),
+        ("SELECT COUNT(*) FROM user_star", "the favourites"),
+        (
+            "SELECT COUNT(*) FROM album \
+             WHERE NOT EXISTS (SELECT 1 FROM track t WHERE t.album_id = album.id)",
+            "an empty album",
+        ),
+        (
+            "SELECT COUNT(*) FROM track_fts WHERE track_id NOT IN (SELECT id FROM track)",
+            "a search row",
+        ),
+    ] {
+        assert_eq!(count(&state, query).await, 0, "{what} outlived the purge");
+    }
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM playlist").await,
+        1,
+        "the playlist itself is not the track's to take"
+    );
+    assert_eq!(count(&state, "SELECT COUNT(*) FROM canvas").await, 0);
+    assert!(
+        !canvas_file.exists(),
+        "the purged track's canvas stayed in the store"
+    );
+}
+
+/// RFC-021 decision 4: a purge is explicit, refused while the library is
+/// scanned, and for curators only; the retention pass purges by age.
+#[tokio::test]
+async fn a_purge_is_explicit_and_waits_for_no_scan() {
+    use waveflow_server::services::{PurgeRequest, ServiceError};
+
+    let (_temp, state, owner, library, root) = library_with_albums("purge-rules").await;
+    std::fs::remove_file(root.join("First/0.flac")).unwrap();
+    std::fs::remove_file(root.join("Second/2.flac")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+
+    let neither = state
+        .services
+        .purge_unavailable_tracks(owner, library.id, PurgeRequest::default())
+        .await;
+    assert!(matches!(neither, Err(ServiceError::Invalid)), "{neither:?}");
+
+    let listener = insert_account(&state, "purge-listener", "user").await;
+    state
+        .db
+        .add_library_member(
+            owner,
+            library.id,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let all = || PurgeRequest {
+        track_ids: None,
+        all: true,
+    };
+    assert!(matches!(
+        state
+            .services
+            .purge_unavailable_tracks(listener, library.id, all())
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .unavailable_tracks(listener, library.id, Default::default())
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
+
+    let scanning = state.scanner.try_lock_library(library.id).unwrap();
+    assert!(matches!(
+        state
+            .services
+            .purge_unavailable_tracks(owner, library.id, all())
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+    assert_eq!(
+        state
+            .services
+            .purge_expired_unavailable_tracks(i64::MAX)
+            .await
+            .unwrap(),
+        0,
+        "the retention pass must leave a library being scanned alone"
+    );
+    drop(scanning);
+
+    // One went missing long ago, the other just now.
+    sqlx::query("UPDATE track SET unavailable_since = 1000 WHERE relative_path = 'First/0.flac'")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .services
+            .purge_expired_unavailable_tracks(now_ms() - 60_000)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
+        1
+    );
+}
+
+/// RFC-021 decision 5: a root moved with its tree intact keeps every
+/// identifier, and the scan it queues says why it ran.
+#[tokio::test]
+async fn a_moved_root_keeps_every_identity() {
+    let (temp, state, owner, library, root) = library_with_albums("moved").await;
+    let before: Vec<(String, String)> =
+        sqlx::query_as("SELECT relative_path, id FROM track ORDER BY relative_path")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    let moved = temp.path().join("moved-elsewhere");
+    std::fs::rename(&root, &moved).unwrap();
+
+    let updated = state
+        .services
+        .update_library(
+            owner,
+            library.id,
+            waveflow_server::services::LibraryUpdate {
+                path: Some(moved.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let scan = updated.scan_id.expect("a new root queues a scan");
+    let record = settled(&state, owner, scan).await;
+    assert_eq!(record.status, "completed", "{:?}", record.message);
+    assert_eq!((record.added, record.unavailable), (0, 0));
+    let trigger: String = sqlx::query_scalar("SELECT trigger FROM scan_job WHERE id = ?")
+        .bind(scan.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(trigger, "library_moved");
+    let after: Vec<(String, String)> = sqlx::query_as(
+        "SELECT relative_path, id FROM track WHERE is_available = 1 ORDER BY relative_path",
+    )
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(after, before);
+    let stored: String = sqlx::query_scalar("SELECT root_path FROM library WHERE id = ?")
+        .bind(library.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::path::PathBuf::from(stored),
+        std::fs::canonicalize(&moved).unwrap()
+    );
+}
+
+/// RFC-021 decision 5: who may do what. The owner renames; the path, the
+/// links setting and deletion are an administrator's; a listener does
+/// nothing; and nothing that changes the walk happens during a scan.
+#[tokio::test]
+async fn the_lifecycle_follows_the_role_model() {
+    use waveflow_server::services::{LibraryUpdate, ServiceError};
+
+    let (temp, state, admin, library, _root) = library_with_albums("roles").await;
+    let owner = insert_account(&state, "roles-owner", "user").await;
+    let listener = insert_account(&state, "roles-listener", "user").await;
+    sqlx::query("UPDATE library_member SET user_id = ? WHERE library_id = ?")
+        .bind(owner.to_string())
+        .bind(library.id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(
+            owner,
+            library.id,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let rename = |name: &str| LibraryUpdate {
+        name: Some(name.into()),
+        ..Default::default()
+    };
+
+    state
+        .services
+        .update_library(owner, library.id, rename("  Renamed  "))
+        .await
+        .unwrap();
+    let name: String = sqlx::query_scalar("SELECT name FROM library WHERE id = ?")
+        .bind(library.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(name, "Renamed");
+    assert!(matches!(
+        state
+            .services
+            .update_library(listener, library.id, rename("Mine now"))
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .update_library(owner, library.id, rename(" "))
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    let elsewhere = temp.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let repath = LibraryUpdate {
+        path: Some(elsewhere.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        state
+            .services
+            .update_library(owner, library.id, repath.clone())
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .delete_library(owner, library.id, "Renamed")
+            .await,
+        Err(ServiceError::Forbidden)
+    ));
+    let scanning = state.scanner.try_lock_library(library.id).unwrap();
+    assert!(matches!(
+        state
+            .services
+            .update_library(admin, library.id, repath)
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+    assert!(matches!(
+        state
+            .services
+            .delete_library(admin, library.id, "Renamed")
+            .await,
+        Err(ServiceError::Conflict)
+    ));
+    drop(scanning);
+    assert!(matches!(
+        state
+            .services
+            .update_library(
+                admin,
+                library.id,
+                LibraryUpdate {
+                    path: Some(temp.path().join("absent").to_string_lossy().into_owned()),
+                    ..Default::default()
+                }
+            )
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    // Somebody else's library, by an outsider: as missing as no library.
+    let outsider = insert_account(&state, "roles-outsider", "user").await;
+    assert!(matches!(
+        state
+            .services
+            .update_library(outsider, library.id, rename("Ours"))
+            .await,
+        Err(ServiceError::NotFound)
+    ));
+}
+
+/// RFC-021 decision 5: deleting a library is confirmed by its name, removes
+/// every row it held and nothing on disk, and leaves the other libraries
+/// alone.
+#[tokio::test]
+async fn a_deleted_library_leaves_no_row_behind() {
+    use waveflow_server::services::ServiceError;
+
+    let (temp, state, admin, library, root) = library_with_albums("deleted").await;
+    let kept_root = temp.path().join("kept");
+    std::fs::create_dir_all(&kept_root).unwrap();
+    write_test_wav_of_len(&kept_root.join("Kept.wav"), 1234);
+    let kept_root = std::fs::canonicalize(&kept_root).unwrap();
+    let kept_id = state
+        .db
+        .create_library(
+            admin,
+            "kept",
+            &kept_root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    scan_once(
+        &state,
+        admin,
+        LibraryRecord {
+            id: kept_id,
+            name: "kept".into(),
+            root_path: kept_root,
+        },
+    )
+    .await;
+    let doomed = track_id(&state, "First/0.flac").await;
+    sqlx::query(
+        "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \
+         VALUES (?, 'track', ?, 1)",
+    )
+    .bind(admin.to_string())
+    .bind(&doomed)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        state
+            .services
+            .delete_library(admin, library.id, "Deleted")
+            .await,
+        Err(ServiceError::Invalid)
+    ));
+    assert_eq!(count(&state, "SELECT COUNT(*) FROM library").await, 2);
+
+    let deleted = state
+        .services
+        .delete_library(admin, library.id, "deleted")
+        .await
+        .unwrap();
+    assert_eq!(deleted.tracks, 3);
+    assert_eq!(deleted.albums, 2);
+
+    for table in [
+        "SELECT COUNT(*) FROM track WHERE library_id = ?",
+        "SELECT COUNT(*) FROM album WHERE library_id = ?",
+        "SELECT COUNT(*) FROM artist WHERE library_id = ?",
+        "SELECT COUNT(*) FROM genre WHERE library_id = ?",
+        "SELECT COUNT(*) FROM track_fts WHERE library_id = ?",
+        "SELECT COUNT(*) FROM artist_fts WHERE library_id = ?",
+        "SELECT COUNT(*) FROM library_member WHERE library_id = ?",
+        "SELECT COUNT(*) FROM scan_job WHERE library_id = ?",
+        "SELECT COUNT(*) FROM library_event WHERE library_id = ?",
+    ] {
+        let left: i64 = sqlx::query_scalar(table)
+            .bind(library.id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM user_star").await,
+        0,
+        "a favourite of a deleted track outlived it"
+    );
+    let violations = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap();
+    assert!(violations.is_empty());
+    assert!(root.join("First/0.flac").exists(), "a file was touched");
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 1").await,
+        1,
+        "the other library lost its track"
+    );
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_event WHERE kind = 'library.deleted' AND subject_id = ?",
+    )
+    .bind(library.id.to_string())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+}
+
+/// RFC-021 decision 6: a change in a watched library is scanned once it
+/// settles, by a scan that says it came from the watcher.
+#[tokio::test]
+async fn a_watched_change_is_scanned_once_it_settles() {
+    let (_temp, state, owner, library, root) = incremental_library("watched", |music| {
+        write_test_wav(&music.join("First.wav"));
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    let watcher = waveflow_server::watcher::spawn(
+        state.scanner.clone(),
+        state.db.clone(),
+        std::time::Duration::from_millis(200),
+    );
+    // Long enough for the watch to be placed before the change it must see.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    write_test_wav_of_len(&root.join("Second.wav"), 900);
+
+    let mut watched = None;
+    for _ in 0..300 {
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT added FROM scan_job WHERE trigger = 'watch' AND status = 'completed'",
+        )
+        .fetch_optional(state.db.pool())
+        .await
+        .unwrap();
+        if found.is_some() {
+            watched = found;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    watcher.abort();
+    assert_eq!(watched, Some(1), "no scan followed the change");
+    assert_eq!(available_paths(&state).await, ["First.wav", "Second.wav"]);
 }

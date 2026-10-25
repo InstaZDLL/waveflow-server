@@ -5584,3 +5584,266 @@ async fn chosen_artist_images_lead_every_reader_and_outlive_the_portrait_fill() 
         StatusCode::NOT_FOUND
     );
 }
+
+/// An account written straight into the table, with an API token minted for
+/// it at run time: these routes need a bearer, never a password.
+async fn account_with_token(
+    state: &waveflow_server::AppState,
+    username: &str,
+    role: &str,
+) -> (uuid::Uuid, String) {
+    let id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, ?, 'this-account-signs-in-by-token-only', ?, 0, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(username)
+    .bind(role)
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let token = security::generate_token("wfapi_");
+    state
+        .db
+        .create_api_token(
+            waveflow_server::database::NewApiToken {
+                actor_id: id,
+                user_id: id,
+                name: "lifecycle",
+                token_hash: &security::token_hash(&token),
+                scopes: &[],
+                expires_at: None,
+            },
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    (id, token)
+}
+
+fn bearer_json(method: &str, uri: &str, token: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// RFC-021 over HTTP: the routes of a library's lifecycle and of its missing
+/// tracks, who each one answers, and the confirmation a deletion carries.
+#[tokio::test]
+async fn the_library_lifecycle_routes_answer_by_standing() {
+    let (_temp, config, state) = test_app().await;
+    let (_admin, admin_token) = account_with_token(&state, "lifecycle-admin", "admin").await;
+    let (owner, owner_token) = account_with_token(&state, "lifecycle-owner", "user").await;
+    let (listener, listener_token) = account_with_token(&state, "lifecycle-listener", "user").await;
+    let music = config.data_dir.join("lifecycle-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Only.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Lifecycle",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .add_library_member(
+            owner,
+            library_id,
+            listener,
+            waveflow_server::database::LibraryRole::Listener,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Lifecycle".into(),
+            root_path: root.clone(),
+        },
+    )
+    .await;
+    let router = waveflow_server::app(&config, state);
+    let library = format!("/api/v2/libraries/{library_id}");
+    let send = |request: Request<Body>| {
+        let router = router.clone();
+        async move { router.oneshot(request).await.unwrap() }
+    };
+
+    // The owner renames; a listener cannot even see that there is something
+    // to rename; the path is an administrator's.
+    let renamed = send(bearer_json(
+        "PATCH",
+        &library,
+        &owner_token,
+        serde_json::json!({"name": "Renamed"}),
+    ))
+    .await;
+    assert_eq!(renamed.status(), StatusCode::OK);
+    assert!(json_body(renamed).await["scan_id"].is_null());
+    let refused = send(bearer_json(
+        "PATCH",
+        &library,
+        &listener_token,
+        serde_json::json!({"name": "Mine"}),
+    ))
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    let repath = send(bearer_json(
+        "PATCH",
+        &library,
+        &owner_token,
+        serde_json::json!({"path": root.to_string_lossy()}),
+    ))
+    .await;
+    assert_eq!(repath.status(), StatusCode::FORBIDDEN);
+    let settings = send(bearer_json(
+        "GET",
+        &format!("{library}/settings"),
+        &owner_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(settings.status(), StatusCode::FORBIDDEN);
+    let settings = send(bearer_json(
+        "GET",
+        &format!("{library}/settings"),
+        &admin_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(settings.status(), StatusCode::OK);
+    let settings = json_body(settings).await;
+    assert_eq!(settings["name"], "Renamed");
+    assert_eq!(settings["follow_links"], false);
+
+    // Missing tracks: the owner reads them, a listener does not, and a purge
+    // that names nothing purges nothing.
+    std::fs::remove_file(root.join("Only.wav")).unwrap();
+    let scan = send(bearer_json(
+        "POST",
+        &format!("{library}/scans"),
+        &owner_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(scan.status(), StatusCode::ACCEPTED);
+    let scan_id = json_body(scan).await["scan_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for _ in 0..200 {
+        let job = send(bearer_json(
+            "GET",
+            &format!("/api/v2/scans/{scan_id}"),
+            &owner_token,
+            serde_json::json!({}),
+        ))
+        .await;
+        if json_body(job).await["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let missing = send(bearer_json(
+        "GET",
+        &format!("{library}/unavailable-tracks"),
+        &owner_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(missing.status(), StatusCode::OK);
+    let missing = json_body(missing).await;
+    assert_eq!(missing["total"], 1);
+    assert_eq!(missing["tracks"][0]["relative_path"], "Only.wav");
+    let hidden = send(bearer_json(
+        "GET",
+        &format!("{library}/unavailable-tracks"),
+        &listener_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    let neither = send(bearer_json(
+        "POST",
+        &format!("{library}/unavailable-tracks/purge"),
+        &owner_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(neither.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let purged = send(bearer_json(
+        "POST",
+        &format!("{library}/unavailable-tracks/purge"),
+        &owner_token,
+        serde_json::json!({"all": true}),
+    ))
+    .await;
+    assert_eq!(purged.status(), StatusCode::OK);
+    assert_eq!(json_body(purged).await["purged"], 1);
+
+    // A deletion is an administrator's, and carries the name it deletes.
+    let by_owner = send(bearer_json(
+        "DELETE",
+        &library,
+        &owner_token,
+        serde_json::json!({"confirm": "Renamed"}),
+    ))
+    .await;
+    assert_eq!(by_owner.status(), StatusCode::FORBIDDEN);
+    let unconfirmed = send(bearer_json(
+        "DELETE",
+        &library,
+        &admin_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(unconfirmed.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let mistyped = send(bearer_json(
+        "DELETE",
+        &library,
+        &admin_token,
+        serde_json::json!({"confirm": "renamed"}),
+    ))
+    .await;
+    assert_eq!(mistyped.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let deleted = send(bearer_json(
+        "DELETE",
+        &library,
+        &admin_token,
+        serde_json::json!({"confirm": "Renamed"}),
+    ))
+    .await;
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let listed = send(bearer_json(
+        "GET",
+        "/api/v2/libraries",
+        &owner_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(json_body(listed).await, serde_json::json!([]));
+    let again = send(bearer_json(
+        "DELETE",
+        &library,
+        &admin_token,
+        serde_json::json!({"confirm": "Renamed"}),
+    ))
+    .await;
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+}
