@@ -185,24 +185,37 @@ async fn serve_script(request_headers: HeaderMap) -> Response {
     response
 }
 
-/// Whether the request names gzip with a non-zero weight, or `*`.
+/// Whether the request accepts gzip.
+///
+/// An entry naming gzip decides, whatever its place in the list; `*` decides
+/// only when none does, because RFC 9110 §12.5.3 has it stand for the codings
+/// the field does not name. So `gzip;q=0, *` refuses gzip, and `*` alone
+/// accepts it. A weight of zero refuses; any other weight, or none, accepts.
+/// `x-gzip` is gzip by the same RFC.
 fn accepts_gzip(headers: &HeaderMap) -> bool {
-    headers
+    let mut named = None;
+    let mut wildcard = None;
+    for coding in headers
         .get_all(header::ACCEPT_ENCODING)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
-        .any(|coding| {
-            let mut parts = coding.split(';').map(str::trim);
-            let name = parts.next().unwrap_or_default();
-            let refused = parts.any(|parameter| {
-                parameter
-                    .strip_prefix("q=")
-                    .and_then(|q| q.trim().parse::<f32>().ok())
-                    .is_some_and(|q| q <= 0.0)
-            });
-            (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
-        })
+    {
+        let mut parts = coding.split(';').map(str::trim);
+        let name = parts.next().unwrap_or_default();
+        let refused = parts.any(|parameter| {
+            parameter
+                .strip_prefix("q=")
+                .and_then(|q| q.trim().parse::<f32>().ok())
+                .is_some_and(|q| q <= 0.0)
+        });
+        if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
+            named.get_or_insert(!refused);
+        } else if name == "*" {
+            wildcard.get_or_insert(!refused);
+        }
+    }
+    named.or(wildcard).unwrap_or(false)
 }
 
 /// The bundle as published.
@@ -267,6 +280,13 @@ mod tests {
         assert!(!with("br"));
         assert!(!with("gzip;q=0"));
         assert!(!accepts_gzip(&HeaderMap::new()));
+        // A coding the field names is decided by its own entry, and `*` only
+        // stands for the ones it does not name (RFC 9110 §12.5.3).
+        assert!(!with("gzip;q=0, *;q=1"));
+        assert!(!with("*, gzip;q=0"));
+        assert!(with("*;q=0, gzip"));
+        assert!(!with("br, *;q=0"));
+        assert!(with("x-gzip"));
     }
 
     /// No string in the document can end the block it is carried in.
