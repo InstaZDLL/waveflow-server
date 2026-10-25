@@ -27,7 +27,7 @@ pub(super) async fn admin(
                 .into_iter()
                 .find(|user| user.username.eq_ignore_ascii_case(username))
                 .ok_or_else(not_found)?;
-            Ok(user_node(&user))
+            Ok(user_with_podcast_role(state, &user))
         }
         "getUsers" => Ok(Node::new("users").children(
             state
@@ -36,7 +36,7 @@ pub(super) async fn admin(
                 .await
                 .map_err(service_protocol)?
                 .iter()
-                .map(user_node),
+                .map(|user| user_with_podcast_role(state, user)),
         )),
         "createUser" => {
             let password =
@@ -54,7 +54,7 @@ pub(super) async fn admin(
                 )
                 .await
                 .map_err(service_protocol)?;
-            Ok(user_node(&user))
+            Ok(user_with_podcast_role(state, &user))
         }
         "updateUser" => {
             let folders = params.uuids("musicFolderId")?;
@@ -78,7 +78,7 @@ pub(super) async fn admin(
                 )
                 .await
                 .map_err(service_protocol)?;
-            Ok(user_node(&user))
+            Ok(user_with_podcast_role(state, &user))
         }
         "deleteUser" => {
             state

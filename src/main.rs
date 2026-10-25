@@ -92,6 +92,9 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // The eighth. A queue that never forgets grows by a row per listen and per
     // destination, for ever — RFC-010's retention section.
     state.services.spawn_scrobble_purge();
+    // Off unless WAVEFLOW_PODCASTS says otherwise, and then the first pass
+    // waits one interval: a boot fetches nothing (RFC-025 decision 9).
+    state.services.spawn_podcast_refresher();
     state.db.spawn_authorization_pruning();
     // Refused sign-ins, counted and logged once a minute (RFC-017).
     state.auth.sign_in_guard().spawn_summary();
