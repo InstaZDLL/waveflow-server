@@ -5051,6 +5051,19 @@ test("follows the sung line in the strip beside the cover, and seeks from it", a
   // The strip scrolls itself and nothing else: the page stays where it was.
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 
+  // Pressing a line moves the head to it. The sung line is derived from the
+  // player's position, so the mark landing on the pressed line is the head
+  // having moved there — the arrow keys above go through the same `seek`.
+  await strip
+    .getByRole("button", { name: "strip line 5, jump to 0:25", exact: true })
+    .click();
+  await expect(
+    strip.getByRole("listitem").filter({ hasText: /^strip line 5$/ }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(
+    strip.getByRole("listitem").filter({ hasText: /^strip line 20$/ }),
+  ).not.toHaveAttribute("aria-current", "true");
+
   await expectNoWcagViolations(page);
 
   // Without timings, the strip offers no seeking, as the lyrics view does not.
