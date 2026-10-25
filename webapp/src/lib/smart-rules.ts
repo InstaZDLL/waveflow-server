@@ -16,7 +16,13 @@ import type {
 } from "../api/smart-playlists";
 
 /** The kind of value a field holds, which decides its operators. */
-export type FieldKind = "text" | "number" | "date" | "flag" | "extension";
+export type FieldKind =
+  | "text"
+  | "number"
+  | "date"
+  | "flag"
+  | "extension"
+  | "identifier";
 
 /** The field, its kind, and — for a number — the range the server accepts. */
 export const SMART_FIELDS: ReadonlyArray<{
@@ -39,6 +45,7 @@ export const SMART_FIELDS: ReadonlyArray<{
   { field: "duration", kind: "number", min: 0, max: 1_000_000 },
   { field: "bitrate", kind: "number", min: 0, max: 100_000 },
   { field: "format", kind: "extension" },
+  { field: "library", kind: "identifier" },
 ];
 
 export const OPERATORS: Record<FieldKind, SmartOperator[]> = {
@@ -54,6 +61,7 @@ export const OPERATORS: Record<FieldKind, SmartOperator[]> = {
   date: ["in_the_last", "not_in_the_last", "before", "after"],
   flag: ["is"],
   extension: ["is", "is_not"],
+  identifier: ["is", "is_not"],
 };
 
 export const SMART_SORTS: SmartSort[] = [
@@ -165,6 +173,15 @@ export function conditionValue(
     case "extension": {
       const extension = draft.value.trim().toLowerCase().replace(/^\./, "");
       return /^[a-z0-9]{1,10}$/.test(extension) ? extension : null;
+    }
+    case "identifier": {
+      // The library's id, in the spelling the server stores it in.
+      const id = draft.value.trim().toLowerCase();
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        id,
+      )
+        ? id
+        : null;
     }
   }
 }

@@ -202,6 +202,9 @@ export function PodcastsPage() {
       )}
       {selected ? (
         <ChannelEpisodes
+          // Another channel is another player: the previous one unmounts,
+          // which pauses its episode and saves its place.
+          key={selected}
           channelId={selected}
           canManage={overview.can_manage}
           pauseMusic={() => {

@@ -194,6 +194,15 @@ this decision bounds.
   partial. The evaluation runs in a spawned task, so it always finishes what
   it started and removes its handler: were it cancelled with its request, the
   connection would go back to the pool still carrying an exhausted budget.
+- **At most half the pool evaluates at once.** Each evaluation holds a
+  connection for as long as its budget lets it, so a burst of them from any
+  account could otherwise hold every connection the server has. A semaphore of
+  `WAVEFLOW_DB_MAX_CONNECTIONS / 2` permits (at least one) is waited for before
+  the evaluation starts and held by its task until it ends, request dropped or
+  not. A read holds no connection while it waits or evaluates: it used to hold
+  one across the evaluation, which takes a second, and as many concurrent reads
+  as the pool has connections deadlocked it until the acquire timeout. A test
+  runs twenty-four concurrent reads and previews against a pool of four.
 - **At most 1,000 tracks** in an answer, the default when no limit is named;
   at most 100 smart playlists per account, public or not.
 - **The cost is the projection's.** The statement wraps `song_select!`, whose

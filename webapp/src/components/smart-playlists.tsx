@@ -43,6 +43,7 @@ import {
 } from "../lib/smart-rules";
 import { usePlayer } from "../player/player";
 import { type TranslationKey, useI18n } from "../state/i18n";
+import { useLibraryScope } from "../state/library-scope";
 import { useReload } from "./page-shell";
 
 type Editing = {
@@ -135,11 +136,7 @@ export function SmartPlaylistsSection() {
           </span>
         </div>
         <div className="actions">
-          <button
-            type="button"
-            onClick={() => void play(playlist)}
-            disabled={playlist.song_count === 0}
-          >
+          <button type="button" onClick={() => void play(playlist)}>
             {t("playlists.play")}
           </button>
           {mine ? (
@@ -209,6 +206,9 @@ export function SmartPlaylistsSection() {
       </header>
       {editing ? (
         <SmartPlaylistEditor
+          // Its own state — a preview, a failure — belongs to one playlist,
+          // so editing another starts a fresh editor.
+          key={editing.id ?? "new"}
           editing={editing}
           onChange={setEditing}
           onDone={() => {
@@ -250,8 +250,13 @@ function SmartPlaylistEditor({
   const [busy, setBusy] = useState(false);
   const rules = rulesFromDraft(editing.rules);
 
-  const setRules = (next: Partial<RulesDraft>) =>
+  const { libraries } = useLibraryScope();
+  // A preview answers the rules it was asked about: any change makes it
+  // stale, so it goes rather than describing rules that are no longer these.
+  const setRules = (next: Partial<RulesDraft>) => {
+    setPreview(null);
     onChange({ ...editing, rules: { ...editing.rules, ...next } });
+  };
   const setCondition = (index: number, next: ConditionDraft) =>
     setRules({
       conditions: editing.rules.conditions.map((condition, at) =>
@@ -391,6 +396,26 @@ function SmartPlaylistEditor({
                 >
                   <option value="true">{t("smart.yes")}</option>
                   <option value="false">{t("smart.no")}</option>
+                </select>
+              ) : kind === "identifier" ? (
+                // A library is chosen, never typed: its id is what is sent.
+                <select
+                  aria-label={t("smart.valueOf", { position })}
+                  value={condition.value}
+                  onChange={(event) =>
+                    setCondition(index, {
+                      ...condition,
+                      value: event.target.value,
+                    })
+                  }
+                  disabled={busy}
+                >
+                  <option value="">{t("smart.chooseLibrary")}</option>
+                  {libraries.map((library) => (
+                    <option key={library.id} value={library.id}>
+                      {library.name}
+                    </option>
+                  ))}
                 </select>
               ) : (
                 <input

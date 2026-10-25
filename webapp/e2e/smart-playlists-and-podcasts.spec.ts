@@ -17,6 +17,8 @@ const session = {
   device_id: "device-1",
 };
 
+const LIBRARY_ID = "2740f393-e84e-488a-8a67-745deb23399a";
+
 const song = (index: number, title: string) => ({
   id: `song-${index}`,
   library_id: "library-1",
@@ -162,8 +164,27 @@ async function mockApi(page: Page) {
       await route.fulfill({ json: session });
       return;
     }
-    if (path === "/api/v2/playlists" || path === "/api/v2/libraries") {
+    if (path === "/api/v2/playlists") {
       await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/v2/libraries") {
+      // The whole `Library` shape, with a real UUID: the editor sends the id.
+      await route.fulfill({
+        json: [
+          {
+            id: LIBRARY_ID,
+            name: "Ma musique",
+            visibility: "private",
+            role: "owner",
+            last_scan_started_at: null,
+            last_scan_completed_at: null,
+            accepts_uploads: false,
+            accepts_canvas: false,
+            follow_links: false,
+          },
+        ],
+      });
       return;
     }
     if (path === "/api/v2/smart-playlists/preview") {
@@ -448,6 +469,89 @@ test("lists another account's smart playlist uncounted until it is opened", asyn
   await expect(page.locator(".player")).toContainText("Army of Me");
 });
 
+/** A smart playlist of this account's, as the listing answers it. */
+const ownSmart = (id: string, name: string, needle: string, counted: number | null) => ({
+  id,
+  owner_id: "user-1",
+  owner_username: "listener",
+  name,
+  comment: null,
+  public: false,
+  rules: {
+    match: "all" as const,
+    conditions: [{ field: "title", operator: "contains", value: needle }],
+    sort: null,
+    order: "asc" as const,
+    limit: null,
+  },
+  created_at: 1,
+  updated_at: 1,
+  evaluated_at: counted === null ? null : 1,
+  song_count: counted,
+  duration_ms: counted === null ? null : counted * 200_000,
+});
+
+test("plays a smart playlist whose remembered count is zero", async ({ page }) => {
+  // Counted at zero when last opened; matching tracks arrived since. A count
+  // is only what was true then, so it must not keep the playlist from playing.
+  smart = [ownSmart("smart-stale", "Was empty", "y", 0)];
+  await page.goto("/playlists");
+  const card = page.locator(".smart-playlist").filter({ hasText: "Was empty" });
+  await expect(card).toContainText("0 tracks");
+  await card.getByRole("button", { name: "Play" }).click();
+  await expect(page.locator(".player")).toContainText("Army of Me");
+  await expect(card).toContainText("2 tracks");
+});
+
+test("starts a fresh editor for each playlist, and drops a preview that no longer applies", async ({
+  page,
+}) => {
+  smart = [
+    ownSmart("smart-a", "Playlist A", "y", 2),
+    ownSmart("smart-b", "Playlist B", "Iso", 1),
+  ];
+  await page.goto("/playlists");
+  const first = page.locator(".smart-playlist").filter({ hasText: "Playlist A" });
+  await first.getByRole("button", { name: "Edit rules" }).click();
+  const editor = page.getByRole("form", { name: "Edit rules" });
+  await editor.getByRole("button", { name: "Preview" }).click();
+  await expect(editor.getByRole("status")).toContainText("2 tracks match");
+
+  // Another playlist: its own rules, and no preview of the first's.
+  const second = page.locator(".smart-playlist").filter({ hasText: "Playlist B" });
+  await second.getByRole("button", { name: "Edit rules" }).click();
+  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue("Playlist B");
+  await expect(editor.getByLabel("Value of condition 1")).toHaveValue("Iso");
+  await expect(editor.getByRole("status")).toHaveCount(0);
+
+  // A preview, then a change to the rules: the preview goes.
+  await editor.getByRole("button", { name: "Preview" }).click();
+  await expect(editor.getByRole("status")).toContainText("1 track matches");
+  await editor.getByLabel("Value of condition 1").fill("Army");
+  await expect(editor.getByRole("status")).toHaveCount(0);
+});
+
+test("chooses a library for a condition, by name, and sends its id", async ({ page }) => {
+  await page.goto("/playlists");
+  const section = page.locator(".smart-playlists");
+  await section.getByRole("button", { name: "New smart playlist" }).click();
+  const editor = page.getByRole("form", { name: "New smart playlist" });
+  await editor.getByLabel("Name", { exact: true }).fill("From one library");
+  await editor.getByLabel("Field of condition 1").selectOption("library");
+  await expect(
+    editor.getByLabel("Comparison of condition 1").locator("option"),
+  ).toHaveText(["is", "is not"]);
+  await expect(editor.getByRole("button", { name: "Save smart playlist" })).toBeDisabled();
+  await editor.getByLabel("Value of condition 1").selectOption({ label: "Ma musique" });
+  await editor.getByRole("button", { name: "Save smart playlist" }).click();
+  await expect(editor).toHaveCount(0);
+  expect(smartWrites[0].body).toMatchObject({
+    rules: {
+      conditions: [{ field: "library", operator: "is", value: LIBRARY_ID }],
+    },
+  });
+});
+
 test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   page,
 }) => {
@@ -478,6 +582,46 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
 
   await page.getByRole("button", { name: "Refresh every feed" }).click();
   expect(podcastWrites).toContain("refresh");
+});
+
+test("stops an episode, keeping its place, when another channel is opened", async ({
+  page,
+}) => {
+  const ready = { status: "completed" as const, suffix: "wav", size: 8044 };
+  const channel = (id: string, title: string, episodes: Episode[]) => ({
+    id,
+    url: null,
+    title,
+    description: null,
+    site_url: null,
+    image_url: null,
+    status: "completed",
+    error: null,
+    created_at: 1,
+    refreshed_at: 1,
+    episode_count: episodes.length,
+    episodes,
+  });
+  channels = [
+    channel("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
+    channel("channel-2", "Day Shift", [
+      { ...episode("episode-9", "First day", ready), channel_id: "channel-2" },
+    ]),
+  ];
+  await page.goto("/podcasts");
+  const night = page.locator(".podcast-channels li").filter({ hasText: "Night Shift" });
+  await night.getByRole("button", { name: "Episodes" }).click();
+  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  await first.getByRole("button", { name: "Play First night" }).click();
+  await expect(first.getByRole("button", { name: "Pause First night" })).toBeVisible();
+  expect(bookmarkWrites).toEqual([]);
+
+  // Opening the other channel stops what was playing, and saves its place.
+  const day = page.locator(".podcast-channels li").filter({ hasText: "Day Shift" });
+  await day.getByRole("button", { name: "Episodes" }).click();
+  await expect(page.getByRole("heading", { name: "Day Shift" })).toBeVisible();
+  await expect.poll(() => bookmarkWrites.map((write) => write.id)).toContain("episode-1");
+  await expect(page.getByRole("button", { name: /^Pause / })).toHaveCount(0);
 });
 
 test("offers a listener no podcast control it may not use", async ({ page }) => {

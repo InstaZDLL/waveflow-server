@@ -7,6 +7,7 @@ import {
   draftFromRules,
   OPERATORS,
   rulesFromDraft,
+  SMART_FIELDS,
   withField,
 } from "./smart-rules";
 
@@ -89,6 +90,27 @@ describe("smart playlist rules", () => {
         field: "title",
         operator: "contains",
         value: "   ",
+        upper: "",
+      }),
+    ).toBeNull();
+  });
+
+  it("offers the library field, compared by id and only by id", () => {
+    expect(SMART_FIELDS.map((entry) => entry.field)).toContain("library");
+    expect(OPERATORS.identifier).toEqual(["is", "is_not"]);
+    expect(
+      conditionValue({
+        field: "library",
+        operator: "is",
+        value: "2740F393-E84E-488A-8A67-745DEB23399A",
+        upper: "",
+      }),
+    ).toBe("2740f393-e84e-488a-8a67-745deb23399a");
+    expect(
+      conditionValue({
+        field: "library",
+        operator: "is_not",
+        value: "",
         upper: "",
       }),
     ).toBeNull();
