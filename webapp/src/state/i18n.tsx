@@ -829,6 +829,9 @@ const en = {
   "admin.deleteError": "The library could not be deleted.",
   "scan.leftOut": "{excluded} left out · {links} links not followed",
   "nav.missing": "Missing files",
+  "nav.maintenance": "Maintenance",
+  "maintenance.sections": "Maintenance sections",
+  "maintenance.none": "Nothing here is yours to maintain in this library.",
   "missing.total": {
     one: "{count} file the scans can no longer find",
     other: "{count} files the scans can no longer find",
@@ -1961,6 +1964,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.deleteError": "La bibliothèque n’a pas pu être supprimée.",
   "scan.leftOut": "{excluded} écartés · {links} liens non suivis",
   "nav.missing": "Fichiers manquants",
+  "nav.maintenance": "Maintenance",
+  "maintenance.sections": "Sections de maintenance",
+  "maintenance.none":
+    "Rien ici n’est à vous d’entretenir dans cette bibliothèque.",
   "missing.total": {
     one: "{count} fichier que les scans ne trouvent plus",
     other: "{count} fichiers que les scans ne trouvent plus",

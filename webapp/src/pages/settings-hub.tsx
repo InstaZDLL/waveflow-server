@@ -61,12 +61,12 @@ export function SettingsSections() {
       (!section.admin || role === "admin"),
   );
   return (
-    <nav className="settings-sections" aria-label={t("settings.sections")}>
+    <nav className="section-menu" aria-label={t("settings.sections")}>
       {sections.map((section) => (
         <Link
           key={section.to}
           to={section.to}
-          className="settings-section"
+          className="section-menu-link"
           // Account is `/settings` itself, which every other section sits
           // under: matched loosely, it would be current everywhere.
           activeOptions={{ exact: section.to === "/settings" }}

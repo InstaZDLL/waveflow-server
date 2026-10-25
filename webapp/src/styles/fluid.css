@@ -586,6 +586,97 @@
   color: var(--fe-accent-ink);
 }
 
+/* A shorter window draws a denser rail, so that every destination fits
+   without the rail scrolling. Two steps rather than one: a window of
+   1080 px or so needs only the spacing taken in, and keeps the tiles and
+   the rows' height; from about 1070 px down the rows are tightened as well,
+   to fit at a laptop's 768. A tall window keeps the rail as designed.
+
+   Every row stays at least 28 px tall, above the 24 px WCAG 2.5.8 asks of a
+   target, and the type keeps its size: what is taken in is space between
+   things, never the things.
+
+   The thresholds are where each layout stops fitting, measured for the
+   longest rail an account sees: the designed one needs a window of about
+   1140 px, the first step about 1060 px, and each step starts a little
+   above that so a font that loads late cannot tip it over. */
+@media (width > 820px) and (max-height: 72rem) {
+  :where(:root) .sidebar {
+    padding-top: var(--space-4);
+  }
+
+  :where(:root) .primary-navigation {
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  :where(:root) .nav-group[data-group="pinned"] a {
+    min-height: 3.5rem;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  :where(:root) :is(.primary-navigation a, .nav-action) {
+    min-height: 2.125rem;
+  }
+}
+
+@media (width > 820px) and (max-height: 67rem) {
+  :where(:root) .sidebar {
+    padding-top: var(--space-3);
+  }
+
+  :where(:root) .brand {
+    min-height: 2rem;
+  }
+
+  :where(:root) .primary-navigation {
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  :where(:root) .nav-group {
+    gap: 0;
+  }
+
+  :where(:root) .nav-label {
+    padding-bottom: 0.125rem;
+  }
+
+  /* The four tiles become rows of two: the icon beside the name rather than
+     over it. */
+  :where(:root) .nav-group[data-group="pinned"] {
+    gap: var(--space-1);
+  }
+
+  :where(:root) .nav-group[data-group="pinned"] a {
+    display: flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+  }
+
+  :where(:root) :is(.primary-navigation a, .nav-action) {
+    min-height: 1.75rem;
+    padding-block: 0;
+  }
+
+  :where(:root) .sidebar-footer {
+    gap: 0;
+    padding-top: var(--space-2);
+  }
+
+  :where(:root) .account-chip {
+    padding: var(--space-1) var(--space-2);
+  }
+
+  :where(:root) .account-chip > span {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}
+
 /* ── The page ────────────────────────────────────────────────── */
 
 :where(:root) main {
@@ -837,32 +928,32 @@
   background: var(--fe-tone-3);
 }
 
-:where(:root) .settings-sections {
+:where(:root) .section-menu {
   border: 0;
   border-radius: 999px;
   background: var(--fe-tone-1);
 }
 
-:where(:root) .settings-sections .settings-section {
+:where(:root) .section-menu-link {
   border-radius: 999px;
   color: var(--fe-ink-2);
 }
 
-:where(:root) .settings-sections .settings-section:hover {
+:where(:root) .section-menu-link:hover {
   color: var(--fe-ink);
 }
 
-:where(:root) .settings-sections .settings-section[aria-current="page"] {
+:where(:root) .section-menu-link[aria-current="page"] {
   background: var(--fe-tone-3);
   color: var(--fe-ink);
 }
 
 @media (max-width: 820px) {
-  :where(:root) .settings-sections {
+  :where(:root) .section-menu {
     border-radius: var(--fe-radius-card);
   }
 
-  :where(:root) .settings-sections .settings-section {
+  :where(:root) .section-menu-link {
     border-radius: var(--fe-radius-tile);
   }
 }

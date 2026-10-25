@@ -102,7 +102,7 @@ export function AttentionPage({
   useEffect(() => {
     if (category === undefined && open !== undefined) {
       void navigate({
-        to: "/attention",
+        to: "/maintenance/attention",
         search: { category: open },
         replace: true,
       });
@@ -111,7 +111,7 @@ export function AttentionPage({
 
   const header = (
     <PageHeader
-      kicker={t("nav.group.library")}
+      kicker={t("nav.maintenance")}
       title={t("nav.attention")}
       detail={
         total === undefined
@@ -150,7 +150,7 @@ export function AttentionPage({
               return (
                 <li key={entry.key}>
                   <Link
-                    to="/attention"
+                    to="/maintenance/attention"
                     search={{ category: entry.key }}
                     className={`attention-category${count === 0 ? " empty" : ""}`}
                     aria-current={open === entry.key ? "page" : undefined}

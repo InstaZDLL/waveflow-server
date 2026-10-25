@@ -1657,9 +1657,10 @@ test("gathers the account's places behind one Settings entry", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   const sidebar = page.locator(".sidebar");
-  // Drawn in full before anything is counted: an entry gated on the library
-  // arrives with the library, and a count taken earlier proves nothing.
-  await expect(sidebar.locator('a[href="/missing"]')).toHaveCount(1);
+  // Drawn in full before anything is counted: the Maintenance entry is gated
+  // on what the account may do in the library, and a count taken before it
+  // arrives proves nothing.
+  await expect(sidebar.locator('a[href="/maintenance"]')).toHaveCount(1);
 
   await expect(sidebar.locator('.nav-group[data-group="account"]')).toHaveCount(0);
   await expect(sidebar.locator(".nav-label")).toHaveText(["Library", "Listening"]);
@@ -1688,16 +1689,19 @@ test("gathers the account's places behind one Settings entry", async ({
 });
 
 /**
- * Taking the five entries out shortens the rail by their height, and the
- * Settings entry that replaces them sits in the foot, which never scrolls:
- * at a laptop's 1366×768 and a desktop's 1440×900 it is in view without
- * scrolling anything. Where the five sat, at the end of the rail, both
- * heights left Settings below the fold.
+ * The rail holds every destination without scrolling at a laptop's 1366×768
+ * and a desktop's 1440×900, and the Settings entry in its foot is in view and
+ * clear of the player bar.
  *
- * The rail itself is measured as well, and printed, because at those heights
- * it still scrolls: nineteen destinations do not fit in 456 pixels.
+ * Asked of the longest rail any account sees — an administrator owning a
+ * library that takes files — and measured after the fonts have loaded, since
+ * a face arriving late changes every row's height. Three things got it
+ * there: the Account group became one Settings entry, three maintenance
+ * pages became one Maintenance entry, and a short window draws a denser rail
+ * (fluid.css). Before all three the rail was 1112 px tall in 456 px at
+ * 1366×768, and in 588 px at 1440×900.
  */
-test("keeps Settings in view and the rail shorter at common desktop heights", async ({
+test("fits the rail without scrolling at common desktop heights", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the rail is desktop-only");
@@ -1710,7 +1714,8 @@ test("keeps Settings in view and the rail shorter at common desktop heights", as
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
     const rail = page.locator(".primary-navigation");
-    await expect(rail.locator('a[href="/missing"]')).toHaveCount(1);
+    await expect(rail.locator('a[href="/maintenance"]')).toHaveCount(1);
+    await page.evaluate(() => document.fonts.ready);
     const measured = await rail.evaluate((node) => ({
       scrollHeight: node.scrollHeight,
       clientHeight: node.clientHeight,
@@ -1719,6 +1724,22 @@ test("keeps Settings in view and the rail shorter at common desktop heights", as
       type: "rail",
       description: `${width}x${height}: scrollHeight ${measured.scrollHeight}, clientHeight ${measured.clientHeight}`,
     });
+    expect(
+      measured.scrollHeight,
+      `the rail scrolls at ${width}x${height}`,
+    ).toBeLessThanOrEqual(measured.clientHeight);
+    // Dense, not cramped: every row of the sidebar stays a target of at
+    // least 24 px (WCAG 2.5.8).
+    const smallest = await page
+      .locator(".sidebar")
+      .evaluate((node) =>
+        Math.min(
+          ...[...node.querySelectorAll("a, button")].map(
+            (target) => target.getBoundingClientRect().height,
+          ),
+        ),
+      );
+    expect(smallest, `targets at ${width}x${height}`).toBeGreaterThanOrEqual(24);
     const settings = page.locator(".sidebar").getByRole("link", { name: "Settings" });
     await expect(settings, `at ${width}x${height}`).toBeInViewport({ ratio: 1 });
     // And not under the player bar, which runs across the rail's foot.
@@ -1880,6 +1901,172 @@ for (const section of SETTINGS_SECTIONS) {
     page,
   }) => {
     libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+    await chooseLightTheme(page);
+    await page.goto(section.path);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+    await expect(
+      page.getByRole("heading", { name: section.heading, exact: true }),
+    ).toBeVisible();
+    await expectNoWcagViolations(page);
+  });
+}
+
+/**
+ * The sections of Maintenance, in the order its menu offers them, with the
+ * heading each opens on. The pages draw their heading whatever their lists
+ * answer, so these tests need none of the lists served.
+ */
+const MAINTENANCE_SECTIONS = [
+  { link: "Needs attention", path: "/maintenance/attention", heading: "Needs attention" },
+  { link: "Missing files", path: "/maintenance/missing", heading: "Missing files" },
+  { link: "Quality", path: "/maintenance/quality", heading: "Quality" },
+];
+
+/**
+ * "Needs attention", "Missing files" and "Quality" are one rail entry,
+ * Maintenance, and each is a section of it: opened from the rail on a
+ * desktop and from the More sheet on a phone, each at its own address,
+ * marked current in the menu, with Back walking between them.
+ */
+test("opens every section of Maintenance from its menu", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  for (const name of ["Needs attention", "Missing files", "Quality"]) {
+    await expect(
+      page.locator(".sidebar, .mobile-navigation").getByRole("link", { name }),
+      name,
+    ).toHaveCount(0);
+  }
+  if (testInfo.project.name === "mobile") {
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("link", { name: "Maintenance" })
+      .click();
+  } else {
+    await page
+      .locator(".sidebar")
+      .getByRole("link", { name: "Maintenance" })
+      .click();
+  }
+
+  // The entry opens the first section this owner may use.
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/maintenance/attention",
+  );
+  const menu = page.getByRole("navigation", { name: "Maintenance sections" });
+  await expect(menu.getByRole("link")).toHaveText(
+    MAINTENANCE_SECTIONS.map((section) => section.link),
+  );
+  if (testInfo.project.name === "desktop") {
+    // The rail's entry stays current in every section.
+    await expect(
+      page.locator(".sidebar a[data-status='active']"),
+    ).toHaveText(["Maintenance"]);
+  }
+
+  for (const section of [...MAINTENANCE_SECTIONS.slice(1), MAINTENANCE_SECTIONS[0]]) {
+    await menu.getByRole("link", { name: section.link, exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === section.path);
+    await expect(
+      page.getByRole("heading", { name: section.heading, exact: true }),
+    ).toBeVisible();
+    await expect(menu.locator('a[aria-current="page"]')).toHaveText([
+      section.link,
+    ]);
+  }
+  await expectNoWcagViolations(page);
+
+  // Back to the section opened before the last.
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await expect(
+    page.getByRole("heading", { name: "Quality", exact: true }),
+  ).toBeVisible();
+});
+
+/**
+ * The three old addresses arrive at their sections, with the open list or the
+ * verdict filter they carried, and the redirect replaces its own history
+ * entry.
+ */
+test("lands every old address on its section of Maintenance", async ({
+  page,
+}) => {
+  for (const [address, path, search, heading] of [
+    ["/attention?category=missing_year", "/maintenance/attention", "category=missing_year", "Needs attention"],
+    ["/missing", "/maintenance/missing", "", "Missing files"],
+    ["/quality?verdict=upsampled", "/maintenance/quality", "verdict=upsampled", "Quality"],
+  ]) {
+    await page.goto(address);
+    await expect(page).toHaveURL(
+      (url) => url.pathname === path && url.search === (search ? `?${search}` : ""),
+    );
+    await expect(
+      page.getByRole("heading", { name: heading, exact: true }),
+    ).toBeVisible();
+  }
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await page.goto("/quality");
+  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+});
+
+/**
+ * Each section keeps the rule its rail entry had. A listener who is not an
+ * administrator may only read the quality of the files, so that is the only
+ * section their menu shows and the one the entry opens.
+ */
+test("shows a listener only the Maintenance sections theirs to use", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: { ...session, user: { ...session.user, role: "user" } },
+    }),
+  );
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  await page.goto("/maintenance");
+  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await expect(
+    page.getByRole("heading", { name: "Quality", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Maintenance sections" })
+      .getByRole("link"),
+  ).toHaveText(["Quality"]);
+});
+
+/**
+ * An administrator who only listens in this library still purges what the
+ * scans lost (RFC-021), and does not decide what needs attention (RFC-015).
+ */
+test("shows an administrator listening in a library the missing files", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  await page.goto("/maintenance");
+  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/missing");
+  await expect(
+    page
+      .getByRole("navigation", { name: "Maintenance sections" })
+      .getByRole("link"),
+  ).toHaveText(["Missing files", "Quality"]);
+});
+
+for (const section of MAINTENANCE_SECTIONS) {
+  test(`keeps the Maintenance menu readable in the light on ${section.link}`, async ({
+    page,
+  }) => {
     await chooseLightTheme(page);
     await page.goto(section.path);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
@@ -3519,7 +3706,7 @@ test("offers the upload only where the library takes files and the role may add 
   // section menu is drawn at every width, so a zero below is a zero on a
   // phone as well — the rail entry it replaces was counted in the DOM because
   // the rail is hidden there.
-  const link = page.locator('.settings-sections a[href="/settings/upload"]');
+  const link = page.locator('.section-menu a[href="/settings/upload"]');
   const account = page.getByRole("heading", { name: "Account", exact: true });
 
   // The fixture's default: an owner, in a library closed to files.
@@ -4090,24 +4277,20 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The fourteen the bar cannot hold — including the two this account is
-  // entitled to as an administrator and owner of a library: `Needs attention`
-  // and `Missing files`. `Radio` joined them with #217, `Folders` with
-  // RFC-012's filed folders and `Needs attention` with RFC-015, `Quality`
-  // with RFC-016, `Missing files` with RFC-021, `Offline` with RFC-022,
-  // `Statistics` with RFC-024 and `Podcasts` with RFC-025. Shares,
-  // Scrobbling, Upload and Admin left it when they became sections of
-  // Settings, which is how the eighteen became fourteen; this count is what
-  // said so: a new entry in the sidebar reaches the sheet, and the sheet is
-  // pinned.
+  // The twelve the bar cannot hold. `Radio` joined them with #217, `Folders`
+  // with RFC-012's filed folders, `Offline` with RFC-022, `Statistics` with
+  // RFC-024 and `Podcasts` with RFC-025. Shares, Scrobbling, Upload and Admin
+  // left it when they became sections of Settings, and `Needs attention`
+  // (RFC-015), `Missing files` (RFC-021) and `Quality` (RFC-016) when they
+  // became sections of Maintenance — which is how eighteen became twelve.
+  // This count is what said so: a new entry in the sidebar reaches the sheet,
+  // and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
     "Genres",
     "Folders",
-    "Needs attention",
-    "Missing files",
-    "Quality",
+    "Maintenance",
     "Settings",
     "Random",
     "Recently played",
@@ -4120,7 +4303,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(14);
+  await expect(sheet.getByRole("link")).toHaveCount(12);
 
   await expectNoWcagViolations(page);
 
@@ -4161,13 +4344,12 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(sheet.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
-  // Every member reads the quality of the files (RFC-016).
-  await expect(sheet.getByRole("link", { name: "Quality" })).toBeVisible();
-  // Nothing on it is a listener's to decide (RFC-015).
+  // Every member reads the quality of the files (RFC-016), so Maintenance
+  // has a section for a listener; which ones is the hub's test.
+  await expect(sheet.getByRole("link", { name: "Maintenance" })).toBeVisible();
   await expect(
     sheet.getByRole("link", { name: "Needs attention" }),
   ).toHaveCount(0);
-  // Nor is purging what the scans lost (RFC-021).
   await expect(
     sheet.getByRole("link", { name: "Missing files" }),
   ).toHaveCount(0);
@@ -7374,7 +7556,13 @@ test("asks for the header again on every visit", async ({
   const sidebar = page.getByRole("navigation");
   await sidebar.getByRole("link", { name: "Queue" }).click();
   await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
-  await sidebar.getByRole("link", { name: "Quality" }).click();
+  // The rail's entry opens the first section this owner may use, and the
+  // hub's menu the one this test is about.
+  await page.locator(".sidebar").getByRole("link", { name: "Maintenance" }).click();
+  await page
+    .getByRole("navigation", { name: "Maintenance sections" })
+    .getByRole("link", { name: "Quality" })
+    .click();
   await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
 });
 
