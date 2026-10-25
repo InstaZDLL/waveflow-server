@@ -17,7 +17,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -51,10 +51,24 @@ const VISIT_TTL_MS: i64 = 12 * 60 * 60 * 1000;
 /// second visitor costs no encode.
 const VISIT_MP3_BITRATE: u32 = 192;
 
-pub fn router(state: AppState) -> Router {
+/// The two routes, under two different time limits.
+///
+/// **The opening is bounded by the ordinary request timeout.** It counts a
+/// visit, so it waits for the writer gate, and a scan can hold that gate for
+/// minutes: without a bound, every anonymous opening during a long scan kept
+/// its connection open for as long as the scan ran. **The stream is not**, for
+/// the reason every media route is not: a body may rightly outlive any fixed
+/// request timeout, and `MediaService` bounds what it spawns itself.
+pub fn router(state: AppState, request_timeout: std::time::Duration) -> Router {
+    let opening = Router::new().route("/share/{token}", get(open)).layer(
+        tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            request_timeout,
+        ),
+    );
     Router::new()
         .route("/share/{token}/tracks/{track_id}/stream", get(stream))
-        .route("/share/{token}", get(open))
+        .merge(opening)
         .with_state(state)
 }
 
@@ -103,9 +117,16 @@ fn finish(mut response: Response) -> Response {
 async fn open(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    method: Method,
     headers: HeaderMap,
 ) -> Response {
-    if wants_page(&headers) {
+    // A `HEAD` is answered like the page, which counts nothing. Axum hands it
+    // to this `get` route with the body dropped, and it rarely names
+    // `text/html`, so it used to fall through to the document — the visit —
+    // and an uptime monitor or a link previewer probing the address spent a
+    // capped share's visits on nothing anyone heard. Its status is the
+    // page's: 200 for a share that can be opened, 404 for one that cannot.
+    if method == Method::HEAD || wants_page(&headers) {
         return finish(page(&state, &token).await);
     }
     finish(document(&state, &token).await)

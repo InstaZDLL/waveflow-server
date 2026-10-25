@@ -122,7 +122,9 @@ representations:
 - **Handing out the page counts nothing.** The client then asks the same
   address for the JSON, and *that* is the visit. A link preview fetching the
   page to draw a card has listened to nothing, and must not spend a capped
-  share's visits.
+  share's visits. A `HEAD` — what uptime monitors and previewers send, usually
+  with no `Accept` — is answered as the page is, status included, and counts
+  nothing either.
 - **`share/` stays reserved** in the client fallback (`src/webui.rs`).
   Nothing under it falls through to the client by accident; the one address
   that answers the client is chosen by its own route.
@@ -138,7 +140,10 @@ representations:
   one conditional `UPDATE … RETURNING` under the writer gate. An expired,
   deleted or capped share matches no row, so the count and the check cannot
   disagree, and two visitors racing for a share's last visit are serialised by
-  the gate: the second finds the cap reached.
+  the gate: the second finds the cap reached. Because it waits for the gate,
+  the opening sits under the ordinary request timeout and answers 408 rather
+  than holding its connection for the length of a scan; the stream route stays
+  outside it, as every media route does.
 - **The opening hands out one pass per track.** Each `streamUrl` carries
   `?visit=`, a stream ticket of a third kind, `ShareVisit`, sealing
   `(share, track, expiry)` under the instance key. Its first identifier is the

@@ -632,6 +632,27 @@ async fn a_browser_opening_a_share_link_is_handed_the_player() {
     let visits = || async { state.services.shares(owner).await.unwrap()[0].visit_count };
     assert_eq!(visits().await, 0, "handing out the page is not a visit");
 
+    // Nor is a `HEAD`, which is what an uptime monitor or a link previewer
+    // sends, and which names no `Accept` at all. It is answered as the page
+    // is, status included, and the cap is not spent on it.
+    let head = |uri: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::head(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let probed = head(url.clone()).await;
+    assert_eq!(probed.status(), StatusCode::OK);
+    assert!(content_type(&probed).starts_with("text/html"));
+    assert_eq!(
+        head("/share/wfs_nothing-here".into()).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(visits().await, 0, "a HEAD is not a visit");
+
     // Everybody else, including a caller that says nothing, keeps the JSON.
     for accept in [None, Some("*/*"), Some("application/json")] {
         let document = get(url.clone(), accept).await;

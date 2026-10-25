@@ -597,4 +597,41 @@ mod tests {
         assert_eq!(streamed, owner);
         drop(held);
     }
+
+    /// The opening of a share is bounded by the request timeout, whoever holds
+    /// the writer gate.
+    ///
+    /// It counts a visit, so it waits for the gate, and a scan holds that gate
+    /// for as long as it writes. The route was merged beside the media routes,
+    /// outside every timeout, so an anonymous opening during a long scan kept
+    /// its connection for the length of the scan. Held here as a scan holds
+    /// it: the opening must answer 408 once the configured timeout passes, not
+    /// wait for the gate to come back.
+    #[tokio::test]
+    async fn an_opening_waiting_on_the_writer_gate_times_out() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let mut config = crate::Config::for_data_dir(temp.path().join("data"));
+        config.request_timeout = Duration::from_millis(200);
+        let state = crate::initialize(&config).await.expect("initialize");
+        let (token, ..) = a_share(&state).await;
+        let router = crate::app(&config, state.clone());
+
+        let held = state.db.writer_guard().await;
+        let opened = tokio::time::timeout(
+            Duration::from_secs(10),
+            router.oneshot(
+                Request::get(format!("/share/{token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("the opening must not wait for the writer gate past the timeout")
+        .expect("a response");
+        assert_eq!(opened.status(), axum::http::StatusCode::REQUEST_TIMEOUT);
+        drop(held);
+    }
 }
