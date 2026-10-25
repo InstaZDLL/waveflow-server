@@ -2886,3 +2886,328 @@ async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
         .unwrap();
     assert!(violations.is_empty());
 }
+
+/// RFC-021, what decision 3 left open: with `WAVEFLOW_LINK_ROOTS`, a library
+/// that follows links reads a link farm whose files live in an allowed folder
+/// outside its root — once per file, under the path the walk reached it by,
+/// and streamable — while a link into another library, or anywhere else, is
+/// still skipped and counted, and a loop is still caught.
+#[tokio::test]
+async fn links_reach_into_an_allowed_folder_and_nowhere_else() {
+    let temp = tempfile::tempdir().unwrap();
+    let farm = temp.path().join("farm");
+    let elsewhere = temp.path().join("elsewhere");
+    let music = temp.path().join("music");
+    let neighbour = temp.path().join("farm/neighbour");
+    for folder in [&farm, &elsewhere, &music, &neighbour] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    write_test_wav_of_len(&farm.join("Farmed.wav"), 1_111);
+    write_test_wav_of_len(&elsewhere.join("Secret.wav"), 2_222);
+    write_test_wav_of_len(&neighbour.join("Theirs.wav"), 3_333);
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.link_roots = vec![farm.clone()];
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let owner = insert_account(&state, "farm-owner", "admin").await;
+    // Another library lives inside the allowed folder: no link may show its
+    // files to the members of this one.
+    state
+        .db
+        .create_library(
+            owner,
+            "neighbour",
+            &std::fs::canonicalize(&neighbour).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let linked = make_link(&farm.join("Farmed.wav"), &music.join("Single.wav"), false)
+        && make_link(&farm, &music.join("Farm"), true)
+        && make_link(
+            &elsewhere.join("Secret.wav"),
+            &music.join("Secret.wav"),
+            false,
+        )
+        && make_link(
+            &neighbour.join("Theirs.wav"),
+            &music.join("Theirs.wav"),
+            false,
+        )
+        && make_link(&music, &farm.join("Back"), true);
+    if !linked {
+        eprintln!("skipped: this system will not let the test make a symbolic link");
+        return;
+    }
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "farmed", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "farmed".into(),
+        root_path: root,
+    };
+    let updated = state
+        .services
+        .update_library(
+            waveflow_server::services::LibraryActor::operator(owner),
+            library.id,
+            waveflow_server::services::LibraryUpdate {
+                follow_links: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let scanned = settled(&state, owner, updated.scan_id.unwrap()).await;
+    assert_eq!(scanned.status, "completed", "{:?}", scanned.message);
+    let paths: Vec<String> = sqlx::query_scalar(
+        "SELECT relative_path FROM track WHERE library_id = ? AND is_available = 1 \
+         ORDER BY relative_path",
+    )
+    .bind(library.id.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        paths,
+        ["Farm/Farmed.wav"],
+        "one file, once, under the first path that reaches it"
+    );
+    // The secret elsewhere, the neighbour's file, the neighbour's folder seen
+    // through the farm link, and the loop back from the farm to the library.
+    assert_eq!(scanned.skipped_links, 4, "{scanned:?}");
+
+    let track_id: String = sqlx::query_scalar("SELECT id FROM track WHERE library_id = ?")
+        .bind(library.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    let track = state
+        .db
+        .stream_track_for_user(owner, track_id.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let served = state
+        .media
+        .serve(
+            owner,
+            track,
+            waveflow_server::media::StreamQuery {
+                format: waveflow_server::media::OutputFormat::Raw,
+                bitrate: None,
+                offset_ms: 0,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(served.status(), axum::http::StatusCode::OK);
+}
+
+async fn path_ids(state: &waveflow_server::AppState) -> Vec<(String, String, i64)> {
+    sqlx::query_as("SELECT relative_path, id, is_available FROM track ORDER BY relative_path")
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap()
+}
+
+/// RFC-021, what decision 6 left open: a scan the watcher limits to the
+/// folders that changed keeps RFC-018's guarantees. Only what it walked may be
+/// marked missing, relocation claims no track outside it — a file moved in
+/// from a folder it did not walk is a new track, and the old one is left as
+/// it was for the next full scan — and a move inside it keeps its identity.
+#[tokio::test]
+async fn a_scoped_scan_touches_nothing_it_did_not_walk() {
+    let (_temp, state, owner, library, root) = incremental_library("scoped", |music| {
+        for (folder, length) in [("A", 1_000), ("B", 1_100), ("C", 1_200)] {
+            std::fs::create_dir_all(music.join(folder)).unwrap();
+            write_test_wav_of_len(&music.join(format!("{folder}/{folder}.wav")), length);
+        }
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    let before = path_ids(&state).await;
+    let id_of = |path: &str| {
+        before
+            .iter()
+            .find(|(stored, ..)| stored == path)
+            .unwrap()
+            .1
+            .clone()
+    };
+    let scoped = |folders: &[&str]| {
+        let state = state.clone();
+        let library = library.clone();
+        let folders: Vec<String> = folders.iter().map(|f| (*f).to_owned()).collect();
+        async move {
+            let scan = state
+                .scanner
+                .trigger_scoped(library, "watch", &folders)
+                .await
+                .unwrap();
+            settled(&state, owner, scan).await
+        }
+    };
+
+    // B's file goes, and C's moves into A; only A is walked.
+    std::fs::remove_file(root.join("B/B.wav")).unwrap();
+    std::fs::rename(root.join("C/C.wav"), root.join("A/From C.wav")).unwrap();
+    let record = scoped(&["A"]).await;
+    assert_eq!(record.status, "completed", "{:?}", record.message);
+    assert_eq!(
+        (record.added, record.moved, record.unavailable),
+        (1, 0, 0),
+        "{record:?}"
+    );
+    let after = path_ids(&state).await;
+    let row = |path: &str| after.iter().find(|(stored, ..)| stored == path).cloned();
+    assert_eq!(
+        row("B/B.wav").unwrap().2,
+        1,
+        "B was not walked: not missing"
+    );
+    assert_eq!(
+        row("C/C.wav").unwrap(),
+        ("C/C.wav".to_owned(), id_of("C/C.wav"), 1),
+        "C's track was not looked for, so nothing may claim it"
+    );
+    assert_ne!(row("A/From C.wav").unwrap().1, id_of("C/C.wav"));
+
+    // Walking B marks what B lost, and nothing else.
+    let record = scoped(&["B"]).await;
+    assert_eq!((record.added, record.unavailable), (0, 1), "{record:?}");
+    let after = path_ids(&state).await;
+    let row = |path: &str| after.iter().find(|(stored, ..)| stored == path).cloned();
+    assert_eq!(row("B/B.wav").unwrap().2, 0);
+    assert_eq!(row("C/C.wav").unwrap().2, 1);
+
+    // A move inside the walked folders keeps the track it moves.
+    std::fs::create_dir_all(root.join("A/Deeper")).unwrap();
+    std::fs::rename(root.join("A/A.wav"), root.join("A/Deeper/A.wav")).unwrap();
+    let record = scoped(&["A"]).await;
+    assert_eq!((record.moved, record.unavailable), (1, 0), "{record:?}");
+    let after = path_ids(&state).await;
+    assert_eq!(
+        after
+            .iter()
+            .find(|(stored, ..)| stored == "A/Deeper/A.wav")
+            .unwrap()
+            .1,
+        id_of("A/A.wav")
+    );
+
+    // A folder excluded on the way down counts as not discovered, as the
+    // full walk would have it.
+    std::fs::write(root.join("A/.waveflowignore"), "/Deeper/\n").unwrap();
+    let record = scoped(&["A/Deeper"]).await;
+    assert_eq!((record.unavailable, record.excluded), (1, 1), "{record:?}");
+
+    // A scope it cannot trust is the whole library.
+    let record = scoped(&["../elsewhere"]).await;
+    assert_eq!(record.status, "completed");
+    let scope: Option<String> = sqlx::query_scalar("SELECT scope_json FROM scan_job WHERE id = ?")
+        .bind(record.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(scope, None);
+    assert_eq!(
+        path_ids(&state)
+            .await
+            .iter()
+            .find(|(stored, ..)| stored == "C/C.wav")
+            .unwrap()
+            .2,
+        0,
+        "the full walk finds what the scoped ones were not allowed to"
+    );
+}
+
+/// RFC-021, the per-library switch decision 6 left open: a library whose
+/// watch is off is not watched, and a watched change in a library whose walk
+/// reads no link is scanned in the folder it happened in.
+#[tokio::test]
+async fn a_library_is_watched_only_when_it_asks_and_in_the_folder_that_changed() {
+    use waveflow_server::services::{LibraryActor, LibraryUpdate};
+
+    let (_temp, state, owner, library, root) = incremental_library("watch-switch", |music| {
+        std::fs::create_dir_all(music.join("Sub")).unwrap();
+        write_test_wav(&music.join("Sub/First.wav"));
+        std::fs::create_dir_all(music.join("Other")).unwrap();
+        write_test_wav_of_len(&music.join("Other/Kept.wav"), 777);
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    let set_watch = |watch: bool| {
+        let state = state.clone();
+        async move {
+            state
+                .services
+                .update_library(
+                    LibraryActor::operator(owner),
+                    library.id,
+                    LibraryUpdate {
+                        watch: Some(watch),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap()
+        }
+    };
+    assert!(
+        set_watch(false).await.scan_id.is_none(),
+        "a switch queues no scan"
+    );
+    assert!(state.db.watched_libraries().await.unwrap().is_empty());
+    let watcher = waveflow_server::watcher::spawn(
+        state.scanner.clone(),
+        state.db.clone(),
+        std::time::Duration::from_millis(200),
+    );
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    write_test_wav_of_len(&root.join("Sub/Unwatched.wav"), 850);
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let watched_scans = || async {
+        sqlx::query_as::<_, (Option<String>, String)>(
+            "SELECT scope_json, status FROM scan_job WHERE trigger = 'watch'",
+        )
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap()
+    };
+    assert!(
+        watched_scans().await.is_empty(),
+        "a library whose watch is off was scanned by the watcher"
+    );
+
+    set_watch(true).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    write_test_wav_of_len(&root.join("Sub/Second.wav"), 900);
+    let mut completed = None;
+    for _ in 0..300 {
+        let scans = watched_scans().await;
+        if let Some(done) = scans.iter().find(|(_, status)| status == "completed") {
+            completed = Some(done.clone());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    watcher.abort();
+    let (scope, _) = completed.expect("no scan followed the change");
+    assert_eq!(scope.as_deref(), Some(r#"["Sub"]"#));
+    assert_eq!(
+        available_paths(&state).await,
+        [
+            "Other/Kept.wav",
+            "Sub/First.wav",
+            "Sub/Second.wav",
+            "Sub/Unwatched.wav"
+        ]
+    );
+}

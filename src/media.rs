@@ -74,6 +74,9 @@ struct MediaInner {
     /// SHA-256 of the whole `ffmpeg -version` output (RFC-016 decision 5): a
     /// quality measurement is current only under the FFmpeg that made it.
     ffmpeg_digest: String,
+    /// The folders outside every library a stored path may lead into through
+    /// a link (`WAVEFLOW_LINK_ROOTS`).
+    link_roots: crate::link_roots::LinkRoots,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -173,6 +176,7 @@ impl MediaService {
                 cache_locks: DashMap::new(),
                 cache_access: DashMap::new(),
                 pending_fills: DashSet::new(),
+                link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
                 ffmpeg_digest: crate::quality::decoder_digest(&ffmpeg_version),
@@ -219,8 +223,12 @@ impl MediaService {
         if !track.available {
             return Err(MediaError::NotFound);
         }
-        let source = secure_track_path(&track.library_root, &track.relative_path)
-            .await
+        let source = secure_track_path(
+            &track.library_root,
+            &track.relative_path,
+            &self.inner.link_roots,
+        )
+        .await
             .map_err(|error| {
                 tracing::warn!(track_id = %track.id, library_id = %track.library_id, error = %error, "media path rejected");
                 MediaError::NotFound
@@ -1518,7 +1526,17 @@ async fn check_tool(path: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
+///
+/// **A link on the way** is refused, with one exception: a library following
+/// links stores a file in an allowed folder outside its root under the path
+/// the walk reached it through (RFC-021, links outside the root). Such a path
+/// is accepted when it resolves, now, into one of `link_roots` — re-read on
+/// every request, so a link retargeted since the scan leads nowhere.
+pub(crate) async fn secure_track_path(
+    root: &Path,
+    relative: &str,
+    link_roots: &crate::link_roots::LinkRoots,
+) -> io::Result<PathBuf> {
     let canonical_root = tokio::fs::canonicalize(root).await?;
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
@@ -1533,6 +1551,7 @@ pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result
     }
 
     let mut cursor = canonical_root.clone();
+    let mut through_link = false;
     for component in relative.components() {
         let Component::Normal(component) = component else {
             unreachable!("components validated above")
@@ -1543,16 +1562,23 @@ pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result
             .file_type()
             .is_symlink()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "symlink media path rejected",
-            ));
+            if link_roots.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "symlink media path rejected",
+                ));
+            }
+            through_link = true;
         }
     }
     let canonical_file = tokio::fs::canonicalize(&cursor).await?;
-    if !canonical_file.starts_with(&canonical_root)
-        || !tokio::fs::metadata(&canonical_file).await?.is_file()
-    {
+    let reachable = if through_link {
+        let allowed = link_roots.resolved();
+        crate::link_roots::admits(&allowed, &[], &canonical_file)
+    } else {
+        canonical_file.starts_with(&canonical_root)
+    };
+    if !reachable || !tokio::fs::metadata(&canonical_file).await?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "media path escapes library",
@@ -1906,8 +1932,11 @@ mod tests {
         let root = temp.path().join("library");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("safe.wav"), b"audio").unwrap();
-        assert!(secure_track_path(&root, "safe.wav").await.is_ok());
-        assert!(secure_track_path(&root, "../safe.wav").await.is_err());
+        let none = crate::link_roots::LinkRoots::default();
+        assert!(secure_track_path(&root, "safe.wav", &none).await.is_ok());
+        assert!(secure_track_path(&root, "../safe.wav", &none)
+            .await
+            .is_err());
 
         let link = root.join("linked.wav");
         #[cfg(unix)]
@@ -1915,8 +1944,56 @@ mod tests {
         #[cfg(windows)]
         let linked = std::os::windows::fs::symlink_file(root.join("safe.wav"), &link).is_ok();
         if linked {
-            assert!(secure_track_path(&root, "linked.wav").await.is_err());
+            assert!(secure_track_path(&root, "linked.wav", &none).await.is_err());
         }
+    }
+
+    /// A stored path through a link is accepted only when it resolves, now,
+    /// into an allowed folder outside the root (RFC-021, links outside the
+    /// root): not into the root itself, not anywhere else, and not once the
+    /// folder is no longer allowed.
+    #[tokio::test]
+    async fn a_link_is_followed_into_an_allowed_folder_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let farm = temp.path().join("farm");
+        let elsewhere = temp.path().join("elsewhere");
+        for folder in [&root, &farm, &elsewhere] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        std::fs::write(farm.join("kept.wav"), b"audio").unwrap();
+        std::fs::write(elsewhere.join("secret.wav"), b"audio").unwrap();
+        std::fs::write(root.join("own.wav"), b"audio").unwrap();
+        #[cfg(unix)]
+        let make = |target: &std::path::Path, link: &std::path::Path| {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        };
+        #[cfg(windows)]
+        let make = |target: &std::path::Path, link: &std::path::Path| {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        };
+        if !(make(&farm.join("kept.wav"), &root.join("farmed.wav"))
+            && make(&elsewhere.join("secret.wav"), &root.join("stolen.wav"))
+            && make(&root.join("own.wav"), &root.join("mine.wav")))
+        {
+            eprintln!("skipped: this system will not let the test make a symbolic link");
+            return;
+        }
+        let allowed = crate::link_roots::LinkRoots::new(vec![farm.clone()]);
+        assert!(secure_track_path(&root, "farmed.wav", &allowed)
+            .await
+            .is_ok());
+        assert!(secure_track_path(&root, "stolen.wav", &allowed)
+            .await
+            .is_err());
+        assert!(
+            secure_track_path(&root, "mine.wav", &allowed)
+                .await
+                .is_err(),
+            "a link inside the root is stored by its target, never by itself"
+        );
+        let none = crate::link_roots::LinkRoots::default();
+        assert!(secure_track_path(&root, "farmed.wav", &none).await.is_err());
     }
 
     #[tokio::test]
@@ -1944,6 +2021,7 @@ mod tests {
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
             transcoding_available: true,
             ffmpeg_digest: String::new(),
+            link_roots: crate::link_roots::LinkRoots::default(),
         };
         prune_cache(&inner).await;
         assert!(!old.exists());

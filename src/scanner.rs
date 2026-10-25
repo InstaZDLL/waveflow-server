@@ -102,6 +102,9 @@ pub struct ScanManager {
     /// Moves whenever a library is added, moved or deleted through this
     /// process, so the watcher (RFC-021 decision 6) re-reads what to watch.
     libraries: Arc<watch::Sender<u64>>,
+    /// The folders outside every library a followed link may reach into
+    /// (`WAVEFLOW_LINK_ROOTS`).
+    link_roots: crate::link_roots::LinkRoots,
 }
 
 /// One scan counted as running, for as long as this lives.
@@ -157,7 +160,36 @@ impl ScanManager {
             in_flight: Arc::new(watch::Sender::new(0)),
             scanning: Arc::new(DashMap::new()),
             libraries: Arc::new(watch::Sender::new(0)),
+            link_roots: crate::link_roots::LinkRoots::default(),
         }
+    }
+
+    /// The folders outside every library that a library following links may
+    /// reach into.
+    pub fn with_link_roots(mut self, link_roots: crate::link_roots::LinkRoots) -> Self {
+        self.link_roots = link_roots;
+        self
+    }
+
+    /// Queues a scan of `scope` only, folders relative to the library root,
+    /// and runs it: what the watcher asks for once it can say where the
+    /// changes were. A scope that is not plainly such a list scans the whole
+    /// library instead, with the same trigger.
+    pub async fn trigger_scoped(
+        &self,
+        library: LibraryRecord,
+        trigger: &'static str,
+        scope: &[String],
+    ) -> anyhow::Result<Uuid> {
+        let Some(scope) = normalised_scope(scope) else {
+            return self.trigger(library, None, trigger).await;
+        };
+        let scan_id = self
+            .db
+            .create_scoped_scan_job(library.id, trigger, &scope)
+            .await?;
+        self.spawn(scan_id, library);
+        Ok(scan_id)
     }
 
     /// The lock every scan of one library holds for its whole run.
@@ -355,6 +387,36 @@ impl ScanManager {
         tokio::fs::create_dir_all(&self.artwork_dir).await?;
         let root = tokio::fs::canonicalize(&library.root_path).await?;
         let follow_links = settings.follow_links;
+        // The folders a followed link may reach outside the root, and every
+        // other library's root, which none may reach into. Resolved now, so a
+        // mount that appeared since the boot counts and one that went does not.
+        let (link_roots, libraries) = if follow_links && !self.link_roots.is_empty() {
+            let others = self
+                .db
+                .all_libraries()
+                .await?
+                .into_iter()
+                .filter(|other| other.id != library.id)
+                .filter_map(|other| std::fs::canonicalize(&other.root_path).ok())
+                .collect::<Vec<_>>();
+            (self.link_roots.resolved(), others)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // Only a walk that reads no link is ever scoped: a folder reached
+        // through a link is named by its target, and the watcher names the
+        // path it saw, so the two could not be told to agree.
+        let scope = match self.db.scan_scope(scan_id).await? {
+            Some(scope) if !follow_links => normalised_scope(&scope),
+            _ => None,
+        };
+        if let Some(scope) = scope.as_ref() {
+            tracing::info!(
+                library_id = %library.id,
+                folders = scope.len(),
+                "scanning the folders the watcher saw change"
+            );
+        }
         let Discovery {
             paths,
             unreadable,
@@ -363,17 +425,26 @@ impl ScanManager {
             skipped_links,
         } = tokio::task::spawn_blocking({
             let root = root.clone();
-            move || discover_audio(&root, follow_links)
+            let scope = scope.clone();
+            move || {
+                discover_audio(
+                    &Reach {
+                        root: &root,
+                        follow_links,
+                        link_roots: &link_roots,
+                        libraries: &libraries,
+                    },
+                    scope.as_deref(),
+                )
+            }
         })
         .await??;
         let unreadable_folders: Vec<String> = unreadable
             .iter()
             .map(|folder| folder.folder.clone())
             .collect();
-        let discovered: HashSet<String> = paths
-            .iter()
-            .filter_map(|path| relative_path(&root, path).ok())
-            .collect();
+        let discovered: HashSet<String> =
+            paths.iter().map(|(_, relative)| relative.clone()).collect();
         // Read here rather than taken as an argument: a scan that died halfway
         // left the request standing, and the run picking up after it has to
         // honour a request it never saw made.
@@ -394,17 +465,15 @@ impl ScanManager {
         // What the catalogue already knows, read once: the pre-check compares
         // against it before a file is opened (RFC-018 decision 1).
         let facts = Arc::new(self.db.track_skip_facts(library.id).await?);
-        let root_for_tasks = root.clone();
         let artwork_dir = self.artwork_dir.clone();
         // In path order, as they finish, a few batches at most in memory
         // (RFC-018 decision 2): `buffered` keeps the order `paths` has, so the
         // outcome is the same however the extractions interleave.
-        let mut scanned = stream::iter(paths.into_iter().map(|path| {
-            let root = root_for_tasks.clone();
+        let mut scanned = stream::iter(paths.into_iter().map(|(path, relative)| {
             let artwork = artwork_dir.clone();
             let facts = Arc::clone(&facts);
             async move {
-                let relative = relative_path(&root, &path);
+                let relative: anyhow::Result<String> = Ok(relative);
                 let known = relative
                     .as_ref()
                     .ok()
@@ -456,6 +525,7 @@ impl ScanManager {
             discovered: &discovered,
             unreadable: &unreadable_folders,
             incomplete,
+            scope: scope.as_deref(),
         };
         while let Some(batch) = scanned.next().await {
             let mut applies = Vec::new();
@@ -617,7 +687,9 @@ impl ScanManager {
             );
             0
         } else {
-            self.db.mark_unseen_unavailable(library.id, scan_id).await?
+            self.db
+                .mark_unseen_unavailable_within(library.id, scan_id, scope.as_deref())
+                .await?
         };
         // After availability is settled, not before: the album and artist
         // identifiers are a majority vote over the tracks that are still there,
@@ -901,10 +973,11 @@ struct Unreadable {
     reason: &'static str,
 }
 
-/// What the walk found: the audio files, in path order, and the folders it
-/// could not read, relative to the root.
+/// What the walk found: the audio files, in catalogue path order, each with
+/// the path it is read from and the path the catalogue knows it by, and the
+/// folders it could not read, relative to the root.
 struct Discovery {
-    paths: Vec<PathBuf>,
+    paths: Vec<(PathBuf, String)>,
     unreadable: Vec<Unreadable>,
     /// An error named no path inside the root, so the walk cannot say which
     /// tracks it missed: none may be marked missing.
@@ -914,6 +987,48 @@ struct Discovery {
     excluded: usize,
     /// Symbolic links the walk did not follow (RFC-021 decision 3).
     skipped_links: usize,
+}
+
+/// Where one walk may go: the library root, whether it follows links, and —
+/// when it does — the folders outside the root a link may reach into and the
+/// other libraries' roots no link may reach into (RFC-021, links outside the
+/// root). Every path in it is canonical.
+struct Reach<'a> {
+    root: &'a Path,
+    follow_links: bool,
+    link_roots: &'a [PathBuf],
+    libraries: &'a [PathBuf],
+}
+
+impl Reach<'_> {
+    /// Whether a followed link may lead to `target`, a canonical path.
+    fn admits_target(&self, target: &Path) -> bool {
+        target.starts_with(self.root)
+            || crate::link_roots::admits(self.link_roots, self.libraries, target)
+    }
+
+    /// What the walk reached at `path`: the canonical path to read it from,
+    /// and the path relative to the root the catalogue names it by.
+    ///
+    /// Without links, the path as walked. With links, a target inside the root
+    /// is named by its canonical path, so one file is one track however many
+    /// links name it (decision 3); a target in an allowed folder outside it has
+    /// no path inside the root, so it is named by the path the walk reached it
+    /// through — links included, which is why the stream check accepts a link
+    /// that resolves into an allowed folder. Anything else names nothing.
+    fn catalogue_name(&self, path: &Path) -> Option<(PathBuf, String)> {
+        if !self.follow_links {
+            return Some((path.to_path_buf(), relative_to(self.root, path)));
+        }
+        let canonical = fs::canonicalize(path).ok()?;
+        if canonical.starts_with(self.root) {
+            let name = relative_to(self.root, &canonical);
+            return Some((canonical, name));
+        }
+        (crate::link_roots::admits(self.link_roots, self.libraries, &canonical)
+            && path.starts_with(self.root))
+        .then(|| (canonical, relative_to(self.root, path)))
+    }
 }
 
 /// What the walk accumulates while `walkdir` decides, entry by entry, what to
@@ -938,18 +1053,10 @@ impl WalkState {
     /// With links followed, a track is stored under its canonical path, and a
     /// folder reached through a link has another name: spared under the
     /// link's, its tracks would be marked missing anyway. So the folder is
-    /// named by its target; one that cannot be resolved inside the root names
-    /// nothing, and the walk is then incomplete.
-    fn unreadable(&mut self, root: &Path, path: &Path, follow_links: bool, reason: &'static str) {
-        let folder = if follow_links {
-            fs::canonicalize(path)
-                .ok()
-                .filter(|canonical| canonical.starts_with(root))
-                .map(|canonical| relative_to(root, &canonical))
-        } else {
-            Some(relative_to(root, path))
-        };
-        match folder {
+    /// named as the catalogue names what it holds; one that names nothing
+    /// leaves the walk incomplete.
+    fn unreadable(&mut self, reach: &Reach<'_>, path: &Path, reason: &'static str) {
+        match reach.catalogue_name(path).map(|(_, name)| name) {
             Some(folder) => {
                 tracing::warn!(
                     path = %folder,
@@ -960,7 +1067,7 @@ impl WalkState {
             }
             None => {
                 tracing::warn!(
-                    path = %relative_to(root, path),
+                    path = %relative_to(reach.root, path),
                     reason,
                     "a folder reached through a link could not be used, nor resolved; nothing is marked missing this scan"
                 );
@@ -1010,21 +1117,24 @@ fn relative_to(root: &Path, path: &Path) -> String {
         .unwrap_or_else(|_| "<outside the library>".to_owned())
 }
 
-/// The walk's decision on one entry below the root: enter it, or leave it.
+/// The walk's decision on one entry below where it started: enter it, or
+/// leave it. `base` is how deep below the root the walk started, so the rules
+/// that depend on depth read the depth below the root.
 fn admit(
     entry: &walkdir::DirEntry,
-    root: &Path,
-    follow_links: bool,
+    reach: &Reach<'_>,
+    base: usize,
     walk: &std::cell::RefCell<WalkState>,
 ) -> bool {
     if entry.depth() == 0 {
         return true;
     }
+    let root = reach.root;
     let mut walk = walk.borrow_mut();
     let path = entry.path();
     // Followed, `file_type` is the target's; not followed, it is the link's.
     let is_dir = entry.file_type().is_dir();
-    let is_link = if follow_links {
+    let is_link = if reach.follow_links {
         entry.path_is_symlink()
     } else {
         entry.file_type().is_symlink()
@@ -1034,7 +1144,7 @@ fn admit(
         return false;
     }
     // By the name the walk sees, a link's own included (decision 1).
-    if built_in_exclusion(entry.file_name(), entry.depth(), is_dir)
+    if built_in_exclusion(entry.file_name(), base + entry.depth(), is_dir)
         || walk.ignored(root, path, is_dir)
     {
         walk.excluded += 1;
@@ -1042,11 +1152,11 @@ fn admit(
         return false;
     }
     if is_link {
-        let skipped = if !follow_links {
+        let skipped = if !reach.follow_links {
             Some(SkippedLink::NotFollowed)
         } else {
             match fs::canonicalize(path) {
-                Ok(target) if target.starts_with(root) => None,
+                Ok(target) if reach.admits_target(&target) => None,
                 Ok(_) => Some(SkippedLink::Outside),
                 Err(_) => Some(SkippedLink::Broken),
             }
@@ -1054,6 +1164,17 @@ fn admit(
         if let Some(why) = skipped {
             walk.skip_link(&relative_to(root, path), why);
             return false;
+        }
+    } else if is_dir && reach.follow_links && !reach.link_roots.is_empty() {
+        // A folder that is no link itself, reached through one into an
+        // allowed folder, may be another library's root: the link that led
+        // here stops at it, and is counted as skipped there.
+        match fs::canonicalize(path) {
+            Ok(target) if reach.admits_target(&target) => {}
+            _ => {
+                walk.skip_link(&relative_to(root, path), SkippedLink::Outside);
+                return false;
+            }
         }
     }
     if is_dir {
@@ -1068,7 +1189,7 @@ fn admit(
                 return false;
             }
             Rules::Unusable(reason) => {
-                walk.unreadable(root, path, follow_links, reason);
+                walk.unreadable(reach, path, reason);
                 return false;
             }
         }
@@ -1076,16 +1197,129 @@ fn admit(
     true
 }
 
-/// Walks the library (RFC-018 decision 3, RFC-021 decisions 1 to 3).
+/// How many folders a scoped scan walks at most. A watcher that saw changes in
+/// more than this is told to walk the whole library instead: a list that long
+/// says the changes were everywhere, and walking it folder by folder would
+/// cost more than the walk it was meant to save.
+pub(crate) const MAX_SCOPE_FOLDERS: usize = 64;
+
+/// A scope as a scoped walk may use it: folders relative to the root, spelled
+/// with `/`, none of them nested in another, at most [`MAX_SCOPE_FOLDERS`].
+///
+/// `None` — the whole library — for anything that is not plainly such a list:
+/// an empty folder (the root itself), a `..`, an absolute path, too many
+/// folders. Walking more than asked is always safe; walking less is not.
+pub(crate) fn normalised_scope(scope: &[String]) -> Option<Vec<String>> {
+    let mut folders = Vec::with_capacity(scope.len());
+    for folder in scope {
+        let folder = folder.trim_matches('/');
+        if folder.is_empty()
+            || folder
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == ".." || part.contains('\\'))
+            || Path::new(folder).is_absolute()
+        {
+            return None;
+        }
+        folders.push(folder.to_owned());
+    }
+    folders.sort();
+    folders.dedup();
+    // Sorted, a folder's descendants follow it directly.
+    let mut kept: Vec<String> = Vec::with_capacity(folders.len());
+    for folder in folders {
+        let nested = kept.last().is_some_and(|parent| {
+            folder
+                .strip_prefix(parent.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        });
+        if !nested {
+            kept.push(folder);
+        }
+    }
+    (!kept.is_empty() && kept.len() <= MAX_SCOPE_FOLDERS).then_some(kept)
+}
+
+/// Where a scoped walk of `folder` starts, and how deep below the root that
+/// is — or `None` when there is nothing to walk there.
+///
+/// Every folder on the way down is judged as the whole walk would have judged
+/// it, so a scoped walk reads exactly what a full one would read below it: the
+/// built-in exclusions and every ignore file above it, which are loaded as it
+/// goes. A folder on the way that is excluded is left out, and what the
+/// catalogue holds under it counts as not discovered (RFC-021 decision 2); one
+/// that cannot be read, or whose rules cannot be used, is unreadable and spares
+/// its tracks (RFC-018 decision 3). A folder that is gone was walked, and
+/// nothing is there. A scoped walk reads no link, so a link on the way leads
+/// nowhere, as it would in a walk that does not follow links.
+fn enter_scope(
+    reach: &Reach<'_>,
+    walk: &std::cell::RefCell<WalkState>,
+    folder: &str,
+) -> Option<(PathBuf, usize)> {
+    let root = reach.root;
+    let mut current = root.to_path_buf();
+    let parts: Vec<&str> = folder.split('/').collect();
+    for (index, name) in parts.iter().enumerate() {
+        let depth = index + 1;
+        let next = current.join(name);
+        let metadata = match fs::symlink_metadata(&next) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(_) => {
+                walk.borrow_mut()
+                    .unreadable(reach, &next, "folder could not be read");
+                return None;
+            }
+        };
+        let mut state = walk.borrow_mut();
+        if metadata.file_type().is_symlink() {
+            state.skip_link(&relative_to(root, &next), SkippedLink::NotFollowed);
+            return None;
+        }
+        if !metadata.is_dir() {
+            // A file where a folder was named: the folder above it, walked
+            // whole, holds it.
+            return Some((current, depth - 1));
+        }
+        if built_in_exclusion(std::ffi::OsStr::new(name), depth, true)
+            || state.ignored(root, &next, true)
+        {
+            state.excluded += 1;
+            return None;
+        }
+        match load_rules(&next, false) {
+            Rules::None => {}
+            Rules::Matcher(rules) => {
+                state.rules.insert(next.clone(), rules);
+            }
+            Rules::ExcludeAll => {
+                state.excluded += 1;
+                return None;
+            }
+            Rules::Unusable(reason) => {
+                state.unreadable(reach, &next, reason);
+                return None;
+            }
+        }
+        current = next;
+    }
+    Some((current, parts.len()))
+}
+
+/// Walks the library (RFC-018 decision 3, RFC-021 decisions 1 to 3), or only
+/// the folders of `scope` when the watcher could name them.
 ///
 /// An entry the walk cannot read is logged by its path relative to the root,
 /// never the absolute one, and the walk goes on; only the root itself failing
 /// fails the scan, since then nothing can be told apart — and that includes an
 /// ignore file at the root the walk cannot use.
 ///
-/// With `follow_links`, a file reached through a link is returned under its
-/// canonical path, so it is one track however many links name it.
-fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> {
+/// With `follow_links`, a file reached through a link is returned under the
+/// name [`Reach::catalogue_name`] gives it, and once only, however many links
+/// name it.
+fn discover_audio(reach: &Reach<'_>, scope: Option<&[String]>) -> anyhow::Result<Discovery> {
+    let root = reach.root;
     let walk = std::cell::RefCell::new(WalkState::default());
     match load_rules(root, true) {
         Rules::Matcher(rules) => {
@@ -1096,79 +1330,85 @@ fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> 
         }
         Rules::None | Rules::ExcludeAll => {}
     }
+    let starts: Vec<(PathBuf, usize)> = match scope {
+        None => vec![(root.to_path_buf(), 0)],
+        Some(folders) => folders
+            .iter()
+            .filter_map(|folder| enter_scope(reach, &walk, folder))
+            .collect(),
+    };
     let mut paths = Vec::new();
     let mut incomplete = false;
-    let entries = WalkDir::new(root)
-        .follow_links(follow_links)
-        .into_iter()
-        .filter_entry(|entry| admit(entry, root, follow_links, &walk));
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) if error.depth() == 0 => return Err(error.into()),
-            Err(error) => {
-                let mut walk = walk.borrow_mut();
-                // A link the walk was told to follow and could not: a loop, or
-                // a target it cannot read. A link, not a folder, so nothing
-                // under a folder is spared for it.
-                let link = if error.loop_ancestor().is_some() {
-                    Some(SkippedLink::Loop)
-                } else if follow_links
-                    && error.path().is_some_and(|path| {
-                        fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
-                    })
-                {
-                    Some(SkippedLink::Broken)
-                } else {
-                    None
-                };
-                let named = error.path().filter(|path| path.starts_with(root));
-                match (link, named) {
-                    (Some(why), Some(path)) => walk.skip_link(&relative_to(root, path), why),
-                    (_, None) => {
-                        tracing::warn!("the library walk failed somewhere it could not name");
-                        incomplete = true;
-                        walk.unreadable.push(Unreadable {
-                            folder: "<unknown>".to_owned(),
-                            reason: "folder could not be read",
-                        });
+    for (start, base) in starts {
+        let entries = WalkDir::new(&start)
+            .follow_links(reach.follow_links)
+            .into_iter()
+            .filter_entry(|entry| admit(entry, reach, base, &walk));
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.depth() == 0 && base == 0 => return Err(error.into()),
+                Err(error) => {
+                    let mut walk = walk.borrow_mut();
+                    // A link the walk was told to follow and could not: a loop,
+                    // or a target it cannot read. A link, not a folder, so
+                    // nothing under a folder is spared for it.
+                    let link = if error.loop_ancestor().is_some() {
+                        Some(SkippedLink::Loop)
+                    } else if reach.follow_links
+                        && error.path().is_some_and(|path| {
+                            fs::symlink_metadata(path)
+                                .is_ok_and(|meta| meta.file_type().is_symlink())
+                        })
+                    {
+                        Some(SkippedLink::Broken)
+                    } else {
+                        None
+                    };
+                    let named = error.path().filter(|path| path.starts_with(root));
+                    match (link, named) {
+                        (Some(why), Some(path)) => walk.skip_link(&relative_to(root, path), why),
+                        (_, None) => {
+                            tracing::warn!("the library walk failed somewhere it could not name");
+                            incomplete = true;
+                            walk.unreadable.push(Unreadable {
+                                folder: "<unknown>".to_owned(),
+                                reason: "folder could not be read",
+                            });
+                        }
+                        (None, Some(path)) => {
+                            walk.unreadable(reach, path, "folder could not be read");
+                        }
                     }
-                    (None, Some(path)) => {
-                        walk.unreadable(root, path, follow_links, "folder could not be read");
-                    }
+                    continue;
                 }
+            };
+            // A link is only ever yielded here when it is followed, and then
+            // its type is its target's.
+            if !entry.file_type().is_file() {
                 continue;
             }
-        };
-        // A link is only ever yielded here when it is followed, and then its
-        // type is its target's.
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = if follow_links {
-            match fs::canonicalize(entry.path()) {
-                Ok(canonical) if canonical.starts_with(root) => canonical,
-                _ => continue,
+            let Some((path, name)) = reach.catalogue_name(entry.path()) else {
+                continue;
+            };
+            let supported = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|ext| {
+                    waveflow_core::scanner::AUDIO_EXTENSIONS
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+                });
+            if supported {
+                paths.push((path, name));
             }
-        } else {
-            entry.into_path()
-        };
-        let supported = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|ext| {
-                waveflow_core::scanner::AUDIO_EXTENSIONS
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(ext))
-            });
-        if supported {
-            paths.push(path);
         }
     }
-    paths.sort();
+    paths.sort_by(|left, right| left.1.cmp(&right.1));
     // Followed links can name one file twice, or name a file the walk also
-    // found directly; sorted, the copies are adjacent.
-    paths.dedup();
+    // found directly: the first name in catalogue order keeps it.
+    let mut read = HashSet::new();
+    paths.retain(|(path, _)| read.insert(path.clone()));
     let walk = walk.into_inner();
     if walk.skipped_links > LOGGED_LINKS {
         tracing::info!(
@@ -1185,26 +1425,41 @@ fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> 
     })
 }
 
-/// What one walk saw, as relocation needs it: the files it found, and what
-/// it could not look at.
+/// What one walk saw, as relocation needs it: the files it found, what it
+/// could not look at, and — for a scoped walk — where it looked at all.
 struct Walked<'a> {
     discovered: &'a HashSet<String>,
     unreadable: &'a [String],
     incomplete: bool,
+    /// The folders a scoped walk covered, `None` for the whole library.
+    scope: Option<&'a [String]>,
+}
+
+/// Whether `path` is `folder` or lies under it, compared as text.
+fn under(path: &str, folder: &str) -> bool {
+    path == folder
+        || path
+            .strip_prefix(folder)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 impl Walked<'_> {
-    /// Whether the walk can say this track's file is gone: it was not found,
-    /// and it does not sit under a folder the walk could not read.
+    /// Whether the walk can say this track's file is gone: it looked where the
+    /// file was, did not find it, and that place is not under a folder it
+    /// could not read. A scoped walk did not look outside its folders, so a
+    /// track there is never one it saw missing — which is what keeps a scoped
+    /// scan from moving the identity of a track it never looked for onto a
+    /// file it found.
     fn saw_missing(&self, relative_path: &str) -> bool {
         !self.incomplete
+            && self
+                .scope
+                .is_none_or(|folders| folders.iter().any(|folder| under(relative_path, folder)))
             && !self.discovered.contains(relative_path)
-            && !self.unreadable.iter().any(|folder| {
-                relative_path == folder
-                    || relative_path
-                        .strip_prefix(folder.as_str())
-                        .is_some_and(|rest| rest.starts_with('/'))
-            })
+            && !self
+                .unreadable
+                .iter()
+                .any(|folder| under(relative_path, folder))
     }
 }
 
@@ -1228,14 +1483,6 @@ fn unclaimed(
             walked.saw_missing(&candidate.relative_path) && !claimed.contains(&candidate.id)
         })
         .collect()
-}
-
-fn relative_path(root: &Path, path: &Path) -> anyhow::Result<String> {
-    let canonical = fs::canonicalize(path)?;
-    let relative = canonical
-        .strip_prefix(root)
-        .map_err(|_| anyhow::anyhow!("path escaped library root"))?;
-    Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
 pub(crate) fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTrackInput, String> {
@@ -1804,6 +2051,7 @@ mod tests {
             discovered: &discovered,
             unreadable: &unreadable,
             incomplete: false,
+            scope: None,
         };
         assert!(!walked.saw_missing("Found/One.wav"));
         assert!(!walked.saw_missing("Locked/Two.wav"));
@@ -1815,6 +2063,34 @@ mod tests {
             ..walked
         };
         assert!(!incomplete.saw_missing("Gone/Four.wav"));
+        // A scoped walk looked in its folders only: a track anywhere else was
+        // not looked for, so it was not seen missing.
+        let scope = vec!["Gone".to_owned()];
+        let scoped = Walked {
+            scope: Some(&scope),
+            ..walked
+        };
+        assert!(scoped.saw_missing("Gone/Four.wav"));
+        assert!(!scoped.saw_missing("Elsewhere/Five.wav"));
+        assert!(!scoped.saw_missing("Goner/Six.wav"));
+    }
+
+    /// A scope is a list of folders a walk can trust, or the whole library.
+    #[test]
+    fn a_scope_is_plain_folders_or_the_whole_library() {
+        let folders = |list: &[&str]| list.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            super::normalised_scope(&folders(&["b/c", "a", "a/x/y", "b/c/", "bc"])),
+            Some(folders(&["a", "b/c", "bc"])),
+            "nested folders are covered by their parent, and a prefix is not a parent"
+        );
+        for whole in [&[""][..], &["a/../b"], &["/etc"], &["a//b"], &["."], &[]] {
+            assert_eq!(super::normalised_scope(&folders(whole)), None, "{whole:?}");
+        }
+        let many: Vec<String> = (0..=super::MAX_SCOPE_FOLDERS)
+            .map(|index| format!("f{index}"))
+            .collect();
+        assert_eq!(super::normalised_scope(&many), None);
     }
     use lofty::{
         prelude::ItemKey,

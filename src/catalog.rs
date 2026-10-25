@@ -645,6 +645,47 @@ impl Database {
         Ok(id)
     }
 
+    /// A job that walks only `scope`, folders relative to the library root:
+    /// what the watcher queues once a library's changes settle and it can
+    /// name where they were (RFC-021, what decision 6 left open).
+    pub async fn create_scoped_scan_job(
+        &self,
+        library_id: Uuid,
+        trigger: &str,
+        scope: &[String],
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let id = Uuid::new_v4();
+        let scope = serde_json::to_string(scope).expect("a list of strings serializes");
+        sqlx::query(
+            "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, created_at, \
+                                   scope_json) \
+             VALUES (?, ?, NULL, ?, 'queued', ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(library_id.to_string())
+        .bind(trigger)
+        .bind(now_ms())
+        .bind(scope)
+        .execute(self.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// The folders a job walks, or `None` for the whole library. A scope that
+    /// cannot be read is the whole library: walking more than asked is always
+    /// safe, and walking less is not.
+    pub async fn scan_scope(&self, scan_id: Uuid) -> Result<Option<Vec<String>>, sqlx::Error> {
+        let scope: Option<Option<String>> =
+            sqlx::query_scalar("SELECT scope_json FROM scan_job WHERE id = ?")
+                .bind(scan_id.to_string())
+                .fetch_optional(self.pool())
+                .await?;
+        Ok(scope
+            .flatten()
+            .and_then(|scope| serde_json::from_str::<Vec<String>>(&scope).ok()))
+    }
+
     /// Every job still `queued`, oldest first, with its library: what a
     /// previous run committed and never started.
     pub async fn queued_scan_jobs(&self) -> Result<Vec<(Uuid, Uuid)>, sqlx::Error> {
@@ -1740,6 +1781,22 @@ impl Database {
         library_id: Uuid,
         scan_id: Uuid,
     ) -> Result<i64, sqlx::Error> {
+        self.mark_unseen_unavailable_within(library_id, scan_id, None)
+            .await
+    }
+
+    /// [`Self::mark_unseen_unavailable`], for a scan that walked only
+    /// `scope`: a track outside the folders it walked was not looked for, so
+    /// it cannot have been missed (RFC-018 decision 3, which a scoped scan
+    /// keeps).
+    pub async fn mark_unseen_unavailable_within(
+        &self,
+        library_id: Uuid,
+        scan_id: Uuid,
+        scope: Option<&[String]>,
+    ) -> Result<i64, sqlx::Error> {
+        let scope = scope
+            .map(|folders| serde_json::to_string(folders).expect("a list of strings serializes"));
         let _writer = self.writer_guard().await;
         let now = now_ms();
         let mut tx = self.begin_write(&_writer).await?;
@@ -1770,6 +1827,10 @@ impl Database {
                  OR (last_seen_scan_id IS NULL \
                      AND created_at < COALESCE( \
                        (SELECT started_at FROM scan_job WHERE id = ?), ?))) \
+               AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) folder \
+                     WHERE folder.value = '' OR track.relative_path = folder.value \
+                        OR substr(track.relative_path, 1, length(folder.value) + 1) \
+                           = folder.value || '/')) \
              RETURNING id",
         )
         .bind(now)
@@ -1778,6 +1839,8 @@ impl Database {
         .bind(scan_id.to_string())
         .bind(scan_id.to_string())
         .bind(now)
+        .bind(scope.as_deref())
+        .bind(scope.as_deref())
         .fetch_all(&mut *tx)
         .await?;
         for id in &gone {

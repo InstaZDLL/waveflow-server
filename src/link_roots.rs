@@ -1,0 +1,100 @@
+//! The folders outside every library that a followed symbolic link may point
+//! into (RFC-021, what decision 3 left open).
+//!
+//! A library that follows links reads a link only when its target stays inside
+//! the library root: a link is a way for anyone who can write into the library
+//! folder to make the server read whatever it can read. A link farm whose
+//! files live elsewhere — a beets `link: yes` import into a separate folder —
+//! was therefore not followed at all. `WAVEFLOW_LINK_ROOTS` names the folders
+//! an operator vouches for, and a followed link may reach into those as well.
+//!
+//! **Resolved when used, not when read.** The configured paths are
+//! canonicalised at every scan and every stream, so a mount that appears after
+//! the boot is honoured, one that vanished reaches nothing, and a configured
+//! path that is itself a link is judged by where it points now.
+//!
+//! **Never into another library.** A target inside another library's root is
+//! refused even when an allowed folder holds it: following it would show one
+//! library's files to the members of another.
+
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+/// The configured roots, as the operator wrote them.
+#[derive(Debug, Clone, Default)]
+pub struct LinkRoots(Arc<Vec<PathBuf>>);
+
+impl LinkRoots {
+    pub fn new(roots: Vec<PathBuf>) -> Self {
+        Self(Arc::new(roots))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Every configured root that resolves now, canonical. One that does not —
+    /// a mount not there, a folder removed — is left out, and reaches nothing.
+    pub fn resolved(&self) -> Vec<PathBuf> {
+        self.0
+            .iter()
+            .filter_map(|root| match std::fs::canonicalize(root) {
+                Ok(root) if root.is_dir() => Some(root),
+                Ok(_) | Err(_) => {
+                    tracing::debug!(
+                        root = %root.display(),
+                        "a link root does not resolve to a folder; links into it are not followed"
+                    );
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+/// Whether a canonical `target` lies inside one of the canonical `roots` and
+/// inside none of the canonical `libraries` — every other library's root.
+pub fn admits(roots: &[PathBuf], libraries: &[PathBuf], target: &Path) -> bool {
+    roots.iter().any(|root| target.starts_with(root))
+        && !libraries.iter().any(|library| target.starts_with(library))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_target_must_sit_in_an_allowed_root_and_in_no_other_library() {
+        let roots = [PathBuf::from("/srv/beets")];
+        let libraries = [PathBuf::from("/srv/beets/shared-library")];
+        assert!(admits(&roots, &libraries, Path::new("/srv/beets/a/b.flac")));
+        assert!(!admits(
+            &roots,
+            &libraries,
+            Path::new("/srv/elsewhere/b.flac")
+        ));
+        assert!(!admits(
+            &roots,
+            &libraries,
+            Path::new("/srv/beets/shared-library/b.flac")
+        ));
+        // A prefix of a name is not a folder.
+        assert!(!admits(&roots, &[], Path::new("/srv/beetsx/b.flac")));
+        assert!(!admits(&[], &[], Path::new("/srv/beets/a.flac")));
+    }
+
+    #[test]
+    fn a_root_that_does_not_resolve_reaches_nothing() {
+        let present = tempfile::tempdir().unwrap();
+        let roots = LinkRoots::new(vec![
+            present.path().to_path_buf(),
+            present.path().join("not-there"),
+        ]);
+        assert_eq!(
+            roots.resolved(),
+            vec![std::fs::canonicalize(present.path()).unwrap()]
+        );
+    }
+}

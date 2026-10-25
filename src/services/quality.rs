@@ -549,6 +549,7 @@ impl DomainServices {
         let path = crate::media::secure_track_path(
             std::path::Path::new(&pending.root_path),
             &pending.relative_path,
+            &self.link_roots,
         )
         .await
         .ok()?;
@@ -834,10 +835,13 @@ impl DomainServices {
         let _slot = Arc::clone(&self.quality.0.spectrograms)
             .try_acquire_owned()
             .map_err(|_| ServiceError::Busy)?;
-        let path =
-            crate::media::secure_track_path(std::path::Path::new(&root_path), &relative_path)
-                .await
-                .map_err(|_| ServiceError::Unavailable)?;
+        let path = crate::media::secure_track_path(
+            std::path::Path::new(&root_path),
+            &relative_path,
+            &self.link_roots,
+        )
+        .await
+        .map_err(|_| ServiceError::Unavailable)?;
         let picture = quality::spectrogram(
             &self.ffmpeg_path,
             &path,

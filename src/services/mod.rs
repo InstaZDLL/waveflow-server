@@ -1391,6 +1391,10 @@ pub struct DomainServices {
     /// How long a purge stays restorable before its tracks are deleted for
     /// good; zero deletes at once (RFC-021, undoing a purge).
     purge_grace: std::time::Duration,
+    /// The folders outside every library a stored path may lead into through
+    /// a link (`WAVEFLOW_LINK_ROOTS`): the quality analysis reads those files
+    /// as the stream does.
+    link_roots: crate::link_roots::LinkRoots,
     /// Bounds a credential an account mints for itself. See the field on
     /// [`crate::config::Config`] for why the administrative path is not
     /// bounded by it.
@@ -1592,6 +1596,7 @@ impl DomainServices {
             library_event_retention: config.library_event_retention,
             unavailable_retention: config.unavailable_retention,
             purge_grace: config.purge_grace,
+            link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
             api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,

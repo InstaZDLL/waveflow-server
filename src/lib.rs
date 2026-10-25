@@ -8,6 +8,7 @@ pub mod config;
 pub mod credit_split;
 pub mod database;
 pub mod enrichment;
+pub mod link_roots;
 pub mod lyrics;
 pub mod media;
 pub mod migration_backup;
@@ -715,7 +716,8 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         db.clone(),
         config.artwork_dir.clone(),
         config.scan_parallelism,
-    );
+    )
+    .with_link_roots(link_roots::LinkRoots::new(config.link_roots.clone()));
     let media = media::MediaService::initialize(config).await?;
     let sync = sync::SyncService::new(db.clone());
     let services = services::DomainServices::new(
