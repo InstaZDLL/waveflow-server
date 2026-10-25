@@ -280,6 +280,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         catalog::TrackRecord,
         catalog::LibraryAccess,
         services::AlbumItem,
+        services::ReleaseGroup,
         services::ArtistItem,
         services::GenreItem,
         services::LibraryMember,

@@ -273,6 +273,11 @@ pub struct AlbumItem {
     pub original_release_date: Option<String>,
     pub release_date: Option<String>,
     pub release_types: Vec<String>,
+    /// Which section of a discography the album belongs in, decided once here
+    /// from `release_types` and `is_compilation` (RFC-022 decision 2) so no
+    /// client reinterprets MusicBrainz's vocabulary its own way. Native only:
+    /// the Subsonic nodes are built field by field and never read it.
+    pub release_group: ReleaseGroup,
     pub record_labels: Vec<String>,
     /// One entry per disc the album's available tracks name a title for.
     /// Derived like the genres, because an album has as many as it has discs.
@@ -288,6 +293,63 @@ pub struct AlbumItem {
     /// the counts cost a full catalogue read per request.
     pub song_count: i64,
     pub duration_ms: i64,
+}
+
+/// The section of an artist's discography an album is listed under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseGroup {
+    Album,
+    Ep,
+    Single,
+    Live,
+    Compilation,
+}
+
+impl ReleaseGroup {
+    /// Classifies an album by the release types its files carry (RFC-022
+    /// decision 2).
+    ///
+    /// The values are MusicBrainz's, as taggers write them: a primary type
+    /// (`album`, `single`, `ep`, `broadcast`, `other`) and any secondary ones
+    /// (`compilation`, `live`, `soundtrack`, …). The scanner joins several
+    /// with `;`, and Picard's ID3v2.3 output joins them with `/` instead, so
+    /// each value is split on both — and on `,` — then compared without case.
+    ///
+    /// Secondary types win over primary ones, as on MusicBrainz's own artist
+    /// pages: a live EP is filed under live, a compilation album under
+    /// compilations. Anything else, or nothing at all, is an album, so a
+    /// library that carries no release type keeps the one section it had.
+    pub fn classify(release_types: &[String], is_compilation: bool) -> Self {
+        let mut compilation = is_compilation;
+        let (mut live, mut ep, mut single) = (false, false, false);
+        for kind in release_types
+            .iter()
+            .flat_map(|value| value.split([';', '/', ',']))
+            .map(str::trim)
+        {
+            if kind.eq_ignore_ascii_case("compilation") {
+                compilation = true;
+            } else if kind.eq_ignore_ascii_case("live") {
+                live = true;
+            } else if kind.eq_ignore_ascii_case("ep") {
+                ep = true;
+            } else if kind.eq_ignore_ascii_case("single") {
+                single = true;
+            }
+        }
+        if compilation {
+            Self::Compilation
+        } else if live {
+            Self::Live
+        } else if ep {
+            Self::Ep
+        } else if single {
+            Self::Single
+        } else {
+            Self::Album
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -963,6 +1025,15 @@ pub struct ArtistDetail {
     /// should not have to depend on one.
     pub album_count: i64,
     pub albums: Vec<AlbumItem>,
+    /// The albums a track of which credits this artist in its `artist` role,
+    /// while the artist is not one of the album's own artists — "Appears on"
+    /// (RFC-022 decision 3).
+    ///
+    /// Filled by [`DomainServices::artist_page`] alone, like the enrichment:
+    /// the Subsonic `getArtist` path has nowhere to put it, and a client that
+    /// syncs every artist would pay for a query it never reads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub appears_on: Option<Vec<AlbumItem>>,
     /// What metadata enrichment says about this artist — RFC-011 decision 11.
     ///
     /// Always present on `GET /api/v2/artists/{id}`, whose answer comes from
@@ -1955,7 +2026,13 @@ fn artist_summary_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ArtistSummary
 }
 
 fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error> {
+    let is_compilation = row.try_get::<i64, _>("is_compilation")? != 0;
+    let release_types = split_tag_values(
+        row.try_get::<Option<String>, _>("release_types")?
+            .as_deref(),
+    );
     Ok(AlbumItem {
+        release_group: ReleaseGroup::classify(&release_types, is_compilation),
         id: parse_uuid(row.try_get("id")?)?,
         library_id: parse_uuid(row.try_get("library_id")?)?,
         title: row.try_get("title")?,
@@ -1966,15 +2043,12 @@ fn album_from_row(row: sqlx::sqlite::SqliteRow) -> Result<AlbumItem, sqlx::Error
             .transpose()?,
         artwork_hash: row.try_get("artwork_hash")?,
         year: row.try_get("year")?,
-        is_compilation: row.try_get::<i64, _>("is_compilation")? != 0,
+        is_compilation,
         sort_name: row.try_get("sort_name")?,
         musicbrainz_id: row.try_get("musicbrainz_id")?,
         original_release_date: row.try_get("original_release_date")?,
         release_date: row.try_get("release_date")?,
-        release_types: split_tag_values(
-            row.try_get::<Option<String>, _>("release_types")?
-                .as_deref(),
-        ),
+        release_types,
         record_labels: split_tag_values(
             row.try_get::<Option<String>, _>("record_labels")?
                 .as_deref(),
@@ -2145,4 +2219,68 @@ fn validate_username(username: &str) -> Result<(), ServiceError> {
 
 fn parse_uuid(value: String) -> Result<Uuid, sqlx::Error> {
     Uuid::from_str(&value).map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}
+
+#[cfg(test)]
+mod release_group_tests {
+    use super::ReleaseGroup;
+
+    fn classify(types: &[&str], is_compilation: bool) -> ReleaseGroup {
+        let types = types
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect::<Vec<_>>();
+        ReleaseGroup::classify(&types, is_compilation)
+    }
+
+    /// One case per row of the table in RFC-022 decision 2, in its order.
+    #[test]
+    fn each_rule_of_the_table_files_its_own_group() {
+        assert_eq!(classify(&["album"], true), ReleaseGroup::Compilation);
+        assert_eq!(
+            classify(&["album", "compilation"], false),
+            ReleaseGroup::Compilation
+        );
+        assert_eq!(classify(&["album", "live"], false), ReleaseGroup::Live);
+        assert_eq!(classify(&["ep"], false), ReleaseGroup::Ep);
+        assert_eq!(classify(&["single"], false), ReleaseGroup::Single);
+        assert_eq!(classify(&["album"], false), ReleaseGroup::Album);
+    }
+
+    /// The first rule that matches wins: secondary types before primary ones.
+    #[test]
+    fn a_secondary_type_wins_over_the_primary_one() {
+        assert_eq!(classify(&["ep", "live"], false), ReleaseGroup::Live);
+        assert_eq!(
+            classify(&["single", "compilation"], false),
+            ReleaseGroup::Compilation
+        );
+        assert_eq!(classify(&["ep", "live"], true), ReleaseGroup::Compilation);
+    }
+
+    /// What the scanner stores joined with `;`, Picard's ID3v2.3 joins with
+    /// `/`, and some taggers capitalise. All of them read the same.
+    #[test]
+    fn separators_and_case_do_not_change_the_answer() {
+        assert_eq!(classify(&["Album/Live"], false), ReleaseGroup::Live);
+        assert_eq!(classify(&["album; live"], false), ReleaseGroup::Live);
+        assert_eq!(classify(&["EP, Remix"], false), ReleaseGroup::Ep);
+        assert_eq!(classify(&[" Single "], false), ReleaseGroup::Single);
+        // A type is matched whole, never as a substring of a longer one.
+        assert_eq!(classify(&["lives"], false), ReleaseGroup::Album);
+        assert_eq!(classify(&["epic"], false), ReleaseGroup::Album);
+    }
+
+    /// Most libraries carry no release type at all, and keep the one section
+    /// they had; types with no section of their own fall to `album`.
+    #[test]
+    fn unknown_or_missing_types_are_albums() {
+        assert_eq!(classify(&[], false), ReleaseGroup::Album);
+        assert_eq!(classify(&["broadcast"], false), ReleaseGroup::Album);
+        assert_eq!(
+            classify(&["album", "soundtrack"], false),
+            ReleaseGroup::Album
+        );
+        assert_eq!(classify(&["other"], false), ReleaseGroup::Album);
+    }
 }

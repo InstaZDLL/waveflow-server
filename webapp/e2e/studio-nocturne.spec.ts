@@ -208,6 +208,12 @@ const song = (
   sample_rate: 44_100,
   channels: 2,
   bit_depth: 16,
+  // ReplayGain as tagged, different per track so a test can tell which one
+  // the player levelled. The album's pair is shared, as on a real record.
+  replay_gain_track_gain: -6 - index,
+  replay_gain_track_peak: 0.9,
+  replay_gain_album_gain: -8,
+  replay_gain_album_peak: 0.95,
 });
 
 const albumDetail = {
@@ -242,6 +248,11 @@ let artistPlayed: Array<ReturnType<typeof song>> = [];
 let topSongAsks: Array<string | null> = [];
 /** How many times the artist page was asked for. */
 let artistAsks = 0;
+/**
+ * Fields laid over the artist's answer: the RFC-022 sections and appearances.
+ * Empty by default, which is what a server from before RFC-022 sends.
+ */
+let artistExtra: Record<string, unknown> = {};
 /**
  * The `enrichment` object of the artist's nth answer, counting from one.
  * Undefined leaves it out, as a server from before RFC-011 does.
@@ -1087,7 +1098,11 @@ async function mockAuthenticatedApi(page: Page) {
         return;
       }
       await route.fulfill({
-        json: { ...artistDetail, enrichment: enrichmentOf(artistAsks) },
+        json: {
+          ...artistDetail,
+          ...artistExtra,
+          enrichment: enrichmentOf(artistAsks),
+        },
       });
       return;
     }
@@ -1118,6 +1133,7 @@ test.beforeEach(async ({ page }) => {
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
   artistAsks = 0;
+  artistExtra = {};
   enrichmentOf = () => undefined;
   artistFailsAfterFirst = false;
   // **Reset here, and they were not.** These four reached the mock without
@@ -6647,3 +6663,353 @@ test("asks for the header again on every visit", async ({
   await sidebar.getByRole("link", { name: "Quality" }).click();
   await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
 });
+
+/**
+ * RFC-022 decisions 2 and 3 on the screen: the albums in the sections the
+ * server filed them under, in the page's order whatever order they came in,
+ * empty sections left out, and the appearances last.
+ */
+test("an artist page files its records by type, and lists what it appears on", async ({
+  page,
+}) => {
+  artistExtra = {
+    albums: [
+      { ...albums[1], id: "album-3", title: "Vespertine Live", release_group: "live" },
+      { ...albums[0], release_group: "album" },
+      { ...albums[1], release_group: "album" },
+    ],
+    appears_on: [
+      {
+        ...albums[0],
+        id: "album-9",
+        title: "Guest Spot",
+        artist: "Someone Else",
+        artist_id: "artist-9",
+        release_group: "album",
+      },
+    ],
+  };
+  await page.goto("/artists/artist-1");
+  await expect(
+    page.getByRole("heading", { name: "Björk", level: 2 }),
+  ).toBeVisible();
+  await expect(page.locator(".artist-discography h3")).toHaveText([
+    "Albums",
+    "Live",
+    "Appears on",
+  ]);
+  const appearances = page.getByRole("region", { name: "Appears on" });
+  await expect(appearances.getByText("Guest Spot", { exact: true })).toBeVisible();
+  await expect(appearances.getByText("Someone Else")).toBeVisible();
+  // Filed under its own section, and nowhere else.
+  await expect(
+    page.getByRole("region", { name: "Live" }).getByText("Vespertine Live"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Albums" }).getByText("Vespertine Live"),
+  ).toHaveCount(0);
+  await expectNoWcagViolations(page);
+});
+
+/**
+ * An older server sends no groups and no appearances: one section, the one
+ * the page always had.
+ */
+test("an artist page from a server without release groups keeps one section", async ({
+  page,
+}) => {
+  await page.goto("/artists/artist-1");
+  await expect(page.locator(".artist-discography h3")).toHaveText(["Albums"]);
+  await expect(
+    page.getByRole("region", { name: "Albums" }).getByText("Vespertine", { exact: true }),
+  ).toBeVisible();
+});
+
+/**
+ * RFC-022 decision 1: ReplayGain is off until asked for, and asking for it is
+ * what builds the Web Audio graph — on the next play, never on page load.
+ *
+ * The browser's own `AudioContext` and `AudioParam` are wrapped to count
+ * contexts and record the gains set, because the level a track is played at
+ * cannot be heard by a test. What can be read is that no context exists while
+ * the setting is off, that exactly one exists once a play follows turning it
+ * on, and that the gain set is the one the tags and the preamp call for.
+ */
+test("levels a track by its ReplayGain only once asked to, and remembers how", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const record = window as unknown as {
+      __contexts: number;
+      __gains: number[];
+    };
+    record.__contexts = 0;
+    record.__gains = [];
+    const setValueAtTime = AudioParam.prototype.setValueAtTime;
+    AudioParam.prototype.setValueAtTime = function (value, time) {
+      record.__gains.push(value);
+      return setValueAtTime.call(this, value, time);
+    };
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        record.__contexts += 1;
+      }
+    };
+  });
+  const contexts = () =>
+    page.evaluate(() => (window as unknown as { __contexts: number }).__contexts);
+  const gains = () =>
+    page.evaluate(() => (window as unknown as { __gains: number[] }).__gains);
+
+  // Off by default: playing builds nothing.
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  expect(await contexts()).toBe(0);
+
+  await page.goto("/settings");
+  const playback = page.locator(".settings-panel", {
+    has: page.getByRole("heading", { name: "Playback" }),
+  });
+  // The preamp changes nothing while ReplayGain is off, so it is not offered.
+  await expect(playback.getByRole("slider", { name: "Preamp" })).toHaveCount(0);
+  await playback.getByLabel("ReplayGain").selectOption("album");
+  const preamp = playback.getByRole("slider", { name: "Preamp" });
+  await expect(preamp).toBeVisible();
+  await preamp.fill("3");
+  await expect(playback.locator("output")).toHaveText("+3 dB");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("waveflow.replayGain")))
+    .toBe(JSON.stringify({ mode: "album", preampDb: 3 }));
+  await expectNoWcagViolations(page);
+  // Choosing it is not playing: still no graph.
+  expect(await contexts()).toBe(0);
+
+  // Remembered across a reload, and applied on the next play: the album gain
+  // of −8 dB plus the 3 dB preamp, well under what the 0.95 peak allows.
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expect.poll(contexts).toBe(1);
+  await expect
+    .poll(async () => (await gains()).at(-1))
+    .toBeCloseTo(10 ** (-5 / 20), 4);
+
+  // Track mode levels by the track's own gain: −7 dB for the first track.
+  await page.goto("/settings");
+  await page.getByLabel("ReplayGain").selectOption("track");
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect
+    .poll(async () => (await gains()).at(-1))
+    .toBeCloseTo(10 ** (-4 / 20), 4);
+});
+
+/**
+ * RFC-022 decision 4: the client declares a manifest a phone can install from,
+ * and every icon it names is served as an image.
+ */
+test("declares an install manifest whose icons are all served", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
+  await page.goto("/");
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+    "href",
+    "/manifest.webmanifest",
+  );
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+    "href",
+    "/apple-touch-icon.png",
+  );
+  const response = await page.request.get("/manifest.webmanifest");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain(
+    "application/manifest+json",
+  );
+  const manifest = (await response.json()) as {
+    start_url: string;
+    display: string;
+    icons: Array<{ src: string; sizes: string; purpose: string }>;
+  };
+  expect(manifest.start_url).toBe("/");
+  expect(manifest.display).toBe("standalone");
+  expect(manifest.icons.map((icon) => icon.sizes)).toEqual(
+    expect.arrayContaining(["192x192", "512x512"]),
+  );
+  expect(manifest.icons.some((icon) => icon.purpose === "maskable")).toBe(true);
+  for (const src of [
+    ...manifest.icons.map((icon) => icon.src),
+    "/apple-touch-icon.png",
+  ]) {
+    const icon = await page.request.get(src);
+    expect(icon.status(), src).toBe(200);
+    expect(icon.headers()["content-type"], src).toContain("image/png");
+  }
+});
+
+/**
+ * The two RFC-022 screens in the light appearance, whose contrast the dark
+ * default's sweep says nothing about: the playback settings with the preamp
+ * showing, and an artist page with every kind of section.
+ */
+test("keeps the playback settings and the discography readable in light", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("waveflow.theme", "default");
+    localStorage.setItem(
+      "waveflow.replayGain",
+      JSON.stringify({ mode: "track", preampDb: -2 }),
+    );
+  });
+  await page.goto("/settings");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await expect(page.getByRole("slider", { name: "Preamp" })).toHaveValue("-2");
+  await expect(page.locator(".replay-gain-preamp output")).toHaveText("−2 dB");
+  await expectNoWcagViolations(page);
+
+  artistExtra = {
+    albums: [
+      { ...albums[0], release_group: "album" },
+      { ...albums[1], id: "album-4", title: "Single Cut", release_group: "single" },
+      { ...albums[1], id: "album-5", title: "Best Of", release_group: "compilation" },
+    ],
+    appears_on: [{ ...albums[0], id: "album-9", title: "Guest Spot", artist: "Someone Else" }],
+  };
+  await page.goto("/artists/artist-1");
+  await expect(page.locator(".artist-discography h3")).toHaveText([
+    "Albums",
+    "Singles",
+    "Compilations",
+    "Appears on",
+  ]);
+  await expectNoWcagViolations(page);
+});
+
+/**
+ * A context the browser will not let run never claims the element.
+ *
+ * Once `createMediaElementSource` has the element, its sound reaches the
+ * speakers only through the context, so a context left suspended would play
+ * the music as silence while the player said it was playing. Here the
+ * browser's context is replaced by one that stays suspended and whose resume
+ * never settles — what a browser does when it does not count the gesture —
+ * and the element must stay unclaimed, playing as it always did.
+ */
+test("leaves the element alone when the audio context will not run", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "waveflow.replayGain",
+      JSON.stringify({ mode: "album", preampDb: 0 }),
+    );
+    const record = window as unknown as { __contexts: number; __claims: number };
+    record.__contexts = 0;
+    record.__claims = 0;
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        record.__contexts += 1;
+      }
+      override get state(): AudioContextState {
+        return "suspended";
+      }
+      override resume(): Promise<void> {
+        return new Promise(() => undefined);
+      }
+      override createMediaElementSource(element: HTMLMediaElement) {
+        record.__claims += 1;
+        return super.createMediaElementSource(element);
+      }
+    };
+  });
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __contexts: number }).__contexts),
+    )
+    .toBe(1);
+  // A second gesture asks the same candidate again rather than making another.
+  await page.locator(".album-songs .song-title").nth(1).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
+  const seen = await page.evaluate(() => {
+    const record = window as unknown as { __contexts: number; __claims: number };
+    return { contexts: record.__contexts, claims: record.__claims };
+  });
+  expect(seen).toEqual({ contexts: 1, claims: 0 });
+});
+
+/**
+ * Signing out closes every AudioContext the player opened.
+ *
+ * Signing out unmounts the player, and an open context holds the audio device
+ * until it is closed; a browser caps how many one page may have, so each
+ * sign-in would otherwise leave one more behind. Both kinds are covered: the
+ * graph a play built, and a candidate still waiting to run — the one a
+ * browser that does not count the gesture leaves pending for ever.
+ */
+for (const kind of ["running", "pending"] as const) {
+  test(`closes the ${kind} audio context when the listener signs out`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+    await page.addInitScript((pending) => {
+      localStorage.setItem(
+        "waveflow.replayGain",
+        JSON.stringify({ mode: "album", preampDb: 0 }),
+      );
+      const contexts: AudioContext[] = [];
+      (window as unknown as { __contexts: AudioContext[] }).__contexts =
+        contexts;
+      const Original = window.AudioContext;
+      window.AudioContext = pending
+        ? class extends Original {
+            constructor(options?: AudioContextOptions) {
+              super(options);
+              contexts.push(this);
+            }
+            // Stays suspended until closed, and never resumes.
+            override get state(): AudioContextState {
+              return super.state === "closed" ? "closed" : "suspended";
+            }
+            override resume(): Promise<void> {
+              return new Promise(() => undefined);
+            }
+          }
+        : class extends Original {
+            constructor(options?: AudioContextOptions) {
+              super(options);
+              contexts.push(this);
+            }
+          };
+    }, kind === "pending");
+    const states = () =>
+      page.evaluate(() =>
+        (window as unknown as { __contexts: AudioContext[] }).__contexts.map(
+          (context) => context.state,
+        ),
+      );
+
+    await page.goto("/albums/album-2");
+    await page.getByRole("button", { name: "Play album" }).click();
+    await expect(page.locator(".player-track strong")).toHaveText(
+      "Hidden Place",
+    );
+    await expect
+      .poll(states)
+      .toEqual([kind === "running" ? "running" : "suspended"]);
+
+    // Dispatched rather than clicked, as in the cache test: the sidebar's
+    // footer sits under the fixed player bar at this viewport.
+    await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+    await expect(page).toHaveURL(/\/login$/);
+    await expect.poll(states).toEqual(["closed"]);
+  });
+}

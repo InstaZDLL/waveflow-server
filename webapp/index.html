@@ -15,6 +15,13 @@
          HTML as an image, and it asked again — sixty-six times in fifty-one
          seconds, measured on a real session. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Installable on a phone (RFC-022 decision 4). The manifest names the
+         icons Android and desktop browsers use; iOS reads its home-screen icon
+         from this tag instead. No service worker: nothing here may be cached
+         past the session, and installing no longer needs one. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="WaveFlow" />
     <title>WaveFlow</title>
     <!-- Inline, and only what the first screen needs. The stylesheet is a
          separate request of about 30 kB, and a splash that waited for it would

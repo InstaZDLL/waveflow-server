@@ -897,7 +897,7 @@ async fn internet_radio_stations_are_kept_per_account_and_handed_out_never_fetch
     assert_eq!(state.services.radio_stations(owner).await.unwrap().len(), 1);
 }
 
-/// An account with a Subsonic API key drawn at run time, so no credential is
+// An account with a Subsonic API key drawn at run time, so no credential is
 /// ever written into the source.
 async fn subsonic_account(state: &waveflow_server::AppState, username: &str) -> (Uuid, String) {
     let hash = security::hash_password(&Uuid::new_v4().to_string()).unwrap();
@@ -1182,4 +1182,314 @@ async fn subsonic_lists_public_playlists_of_other_accounts_under_their_owner() {
     .await;
     let withdrawn = subsonic_json(&router, "getPlaylist", &viewer_key, &format!("&id={id}")).await;
     assert_eq!(withdrawn["subsonic-response"]["error"]["code"], 70);
+}
+
+// A playlist as long as the domain allows fits in one form POST, and the body
+/// is still bounded (RFC-022 decision 7).
+///
+/// `formPost` exists for requests too long for a URL, and the longest one a
+/// client sends is a playlist edit naming every track. The old fixed 64 KiB
+/// refused `updatePlaylist` short of 1,338 identifiers — `songIdToAdd=<uuid>&` is
+/// forty-nine bytes — against a ceiling of ten thousand. The edit here names
+/// exactly that ceiling, so it fails under the old bound and passes under the
+/// new one; the second half sends one byte more than the bound and must still
+/// be refused, so the bound cannot have quietly gone away.
+#[tokio::test]
+async fn a_playlist_as_long_as_the_domain_allows_fits_in_one_form_post() {
+    let (_temp, config, state) = test_app().await;
+    // Inserted rather than created, every credential drawn at run time: see
+    // the radio test above for why.
+    let owner = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, 'form-owner', 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4());
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let root = config.data_dir.join("form-library");
+    std::fs::create_dir_all(&root).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "form-library",
+            &std::fs::canonicalize(&root).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
+    let input = browse_input(0, "Repeat", "Form Album", "Form Artist", Some(1), Some(1));
+    state
+        .db
+        .apply_catalog_track(library, scan, &input, None, false)
+        .await
+        .unwrap();
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let song = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    // A playlist holds a track once (`playlist_track` is keyed on the pair), so
+    // reaching the ceiling takes that many distinct tracks. Ten thousand
+    // through the catalogue writer would take minutes; copying the one row in
+    // SQL gives the same projection, since everything a playlist reads of a
+    // track is on that row. Each copy gets its own id and path, the two
+    // columns the table holds unique.
+    let ceiling = waveflow_server::services::MAX_PLAYLIST_TRACKS;
+    // One connection throughout: a temporary table belongs to the connection
+    // that made it.
+    let mut connection = state.db.pool().acquire().await.unwrap();
+    sqlx::query(
+        "CREATE TEMP TABLE copies AS \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
+         SELECT t.*, n.i AS copy_number FROM track t, n WHERE t.id = ?",
+    )
+    .bind(ceiling as i64 - 1)
+    .bind(song.to_string())
+    .execute(&mut *connection)
+    .await
+    .unwrap();
+    for statement in [
+        "UPDATE copies SET id = printf('%08x-0000-4000-8000-%012x', copy_number, copy_number), \
+         relative_path = 'copy-' || copy_number || '.flac'",
+        "ALTER TABLE copies DROP COLUMN copy_number",
+        "INSERT INTO track SELECT * FROM copies",
+        "DROP TABLE copies",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .unwrap();
+    }
+    drop(connection);
+    let tracks = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs
+        .into_iter()
+        .map(|song| song.id.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(tracks.len(), ceiling);
+    let router = waveflow_server::app(&config, state.clone());
+    let created = subsonic_json(&router, "createPlaylist", &api_key, "&name=Long").await;
+    let playlist = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let post = |body: String| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    // `f` in the query string as well: a body refused for its
+                    // size is never read, so it cannot carry the format.
+                    Request::post("/rest/updatePlaylist.view?f=json")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
+        }
+    };
+
+    let mut body = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json&playlistId={playlist}");
+    for track in &tracks {
+        body.push_str("&songIdToAdd=");
+        body.push_str(track);
+    }
+    assert!(
+        body.len() > 64 * 1024,
+        "the request must be one the old bound refused"
+    );
+    let filled = post(body).await;
+    assert_eq!(
+        filled["subsonic-response"]["status"], "ok",
+        "{}",
+        filled["subsonic-response"]["error"]
+    );
+    let listed = subsonic_json(&router, "getPlaylists", &api_key, "").await;
+    assert_eq!(
+        listed["subsonic-response"]["playlists"]["playlist"][0]["songCount"],
+        ceiling
+    );
+
+    // One byte past the bound is refused before anything reads it, and the
+    // refusal is the façade's own, in the body of an HTTP 200.
+    let limit = waveflow_server::subsonic::MAX_FORM_BYTES;
+    let mut over = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json&padding=");
+    over.push_str(&"a".repeat(limit + 1 - over.len()));
+    assert_eq!(over.len(), limit + 1);
+    let refused = post(over).await;
+    assert_eq!(refused["subsonic-response"]["error"]["code"], 10);
+    assert_eq!(
+        refused["subsonic-response"]["error"]["message"],
+        "Invalid form body"
+    );
+    // A body exactly at the bound is read: whatever refuses it, if anything,
+    // is not its size.
+    let mut exact = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json&padding=");
+    exact.push_str(&"a".repeat(limit - exact.len()));
+    assert_eq!(exact.len(), limit);
+    let read = post(exact).await;
+    assert_ne!(
+        read["subsonic-response"]["error"]["message"],
+        "Invalid form body"
+    );
+}
+
+/// A format the façade cannot produce plays something rather than nothing
+/// (RFC-022 decision 6), and `aac` is one it can (decision 5).
+///
+/// The unknown format is read as no format at all: the original while the cap
+/// admits it, MP3 at the cap when it does not — exactly the answers a request
+/// naming no format already gets, so the fallback adds no path of its own. Each
+/// answer is identified by its `Content-Type` and its first bytes, because a
+/// refusal is an HTTP 200 too and would pass a status check.
+#[tokio::test]
+async fn a_format_the_facade_cannot_produce_falls_back_and_aac_is_produced() {
+    let (_temp, config, state) = test_app().await;
+    let owner = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
+         VALUES (?, 'format-owner', 'this-account-never-authenticates', 'admin', 0, ?, ?)",
+    )
+    .bind(owner.to_string())
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4());
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("format-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav_of_len(&music.join("Format.wav"), 8_000);
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Formats",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        waveflow_server::catalog::LibraryRecord {
+            id: library,
+            name: "Formats".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let song = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    let router = waveflow_server::app(&config, state.clone());
+    let stream = |extra: &'static str| {
+        let router = router.clone();
+        let uri = format!("/rest/stream.view?apiKey={api_key}&id={song}&v=1.16.1&c=golden{extra}");
+        async move {
+            let response = router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{extra}");
+            let kind = response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let bytes = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            (kind, bytes)
+        }
+    };
+
+    // Asked for FLAC over a WAV: the original, which is what the client is
+    // after, where it used to be error 10.
+    for extra in ["&format=flac", "&format=wav", "&format=nonsense"] {
+        let (kind, bytes) = stream(extra).await;
+        assert_eq!(kind, "audio/wav", "{extra}");
+        assert!(bytes.starts_with(b"RIFF"), "{extra}");
+    }
+    // Under a cap the source exceeds, the same fallback a request naming no
+    // format takes: MP3 at the cap.
+    let (kind, bytes) = stream("&format=flac&maxBitRate=32").await;
+    assert_eq!(kind, "audio/mpeg");
+    assert!(bytes.len() > 32);
+    // AAC is produced, under each name a client spells it with.
+    for extra in ["&format=aac", "&format=m4a", "&format=AAC"] {
+        let (kind, bytes) = stream(extra).await;
+        assert_eq!(kind, "audio/aac", "{extra}");
+        assert!(bytes[0] == 0xFF && bytes[1] & 0xF0 == 0xF0, "{extra}");
+    }
+    // And the formats it always knew are untouched.
+    let (kind, _) = stream("&format=mp3").await;
+    assert_eq!(kind, "audio/mpeg");
+    let (kind, bytes) = stream("&format=raw").await;
+    assert_eq!(kind, "audio/wav");
+    assert!(bytes.starts_with(b"RIFF"));
 }

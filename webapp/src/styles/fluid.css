@@ -276,6 +276,7 @@
   .page-heading h2,
   .album-related h3,
   .artist-played h3,
+  .artist-discography h3,
   .artist-similar h3
 )::after {
   display: block;
