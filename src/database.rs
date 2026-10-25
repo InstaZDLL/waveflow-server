@@ -2067,16 +2067,6 @@ impl Database {
         tx.commit().await
     }
 
-    /// Records what a provider answered: its row, its whole neighbour list,
-    /// and its portrait — the artwork row and every artist it belongs to —
-    /// in one transaction.
-    ///
-    /// One transaction is what keeps the sweeper from ever seeing the artwork
-    /// row unreferenced: it deletes under this same gate, so it runs wholly
-    /// before or wholly after. The writer gate is taken here and nowhere
-    /// earlier — the requests that produced `answer` are over, and the
-    /// portrait's file is already in the store, so no network or file I/O
-    /// ever runs under it.
     /// What one lyrics provider said for one lookup key (RFC-024 decision
     /// 4), if it said anything.
     pub async fn lyrics_lookup_row(
@@ -2139,6 +2129,16 @@ impl Database {
         tx.commit().await
     }
 
+    /// Records what a provider answered: its row, its whole neighbour list,
+    /// and its portrait — the artwork row and every artist it belongs to —
+    /// in one transaction.
+    ///
+    /// One transaction is what keeps the sweeper from ever seeing the artwork
+    /// row unreferenced: it deletes under this same gate, so it runs wholly
+    /// before or wholly after. The writer gate is taken here and nowhere
+    /// earlier — the requests that produced `answer` are over, and the
+    /// portrait's file is already in the store, so no network or file I/O
+    /// ever runs under it.
     pub(crate) async fn write_metadata_artist(
         &self,
         provider: crate::enrichment::Provider,
