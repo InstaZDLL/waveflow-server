@@ -3,19 +3,24 @@
 Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
 the code is the authority if the two ever disagree: `src/outbound.rs`,
-`src/enrichment.rs`, `src/portrait.rs` and `src/scrobblers/`.
+`src/enrichment.rs`, `src/portrait.rs`, `src/podcast.rs` and
+`src/scrobblers/`.
 
 **A server left at its defaults sends nothing.** Booting makes no request, and
 no background task does unless an operator configured it *and*, for
-scrobbling, an account linked a destination. The clients are built at boot;
+scrobbling, an account linked a destination — or, for podcasts, an
+administrator subscribed to a feed. The clients are built at boot;
 building one sends nothing.
 
 ## Rules every request follows
 
 All outbound clients are built by one function, `src/outbound.rs`:
 
-- **No redirect is followed.** A provider cannot bounce a request to another
-  host.
+- **No redirect is followed by the client.** A provider cannot bounce a
+  request to another host. The one exception is the podcast fetcher, below:
+  it follows at most five redirects by hand, and puts every hop through the
+  same scheme and public-address checks as the first address before
+  contacting it.
 - **`HTTP_PROXY` and the other proxy variables are ignored.**
 - **The User-Agent is `WaveFlowServer/<version>`**, for example
   `WaveFlowServer/2.0.0-beta.1`. Nothing else in it identifies the instance.
@@ -27,7 +32,9 @@ All outbound clients are built by one function, `src/outbound.rs`:
   unread; one that keeps coming is cut off at the line. Either is logged as a
   verdict, never with its URL or its body.
 
-The server never turns a request it receives into a request of its own. Radio
+The server never turns a request it receives into a request of its own, with
+one exception an operator switches on: an administrator subscribing to a
+podcast, or asking for an episode, below. Radio
 station URLs are stored and handed to clients, never fetched; remote entries in
 an imported playlist are dropped; FFmpeg and ffprobe are only ever given local
 files inside a library or the data directory, and are told so: every input is
@@ -131,6 +138,50 @@ application, with a callback to `WAVEFLOW_PUBLIC_URL`; the server then calls
 (`scrobble authorize`, `scrobble exchange`) calls `auth.getToken` and then
 `auth.getSession`. Each of these calls is bounded by
 `WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS` like a listen.
+
+## Podcasts: the feeds an administrator subscribes to
+
+**Off by default.** On only with `WAVEFLOW_PODCASTS=on`
+([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)). Off, no feed is
+fetched and no episode is downloaded, whatever is stored.
+
+**Which hosts.** The ones an administrator names: the feed address they
+subscribe to, the enclosure addresses that feed lists, and every redirect
+either answers with, up to five. Not a fixed list — which is why every address
+is checked before it is contacted:
+
+- http or https (http only while `WAVEFLOW_PODCAST_ALLOW_HTTP` is on, the
+  default), no user name or password in the address;
+- the name is resolved first, and every address must be public, by the same
+  rules as the portrait fetcher above; the connection is pinned to the address
+  that was checked, and a redirect is checked the same way before it is
+  followed;
+- a feed is at most `WAVEFLOW_PODCAST_MAX_FEED_BYTES` (16 MiB) within
+  `WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS` (20); an episode at most
+  `WAVEFLOW_PODCAST_MAX_EPISODE_BYTES` (1 GiB) within
+  `WAVEFLOW_PODCAST_DOWNLOAD_TIMEOUT_SECS` (1800), and every stored episode
+  together at most `WAVEFLOW_PODCAST_QUOTA_BYTES` (20 GiB).
+
+**When.** When an administrator subscribes (the feed is read once before it is
+stored), when one asks for a refresh, every
+`WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS` (six hours; `0` for never) — the first
+one interval after boot, not at boot — and when one asks for an episode.
+**Never while somebody listens**: an episode is downloaded once and played from
+the server's disk, so the podcast host sees the server, once, and no listener.
+
+**What.** A plain `GET` with the server's User-Agent and nothing about who
+asked. The channel's cover address is stored and handed to clients, and never
+fetched by the server; a client that shows it fetches it from the feed's host
+itself.
+
+**Kept.** The channel's title, description, links and cover address; each
+episode's title, description, dates, duration and enclosure address; the
+downloaded files, under `podcasts/` in the data directory, named by the
+episode's id. The feed address is shown to administrators only — a private
+feed carries its subscriber's token in its path or its query — and every other
+account is shown at most its scheme and host. Enclosure addresses are shown to
+nobody. No feed or enclosure address, and no part of a response, is written to
+the log.
 
 ## What the browser contacts
 

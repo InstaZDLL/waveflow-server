@@ -13,11 +13,14 @@ pub(super) async fn bookmarks(
         .bookmarks(principal.id)
         .await
         .map_err(internal)?;
-    Ok(Node::new("bookmarks").children(
-        bookmarks
-            .iter()
-            .map(|bookmark| bookmark_node(bookmark, &principal.username)),
-    ))
+    Ok(Node::new("bookmarks")
+        .children(
+            bookmarks
+                .iter()
+                .map(|bookmark| bookmark_node(bookmark, &principal.username)),
+        )
+        // Positions in podcast episodes, after the tracks (RFC-025).
+        .children(episode_bookmark_nodes(state, principal).await?))
 }
 
 pub(super) async fn create_bookmark(
