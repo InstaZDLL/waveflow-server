@@ -24,6 +24,7 @@ import {
   downloadPlaylist,
   PlaylistImportPanel,
 } from "../components/playlist-import";
+import { SmartPlaylistsSection } from "../components/smart-playlists";
 import { SongTable } from "../components/song-table";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
@@ -290,6 +291,8 @@ export function PlaylistsPage() {
           {others.map((playlist) => card(playlist, false))}
         </section>
       ) : null}
+      {/* Rules rather than a track list, beside the ordinary ones (RFC-025). */}
+      <SmartPlaylistsSection />
     </section>
   );
 }

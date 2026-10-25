@@ -35,12 +35,14 @@ mod oauth;
 mod playback;
 mod playlist_moves;
 mod playlists;
+mod podcasts;
 mod probes;
 mod quality;
 mod radio;
 mod scrobbling;
 mod setup;
 mod shares;
+mod smart_playlists;
 mod subsonic_credential;
 mod sync;
 mod tokens;
@@ -62,12 +64,14 @@ pub use oauth::*;
 pub use playback::*;
 pub use playlist_moves::*;
 pub use playlists::*;
+pub use podcasts::*;
 pub use probes::*;
 pub use quality::*;
 pub use radio::*;
 pub use scrobbling::*;
 pub use setup::*;
 pub use shares::*;
+pub use smart_playlists::*;
 pub use subsonic_credential::*;
 pub use sync::*;
 pub use tokens::*;
@@ -403,6 +407,43 @@ pub fn router(state: AppState) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(
                     crate::services::queue_body_limit(),
                 )),
+        )
+        // Smart playlists and podcasts (RFC-025), beside the playlists rather
+        // than inside them: their own tables, their own tags.
+        .route(
+            "/api/v2/smart-playlists",
+            get(list_smart_playlists).post(create_smart_playlist),
+        )
+        .route(
+            "/api/v2/smart-playlists/preview",
+            post(preview_smart_playlist),
+        )
+        .route(
+            "/api/v2/smart-playlists/{playlist_id}",
+            get(get_smart_playlist)
+                .patch(update_smart_playlist)
+                .delete(delete_smart_playlist),
+        )
+        .route(
+            "/api/v2/podcasts",
+            get(podcast_overview).post(create_podcast_channel),
+        )
+        .route("/api/v2/podcasts/refresh", post(refresh_podcasts))
+        .route(
+            "/api/v2/podcasts/{channel_id}",
+            get(get_podcast_channel).delete(delete_podcast_channel),
+        )
+        .route(
+            "/api/v2/podcast-episodes/newest",
+            get(newest_podcast_episodes),
+        )
+        .route(
+            "/api/v2/podcast-episodes/{episode_id}",
+            get(get_podcast_episode).delete(delete_podcast_episode),
+        )
+        .route(
+            "/api/v2/podcast-episodes/{episode_id}/download",
+            post(download_podcast_episode),
         )
         .route("/api/v2/shares", get(list_shares).post(create_share))
         .route(

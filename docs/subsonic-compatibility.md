@@ -263,7 +263,11 @@ no client has been replayed against them yet.
   it answers error 70 — the not-found every refusal here gives, so the
   parameter cannot be used to learn which accounts exist. Naming oneself is the
   ordinary listing. Writes stay the owner's. A request without the parameter
-  is answered exactly as before.
+  is answered exactly as before. That account's smart playlists (RFC-025)
+  follow its ordinary ones only when they are public, as any reader sees them:
+  a private rule set is its owner's, and `getPlaylist` answers it error 70 to
+  anyone else, administrators included; a public one is evaluated by its
+  owner's rules and read through the administrator's libraries.
 - **`stream` takes `replayGain=off|track|album`**, a parameter of this
   server's that every other server ignores, and the operator may set a default
   with `WAVEFLOW_SUBSONIC_REPLAYGAIN` (`off` unless set). It levels a
@@ -278,6 +282,60 @@ Reordering a playlist needs no new method: a client sends the whole list again
 through `createPlaylist?playlistId=`, which replaces the track list in the
 order given, as it always has. A move that keeps hidden entries in place is the
 native API's (`POST /api/v2/playlists/{id}/move`).
+
+## Additions for RFC-025: smart playlists and podcasts
+
+Both land after the 2026-09-16 replay, and no client has been replayed against
+them yet. Nothing that existed changes shape, with the one exception named.
+
+**Smart playlists** ([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)
+decision 6). `getPlaylists` lists them after the ordinary playlists, and
+`getPlaylist` answers one with its entries, evaluated at that moment. Each
+carries the OpenSubsonic `readonly="true"`. **`getPlaylists` evaluates none of
+them** (decision 4): their `songCount` and `duration` are what the caller's
+last `getPlaylist` of that playlist found, over what the caller can play, with
+`validUntil` saying when; a smart playlist the caller has not opened since the
+server started, or whose rules changed since, answers `songCount="0"`,
+`duration="0"` and no `validUntil`. `getPlaylist` always evaluates, under a
+budget, and answers error 0 when it is passed. `updatePlaylist`,
+`deletePlaylist` and `createPlaylist` with a `playlistId` naming one answer
+error 70, as for a missing playlist. **Ordinary playlists carry no `readonly`
+attribute, as before**, so no existing answer changes. To check in the next
+campaign: that Feishin and Symfonium offer no edit on a playlist marked
+`readonly`, and that a client caching playlists by id refetches one whose
+`validUntil` has passed.
+
+**Podcasts** (decisions 7 to 13). `getPodcasts`, `getNewestPodcasts`,
+`getPodcastEpisode`, `refreshPodcasts`, `createPodcastChannel`,
+`deletePodcastChannel`, `deletePodcastEpisode` and `downloadPodcastEpisode`
+answered "not implemented" (error 0) and are now served, in the schema's
+`PodcastChannel` and `PodcastEpisode` shapes, with the five writes answering
+the bare envelope. `podcasts.channel`, `channel.episode` and
+`newestPodcasts.episode` are arrays in JSON at any length. A stored episode
+carries `streamId`, its own id, and `stream` and `download` take it.
+`createBookmark` and `deleteBookmark` take an episode id, and `getBookmarks`
+lists episode bookmarks after the track ones, their `entry` the episode
+(`type="podcast"`).
+
+- **The one changed value: `podcastRole`.** It was `false` for every account,
+  which was true. It is now `true` for an enabled administrator of a server
+  with `WAVEFLOW_PODCASTS` on, and `false` otherwise — the default server still
+  answers `false` for everyone.
+- **One list per instance**, as in the reference server; an account without
+  `podcastRole` reads and plays, and its writes answer error 50.
+- **`channel.url` is the feed address to an account holding `podcastRole`,
+  and only its scheme and host to anyone else** — `https://feeds.example.org/`.
+  The schema requires the attribute, and a private feed carries its
+  subscriber's token in its path as often as in its query. Episodes carry no
+  enclosure address at all: they are played from the server.
+- **No cover art**: a channel carries `originalImageUrl`, the feed's own
+  address, and no `coverArt` — the server does not fetch it.
+- **A feed that cannot be read** answers `createPodcastChannel` with error 0
+  and a generic message; nothing is stored.
+
+To check in the next campaign: that DSub and Symfonium list channels and play a
+downloaded episode through `streamId`, and that a client which never sees
+`podcastRole="true"` keeps hiding its podcast screens.
 
 ## The replay this alignment required
 

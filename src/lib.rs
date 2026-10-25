@@ -17,6 +17,7 @@ pub mod oauth;
 pub mod outbound;
 pub mod pid;
 pub mod playlist_file;
+pub mod podcast;
 pub mod portrait;
 pub mod public_share;
 pub mod quality;
@@ -212,6 +213,21 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::move_playlist_entry,
         api::remove_playlist_entry,
         api::delete_playlist,
+        api::list_smart_playlists,
+        api::create_smart_playlist,
+        api::preview_smart_playlist,
+        api::get_smart_playlist,
+        api::update_smart_playlist,
+        api::delete_smart_playlist,
+        api::podcast_overview,
+        api::create_podcast_channel,
+        api::refresh_podcasts,
+        api::get_podcast_channel,
+        api::delete_podcast_channel,
+        api::newest_podcast_episodes,
+        api::get_podcast_episode,
+        api::download_podcast_episode,
+        api::delete_podcast_episode,
         api::list_favorites,
         api::add_favorite,
         api::remove_favorite,
@@ -325,6 +341,24 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::EnrichedSimilar,
         services::SearchResult,
         services::PlaylistItem,
+        services::SmartPlaylistItem,
+        services::SmartPlaylistPreview,
+        services::SmartRules,
+        services::SmartCondition,
+        services::SmartMatch,
+        services::SmartField,
+        services::SmartOperator,
+        services::SmartSort,
+        services::SmartOrder,
+        api::SmartPlaylistRequest,
+        api::SmartPlaylistPatch,
+        api::SmartPreviewRequest,
+        api::RuleErrorResponse,
+        services::PodcastOverview,
+        services::PodcastChannelItem,
+        services::PodcastEpisodeItem,
+        api::CreatePodcastChannelRequest,
+        api::FeedErrorResponse,
         services::QueueItem,
         services::RatingItem,
         services::HistoryItem,
@@ -426,6 +460,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         ,(name = "administration", description = "Administrative user and credential management")
         ,(name = "scrobbling", description = "Per-account authorisations at external listening services, and the queue behind them")
         ,(name = "radio", description = "Internet radio stations, one list per account")
+        ,(name = "smart-playlists", description = "Playlists defined by rules, evaluated when read (RFC-025)")
+        ,(name = "podcasts", description = "Podcast channels and episodes, one list per instance (RFC-025)")
     )
 )]
 pub struct ApiDoc;
@@ -812,6 +848,9 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
     // `complete = 0` it would hold its account's next search at 429 until its
     // deadline passed (RFC-013 decision 4).
     services.forget_unfinished_image_searches().await?;
+    // A podcast download the last process left running has no task any more
+    // (RFC-025): it goes back to `new`, and its staging file goes.
+    services.reconcile_podcasts().await?;
     // Off unless the operator named a provider, and then it still makes no
     // request until somebody asks about an artist (RFC-011 decisions 3 and 6).
     services.use_enrichment(enrichment::Enrichment::new(

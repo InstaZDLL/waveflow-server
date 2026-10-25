@@ -1488,6 +1488,12 @@ pub struct DomainServices {
     /// The quality analysis (RFC-016): its bound, the FFmpeg it measures with,
     /// and the spectrograms in flight.
     quality: quality::QualityRuntime,
+    /// Podcasts (RFC-025): the settings, and the one download permit and one
+    /// refresh lock the background work shares.
+    podcasts: podcasts::PodcastRuntime,
+    /// Smart playlists (RFC-025): what each reader was last shown, the
+    /// evaluation counter and the evaluation budget.
+    smart: smart_playlists::SmartRuntime,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1551,12 +1557,14 @@ mod playback;
 mod playlist_admin;
 mod playlist_order;
 mod playlists;
+mod podcasts;
 mod quality;
 mod radio;
 mod scan;
 mod scrobbling;
 mod search;
 mod shares;
+mod smart_playlists;
 mod songs;
 mod sync;
 mod track_metadata;
@@ -1594,6 +1602,10 @@ pub use library_lifecycle::{
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
+pub use podcasts::{
+    EpisodeBookmark, PodcastChannelItem, PodcastEpisodeItem, PodcastFailure, PodcastOverview,
+    NEWEST_EPISODES_DEFAULT,
+};
 pub use quality::{
     AnalysisState, QualityAnalysis, QualitySummary, QualityTrack, QualityVerdict,
     QualityVerdictCount, Spectrogram, TrackQuality, TrackQualityDetail,
@@ -1601,6 +1613,11 @@ pub use quality::{
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
     ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
+};
+pub use smart_playlists::{
+    RuleError, SmartCondition, SmartField, SmartMatch, SmartOperator, SmartOrder,
+    SmartPlaylistItem, SmartPlaylistPreview, SmartRules, SmartSort, MAX_SMART_PLAYLIST_TRACKS,
+    SMART_EVALUATION_BUDGET_OPS,
 };
 
 impl DomainServices {
@@ -1659,6 +1676,8 @@ impl DomainServices {
                 config.quality_parallelism,
                 config.request_timeout,
             ),
+            podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
+            smart: smart_playlists::SmartRuntime::new(config.db_max_connections),
         }
     }
 

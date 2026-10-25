@@ -31,20 +31,33 @@ pub(super) async fn playlists(
         .first("username")
         .map(str::trim)
         .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case(&principal.username));
-    let playlists = match named {
-        None => state
-            .services
-            .visible_playlists(principal.id)
-            .await
-            .map_err(internal)?,
+    let (playlists, smart) = match named {
+        None => (
+            state
+                .services
+                .visible_playlists(principal.id)
+                .await
+                .map_err(internal)?,
+            smart_playlist_nodes(state, principal).await?,
+        ),
         Some(_) if principal.role != AccountRole::Admin => return Err(not_found()),
-        Some(name) => state
-            .services
-            .administered_playlists(principal.id, name)
-            .await
-            .map_err(service_protocol)?,
+        Some(name) => (
+            state
+                .services
+                .administered_playlists(principal.id, name)
+                .await
+                .map_err(service_protocol)?,
+            // That account's smart playlists the administrator may read: its
+            // public ones (RFC-025). A private rule set is the owner's own,
+            // and `getPlaylist` would answer it error 70, so the listing
+            // does not name it.
+            smart_playlist_nodes_of(state, principal, name).await?,
+        ),
     };
-    Ok(Node::new("playlists").children(playlists.iter().map(playlist_node)))
+    Ok(Node::new("playlists")
+        .children(playlists.iter().map(playlist_node))
+        // Smart playlists after them, read-only (RFC-025 decision 6).
+        .children(smart))
 }
 
 pub(super) async fn get_playlist(
@@ -54,14 +67,18 @@ pub(super) async fn get_playlist(
 ) -> Result<Node, ProtocolError> {
     let id = params.uuid("id")?;
     // An administrator opens what `getPlaylists?username=` listed for them;
-    // everyone else reads their own and the public ones, as before.
+    // everyone else reads their own and the public ones, as before. No
+    // ordinary playlist has the id: perhaps a smart one does (RFC-025).
     let playlist = match state.services.playlist(principal.id, id).await {
-        Err(crate::services::ServiceError::NotFound) if principal.role == AccountRole::Admin => {
+        Err(ServiceError::NotFound) if principal.role == AccountRole::Admin => {
             state.services.administered_playlist(principal.id, id).await
         }
         other => other,
-    }
-    .map_err(service_protocol)?;
+    };
+    let playlist = match playlist {
+        Err(ServiceError::NotFound) => return get_smart_playlist(state, principal, id).await,
+        other => other.map_err(service_protocol)?,
+    };
     Ok(playlist_node(&playlist).children(
         playlist
             .songs

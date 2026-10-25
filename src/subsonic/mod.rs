@@ -33,9 +33,11 @@ mod lyrics;
 mod media;
 mod nodes;
 mod playlists;
+mod podcasts;
 mod protocol;
 mod radio;
 mod shares;
+mod smart_playlists;
 mod userdata;
 
 use admin::*;
@@ -46,9 +48,11 @@ use lyrics::*;
 use media::*;
 use nodes::*;
 use playlists::*;
+use podcasts::*;
 use protocol::*;
 use radio::*;
 use shares::*;
+use smart_playlists::*;
 use userdata::*;
 
 const SUBSONIC_VERSION: &str = "1.16.1";
@@ -442,6 +446,16 @@ async fn dispatch(
         "getUser" | "getUsers" | "createUser" | "updateUser" | "deleteUser" | "changePassword" => {
             admin(state, principal, method, params).await
         }
+        // One list per instance, managed by `podcastRole` (RFC-025). These
+        // answered "not implemented" until then.
+        "getPodcasts"
+        | "getNewestPodcasts"
+        | "getPodcastEpisode"
+        | "refreshPodcasts"
+        | "createPodcastChannel"
+        | "deletePodcastChannel"
+        | "deletePodcastEpisode"
+        | "downloadPodcastEpisode" => podcasts(state, principal, method, params).await,
         _ => Err(ProtocolError {
             code: 0,
             message: "Requested method is not implemented",

@@ -160,6 +160,21 @@ export {
   removePlaylistEntry,
   setPlaylistPublic,
 } from "./playlists";
+export type {
+  PodcastChannel,
+  PodcastEpisode,
+  PodcastEpisodeStatus,
+  PodcastOverview,
+} from "./podcasts";
+export {
+  deletePodcastEpisode,
+  downloadPodcastEpisode,
+  getPodcastChannel,
+  getPodcastOverview,
+  refreshPodcasts,
+  subscribePodcast,
+  unsubscribePodcast,
+} from "./podcasts";
 export type { PublicShare, PublicShareTrack } from "./public-share";
 export { openPublicShare } from "./public-share";
 export type {
@@ -208,6 +223,25 @@ export {
 } from "./scrobbling";
 export type { Share } from "./shares";
 export { createShare, deleteShare, listShares } from "./shares";
+export type {
+  SmartCondition,
+  SmartConditionValue,
+  SmartField,
+  SmartOperator,
+  SmartPlaylist,
+  SmartPlaylistDraft,
+  SmartPreview,
+  SmartRules,
+  SmartSort,
+} from "./smart-playlists";
+export {
+  createSmartPlaylist,
+  deleteSmartPlaylist,
+  getSmartPlaylist,
+  listSmartPlaylists,
+  previewSmartPlaylist,
+  updateSmartPlaylist,
+} from "./smart-playlists";
 export type { StreamUrl } from "./stream";
 export { streamUrl } from "./stream";
 export type {

@@ -320,12 +320,14 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
         70
     );
 
-    // A method that really is unimplemented still says so.
+    // A method that really is unimplemented still says so. It was
+    // `getPodcasts` until RFC-025 implemented it; `jukeboxControl` is the one
+    // a validated client (Feishin) is known to call and be refused.
     let unknown = router
         .clone()
         .oneshot(
             Request::get(format!(
-                "/rest/getPodcasts.view?apiKey={api_key}&v=1.16.1&c=golden&f=json"
+                "/rest/jukeboxControl.view?apiKey={api_key}&v=1.16.1&c=golden&f=json"
             ))
             .body(Body::empty())
             .unwrap(),
@@ -1532,12 +1534,36 @@ async fn subsonic_username_is_an_administrators_view_and_blurred_for_everyone_el
         .unwrap()
         .to_owned();
 
+    // That account's smart playlists (RFC-025): the public one is listed,
+    // the private one is its owner's own and stays out, as `getPlaylist`
+    // would answer it error 70.
+    let rules = waveflow_server::services::SmartRules::parse(&serde_json::json!({
+        "conditions": [{"field": "play_count", "operator": "less_than", "value": 5}],
+    }))
+    .unwrap();
+    let shown = state
+        .services
+        .create_smart_playlist(owner, "Smart open", None, true, &rules)
+        .await
+        .unwrap();
+    state
+        .services
+        .create_smart_playlist(owner, "Smart closed", None, false, &rules)
+        .await
+        .unwrap();
+
     let listed = subsonic_json(&router, "getPlaylists", &admin_key, "&username=named-owner").await;
     let listed = listed["subsonic-response"]["playlists"]["playlist"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert_eq!(listed.len(), 1, "{listed:?}");
+    let names: Vec<&str> = listed
+        .iter()
+        .filter_map(|playlist| playlist["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Private", "Smart open"], "{listed:?}");
+    assert_eq!(listed[1]["id"], shown.id.to_string().as_str());
+    assert_eq!(listed[1]["readonly"], true);
     assert_eq!(listed[0]["id"], id.as_str());
     assert_eq!(listed[0]["owner"], "named-owner");
     assert_eq!(listed[0]["public"], false);
@@ -1550,11 +1576,18 @@ async fn subsonic_username_is_an_administrators_view_and_blurred_for_everyone_el
         entry_ids(&opened["subsonic-response"]["playlist"]),
         vec![seen[0].to_string()]
     );
-    // Its own listing is unchanged by the parameter naming itself.
+    // Its own listing is unchanged by the parameter naming itself: nothing
+    // of its own, and the other account's public smart playlist, as any
+    // reader is shown it.
     let own = subsonic_json(&router, "getPlaylists", &admin_key, "&username=NAMED-ADMIN").await;
-    assert!(own["subsonic-response"]["playlists"]["playlist"]
+    let own: Vec<String> = own["subsonic-response"]["playlists"]["playlist"]
         .as_array()
-        .is_none_or(|playlists| playlists.is_empty()));
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|playlist| playlist["name"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(own, ["Smart open"]);
 
     for (key, extra, who) in [
         (
