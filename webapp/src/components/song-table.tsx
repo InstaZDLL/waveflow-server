@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { formatDuration, type Song, setFavorite, setRating } from "../api";
 import { usePlayer } from "../player/player";
@@ -69,6 +69,7 @@ export function SongTable({
   numbering = "position",
   variant = "default",
   draggableRows = false,
+  rowActions,
 }: {
   songs: Song[];
   numbering?: "track" | "position";
@@ -78,6 +79,12 @@ export function SongTable({
    * a row that drags anywhere else is a gesture that does nothing.
    */
   draggableRows?: boolean;
+  /**
+   * Controls of the list's own, at the end of a row: a playlist's owner moves
+   * or removes an entry there. Given the row's position, because a list may
+   * hold one track twice and the position is the only name a copy has.
+   */
+  rowActions?: (song: Song, position: number, count: number) => ReactNode;
 }) {
   const player = usePlayer();
   const { t } = useI18n();
@@ -253,6 +260,7 @@ export function SongTable({
                         <Icon name="edit" size={16} />
                       </Link>
                     ) : null}
+                    {rowActions?.(song, position, songs.length)}
                   </div>
                 </td>
               </tr>

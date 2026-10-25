@@ -483,6 +483,7 @@ function LibrarySettingsPanel({
   const [name, setName] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [follow, setFollow] = useState<boolean | null>(null);
+  const [watch, setWatch] = useState<boolean | null>(null);
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
@@ -498,12 +499,18 @@ function LibrarySettingsPanel({
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!settings) return;
-    const update: { name?: string; path?: string; follow_links?: boolean } = {};
+    const update: {
+      name?: string;
+      path?: string;
+      follow_links?: boolean;
+      watch?: boolean;
+    } = {};
     if (name !== null && name.trim() !== settings.name) update.name = name;
     if (path !== null && path !== settings.path) update.path = path;
     if (follow !== null && follow !== settings.follow_links) {
       update.follow_links = follow;
     }
+    if (watch !== null && watch !== settings.watch) update.watch = watch;
     if (Object.keys(update).length === 0) return;
     setBusy(true);
     setNotice(null);
@@ -519,6 +526,7 @@ function LibrarySettingsPanel({
       setName(null);
       setPath(null);
       setFollow(null);
+      setWatch(null);
       reloadSettings();
       reloadAdministration();
     } catch (error) {
@@ -591,6 +599,15 @@ function LibrarySettingsPanel({
                   onChange={(event) => setFollow(event.target.checked)}
                 />
                 <span>{t("admin.followLinks")}</span>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  className="toggle-box"
+                  checked={watch ?? settings.watch}
+                  onChange={(event) => setWatch(event.target.checked)}
+                />
+                <span>{t("admin.watch")}</span>
               </label>
               <button type="submit" disabled={busy}>
                 {t("admin.save")}

@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: [#327](https://github.com/InstaZDLL/waveflow-server/pull/327)
-  (this RFC and its implementation, together). The *Status* field above never
+  (this RFC and its implementation, together), and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (the move of a
+  playlist entry, removal in the web client, `getPlaylists?username=` and the
+  share page's covers, closing *What is still open* but one). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -226,13 +228,49 @@ shares page, and a test for each decision, each shown to fail without its fix.
 
 ## What is still open
 
-- **Reordering a playlist** by moving an entry, natively and in the web
-  client. Removal by position and appending are what the surfaces have; a
-  move is a new verb.
-- **Removing one entry from the web client.** The server takes positions; the
-  playlists page has no control for it yet.
-- **`getPlaylists?username=`**, the administrator's view of another account's
-  playlists, stays ignored.
+Four of the items this section listed were closed by the follow-up pull
+request named in *Implemented by*; what was decided is recorded here, beside
+the one item left.
+
+- **Reordering a playlist — done.** `POST /api/v2/playlists/{id}/move` takes
+  `from` and `to`, positions in the list the caller is shown, as removal
+  does (decision 1), and optionally `track_id`, the track the caller believes
+  sits at `from`: when it does not, the move answers 409 rather than moving
+  another entry of a list edited elsewhere. A hidden entry keeps its place
+  among the others, one copy of a repeated track moves and the other stays,
+  and the move journals the playlist's whole new order, as an update does.
+  Owners only: anyone else is answered 404. **Subsonic has no move verb**, and
+  none is added to a frozen contract: a client reorders by sending the whole
+  list again through `createPlaylist?playlistId=`, which replaces the track
+  list in the order given, as it always has — a test now holds that.
+- **Removing one entry from the web client — done.** A playlist's owner has a
+  control per row to move it up, move it down, or remove it, each sending the
+  position shown and the track the page believes is there; another account's
+  public playlist shows none. The removal goes through
+  `POST /api/v2/playlists/{id}/remove` (`position`, optional `track_id`),
+  guarded as a move is — 409 for a stale view — where an update's
+  `remove_indexes` carry no such guard. The page holds every entry control
+  until the edited list has been read again, so a second click never names a
+  position in a list the first one changed.
+- **`getPlaylists?username=` — done.** For an active administrator naming
+  another account: that account's own playlists, private ones included, read
+  through the **administrator's** libraries, so a track in a library the
+  administrator is not a member of is neither listed nor counted; and
+  `getPlaylist` opens what that listing named. Anyone else naming another
+  account, and anyone naming an account that does not exist, is answered
+  error 70 — a 50 would confirm the name belongs to someone. Naming oneself is
+  the ordinary listing, and every write stays the owner's. Recorded in
+  `docs/subsonic-compatibility.md`.
+- **Artwork on the share page — done.** The share's JSON gives each track that
+  has a cover a `coverUrl`, `/share/{token}/tracks/{id}/cover?visit=<pass>`,
+  authorised exactly as the stream is: by the pass the counted opening handed
+  out for that track, the share read again on every request, so a deleted or
+  expired share stops answering at once and a capped one keeps the covers of
+  the visit that was counted. It answers that one cover — the track's own, or
+  its album's — read through the owner's libraries, `private, no-cache` with
+  the hash as validator, counts nothing and writes nothing. The artwork routes
+  stay session-only.
 - **Shares of a disabled owner** still open. Disabling an account should
   arguably close its shares as it now hides its public playlists; that is a
-  decision about accounts rather than about shares.
+  decision about accounts rather than about shares, and it is the hardening
+  pull request's.

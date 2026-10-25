@@ -60,9 +60,10 @@ pub(super) async fn delete_bookmark(
 /// Each one costs a mutation that takes the process-wide writer gate, and the
 /// form body admits some fifteen hundred UUIDs — enough for one well-formed
 /// request to hold the gate against every other writer for as long as it takes
-/// to serialise them. The bound is the one the queue and shares already use,
-/// and for the same reason.
-const MAX_IDENTIFIERS: usize = crate::services::MAX_QUEUE_TRACKS;
+/// to serialise them. The bound is the one shares use, and for the same reason;
+/// it was the queue's too until the queue was raised to hold a whole playlist,
+/// which it writes in one statement rather than one mutation per track.
+const MAX_IDENTIFIERS: usize = crate::services::MAX_REQUEST_IDENTIFIERS;
 
 pub(super) async fn set_star(
     state: &AppState,

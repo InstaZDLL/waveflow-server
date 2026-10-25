@@ -22,6 +22,9 @@ pub struct LibraryScanSettings {
     pub library: LibraryRecord,
     /// Follow symbolic links that stay inside the root (RFC-021 decision 3).
     pub follow_links: bool,
+    /// Whether the watcher observes this library (RFC-021 decision 6, and the
+    /// per-library switch it left open).
+    pub watch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -91,6 +94,11 @@ pub struct StreamTrack {
     pub bitrate: Option<i64>,
     pub duration_ms: i64,
     pub available: bool,
+    /// Whether, and how far, a link in `relative_path` may be followed when
+    /// the file is opened (RFC-021, links outside the root).
+    pub link_policy: crate::link_roots::LinkPolicy,
+    /// The track's ReplayGain tags, for a transcode asked to apply them.
+    pub replay_gain: crate::replay_gain::ReplayGainTags,
 }
 
 #[derive(Debug, Clone)]
@@ -288,18 +296,40 @@ impl Database {
         &self,
         library_id: Uuid,
     ) -> Result<Option<LibraryScanSettings>, sqlx::Error> {
-        let row = sqlx::query("SELECT id, name, root_path, follow_links FROM library WHERE id = ?")
-            .bind(library_id.to_string())
-            .fetch_optional(self.pool())
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, root_path, follow_links, watch FROM library WHERE id = ?",
+        )
+        .bind(library_id.to_string())
+        .fetch_optional(self.pool())
+        .await?;
         row.map(|row| {
             let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
+            let watch = row.try_get::<i64, _>("watch")? != 0;
             Ok(LibraryScanSettings {
                 library: library_from_row(row)?,
                 follow_links,
+                watch,
             })
         })
         .transpose()
+    }
+
+    /// The libraries the watcher observes: those whose `watch` switch is on,
+    /// and the links setting each is walked with, which decides whether a
+    /// watched change may be scanned folder by folder.
+    pub async fn watched_libraries(&self) -> Result<Vec<(LibraryRecord, bool)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id, name, root_path, follow_links FROM library WHERE watch = 1 \
+             ORDER BY created_at",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
+                Ok((library_from_row(row)?, follow_links))
+            })
+            .collect()
     }
 
     /// Whether any library the user can see is being scanned, and how many
@@ -618,6 +648,47 @@ impl Database {
         .execute(self.pool())
         .await?;
         Ok(id)
+    }
+
+    /// A job that walks only `scope`, folders relative to the library root:
+    /// what the watcher queues once a library's changes settle and it can
+    /// name where they were (RFC-021, what decision 6 left open).
+    pub async fn create_scoped_scan_job(
+        &self,
+        library_id: Uuid,
+        trigger: &str,
+        scope: &[String],
+    ) -> Result<Uuid, sqlx::Error> {
+        let _writer = self.writer_guard().await;
+        let id = Uuid::new_v4();
+        let scope = serde_json::to_string(scope).expect("a list of strings serializes");
+        sqlx::query(
+            "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, created_at, \
+                                   scope_json) \
+             VALUES (?, ?, NULL, ?, 'queued', ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(library_id.to_string())
+        .bind(trigger)
+        .bind(now_ms())
+        .bind(scope)
+        .execute(self.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// The folders a job walks, or `None` for the whole library. A scope that
+    /// cannot be read is the whole library: walking more than asked is always
+    /// safe, and walking less is not.
+    pub async fn scan_scope(&self, scan_id: Uuid) -> Result<Option<Vec<String>>, sqlx::Error> {
+        let scope: Option<Option<String>> =
+            sqlx::query_scalar("SELECT scope_json FROM scan_job WHERE id = ?")
+                .bind(scan_id.to_string())
+                .fetch_optional(self.pool())
+                .await?;
+        Ok(scope
+            .flatten()
+            .and_then(|scope| serde_json::from_str::<Vec<String>>(&scope).ok()))
     }
 
     /// Every job still `queued`, oldest first, with its library: what a
@@ -1303,7 +1374,10 @@ impl Database {
         let now = now_ms();
         for track_id in track_ids {
             sqlx::query(
-                "UPDATE track SET is_available = 1, last_seen_scan_id = ?, updated_at = ? WHERE id = ?",
+                // A file found again takes back a purge still within its
+                // grace window: the track is there, so nothing is to go.
+                "UPDATE track SET is_available = 1, purged_at = NULL, last_seen_scan_id = ?, \
+                 updated_at = ? WHERE id = ?",
             )
             .bind(scan_id.to_string())
             .bind(now)
@@ -1551,7 +1625,7 @@ impl Database {
                explicit_status=excluded.explicit_status, \
                lyrics_hash=excluded.lyrics_hash, disc_subtitle=excluded.disc_subtitle, \
                pid=excluded.pid, \
-               is_available=1, unavailable_since=NULL, \
+               is_available=1, unavailable_since=NULL, purged_at=NULL, \
                last_seen_scan_id=excluded.last_seen_scan_id, \
                updated_at=excluded.updated_at",
         )
@@ -1712,6 +1786,22 @@ impl Database {
         library_id: Uuid,
         scan_id: Uuid,
     ) -> Result<i64, sqlx::Error> {
+        self.mark_unseen_unavailable_within(library_id, scan_id, None)
+            .await
+    }
+
+    /// [`Self::mark_unseen_unavailable`], for a scan that walked only
+    /// `scope`: a track outside the folders it walked was not looked for, so
+    /// it cannot have been missed (RFC-018 decision 3, which a scoped scan
+    /// keeps).
+    pub async fn mark_unseen_unavailable_within(
+        &self,
+        library_id: Uuid,
+        scan_id: Uuid,
+        scope: Option<&[String]>,
+    ) -> Result<i64, sqlx::Error> {
+        let scope = scope
+            .map(|folders| serde_json::to_string(folders).expect("a list of strings serializes"));
         let _writer = self.writer_guard().await;
         let now = now_ms();
         let mut tx = self.begin_write(&_writer).await?;
@@ -1742,6 +1832,10 @@ impl Database {
                  OR (last_seen_scan_id IS NULL \
                      AND created_at < COALESCE( \
                        (SELECT started_at FROM scan_job WHERE id = ?), ?))) \
+               AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) folder \
+                     WHERE folder.value = '' OR track.relative_path = folder.value \
+                        OR substr(track.relative_path, 1, length(folder.value) + 1) \
+                           = folder.value || '/')) \
              RETURNING id",
         )
         .bind(now)
@@ -1750,6 +1844,8 @@ impl Database {
         .bind(scan_id.to_string())
         .bind(scan_id.to_string())
         .bind(now)
+        .bind(scope.as_deref())
+        .bind(scope.as_deref())
         .fetch_all(&mut *tx)
         .await?;
         for id in &gone {
@@ -1844,7 +1940,10 @@ impl Database {
     ) -> Result<Option<StreamTrack>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT t.id, t.library_id, l.root_path, t.relative_path, t.full_hash, \
-               t.codec, t.bitrate, t.duration_ms, t.is_available FROM track t \
+               t.codec, t.bitrate, t.duration_ms, t.is_available, \
+               t.replay_gain_track_gain, t.replay_gain_track_peak, \
+               t.replay_gain_album_gain, t.replay_gain_album_peak, \
+               l.follow_links, (SELECT json_group_array(o.root_path) FROM library o WHERE o.id <> l.id) AS other_roots FROM track t \
              JOIN library l ON l.id = t.library_id \
              JOIN library_member m ON m.library_id = t.library_id \
              JOIN account a ON a.id = m.user_id \
@@ -2469,6 +2568,16 @@ fn stream_track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StreamTrack, sq
         bitrate: row.try_get("bitrate")?,
         duration_ms: row.try_get("duration_ms")?,
         available: row.try_get::<i64, _>("is_available")? != 0,
+        link_policy: crate::link_roots::LinkPolicy::from_columns(
+            row.try_get("follow_links")?,
+            row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
+        ),
+        replay_gain: crate::replay_gain::ReplayGainTags {
+            track_gain: row.try_get("replay_gain_track_gain")?,
+            track_peak: row.try_get("replay_gain_track_peak")?,
+            album_gain: row.try_get("replay_gain_album_gain")?,
+            album_peak: row.try_get("replay_gain_album_peak")?,
+        },
     })
 }
 

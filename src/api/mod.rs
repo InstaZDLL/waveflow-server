@@ -33,6 +33,7 @@ mod folders;
 mod libraries;
 mod oauth;
 mod playback;
+mod playlist_moves;
 mod playlists;
 mod podcasts;
 mod probes;
@@ -61,6 +62,7 @@ pub use folders::*;
 pub use libraries::*;
 pub use oauth::*;
 pub use playback::*;
+pub use playlist_moves::*;
 pub use playlists::*;
 pub use podcasts::*;
 pub use probes::*;
@@ -127,6 +129,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/libraries/{library_id}/unavailable-tracks/purge",
             post(purge_unavailable_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/purged-tracks",
+            get(purged_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/purged-tracks/restore",
+            post(restore_purged_tracks),
         )
         .route(
             "/api/v2/libraries/{library_id}/members",
@@ -280,6 +290,14 @@ pub fn router(state: AppState) -> Router {
             get(export_playlist),
         )
         .route(
+            "/api/v2/playlists/{playlist_id}/move",
+            post(move_playlist_entry),
+        )
+        .route(
+            "/api/v2/playlists/{playlist_id}/remove",
+            post(remove_playlist_entry),
+        )
+        .route(
             "/api/v2/playlists/{playlist_id}",
             get(get_playlist)
                 .patch(update_playlist)
@@ -379,6 +397,17 @@ pub fn router(state: AppState) -> Router {
             "/api/v2/scrobble-queue/uncertain/{entry_id}/retry",
             post(retry_uncertain_scrobble),
         )
+        // Its own ceiling, derived from the queue's (RFC-022): a queue as long
+        // as the largest playlist does not fit the 16 KiB every other JSON
+        // body is held to.
+        .route(
+            "/api/v2/queue",
+            get(get_queue)
+                .put(save_queue)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::queue_body_limit(),
+                )),
+        )
         // Smart playlists and podcasts (RFC-025), beside the playlists rather
         // than inside them: their own tables, their own tags.
         .route(
@@ -416,7 +445,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v2/podcast-episodes/{episode_id}/download",
             post(download_podcast_episode),
         )
-        .route("/api/v2/queue", get(get_queue).put(save_queue))
         .route("/api/v2/shares", get(list_shares).post(create_share))
         .route(
             "/api/v2/shares/{share_id}",

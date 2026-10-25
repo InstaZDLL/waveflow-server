@@ -73,6 +73,7 @@ pub fn router(state: AppState, request_timeout: std::time::Duration) -> Router {
     );
     Router::new()
         .route("/share/{token}/tracks/{track_id}/stream", get(stream))
+        .route("/share/{token}/tracks/{track_id}/cover", get(cover))
         .merge(opening)
         .layer(axum::middleware::map_response(
             crate::security_headers::share,
@@ -186,17 +187,21 @@ async fn document(state: &AppState, token: &str) -> Response {
             }
         };
         let path = format!("/share/{token}/tracks/{}/stream?visit={pass}", song.id);
+        let absolute = |path: &str| {
+            state
+                .public_url
+                .as_deref()
+                .map_or_else(|| path.to_owned(), |base| format!("{base}{path}"))
+        };
         let mut value = serde_json::to_value(song).expect("song serialization");
         if let Value::Object(object) = &mut value {
-            object.insert(
-                "streamUrl".into(),
-                Value::String(
-                    state
-                        .public_url
-                        .as_deref()
-                        .map_or_else(|| path.clone(), |base| format!("{base}{path}")),
-                ),
-            );
+            object.insert("streamUrl".into(), Value::String(absolute(&path)));
+            // The cover, under the same pass (see `cover`). Only for a track
+            // that has one, so the page asks for nothing it would be refused.
+            if song.artwork_hash.is_some() {
+                let cover = format!("/share/{token}/tracks/{}/cover?visit={pass}", song.id);
+                object.insert("coverUrl".into(), Value::String(absolute(&cover)));
+            }
         }
         tracks.push(value);
     }
@@ -224,6 +229,43 @@ struct ShareStreamQuery {
     format: Option<String>,
 }
 
+/// The account a visit's request for `track_id` is served as, or the answer
+/// refusing it: what the stream and the cover both ask (decision 4).
+///
+/// A missing, forged, expired or foreign pass answers like a track that is not
+/// in the share, so probing learns nothing about which it was. The share is
+/// read again on every request, so deleting it or letting it expire stops
+/// both at once whatever the pass says.
+async fn visit_owner(
+    state: &AppState,
+    token: &str,
+    track_id: Uuid,
+    visit: Option<&str>,
+) -> Result<Uuid, StatusCode> {
+    let Some((share_id, pass_track)) = visit
+        .and_then(|pass| stream_ticket::verify(&state.secret_box, pass, now_ms()))
+        .filter(|(kind, ..)| *kind == TicketKind::ShareVisit)
+        .map(|(_, share_id, track)| (share_id, track))
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if pass_track != track_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    match state
+        .services
+        .shared_track_owner(token, share_id, track_id)
+        .await
+    {
+        Ok(owner) => Ok(owner),
+        Err(ServiceError::NotFound) => Err(StatusCode::NOT_FOUND),
+        Err(error) => {
+            tracing::error!(error = %error, "public share visit lookup failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn stream(
     State(state): State<AppState>,
     Path((token, track_id)): Path<(String, Uuid)>,
@@ -235,31 +277,9 @@ async fn stream(
         Some("mp3") => (OutputFormat::Mp3, Some(VISIT_MP3_BITRATE)),
         Some(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    // A missing, forged, expired or foreign pass answers like a track that is
-    // not in the share, so probing learns nothing about which it was.
-    let Some((share_id, pass_track)) = query
-        .visit
-        .as_deref()
-        .and_then(|pass| stream_ticket::verify(&state.secret_box, pass, now_ms()))
-        .filter(|(kind, ..)| *kind == TicketKind::ShareVisit)
-        .map(|(_, share_id, track)| (share_id, track))
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if pass_track != track_id {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let owner = match state
-        .services
-        .shared_track_owner(&token, share_id, track_id)
-        .await
-    {
+    let owner = match visit_owner(&state, &token, track_id, query.visit.as_deref()).await {
         Ok(owner) => owner,
-        Err(ServiceError::NotFound) => return StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share stream lookup failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        Err(refused) => return refused.into_response(),
     };
     let track = match state.db.stream_track_for_user(owner, track_id).await {
         Ok(Some(track)) => track,
@@ -280,6 +300,77 @@ async fn stream(
     match state.media.serve(owner, track, query, range).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
+    }
+}
+
+/// What a share cover may be asked for: the pass, and nothing else.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShareCoverQuery {
+    visit: Option<String>,
+}
+
+/// A shared track's cover, for the share page.
+///
+/// **A route of the share's own** rather than the artwork route: that one
+/// needs a session and answers for any cover the account may read, and a
+/// visitor has no session. This one answers exactly one cover — that of a
+/// track the share holds — and is authorised the way the stream is, by the
+/// pass the counted opening handed out for that track, with the share read
+/// again on every request. A deleted or expired share stops answering at
+/// once; a capped one keeps the covers of the visit that was counted, as it
+/// keeps its music. Nothing is written, nothing is counted.
+///
+/// The track's own cover, or its album's when it has none, read through the
+/// owner's libraries: a track the owner can no longer read answers 404.
+async fn cover(
+    State(state): State<AppState>,
+    Path((token, track_id)): Path<(String, Uuid)>,
+    Query(query): Query<ShareCoverQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let owner = match visit_owner(&state, &token, track_id, query.visit.as_deref()).await {
+        Ok(owner) => owner,
+        Err(refused) => return refused.into_response(),
+    };
+    let (hash, format) = match state.services.track_cover_for_user(owner, track_id).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "public share cover lookup failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    // `private`: two owners whose libraries hold the same cover share its
+    // hash, and the address carries a bearer pass. `no-cache` with the hash
+    // as validator, so a second look within the visit is a 304.
+    let etag = format!("\"{hash}\"");
+    let cached = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').map(str::trim).any(|tag| tag == etag));
+    let validators = [
+        (
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-cache"),
+        ),
+        (
+            header::ETAG,
+            HeaderValue::from_str(&etag).expect("a hex hash is a header value"),
+        ),
+    ];
+    if cached {
+        return (StatusCode::NOT_MODIFIED, validators).into_response();
+    }
+    match crate::media::read_artwork(&state.artwork_dir, &hash, &format).await {
+        Some((mime, bytes)) => (
+            StatusCode::OK,
+            validators,
+            [(header::CONTENT_TYPE, HeaderValue::from_static(mime))],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

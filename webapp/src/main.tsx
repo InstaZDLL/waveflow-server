@@ -28,6 +28,7 @@ import {
   ensureSession,
   forgetOnSessionChange,
   logout,
+  onSessionOwner,
 } from "./api";
 import {
   administrationQuery,
@@ -51,6 +52,11 @@ import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
+import {
+  claimOffline,
+  forgetKnownOffline,
+  registerServiceWorker,
+} from "./lib/offline";
 import { dismissSplash } from "./lib/splash";
 import { AdminPage } from "./pages/admin-page";
 import { AlbumPage } from "./pages/album-page";
@@ -67,6 +73,7 @@ import { HistoryPage } from "./pages/history-page";
 import { LoginPage } from "./pages/login-page";
 import { MissingPage } from "./pages/missing-page";
 import { NotFoundPage } from "./pages/not-found-page";
+import { OfflinePage } from "./pages/offline-page";
 import { PlayingPage } from "./pages/playing-page";
 import { PlaylistsPage } from "./pages/playlists-page";
 import { PodcastsPage } from "./pages/podcasts-page";
@@ -135,6 +142,7 @@ const navigation: Array<{
     | "/playing"
     | "/playlists"
     | "/queue"
+    | "/offline"
     | "/shares"
     | "/radio"
     | "/podcasts"
@@ -234,6 +242,12 @@ const navigation: Array<{
     labelKey: "nav.queue",
     icon: "queue",
     primary: true,
+    group: "listen",
+  },
+  {
+    to: "/offline",
+    labelKey: "nav.offline",
+    icon: "download",
     group: "listen",
   },
   { to: "/shares", labelKey: "nav.shares", icon: "shares", group: "account" },
@@ -342,6 +356,8 @@ async function prepareTab(
     case "/search":
     case "/playing":
     case "/queue":
+    // Read from this browser, not from the server.
+    case "/offline":
     case "/upload":
     // The folder is in the address, and the rail links to the root: the
     // page draws its own frame and waits for its folder there.
@@ -769,6 +785,18 @@ const shareRoute = createRoute({
   },
 });
 
+/**
+ * The tracks kept for offline listening (RFC-022). Beside the sign-in page and
+ * not under `authed`: it must open with no network, and a session check with
+ * no server to answer it would send the listener to a sign-in that cannot
+ * complete either.
+ */
+const offlineRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/offline",
+  component: OfflinePage,
+});
+
 /** Everything below requires a session; unauthenticated visitors land on /login. */
 const authedRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -1009,6 +1037,7 @@ const trackEditRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   loginRoute,
   shareRoute,
+  offlineRoute,
   authedRoute.addChildren([
     albumsRoute,
     albumRoute,
@@ -1063,6 +1092,14 @@ const queryClient = createQueryClient();
 // answers are scoped by more than that — so carrying it across a sign-out would
 // show the next person what the last one could see.
 forgetOnSessionChange(() => queryClient.clear());
+
+// The shell and the kept tracks, for listening offline (RFC-022). Never an
+// API response: see `public/sw.js`.
+registerServiceWorker(import.meta.env.PROD);
+// The kept tracks are one account's (RFC-022): a sign-out deletes them, and
+// a different account signing in deletes the last one's before it sees them.
+onSessionOwner((userId) => claimOffline(userId));
+forgetOnSessionChange(forgetKnownOffline);
 
 createRoot(container).render(
   <StrictMode>

@@ -250,6 +250,39 @@ thousand tracks the domain allows can be written in one `updatePlaylist` or
 `createPlaylist`. Only requests that used to be refused with
 `Invalid form body` are affected.
 
+## Deviation for RFC-020 to RFC-022 follow-ups: `username`, `replayGain` and a longer queue
+
+Three changes to `/rest` land with the follow-ups to RFC-020 and RFC-022, and
+no client has been replayed against them yet.
+
+- **`getPlaylists?username=`** is honoured as the specification says: for an
+  administrator naming another account, that account's own playlists, private
+  ones included, with their tracks read through the administrator's own
+  libraries; and `getPlaylist` opens what that listing named. To anyone else
+  naming another account, and to anyone naming an account that does not exist,
+  it answers error 70 — the not-found every refusal here gives, so the
+  parameter cannot be used to learn which accounts exist. Naming oneself is the
+  ordinary listing. Writes stay the owner's. A request without the parameter
+  is answered exactly as before. That account's smart playlists (RFC-025)
+  follow its ordinary ones only when they are public, as any reader sees them:
+  a private rule set is its owner's, and `getPlaylist` answers it error 70 to
+  anyone else, administrators included; a public one is evaluated by its
+  owner's rules and read through the administrator's libraries.
+- **`stream` takes `replayGain=off|track|album`**, a parameter of this
+  server's that every other server ignores, and the operator may set a default
+  with `WAVEFLOW_SUBSONIC_REPLAYGAIN` (`off` unless set). It levels a
+  transcode only; the original is never re-encoded for it, and an unknown mode
+  is error 10. With the default left off, no answer changes.
+- **`savePlayQueue` holds as many tracks as a playlist**, ten thousand, where
+  it refused more than four hundred with error 10; such a request fits the
+  `formPost` bound. `star`, `unstar` and `scrobble` keep their four hundred
+  identifiers a request.
+
+Reordering a playlist needs no new method: a client sends the whole list again
+through `createPlaylist?playlistId=`, which replaces the track list in the
+order given, as it always has. A move that keeps hidden entries in place is the
+native API's (`POST /api/v2/playlists/{id}/move`).
+
 ## Deviation for RFC-023: a search reads its first 256 characters and 16 terms
 
 [RFC-023](rfcs/RFC-023-hardening.md) bounds the full-text query that

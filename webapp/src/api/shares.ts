@@ -1,5 +1,11 @@
 import { call } from "./client";
 
+/**
+ * The most tracks one share holds: the server mints a pass per track when a
+ * share is opened (`MAX_SHARE_TRACKS`), and refuses a longer list.
+ */
+export const MAX_SHARE_TRACKS = 400;
+
 export type Share = {
   id: string;
   url?: string;

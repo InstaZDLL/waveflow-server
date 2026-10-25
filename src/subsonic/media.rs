@@ -76,7 +76,20 @@ pub(super) async fn media_response(
             .map_err(|_| invalid("Invalid time offset"))?
             .unwrap_or(0),
     };
-    match state.media.serve(principal.id, track, query, range).await {
+    // ReplayGain on the encode (RFC-022, what was still open): `replayGain=`
+    // when the request names it — a parameter of this server's, which every
+    // other server ignores — the operator's default otherwise. Only a
+    // transcode carries it; the original is never re-encoded to apply it.
+    let replay_gain = match params.first("replayGain") {
+        Some(mode) => crate::replay_gain::ReplayGainMode::parse(mode)
+            .ok_or_else(|| invalid("Invalid replayGain"))?,
+        None => state.media.subsonic_replay_gain(),
+    };
+    match state
+        .media
+        .serve_with_replay_gain(principal.id, track, query, range, replay_gain)
+        .await
+    {
         Ok(mut response) => {
             if download {
                 response.headers_mut().insert(

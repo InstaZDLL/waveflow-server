@@ -800,11 +800,29 @@ pub struct CatalogSearch {
 pub const MAX_BROWSE_LIMIT: i64 = 500;
 const DEFAULT_BROWSE_LIMIT: i64 = 100;
 pub const MAX_HISTORY_LIMIT: i64 = 500;
-/// Fits a UUID-only queue request below the server's 16 KiB body limit while
-/// also bounding the work performed under the global SQLite writer gate.
-pub const MAX_QUEUE_TRACKS: usize = 400;
-/// Applies the same request-size and writer-gate bound to public shares.
-pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
+/// How many identifiers one request may name when each costs a mutation of its
+/// own under the writer gate — a Subsonic `star` or `scrobble` naming many —
+/// or a sealed pass of its own: a share's opening mints one per track.
+pub const MAX_REQUEST_IDENTIFIERS: usize = 400;
+/// Upper bound on the tracks a play queue holds (RFC-022, what was still
+/// open), shared by the native queue and Subsonic `savePlayQueue`.
+///
+/// **The largest playlist**, because the common way to fill a queue is to play
+/// a playlist whole, and a queue smaller than the playlist it was filled from
+/// loses its end on the next save — silently, on a client that saves the
+/// queue as it plays. Four hundred, the old ceiling, cut off ordinary
+/// libraries.
+///
+/// **Bounded under the writer gate** as a playlist is: a save deletes and
+/// reinserts the list in one statement each, and checks the tracks with one
+/// count rather than reading every song (`save_queue`). **And on the wire**:
+/// the native route carries [`queue_body_limit`], and a `savePlayQueue` of
+/// this many `id=<uuid>&` pairs, forty bytes each, is 400,000 bytes — inside
+/// the Subsonic form bound, which is sized for the longer `songIdToAdd` pair
+/// at this same count.
+pub const MAX_QUEUE_TRACKS: usize = MAX_PLAYLIST_TRACKS;
+/// A share holds what one opening can hand a pass to each of.
+pub const MAX_SHARE_TRACKS: usize = MAX_REQUEST_IDENTIFIERS;
 /// Upper bound on the tracks one playlist may hold.
 ///
 /// Deliberately not [`MAX_QUEUE_TRACKS`]: that one bounds a request, and a
@@ -825,6 +843,15 @@ pub const MAX_PLAYLIST_TRACKS: usize = 10_000;
 /// long names is nowhere near it — and the envelope covers the header lines.
 pub fn playlist_import_body_limit() -> usize {
     MAX_PLAYLIST_TRACKS.saturating_mul(512).saturating_add(4096)
+}
+
+/// The body ceiling the native queue route carries, derived from
+/// [`MAX_QUEUE_TRACKS`] like the import's from the playlist ceiling: a JSON
+/// string of a UUID with its quotes and comma is thirty-nine bytes, so
+/// sixty-four covers any spacing a client adds, and the envelope covers the
+/// other fields.
+pub fn queue_body_limit() -> usize {
+    MAX_QUEUE_TRACKS.saturating_mul(64).saturating_add(4096)
 }
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can
@@ -1388,6 +1415,13 @@ pub struct DomainServices {
     /// How long a missing track is kept before the retention pass purges it,
     /// or `None`, the default, for never (RFC-021 decision 4).
     unavailable_retention: Option<std::time::Duration>,
+    /// How long a purge stays restorable before its tracks are deleted for
+    /// good; zero deletes at once (RFC-021, undoing a purge).
+    purge_grace: std::time::Duration,
+    /// The folders outside every library a stored path may lead into through
+    /// a link (`WAVEFLOW_LINK_ROOTS`): the quality analysis reads those files
+    /// as the stream does.
+    link_roots: crate::link_roots::LinkRoots,
     /// Bounds a credential an account mints for itself. See the field on
     /// [`crate::config::Config`] for why the administrative path is not
     /// bounded by it.
@@ -1520,6 +1554,8 @@ mod library_lifecycle;
 mod library_tree;
 mod lyrics_uploads;
 mod playback;
+mod playlist_admin;
+mod playlist_order;
 mod playlists;
 mod podcasts;
 mod quality;
@@ -1562,7 +1598,7 @@ pub use library_folders::{
 };
 pub use library_lifecycle::{
     LibraryActor, LibraryDeleted, LibrarySettings, LibraryUpdate, LibraryUpdated, PurgeOutcome,
-    PurgeRequest, UnavailableTrack, UnavailableTracks,
+    PurgeRequest, RestoreOutcome, UnavailableTrack, UnavailableTracks,
 };
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
@@ -1603,6 +1639,8 @@ impl DomainServices {
             uploads: config.uploads,
             library_event_retention: config.library_event_retention,
             unavailable_retention: config.unavailable_retention,
+            purge_grace: config.purge_grace,
+            link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
             api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,

@@ -8,6 +8,7 @@ pub mod config;
 pub mod credit_split;
 pub mod database;
 pub mod enrichment;
+pub mod link_roots;
 pub mod lyrics;
 pub mod media;
 pub mod migration_backup;
@@ -21,6 +22,7 @@ pub mod portrait;
 pub mod public_share;
 pub mod quality;
 pub mod reference;
+pub mod replay_gain;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
@@ -148,6 +150,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::library_settings,
         api::unavailable_tracks,
         api::purge_unavailable_tracks,
+        api::purged_tracks,
+        api::restore_purged_tracks,
         api::list_library_members,
         api::set_library_member,
         api::remove_library_member,
@@ -206,6 +210,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::export_playlist,
         api::get_playlist,
         api::update_playlist,
+        api::move_playlist_entry,
+        api::remove_playlist_entry,
         api::delete_playlist,
         api::list_smart_playlists,
         api::create_smart_playlist,
@@ -310,6 +316,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::UnavailableTracks,
         services::PurgeRequest,
         services::PurgeOutcome,
+        services::RestoreOutcome,
         services::AlbumItem,
         services::ReleaseGroup,
         services::ArtistItem,
@@ -368,6 +375,8 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::UserItem,
         api::CreatePlaylistRequest,
         api::UpdatePlaylistRequest,
+        api::MovePlaylistEntryRequest,
+        api::RemovePlaylistEntryRequest,
         api::RatingRequest,
         api::ScrobbleRequest,
         api::SaveQueueRequest,
@@ -746,7 +755,8 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         db.clone(),
         config.artwork_dir.clone(),
         config.scan_parallelism,
-    );
+    )
+    .with_link_roots(link_roots::LinkRoots::new(config.link_roots.clone()));
     let media = media::MediaService::initialize(config).await?;
     let sync = sync::SyncService::new(db.clone());
     let services = services::DomainServices::new(
@@ -1221,11 +1231,12 @@ mod tests {
         use utoipa::openapi::RefOr;
         use utoipa::OpenApi;
 
-        // Fourteen today: the favourite, rating, play-queue and now-playing
-        // mutations, and the playlist import — which claims an operation like
-        // every other playlist creation, because that is the verb it calls.
-        // A new one lands here deliberately, not silently.
-        let expected = 14;
+        // Sixteen today: the favourite, rating, play-queue and now-playing
+        // mutations, the playlist import — which claims an operation like
+        // every other playlist creation, because that is the verb it calls —
+        // and the move and the removal of one playlist entry, which journal as
+        // an update does. A new one lands here deliberately, not silently.
+        let expected = 16;
         let openapi = super::ApiDoc::openapi();
         let mut checked = 0;
         for (path, item) in &openapi.paths.paths {

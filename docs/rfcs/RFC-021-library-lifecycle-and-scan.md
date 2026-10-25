@@ -3,8 +3,10 @@
 - **Status**: Proposed
 - **Implemented by**: [#328](https://github.com/InstaZDLL/waveflow-server/pull/328)
   (this RFC and its whole implementation: exclusions and `.waveflowignore`,
-  links, missing tracks and their purge, the library lifecycle, the watcher).
-  The *Status* field above never flips in this project; this line is the one
+  links, missing tracks and their purge, the library lifecycle, the watcher),
+  and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (everything *What is still open* listed: the journal on a
+  deletion, link roots, undoing a purge, the per-library watch and scoped
+  watched scans). The *Status* field above never flips in this project; this line is the one
   that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -336,16 +338,99 @@ foreign keys off, so the rows that reference it (`scan_error`,
 
 ## What is still open
 
-- **The user sync journal on a purge or a deletion.** A favourite or a
-  playlist entry removed by the cascade is not written to the journal of the
-  account that held it, so a device keeps its copy until that playlist or
-  favourite next changes. The library feed's `delete` for the track is the
-  signal a client has today.
-- **Following links outside the root**, to an allowlist of further roots, for
-  link farms that live elsewhere.
-- **Undoing a purge**, for instance by keeping purged rows for a grace period.
-- **A per-library watcher switch**, for a library on a share where watching
-  costs and finds nothing.
-- **Folder-level skipping** (RFC-018) and watching would combine well: a
-  watcher that names the changed folder could let a scan walk only that
-  folder. Not done; every watched change is a full incremental walk.
+Every item this section listed was closed by the follow-up pull request named
+in *Implemented by*. What was decided:
+
+- **The user sync journal on a deletion — done.** When tracks are deleted —
+  a purge whose grace window has passed, or with none, and a library
+  deletion — every account that loses something is told through its own
+  journal, in the deletion's transaction: a favourite or a rating of a track,
+  or of an album or artist left with nothing, is a `delete` with the payload
+  an unstar or a cleared rating journals, and a playlist that lost entries is
+  an `upsert` of what it now holds, as an edit would journal, its
+  `updated_at` moved. Each is a server-made operation of that account's,
+  published once the transaction commits. Queue and share entries are not
+  journaled: a queue is written whole by its next save, and a share's list is
+  read at its opening.
+- **Following links outside the root — done.** `WAVEFLOW_LINK_ROOTS` names
+  folders, absolute, that a library *whose links setting is on* may reach
+  through a followed link, besides its own root. An operator's setting, global
+  rather than per library: the operator vouches for those folders, and a
+  library whose links are off reads no link at all. Three rules keep it a
+  boundary:
+  - **never into another library.** A target inside another library's root is
+    refused, at the scan and again when the file is opened, even inside an
+    allowed folder and whoever asks: access is checked on the track's own
+    library, so reaching another's file through a link would show it to
+    members who may not see it. Refused outright rather than allowed to
+    someone who is a member of both, which is the simple rule and the safe
+    one;
+  - **resolved when used.** The allowed folders, and the other libraries'
+    roots, are canonicalised at every scan, every stream, every quality
+    measurement and every spectrogram, so a mount that appears later is
+    honoured, one that went reaches nothing, and a link retargeted since its
+    scan opens nothing it should not;
+  - **the stream re-checks the setting.** A stored path through a link is
+    accepted only while its library still follows links, and only when it
+    resolves into an allowed folder; with links off, any link component is
+    refused, as before.
+
+  A file in an allowed folder has no path inside the root, so it is stored
+  under the path the walk reached it by — links included — and once, under the
+  first such path in catalogue order, however many links name it. Loop
+  detection is `walkdir`'s, unchanged. A folder that is no link itself but
+  was reached through one, and is another library's root, stops the walk there
+  and is counted as a skipped link.
+- **Undoing a purge — done, as a grace window.** A purge no longer deletes: it
+  sets `track.purged_at`, which takes the tracks out of the missing-tracks
+  listing — every other read already hides an unavailable track — and keeps
+  every row, favourite, playlist entry and play attached. For
+  `WAVEFLOW_PURGE_GRACE_HOURS` (168, a week, by default) they are listed at
+  `GET /api/v2/libraries/{id}/purged-tracks`, each with `deleted_after`, and
+  `POST …/purged-tracks/restore` (`track_ids` or `all`, never neither) puts
+  them back, as the CLI's `library restore` and the Missing files page do. A
+  file found again by a scan within the window clears its purge by itself. An
+  hourly pass deletes the tracks purged before the window, through the code a
+  purge always used, in a library not being scanned, under the writer gate —
+  so a track is either restored or deleted, never both. A purge past its
+  window is neither listed nor restorable, even before the pass has reached
+  it, and the pass runs whatever the settings: with the window set to `0`,
+  purges a former window left behind are deleted rather than kept for ever. The retention purge
+  (`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`) purges behind the same window. `0`
+  deletes at once, as before. A library deletion has no window: it is
+  confirmed by the library's name.
+- **A per-library watcher switch — done.** `library.watch`, on for every
+  existing library, set by an administrator (`PATCH` with `watch`, the CLI's
+  `library set-watch`, the library's settings in the web client). A library
+  switched off is taken out of the watched set as a deleted one is, and left to
+  the periodic scan; the switch queues no scan.
+- **Watched scans limited to the changed folders — done.** The watcher records,
+  per library, the folder each event happened in — the folder itself for one
+  that exists, its parent for a file or something gone — and the scan it
+  settles into walks only those folders (`scan_job.scope_json`). RFC-018's
+  guarantees hold inside a scope:
+  - **only what was walked may be marked missing**: the end-of-scan sweep is
+    limited to tracks under the scope's folders;
+  - **relocation claims nothing outside it**: a candidate outside the walked
+    folders was not looked for, so it is never "seen missing", and a file
+    moved in from a folder no event named arrives as a new track, its old
+    track left as it was for the next full scan to settle;
+  - **the folders are judged as a full walk would**: every folder on the way
+    down to a scope is held to the built-in exclusions and the ignore files
+    above it, so an excluded one counts as not discovered and an unusable one
+    spares its tracks.
+
+  A change at the root, a queue overflow, an error, more than 64 folders at
+  once, or a library that follows links — whose catalogue names a folder by
+  its target, which the path an event names would not match — scans the whole
+  library, as before. So does a library with a full scan pending (a changed
+  identity spec, `database rescan --full`): a scoped walk is no answer to that
+  request and must not spend it. A scope that is not plainly a list of
+  folders is the whole library: walking more than asked is always safe. A
+  folder whose ancestor is in the scope too is dropped, by asking every
+  ancestor rather than relying on sort order, which puts `Rock - Live`
+  between `Rock` and `Rock/Album`.
+
+  Resolving the allowed folders and the other libraries' roots is a blocking
+  call, made on the blocking pool — with the walk at a scan, beside the
+  request at a stream — so a hung network mount holds no async worker.

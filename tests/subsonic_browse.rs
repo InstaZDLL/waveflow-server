@@ -935,8 +935,8 @@ async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
     // `searchResult3` omits a kind it has no rows for rather than sending `[]`.
     assert!(result["album"].is_null());
 
-    // A request may not name more identifiers than the queue may hold: each one
-    // costs a mutation under the process-wide writer gate.
+    // A request may not name more identifiers than one request may carry:
+    // each one costs a mutation under the process-wide writer gate.
     let track_id = state
         .services
         .catalog_snapshot(owner, &[])
@@ -944,7 +944,7 @@ async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
         .unwrap()
         .songs[0]
         .id;
-    let oversized = (0..=waveflow_server::services::MAX_QUEUE_TRACKS)
+    let oversized = (0..=waveflow_server::services::MAX_REQUEST_IDENTIFIERS)
         .map(|_| format!("&id={track_id}"))
         .collect::<String>();
     let refused = subsonic_json(&router, "star", api_key, &oversized).await;

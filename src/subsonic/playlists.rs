@@ -13,19 +13,51 @@ use super::*;
 /// said, so the flag this façade accepted had no effect anywhere. A client
 /// reads `owner` to decide what it may edit, which is why the field has to be
 /// the owner's and not the caller's; the writes stay refused to anyone else.
+///
+/// **`username`** names another account, and is an administrator's (the
+/// specification: "The user must be admin in order to use this parameter").
+/// An administrator naming someone else is answered that account's own
+/// playlists, private ones included, each read through the administrator's
+/// libraries. Anyone else naming another account — and anyone naming an
+/// account that does not exist — is answered error 70, the not-found every
+/// other refusal here gives: a 50 would confirm the name belongs to someone.
+/// Naming oneself is the ordinary listing.
 pub(super) async fn playlists(
     state: &AppState,
     principal: &Principal,
+    params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let playlists = state
-        .services
-        .visible_playlists(principal.id)
-        .await
-        .map_err(internal)?;
+    let named = params
+        .first("username")
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case(&principal.username));
+    let (playlists, smart) = match named {
+        None => (
+            state
+                .services
+                .visible_playlists(principal.id)
+                .await
+                .map_err(internal)?,
+            smart_playlist_nodes(state, principal).await?,
+        ),
+        Some(_) if principal.role != AccountRole::Admin => return Err(not_found()),
+        Some(name) => (
+            state
+                .services
+                .administered_playlists(principal.id, name)
+                .await
+                .map_err(service_protocol)?,
+            // That account's smart playlists the administrator may read: its
+            // public ones (RFC-025). A private rule set is the owner's own,
+            // and `getPlaylist` would answer it error 70, so the listing
+            // does not name it.
+            smart_playlist_nodes_of(state, principal, name).await?,
+        ),
+    };
     Ok(Node::new("playlists")
         .children(playlists.iter().map(playlist_node))
         // Smart playlists after them, read-only (RFC-025 decision 6).
-        .children(smart_playlist_nodes(state, principal).await?))
+        .children(smart))
 }
 
 pub(super) async fn get_playlist(
@@ -34,8 +66,16 @@ pub(super) async fn get_playlist(
     params: &Params,
 ) -> Result<Node, ProtocolError> {
     let id = params.uuid("id")?;
+    // An administrator opens what `getPlaylists?username=` listed for them;
+    // everyone else reads their own and the public ones, as before. No
+    // ordinary playlist has the id: perhaps a smart one does (RFC-025).
     let playlist = match state.services.playlist(principal.id, id).await {
-        // No ordinary playlist has the id: perhaps a smart one does (RFC-025).
+        Err(ServiceError::NotFound) if principal.role == AccountRole::Admin => {
+            state.services.administered_playlist(principal.id, id).await
+        }
+        other => other,
+    };
+    let playlist = match playlist {
         Err(ServiceError::NotFound) => return get_smart_playlist(state, principal, id).await,
         other => other.map_err(service_protocol)?,
     };

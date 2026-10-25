@@ -34,7 +34,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
-use crate::{catalog::StreamTrack, config::Config, AppState};
+use crate::{
+    catalog::StreamTrack,
+    config::Config,
+    replay_gain::{Gain, ReplayGainMode},
+    AppState,
+};
 
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
@@ -105,6 +110,12 @@ struct MediaInner {
     /// SHA-256 of the whole `ffmpeg -version` output (RFC-016 decision 5): a
     /// quality measurement is current only under the FFmpeg that made it.
     ffmpeg_digest: String,
+    /// The folders outside every library a stored path may lead into through
+    /// a link (`WAVEFLOW_LINK_ROOTS`).
+    link_roots: crate::link_roots::LinkRoots,
+    /// What a Subsonic transcode applies of ReplayGain unless the request
+    /// says otherwise (`WAVEFLOW_SUBSONIC_REPLAYGAIN`).
+    subsonic_replay_gain: ReplayGainMode,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -204,6 +215,8 @@ impl MediaService {
                 cache_locks: DashMap::new(),
                 cache_access: DashMap::new(),
                 pending_fills: DashSet::new(),
+                link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
+                subsonic_replay_gain: config.subsonic_replay_gain,
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
                 ffmpeg_digest: crate::quality::decoder_digest(&ffmpeg_version),
@@ -234,6 +247,12 @@ impl MediaService {
         (self.inner.global_limit, self.inner.per_user_limit)
     }
 
+    /// What a Subsonic transcode applies of ReplayGain when the request does
+    /// not say.
+    pub fn subsonic_replay_gain(&self) -> ReplayGainMode {
+        self.inner.subsonic_replay_gain
+    }
+
     /// The service is only constructed after both FFmpeg tools pass startup
     /// detection, so an initialized instance is the capability signal.
     pub fn transcoding_available(&self) -> bool {
@@ -247,11 +266,35 @@ impl MediaService {
         query: StreamQuery,
         range: Option<&str>,
     ) -> Result<Response, MediaError> {
+        self.serve_with_replay_gain(user_id, track, query, range, ReplayGainMode::Off)
+            .await
+    }
+
+    /// [`Self::serve`], a transcode levelled by the track's ReplayGain under
+    /// `mode` (RFC-022, what was still open). The original is served as it is
+    /// whatever the mode says: the gain rides on an encode that happens anyway,
+    /// and never causes one. A gain is part of the cache key, so a levelled
+    /// encode is never handed to a request that did not ask for it; no gain —
+    /// the mode off, or a track with no tags — keeps the key it always had.
+    pub async fn serve_with_replay_gain(
+        &self,
+        user_id: Uuid,
+        track: StreamTrack,
+        query: StreamQuery,
+        range: Option<&str>,
+        mode: ReplayGainMode,
+    ) -> Result<Response, MediaError> {
+        let gain = crate::replay_gain::gain(track.replay_gain, mode);
         if !track.available {
             return Err(MediaError::NotFound);
         }
-        let source = secure_track_path(&track.library_root, &track.relative_path)
-            .await
+        let source = secure_track_path(
+            &track.library_root,
+            &track.relative_path,
+            &self.inner.link_roots,
+            &track.link_policy,
+        )
+        .await
             .map_err(|error| {
                 tracing::warn!(track_id = %track.id, library_id = %track.library_id, error = %error, "media path rejected");
                 MediaError::NotFound
@@ -268,7 +311,7 @@ impl MediaService {
         if query.offset_ms > track.duration_ms.max(0) as u64 {
             return Err(MediaError::InvalidRequest);
         }
-        let key = cache_key(&track.full_hash, query.format, bitrate);
+        let key = cache_key(&track.full_hash, query.format, bitrate, gain);
         let cache_path = self
             .inner
             .cache_dir
@@ -299,6 +342,7 @@ impl MediaService {
                     source.clone(),
                     query.format,
                     bitrate,
+                    gain,
                     query.offset_ms,
                     None,
                 )
@@ -311,6 +355,7 @@ impl MediaService {
                     source,
                     query.format,
                     bitrate,
+                    gain,
                     key,
                     cache_path,
                     fill_deadline(track.duration_ms),
@@ -342,6 +387,7 @@ impl MediaService {
             source,
             query.format,
             bitrate,
+            gain,
             0,
             Some((cache_path, guard)),
         )
@@ -359,6 +405,7 @@ impl MediaService {
         source: &Path,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         offset_ms: u64,
     ) -> Result<Command, MediaError> {
         let mut command = Command::new(&self.inner.ffmpeg);
@@ -369,6 +416,9 @@ impl MediaService {
                 .arg(format!("{:.3}", offset_ms as f64 / 1000.0));
         }
         file_input(&mut command, source).args(["-vn", "-map_metadata", "-1"]);
+        if let Some(gain) = gain {
+            command.arg("-af").arg(gain.filter());
+        }
         let bitrate_arg = format!("{bitrate}k");
         match format {
             OutputFormat::Mp3 => {
@@ -425,11 +475,13 @@ impl MediaService {
     /// a fill has no listener, so without a deadline an encode that never
     /// finished would hold its slot and its key until the server restarted.
     /// Past it, FFmpeg is killed and nothing it wrote is kept.
+    #[allow(clippy::too_many_arguments)]
     fn fill_cache_behind_a_seek(
         &self,
         source: PathBuf,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         key: String,
         cache_path: PathBuf,
         deadline: Duration,
@@ -450,7 +502,7 @@ impl MediaService {
             return;
         };
         drop(global.split(1));
-        let Ok(mut command) = self.transcode_command(&source, format, bitrate, 0) else {
+        let Ok(mut command) = self.transcode_command(&source, format, bitrate, gain, 0) else {
             return;
         };
         let staging = staging_path(&cache_path);
@@ -512,12 +564,14 @@ impl MediaService {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn stream_transcode(
         &self,
         user_id: Uuid,
         source: PathBuf,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         offset_ms: u64,
         cache: Option<(PathBuf, tokio::sync::OwnedMutexGuard<()>)>,
     ) -> Result<Response, MediaError> {
@@ -534,7 +588,7 @@ impl MediaService {
             .try_acquire_owned()
             .map_err(|_| MediaError::Busy)?;
 
-        let mut command = self.transcode_command(&source, format, bitrate, offset_ms)?;
+        let mut command = self.transcode_command(&source, format, bitrate, gain, offset_ms)?;
         command
             .arg("pipe:1")
             .stdin(Stdio::null())
@@ -1550,7 +1604,22 @@ async fn check_tool(path: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
+///
+/// **A link on the way** is refused, with one exception: a library following
+/// links stores a file in an allowed folder outside its root under the path
+/// the walk reached it through (RFC-021, links outside the root). Such a path
+/// is accepted only while that library still follows links, and only when it
+/// resolves, now, into one of `link_roots` and into no other library's root —
+/// re-read on every request, so a link retargeted since the scan, or a links
+/// setting turned off since, leads nowhere. Another library's file is never
+/// reached through a link, whoever asks: the caller's access was checked on
+/// this track's library only.
+pub(crate) async fn secure_track_path(
+    root: &Path,
+    relative: &str,
+    link_roots: &crate::link_roots::LinkRoots,
+    policy: &crate::link_roots::LinkPolicy,
+) -> io::Result<PathBuf> {
     let canonical_root = tokio::fs::canonicalize(root).await?;
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
@@ -1565,6 +1634,7 @@ pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result
     }
 
     let mut cursor = canonical_root.clone();
+    let mut through_link = false;
     for component in relative.components() {
         let Component::Normal(component) = component else {
             unreachable!("components validated above")
@@ -1575,16 +1645,34 @@ pub(crate) async fn secure_track_path(root: &Path, relative: &str) -> io::Result
             .file_type()
             .is_symlink()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "symlink media path rejected",
-            ));
+            if !policy.follow_links || link_roots.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "symlink media path rejected",
+                ));
+            }
+            through_link = true;
         }
     }
     let canonical_file = tokio::fs::canonicalize(&cursor).await?;
-    if !canonical_file.starts_with(&canonical_root)
-        || !tokio::fs::metadata(&canonical_file).await?.is_file()
-    {
+    let reachable = if through_link {
+        // Off the async worker: resolving a root is a blocking call, and a
+        // hung network mount would otherwise hold the worker with it.
+        let (link_roots, policy, target) =
+            (link_roots.clone(), policy.clone(), canonical_file.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::link_roots::admits(
+                &link_roots.resolved(),
+                &policy.other_libraries_resolved(),
+                &target,
+            )
+        })
+        .await
+        .map_err(io::Error::other)?
+    } else {
+        canonical_file.starts_with(&canonical_root)
+    };
+    if !reachable || !tokio::fs::metadata(&canonical_file).await?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "media path escapes library",
@@ -1765,9 +1853,14 @@ fn staging_path(cache_path: &Path) -> PathBuf {
     ))
 }
 
-fn cache_key(source_hash: &str, format: OutputFormat, bitrate: u32) -> String {
+fn cache_key(source_hash: &str, format: OutputFormat, bitrate: u32, gain: Option<Gain>) -> String {
+    // A gain is named only when there is one, so every key written before
+    // ReplayGain existed is still the key of the same encode.
+    let gain = gain
+        .map(|gain| format!(":{}", gain.key()))
+        .unwrap_or_default();
     blake3::hash(
-        format!("{source_hash}:{format:?}:{bitrate}:{TRANSCODE_PROFILE_VERSION}").as_bytes(),
+        format!("{source_hash}:{format:?}:{bitrate}:{TRANSCODE_PROFILE_VERSION}{gain}").as_bytes(),
     )
     .to_hex()
     .to_string()
@@ -1938,8 +2031,14 @@ pub(crate) mod tests {
         let root = temp.path().join("library");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("safe.wav"), b"audio").unwrap();
-        assert!(secure_track_path(&root, "safe.wav").await.is_ok());
-        assert!(secure_track_path(&root, "../safe.wav").await.is_err());
+        let none = crate::link_roots::LinkRoots::default();
+        let policy = crate::link_roots::LinkPolicy::default();
+        assert!(secure_track_path(&root, "safe.wav", &none, &policy)
+            .await
+            .is_ok());
+        assert!(secure_track_path(&root, "../safe.wav", &none, &policy)
+            .await
+            .is_err());
 
         let link = root.join("linked.wav");
         #[cfg(unix)]
@@ -1947,8 +2046,85 @@ pub(crate) mod tests {
         #[cfg(windows)]
         let linked = std::os::windows::fs::symlink_file(root.join("safe.wav"), &link).is_ok();
         if linked {
-            assert!(secure_track_path(&root, "linked.wav").await.is_err());
+            assert!(secure_track_path(&root, "linked.wav", &none, &policy)
+                .await
+                .is_err());
         }
+    }
+
+    /// A stored path through a link is accepted only when its library follows
+    /// links and it resolves, now, into an allowed folder outside the root
+    /// and into no other library (RFC-021, links outside the root): not into
+    /// the root itself, not anywhere else, not into another library's root
+    /// inside the allowed folder, not once the folder is no longer allowed,
+    /// and not once the library stopped following links.
+    #[tokio::test]
+    async fn a_link_is_followed_into_an_allowed_folder_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let farm = temp.path().join("farm");
+        let neighbour = farm.join("neighbour");
+        let elsewhere = temp.path().join("elsewhere");
+        for folder in [&root, &farm, &neighbour, &elsewhere] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        std::fs::write(farm.join("kept.wav"), b"audio").unwrap();
+        std::fs::write(neighbour.join("theirs.wav"), b"audio").unwrap();
+        std::fs::write(elsewhere.join("secret.wav"), b"audio").unwrap();
+        std::fs::write(root.join("own.wav"), b"audio").unwrap();
+        #[cfg(unix)]
+        let make = |target: &std::path::Path, link: &std::path::Path| {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        };
+        #[cfg(windows)]
+        let make = |target: &std::path::Path, link: &std::path::Path| {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        };
+        if !(make(&farm.join("kept.wav"), &root.join("farmed.wav"))
+            && make(&neighbour.join("theirs.wav"), &root.join("crossing.wav"))
+            && make(&elsewhere.join("secret.wav"), &root.join("stolen.wav"))
+            && make(&root.join("own.wav"), &root.join("mine.wav")))
+        {
+            eprintln!("skipped: this system will not let the test make a symbolic link");
+            return;
+        }
+        let allowed = crate::link_roots::LinkRoots::new(vec![farm.clone()]);
+        let following = crate::link_roots::LinkPolicy {
+            follow_links: true,
+            other_libraries: vec![neighbour.clone()],
+        };
+        assert!(secure_track_path(&root, "farmed.wav", &allowed, &following)
+            .await
+            .is_ok());
+        assert!(
+            secure_track_path(&root, "crossing.wav", &allowed, &following)
+                .await
+                .is_err(),
+            "another library's file is never reached through a link"
+        );
+        assert!(secure_track_path(&root, "stolen.wav", &allowed, &following)
+            .await
+            .is_err());
+        assert!(
+            secure_track_path(&root, "mine.wav", &allowed, &following)
+                .await
+                .is_err(),
+            "a link inside the root is stored by its target, never by itself"
+        );
+        let none = crate::link_roots::LinkRoots::default();
+        assert!(secure_track_path(&root, "farmed.wav", &none, &following)
+            .await
+            .is_err());
+        let not_following = crate::link_roots::LinkPolicy {
+            follow_links: false,
+            ..following
+        };
+        assert!(
+            secure_track_path(&root, "farmed.wav", &allowed, &not_following)
+                .await
+                .is_err(),
+            "a library that does not follow links reads no link, allowlist or not"
+        );
     }
 
     #[tokio::test]
@@ -1976,6 +2152,8 @@ pub(crate) mod tests {
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
             transcoding_available: true,
             ffmpeg_digest: String::new(),
+            link_roots: crate::link_roots::LinkRoots::default(),
+            subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
         };
         prune_cache(&inner).await;
         assert!(!old.exists());
@@ -1996,7 +2174,7 @@ pub(crate) mod tests {
         let source = temp.path().join("track.wav");
         silent_wav(&source, 2);
 
-        let key = cache_key("abandoned", OutputFormat::Mp3, 96);
+        let key = cache_key("abandoned", OutputFormat::Mp3, 96, None);
         let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
         let lock = media
             .inner
@@ -2010,6 +2188,7 @@ pub(crate) mod tests {
             source,
             OutputFormat::Mp3,
             96,
+            None,
             key,
             cache_path.clone(),
             Duration::from_secs(60),
@@ -2049,13 +2228,14 @@ pub(crate) mod tests {
         let source = temp.path().join("track.wav");
         silent_wav(&source, 30);
 
-        let key = cache_key("overdue", OutputFormat::Mp3, 96);
+        let key = cache_key("overdue", OutputFormat::Mp3, 96, None);
         let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
         // A millisecond: less than FFmpeg takes to start, let alone to finish.
         media.fill_cache_behind_a_seek(
             source,
             OutputFormat::Mp3,
             96,
+            None,
             key,
             cache_path.clone(),
             Duration::from_millis(1),
@@ -2121,6 +2301,8 @@ pub(crate) mod tests {
                 active_transcodes: std::sync::atomic::AtomicUsize::new(0),
                 transcoding_available: true,
                 ffmpeg_digest: String::new(),
+                link_roots: crate::link_roots::LinkRoots::default(),
+                subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
             }),
         }
     }
@@ -2129,7 +2311,7 @@ pub(crate) mod tests {
     /// answers whether it succeeded.
     async fn transcode(media: &MediaService, source: &std::path::Path) -> bool {
         let mut command = media
-            .transcode_command(source, OutputFormat::Mp3, 128, 0)
+            .transcode_command(source, OutputFormat::Mp3, 128, None, 0)
             .unwrap();
         command
             .arg("pipe:1")

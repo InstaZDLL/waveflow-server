@@ -16,6 +16,7 @@ const en = {
   "nav.playlists": "Playlists",
   "nav.queue": "Queue",
   "nav.shares": "Shares",
+  "nav.offline": "Offline",
   "nav.radio": "Radio",
   "nav.scrobbling": "Scrobbling",
   "nav.admin": "Admin",
@@ -125,6 +126,8 @@ const en = {
   "trackMenu.play": "Play",
   "trackMenu.queue": "Add to queue",
   "trackMenu.download": "Download",
+  "trackMenu.keepOffline": "Keep for offline",
+  "trackMenu.forgetOffline": "Remove the offline copy",
   "trackMenu.downloadFailed": "The download could not start. Try again.",
   "trackMenu.dismiss": "Dismiss",
   "trackMenu.properties": "Properties",
@@ -349,6 +352,8 @@ const en = {
   "shares.defaultName": "Music share",
   "shares.empty": "No public links have been created.",
   "shares.createError": "The share could not be created.",
+  "shares.tooLong":
+    "A share holds up to {limit} tracks, and the queue holds {count}. Shorten the queue to share it.",
   "shares.deleteError": "The share could not be deleted.",
   "shares.maxVisits": "Visit limit (optional)",
   "shares.visits": { one: "{count} visit", other: "{count} visits" },
@@ -367,6 +372,12 @@ const en = {
   "playlists.othersDetail":
     "Public playlists of other accounts, with the tracks your libraries hold.",
   "playlists.by": "By {owner}",
+  "playlists.moveUp": "Move {title} up",
+  "playlists.moveDown": "Move {title} down",
+  "playlists.removeEntry": "Remove {title} from this playlist",
+  "playlists.moveError":
+    "That entry could not be moved. The playlist may have changed elsewhere; it has been read again.",
+  "playlists.removeEntryError": "That entry could not be removed.",
   "radio.detail": "Internet stations, kept with your account",
   "radio.name": "Station name",
   "radio.address": "Stream address",
@@ -799,6 +810,8 @@ const en = {
   "admin.path": "Folder on the server",
   "admin.followLinks":
     "Follow symbolic links whose target stays inside the library",
+  "admin.watch":
+    "Watch the folder and scan what changes (off for a network share changed by other machines)",
   "admin.save": "Save",
   "admin.saved": "Saved.",
   "admin.savedScan": "Saved. Scan {id} queued.",
@@ -823,7 +836,7 @@ const en = {
   "missing.notYours":
     "Only the owners and managers of this library, and administrators, see its missing files.",
   "missing.note":
-    "These tracks stay in the catalogue, with their favourites, playlist entries and plays, until they are purged; a file that comes back first keeps its track. A purge is not reversible: the track, and everything that hangs off it for every member, goes for good.",
+    "These tracks stay in the catalogue, with their favourites, playlist entries and plays, until they are purged; a file that comes back first keeps its track. A purge can be taken back for a while, then the track, and everything that hangs off it for every member, goes for good.",
   "missing.since": "missing since {date}",
   "missing.cost":
     "{playlists} in playlists · {favorites} favourites · {plays} plays",
@@ -839,6 +852,42 @@ const en = {
     "The library is being scanned. Try again once the scan is over.",
   "missing.failed": "The purge did not work. Try again.",
   "missing.more": "Show more",
+  "missing.purgedUntil": {
+    one: "{count} track purged. It can be restored until {date}.",
+    other: "{count} tracks purged. They can be restored until {date}.",
+  },
+  "missing.purgedTitle": {
+    one: "Purged, still restorable ({count})",
+    other: "Purged, still restorable ({count})",
+  },
+  "missing.purgedNote":
+    "Nothing of these is lost yet. Restored, a track goes back to the missing files with everything that hung off it; a file that comes back restores its track by itself.",
+  "missing.deletedAfter": "deleted for good after {date}",
+  "missing.restore": "Restore",
+  "missing.restoreOne": "Restore {title}",
+  "missing.restoreAll": "Restore them all",
+  "missing.restored": {
+    one: "{count} track restored.",
+    other: "{count} tracks restored.",
+  },
+  "missing.restoreFailed": "The restoration did not work. Try again.",
+  "offline.kicker": "In this browser",
+  "offline.title": "Kept for offline",
+  "offline.detail":
+    "These tracks were kept in this browser for the account that last signed in, and play without a connection. Signing out deletes them from this browser. Keep more from a track's menu.",
+  "offline.unsupported":
+    "This browser cannot keep tracks for offline listening.",
+  "offline.back": "Back to the library",
+  "offline.empty": "Nothing is kept yet. A track's menu offers to keep it.",
+  "offline.player": "Offline player",
+  "offline.gone": "That copy is no longer in this browser.",
+  "offline.forget": "Remove the offline copy of {title}",
+  "offline.forgetShort": "Remove",
+  "offline.forgetDetail": "Frees {size}",
+  "login.offline": {
+    one: "Listen to the {count} track kept in this browser",
+    other: "Listen to the {count} tracks kept in this browser",
+  },
   "scrobbling.title": "External scrobbling",
   "scrobbling.detail":
     "Forward what you listen to here to ListenBrainz, Maloja or Last.fm.",
@@ -1042,6 +1091,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.playlists": "Playlists",
   "nav.queue": "File d’attente",
   "nav.shares": "Partages",
+  "nav.offline": "Hors ligne",
   "nav.radio": "Radio",
   "nav.scrobbling": "Scrobbling",
   "nav.admin": "Administration",
@@ -1152,6 +1202,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "trackMenu.play": "Lire",
   "trackMenu.queue": "Ajouter à la file",
   "trackMenu.download": "Télécharger",
+  "trackMenu.keepOffline": "Garder hors ligne",
+  "trackMenu.forgetOffline": "Retirer la copie hors ligne",
   "trackMenu.downloadFailed":
     "Le téléchargement n’a pas pu démarrer. Réessayez.",
   "trackMenu.dismiss": "Fermer",
@@ -1381,6 +1433,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "shares.defaultName": "Partage musical",
   "shares.empty": "Aucun lien public n’a été créé.",
   "shares.createError": "Le partage n’a pas pu être créé.",
+  "shares.tooLong":
+    "Un partage contient au plus {limit} titres, et la file en contient {count}. Raccourcissez la file pour la partager.",
   "shares.deleteError": "Le partage n’a pas pu être supprimé.",
   "shares.maxVisits": "Limite de visites (facultative)",
   "shares.visits": { one: "{count} visite", other: "{count} visites" },
@@ -1399,6 +1453,12 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "playlists.othersDetail":
     "Les playlists publiques des autres comptes, avec les pistes que vos bibliothèques contiennent.",
   "playlists.by": "Par {owner}",
+  "playlists.moveUp": "Monter {title}",
+  "playlists.moveDown": "Descendre {title}",
+  "playlists.removeEntry": "Retirer {title} de cette playlist",
+  "playlists.moveError":
+    "Cette entrée n’a pas pu être déplacée. La playlist a peut-être changé ailleurs ; elle a été relue.",
+  "playlists.removeEntryError": "Cette entrée n’a pas pu être retirée.",
   "radio.detail": "Des stations en ligne, attachées à votre compte",
   "radio.name": "Nom de la station",
   "radio.address": "Adresse du flux",
@@ -1834,6 +1894,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.path": "Dossier sur le serveur",
   "admin.followLinks":
     "Suivre les liens symboliques dont la cible reste dans la bibliothèque",
+  "admin.watch":
+    "Surveiller le dossier et analyser ce qui change (à couper pour un partage réseau modifié par d’autres machines)",
   "admin.save": "Enregistrer",
   "admin.saved": "Enregistré.",
   "admin.savedScan": "Enregistré. Scan {id} ajouté à la file.",
@@ -1859,7 +1921,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "missing.notYours":
     "Seuls les propriétaires et gestionnaires de cette bibliothèque, et les administrateurs, voient ses fichiers manquants.",
   "missing.note":
-    "Ces titres restent au catalogue, avec leurs favoris, entrées de playlist et écoutes, jusqu’à leur purge ; un fichier qui revient avant garde son titre. Une purge est irréversible : le titre, et tout ce qui s’y rattache pour chaque membre, disparaît pour de bon.",
+    "Ces titres restent au catalogue, avec leurs favoris, entrées de playlist et écoutes, jusqu’à leur purge ; un fichier qui revient avant garde son titre. Une purge peut être annulée pendant un temps, puis le titre, et tout ce qui s’y rattache pour chaque membre, disparaît pour de bon.",
   "missing.since": "manquant depuis le {date}",
   "missing.cost":
     "{playlists} en playlist · {favorites} favoris · {plays} écoutes",
@@ -1875,6 +1937,43 @@ const fr: Record<TranslationKey, TranslationValue> = {
     "La bibliothèque est en cours d’analyse. Réessayez une fois l’analyse terminée.",
   "missing.failed": "La purge n’a pas abouti. Réessayez.",
   "missing.more": "Afficher plus",
+  "missing.purgedUntil": {
+    one: "{count} titre purgé. Il peut être restauré jusqu’au {date}.",
+    other: "{count} titres purgés. Ils peuvent être restaurés jusqu’au {date}.",
+  },
+  "missing.purgedTitle": {
+    one: "Purgés, encore restaurables ({count})",
+    other: "Purgés, encore restaurables ({count})",
+  },
+  "missing.purgedNote":
+    "Rien n’en est encore perdu. Restauré, un titre retourne aux fichiers manquants avec tout ce qui s’y rattachait ; un fichier qui revient restaure son titre de lui-même.",
+  "missing.deletedAfter": "supprimé pour de bon après le {date}",
+  "missing.restore": "Restaurer",
+  "missing.restoreOne": "Restaurer {title}",
+  "missing.restoreAll": "Tout restaurer",
+  "missing.restored": {
+    one: "{count} titre restauré.",
+    other: "{count} titres restaurés.",
+  },
+  "missing.restoreFailed": "La restauration n’a pas abouti. Réessayez.",
+  "offline.kicker": "Dans ce navigateur",
+  "offline.title": "Gardé hors ligne",
+  "offline.detail":
+    "Ces titres sont gardés dans ce navigateur pour le compte qui s’y est connecté en dernier, et se lisent sans connexion. Se déconnecter les supprime de ce navigateur. Gardez-en d’autres depuis le menu d’un titre.",
+  "offline.unsupported":
+    "Ce navigateur ne peut pas garder de titres pour l’écoute hors ligne.",
+  "offline.back": "Retour à la bibliothèque",
+  "offline.empty":
+    "Rien n’est encore gardé. Le menu d’un titre propose de le garder.",
+  "offline.player": "Lecteur hors ligne",
+  "offline.gone": "Cette copie n’est plus dans ce navigateur.",
+  "offline.forget": "Retirer la copie hors ligne de {title}",
+  "offline.forgetShort": "Retirer",
+  "offline.forgetDetail": "Libère {size}",
+  "login.offline": {
+    one: "Écouter le {count} titre gardé dans ce navigateur",
+    other: "Écouter les {count} titres gardés dans ce navigateur",
+  },
   "scrobbling.title": "Scrobbling externe",
   "scrobbling.detail":
     "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm.",

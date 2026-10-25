@@ -755,6 +755,11 @@ impl DomainServices {
             bitrate: None,
             duration_ms: row.try_get::<Option<i64>, _>("duration_ms")?.unwrap_or(0),
             available: true,
+            // The server's own folder, written by its downloads: no link in
+            // it is ever followed (RFC-021), and an episode carries no
+            // ReplayGain tags (RFC-022).
+            link_policy: crate::link_roots::LinkPolicy::default(),
+            replay_gain: crate::replay_gain::ReplayGainTags::default(),
         }))
     }
 
