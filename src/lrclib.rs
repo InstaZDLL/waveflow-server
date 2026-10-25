@@ -481,19 +481,23 @@ struct Record {
 }
 
 /// What a record means for a track of `duration_ms` (decision 2).
+///
+/// The duration is checked first, whatever the record says: an instrumental
+/// of another recording is no more this track's answer than its words are,
+/// and taken as one it would stand for the long TTL.
 fn judge(record: Record, duration_ms: i64) -> Answer {
+    if let Some(duration) = record.duration {
+        let ours = duration_ms as f64 / 1000.0;
+        if !duration.is_finite() || (duration - ours).abs() > DURATION_TOLERANCE_SECS {
+            return Answer::miss();
+        }
+    }
     if record.instrumental == Some(true) {
         return Answer {
             outcome: LyricsOutcome::Instrumental,
             synced: None,
             plain: None,
         };
-    }
-    if let Some(duration) = record.duration {
-        let ours = duration_ms as f64 / 1000.0;
-        if !duration.is_finite() || (duration - ours).abs() > DURATION_TOLERANCE_SECS {
-            return Answer::miss();
-        }
     }
     let text = |value: Option<String>| value.filter(|text| !text.trim().is_empty());
     let synced = text(record.synced_lyrics);
@@ -611,6 +615,12 @@ mod tests {
         assert_eq!(close.outcome, LyricsOutcome::Hit);
         let far = judge(record(r#"{"duration":237.5,"plainLyrics":"a"}"#), 234_000);
         assert_eq!(far.outcome, LyricsOutcome::Miss);
+        // An instrumental is held to the same tolerance: another recording's
+        // silence is not this track's answer, and would stand for 30 days.
+        let other = judge(record(r#"{"duration":300,"instrumental":true}"#), 234_000);
+        assert_eq!(other.outcome, LyricsOutcome::Miss);
+        let ours = judge(record(r#"{"duration":235,"instrumental":true}"#), 234_000);
+        assert_eq!(ours.outcome, LyricsOutcome::Instrumental);
     }
 
     #[test]
