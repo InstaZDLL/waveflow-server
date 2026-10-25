@@ -1972,7 +1972,10 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
             PurgeRequest::default(),
         )
         .await;
-    assert!(matches!(neither, Err(ServiceError::Invalid)), "{neither:?}");
+    assert!(
+        matches!(neither, Err(ServiceError::Invalid)),
+        "a purge naming nothing must be refused as invalid"
+    );
 
     let listener = insert_account(&state, "purge-listener", "user").await;
     state
@@ -2039,7 +2042,7 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
         .await;
     assert!(
         matches!(refused, Err(ServiceError::NotFound)),
-        "{refused:?}"
+        "a stranger must be told there is no library"
     );
     let refused = state
         .services
@@ -2051,7 +2054,7 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
         .await;
     assert!(
         matches!(refused, Err(ServiceError::Forbidden)),
-        "{refused:?}"
+        "a listener may see the library and may not purge it"
     );
     assert_eq!(
         state
@@ -2842,7 +2845,7 @@ async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
                 && *id == doomed
                 && action == "delete"
                 && payload["entity_type"] == "track"),
-        "the listener's favourite of the track: {told:?}"
+        "the listener's favourite of the track"
     );
     assert!(
         told.iter()
@@ -2850,7 +2853,7 @@ async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
                 && *id == doomed_album
                 && action == "delete"
                 && payload["entity_type"] == "album"),
-        "the listener's favourite of the album left empty: {told:?}"
+        "the listener's favourite of the album left empty"
     );
     let playlist_entry = told
         .iter()
@@ -2864,7 +2867,7 @@ async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
         owner_told[owner_before..]
             .iter()
             .any(|(kind, id, action, _)| kind == "rating" && *id == doomed && action == "delete"),
-        "the owner's rating: {owner_told:?}"
+        "the owner's rating"
     );
 
     // A deletion tells them the same way.
