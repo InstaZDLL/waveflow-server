@@ -59,7 +59,7 @@ function classify(url, method, mode, origin) {
   if (url.search !== "") return "network";
   if (mode === "navigate") return "shell";
   if (path.startsWith("/assets/")) return "asset";
-  if (/\.(?:svg|png|webmanifest|woff2?)$/.test(path)) return "static";
+  if (/\.(?:svg|png|ico|webmanifest|woff2?)$/.test(path)) return "static";
   return "network";
 }
 

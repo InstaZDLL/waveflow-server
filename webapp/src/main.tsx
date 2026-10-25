@@ -390,20 +390,41 @@ async function prepareTab(
 }
 
 /**
+ * The horizontal logo, the brand guide's primary version, from the logo kit
+ * unchanged: its wordmark is Inter outlined, which the guide asks for instead
+ * of the name typed in an interface face. Two files, because the guide gives
+ * one per background — the colour version on light, the dark one (mint and
+ * white) on dark — and the theme is the reader's preference, not the system's,
+ * so no `<picture>` media query can choose. Both are in the document and the
+ * stylesheet shows the one that matches the root's `dark` class, which
+ * `applyTheme` sets before the first render: nothing swaps after paint.
+ *
  * The name has to contain the words on screen, in order (WCAG 2.5.3, which
  * axe checks as `label-content-name-mismatch`): someone who says "click
- * WaveFlow server" to voice control must land on this link. The space between
- * the two pieces is load-bearing for the same reason — axe reads the visible
- * text by joining the children with nothing, so without it the label is the
- * one word "WaveFlowserver", which no name contains. The flex row drops the
- * space from the layout, so it changes nothing that is drawn.
+ * WaveFlow server" to voice control must land on this link, and "WaveFlow
+ * server, home" is what they would read off the logo and the label beside it.
  */
 function Brand() {
   const { t } = useI18n();
   return (
     <Link className="brand" to="/" aria-label={t("nav.home")}>
-      <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
-      <span>WaveFlow</span> <small>{t("nav.server")}</small>
+      <img
+        className="brand-logo brand-logo-light"
+        src="/brand/waveflow-logo-horizontal-color.svg"
+        alt=""
+        aria-hidden="true"
+        width={131}
+        height={32}
+      />
+      <img
+        className="brand-logo brand-logo-dark"
+        src="/brand/waveflow-logo-horizontal-dark.svg"
+        alt=""
+        aria-hidden="true"
+        width={131}
+        height={32}
+      />
+      <small>{t("nav.server")}</small>
     </Link>
   );
 }

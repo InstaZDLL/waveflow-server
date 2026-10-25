@@ -8,12 +8,17 @@
       name="description"
       content="WaveFlow is your private, self-hosted music library."
     />
-    <meta name="theme-color" content="#11100f" />
-    <!-- Declared, so the browser stops probing for one. With no icon named
-         here it asks for /favicon.ico, which no build has ever produced: the
-         router fallback answered the client shell, the browser could not decode
-         HTML as an image, and it asked again — sixty-six times in fifty-one
-         seconds, measured on a real session. -->
+    <!-- Wave green, the brand's own colour, as the logo kit's head snippet
+         sets it (design/logo/web/ in InstaZDLL/WaveFlow). -->
+    <meta name="theme-color" content="#10B981" />
+    <!-- Both icons come from the logo kit unchanged, and both carry its small
+         drawing, the heavier stroke the guide asks for below 24px. The `.ico`
+         first, sized, for the browsers that read nothing else; the SVG after,
+         which every browser that understands it prefers. Declaring them also
+         stops the probing: with no icon named, a browser asks for
+         /favicon.ico on its own, and when no build shipped one it asked again
+         and again — sixty-six times in fifty-one seconds on a real session. -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Installable on a phone (RFC-022 decision 4). The manifest names the
          icons Android and desktop browsers use; iOS reads its home-screen icon
@@ -53,36 +58,27 @@
         opacity: 0;
         pointer-events: none;
       }
+      /* Still. The mark used to breathe here, and the brand guide rules a
+         pulsing logo out with its gradients and shadows. */
       #splash img {
         width: 5.5rem;
         height: 5.5rem;
-        animation: splash-breathe 1.6s ease-in-out infinite;
-      }
-      @keyframes splash-breathe {
-        0%,
-        100% {
-          opacity: 0.55;
-        }
-        50% {
-          opacity: 1;
-        }
       }
       @media (prefers-reduced-motion: reduce) {
         #splash {
           transition: none;
         }
-        #splash img {
-          animation: none;
-          opacity: 1;
-        }
       }
     </style>
   </head>
   <body>
-    <!-- The mark comes from `/logo.svg`, the one vector file the sidebar also
-         references. Inlining the five bars here would be quicker by one small
-         request and would recreate the fourth copy of the mark — which is the
-         defect this screen's own issue was filed about.
+    <!-- The symbol, in mint, because this screen is always the app's dark
+         background and mint is the guide's colour on dark. The file is the
+         logo kit's master, copied unchanged, as every brand file under
+         `public/brand/` is. Inlining the path here would be quicker by one
+         small request and would start a second copy of the mark that could
+         drift from the kit — the defect this screen's own issue was filed
+         about.
 
          `aria-hidden`: the mark says nothing a reader needs, and three
          hundred milliseconds is below the span where announcing a wait helps
@@ -90,13 +86,13 @@
          `Waiting`'s, inside the application, where it carries
          `role="status"`. -->
     <div id="splash" aria-hidden="true">
-      <img src="/logo.svg" alt="" width="88" height="88" />
+      <img src="/brand/waveflow-symbol-mint.svg" alt="" width="88" height="88" />
     </div>
     <div id="root"></div>
     <!-- The screen must not outlive a client that never arrives.
          `dismissSplash` is the ordinary way out and it runs from the bundle,
          so a bundle that fails to parse, or throws before React's first
-         commit, would leave a pulsing mark over the viewport for as long as
+         commit, would leave the mark over the viewport for as long as
          the tab stayed open — worse than a blank page, because a blank page
          at least looks broken instead of looking like it is working.
 

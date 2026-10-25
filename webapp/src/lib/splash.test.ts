@@ -14,7 +14,7 @@ import { dismissSplash } from "./splash";
 describe("the first-load screen", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    document.body.innerHTML = `<div id="splash"><img src="/logo.svg" alt=""></div>`;
+    document.body.innerHTML = `<div id="splash"><img src="/brand/waveflow-symbol-mint.svg" alt=""></div>`;
   });
 
   afterEach(() => {

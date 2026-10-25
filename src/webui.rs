@@ -36,23 +36,7 @@ const RESERVED_PREFIXES: [&str; 3] = ["api/", "rest/", "share/"];
 /// Single endpoints, matched whole. Comparing these by prefix would swallow
 /// client routes that merely start the same way — `/reference-guide` is a
 /// legitimate page, not a mistyped `/reference`.
-///
-/// `favicon.ico` is here for a different reason than the rest: not because the
-/// server claims it, but because no build produces it and answering the shell
-/// was worse than answering nothing. A browser that asks for an icon and
-/// receives `200 text/html` cannot decode it, learns nothing, and asks again —
-/// sixty-six times in fifty-one seconds on a real session, forty kilobytes of
-/// HTML spent on a tab icon. A 404 is a definitive answer and is asked once.
-/// The icon this build does ship is declared in `index.html` and served as
-/// `favicon.svg`; shipping a real `.ico` beside it would mean taking this line
-/// out, since a reserved path is refused before the assets are looked at.
-const RESERVED_EXACT: [&str; 5] = [
-    "health",
-    "ready",
-    "openapi.json",
-    "reference",
-    "favicon.ico",
-];
+const RESERVED_EXACT: [&str; 4] = ["health", "ready", "openapi.json", "reference"];
 
 /// Files the installed client is made of (RFC-022 decision 4), answered as
 /// themselves or not at all.
@@ -67,8 +51,25 @@ const RESERVED_EXACT: [&str; 5] = [
 /// `sw.js`, the service worker (RFC-022, offline listening), for the same
 /// reason: a browser registering a worker and handed the shell refuses it as
 /// a script of the wrong type, and the client silently loses the offline copy.
-const ASSET_ONLY_EXACT: [&str; 3] = ["manifest.webmanifest", "apple-touch-icon.png", "sw.js"];
-const ASSET_ONLY_PREFIXES: [&str; 1] = ["icons/"];
+///
+/// `favicon.ico`, the logo kit's icon for browsers that read no SVG, is the
+/// case that taught the rule. Before a build shipped one, the fallback handed
+/// the browser the shell for it; a browser that asks for an icon and receives
+/// `200 text/html` cannot decode it, learns nothing, and asks again — sixty-six
+/// times in fifty-one seconds on a real session, forty kilobytes of HTML spent
+/// on a tab icon. Served from the build when it is there, a JSON 404 when it
+/// is not: either is a definitive answer, asked once.
+///
+/// `favicon.svg` and the logo kit's files under `brand/` for the same reason
+/// as the `.ico`: an image, which the shell can never stand in for.
+const ASSET_ONLY_EXACT: [&str; 5] = [
+    "manifest.webmanifest",
+    "apple-touch-icon.png",
+    "favicon.ico",
+    "favicon.svg",
+    "sw.js",
+];
+const ASSET_ONLY_PREFIXES: [&str; 2] = ["icons/", "brand/"];
 
 pub async fn handler(uri: Uri) -> Response {
     let mut response = respond(uri.path().trim_start_matches('/'));
