@@ -229,6 +229,43 @@ struct ShareStreamQuery {
     format: Option<String>,
 }
 
+/// The account a visit's request for `track_id` is served as, or the answer
+/// refusing it: what the stream and the cover both ask (decision 4).
+///
+/// A missing, forged, expired or foreign pass answers like a track that is not
+/// in the share, so probing learns nothing about which it was. The share is
+/// read again on every request, so deleting it or letting it expire stops
+/// both at once whatever the pass says.
+async fn visit_owner(
+    state: &AppState,
+    token: &str,
+    track_id: Uuid,
+    visit: Option<&str>,
+) -> Result<Uuid, StatusCode> {
+    let Some((share_id, pass_track)) = visit
+        .and_then(|pass| stream_ticket::verify(&state.secret_box, pass, now_ms()))
+        .filter(|(kind, ..)| *kind == TicketKind::ShareVisit)
+        .map(|(_, share_id, track)| (share_id, track))
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if pass_track != track_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    match state
+        .services
+        .shared_track_owner(token, share_id, track_id)
+        .await
+    {
+        Ok(owner) => Ok(owner),
+        Err(ServiceError::NotFound) => Err(StatusCode::NOT_FOUND),
+        Err(error) => {
+            tracing::error!(error = %error, "public share visit lookup failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn stream(
     State(state): State<AppState>,
     Path((token, track_id)): Path<(String, Uuid)>,
@@ -240,31 +277,9 @@ async fn stream(
         Some("mp3") => (OutputFormat::Mp3, Some(VISIT_MP3_BITRATE)),
         Some(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    // A missing, forged, expired or foreign pass answers like a track that is
-    // not in the share, so probing learns nothing about which it was.
-    let Some((share_id, pass_track)) = query
-        .visit
-        .as_deref()
-        .and_then(|pass| stream_ticket::verify(&state.secret_box, pass, now_ms()))
-        .filter(|(kind, ..)| *kind == TicketKind::ShareVisit)
-        .map(|(_, share_id, track)| (share_id, track))
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if pass_track != track_id {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let owner = match state
-        .services
-        .shared_track_owner(&token, share_id, track_id)
-        .await
-    {
+    let owner = match visit_owner(&state, &token, track_id, query.visit.as_deref()).await {
         Ok(owner) => owner,
-        Err(ServiceError::NotFound) => return StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share stream lookup failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        Err(refused) => return refused.into_response(),
     };
     let track = match state.db.stream_track_for_user(owner, track_id).await {
         Ok(Some(track)) => track,
@@ -314,29 +329,9 @@ async fn cover(
     Query(query): Query<ShareCoverQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some((share_id, pass_track)) = query
-        .visit
-        .as_deref()
-        .and_then(|pass| stream_ticket::verify(&state.secret_box, pass, now_ms()))
-        .filter(|(kind, ..)| *kind == TicketKind::ShareVisit)
-        .map(|(_, share_id, track)| (share_id, track))
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if pass_track != track_id {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let owner = match state
-        .services
-        .shared_track_owner(&token, share_id, track_id)
-        .await
-    {
+    let owner = match visit_owner(&state, &token, track_id, query.visit.as_deref()).await {
         Ok(owner) => owner,
-        Err(ServiceError::NotFound) => return StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share cover lookup failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        Err(refused) => return refused.into_response(),
     };
     let (hash, format) = match state.services.track_cover_for_user(owner, track_id).await {
         Ok(Some(found)) => found,

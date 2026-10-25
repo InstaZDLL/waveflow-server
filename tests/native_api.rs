@@ -6656,6 +6656,43 @@ async fn a_playlist_entry_moves_to_the_position_it_was_shown_at() {
     .await;
     assert_eq!(beyond.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    // Removal by the position shown, guarded the same way: a stale view is
+    // refused, and the hidden entry stays where it is.
+    let remove = format!("/api/v2/playlists/{id}/remove");
+    let stale = send_json(
+        &router,
+        "POST",
+        &remove,
+        &token,
+        Some(serde_json::json!({ "position": 1, "track_id": c })),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let removed = send_json(
+        &router,
+        "POST",
+        &remove,
+        &token,
+        Some(serde_json::json!({ "position": 3, "track_id": a })),
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert_eq!(
+        song_ids(&json_body(removed).await["songs"]),
+        vec![a.as_str(), b.as_str(), c.as_str()]
+    );
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM playlist_track WHERE playlist_id=? ORDER BY position",
+    )
+    .bind(&id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        vec![a.clone(), hidden.clone(), b.clone(), c.clone()]
+    );
+
     // Someone else's playlist, public or not, answers as a missing one.
     sqlx::query("UPDATE playlist SET public=1 WHERE id=?")
         .bind(&id)
@@ -6685,6 +6722,15 @@ async fn a_playlist_entry_moves_to_the_position_it_was_shown_at() {
     .await;
     assert_eq!(
         song_ids(&unchanged["songs"]),
-        vec![a.as_str(), b.as_str(), c.as_str(), a.as_str()]
+        vec![a.as_str(), b.as_str(), c.as_str()]
     );
+    let refused = send_json(
+        &router,
+        "POST",
+        &remove,
+        &other_token,
+        Some(serde_json::json!({ "position": 0 })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
 }

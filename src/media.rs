@@ -1624,9 +1624,19 @@ pub(crate) async fn secure_track_path(
     }
     let canonical_file = tokio::fs::canonicalize(&cursor).await?;
     let reachable = if through_link {
-        let allowed = link_roots.resolved();
-        let others = policy.other_libraries_resolved();
-        crate::link_roots::admits(&allowed, &others, &canonical_file)
+        // Off the async worker: resolving a root is a blocking call, and a
+        // hung network mount would otherwise hold the worker with it.
+        let (link_roots, policy, target) =
+            (link_roots.clone(), policy.clone(), canonical_file.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::link_roots::admits(
+                &link_roots.resolved(),
+                &policy.other_libraries_resolved(),
+                &target,
+            )
+        })
+        .await
+        .map_err(io::Error::other)?
     } else {
         canonical_file.starts_with(&canonical_root)
     };

@@ -210,6 +210,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::get_playlist,
         api::update_playlist,
         api::move_playlist_entry,
+        api::remove_playlist_entry,
         api::delete_playlist,
         api::list_favorites,
         api::add_favorite,
@@ -341,6 +342,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         api::CreatePlaylistRequest,
         api::UpdatePlaylistRequest,
         api::MovePlaylistEntryRequest,
+        api::RemovePlaylistEntryRequest,
         api::RatingRequest,
         api::ScrobbleRequest,
         api::SaveQueueRequest,
@@ -1182,12 +1184,12 @@ mod tests {
         use utoipa::openapi::RefOr;
         use utoipa::OpenApi;
 
-        // Fifteen today: the favourite, rating, play-queue and now-playing
+        // Sixteen today: the favourite, rating, play-queue and now-playing
         // mutations, the playlist import — which claims an operation like
         // every other playlist creation, because that is the verb it calls —
-        // and the move of a playlist entry, which journals as an update does.
-        // A new one lands here deliberately, not silently.
-        let expected = 15;
+        // and the move and the removal of one playlist entry, which journal as
+        // an update does. A new one lands here deliberately, not silently.
+        let expected = 16;
         let openapi = super::ApiDoc::openapi();
         let mut checked = 0;
         for (path, item) in &openapi.paths.paths {

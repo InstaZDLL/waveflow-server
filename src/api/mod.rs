@@ -290,6 +290,10 @@ pub fn router(state: AppState) -> Router {
             post(move_playlist_entry),
         )
         .route(
+            "/api/v2/playlists/{playlist_id}/remove",
+            post(remove_playlist_entry),
+        )
+        .route(
             "/api/v2/playlists/{playlist_id}",
             get(get_playlist)
                 .patch(update_playlist)

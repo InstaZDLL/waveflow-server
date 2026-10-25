@@ -560,12 +560,17 @@ async fn list_missing_on(
     grace: Option<i64>,
 ) -> Result<UnavailableTracks, ServiceError> {
     let purged = grace.is_some();
+    // A purge past its window is due for deletion, not restorable: it is
+    // listed nowhere until the finishing pass takes it.
+    let restorable_after = grace.map(|grace| now_ms().saturating_sub(grace));
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM track WHERE library_id = ? AND is_available = 0 \
-           AND (purged_at IS NOT NULL) = ?",
+           AND (purged_at IS NOT NULL) = ? AND (? IS NULL OR purged_at > ?)",
     )
     .bind(library_id.to_string())
     .bind(purged)
+    .bind(restorable_after)
+    .bind(restorable_after)
     .fetch_one(&mut *connection)
     .await?;
     let rows = sqlx::query(
@@ -579,10 +584,13 @@ async fn list_missing_on(
                 (SELECT COUNT(*) FROM play_event pe WHERE pe.track_id = t.id) AS plays \
          FROM track t LEFT JOIN track_override ovr ON ovr.track_id = t.id \
          WHERE t.library_id = ? AND t.is_available = 0 AND (t.purged_at IS NOT NULL) = ? \
+           AND (? IS NULL OR t.purged_at > ?) \
          ORDER BY t.purged_at, since, t.relative_path, t.id LIMIT ? OFFSET ?",
     )
     .bind(library_id.to_string())
     .bind(purged)
+    .bind(restorable_after)
+    .bind(restorable_after)
     .bind(page.limit)
     .bind(page.offset)
     .fetch_all(&mut *connection)
@@ -1133,13 +1141,18 @@ impl DomainServices {
             return Err(ServiceError::Forbidden);
         }
         // Under the writer gate, which the finishing pass takes too: a track
-        // is either restored here or deleted there, never both.
+        // is either restored here or deleted there, never both. Only within
+        // the window: one past it is due for deletion even if the pass has not
+        // reached it yet — it ran before, or the library was being scanned.
+        let restorable_after = now_ms()
+            .saturating_sub(i64::try_from(self.purge_grace.as_millis()).unwrap_or(i64::MAX));
         let restored = sqlx::query(
             "UPDATE track SET purged_at = NULL \
-             WHERE library_id = ? AND purged_at IS NOT NULL \
+             WHERE library_id = ? AND purged_at IS NOT NULL AND purged_at > ? \
                AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))",
         )
         .bind(library_id.to_string())
+        .bind(restorable_after)
         .bind(named.as_deref())
         .bind(named.as_deref())
         .execute(&mut *tx)
@@ -1402,12 +1415,12 @@ impl DomainServices {
     /// the retention, when the operator set one
     /// (`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`), then the deletion of every
     /// purge whose grace window (`WAVEFLOW_PURGE_GRACE_HOURS`) has passed.
+    ///
+    /// Runs whatever the settings: with no grace window, the purges a former
+    /// window left behind are due at once, and nothing else would delete them.
     pub fn spawn_unavailable_purge(&self) {
         let retention = self.unavailable_retention;
         let grace = self.purge_grace;
-        if retention.is_none() && grace.is_zero() {
-            return;
-        }
         let services = self.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(RETENTION_INTERVAL);
@@ -1428,9 +1441,6 @@ impl DomainServices {
                             tracing::warn!(%error, "could not purge missing tracks past their retention")
                         }
                     }
-                }
-                if grace.is_zero() {
-                    continue;
                 }
                 let cutoff =
                     now_ms().saturating_sub(i64::try_from(grace.as_millis()).unwrap_or(i64::MAX));

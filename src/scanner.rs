@@ -388,26 +388,37 @@ impl ScanManager {
         let root = tokio::fs::canonicalize(&library.root_path).await?;
         let follow_links = settings.follow_links;
         // The folders a followed link may reach outside the root, and every
-        // other library's root, which none may reach into. Resolved now, so a
-        // mount that appeared since the boot counts and one that went does not.
-        let (link_roots, libraries) = if follow_links && !self.link_roots.is_empty() {
+        // other library's root, which none may reach into. Resolved when the
+        // walk starts, on the blocking pool with it, so a mount that appeared
+        // since the boot counts, one that went does not, and one that hangs
+        // holds no async worker.
+        let (link_roots, other_roots) = if follow_links && !self.link_roots.is_empty() {
             let others = self
                 .db
                 .all_libraries()
                 .await?
                 .into_iter()
                 .filter(|other| other.id != library.id)
-                .filter_map(|other| std::fs::canonicalize(&other.root_path).ok())
+                .map(|other| other.root_path)
                 .collect::<Vec<_>>();
-            (self.link_roots.resolved(), others)
+            (Some(self.link_roots.clone()), others)
         } else {
-            (Vec::new(), Vec::new())
+            (None, Vec::new())
         };
+        // Read before the walk is chosen, not after it: a scan that died
+        // halfway left the request standing, and the run picking up after it
+        // has to honour a request it never saw made. A scoped walk is no
+        // answer to it — it would record a partial walk as the full one and
+        // clear the request — so a pending full scan walks everything.
+        let full = self.db.full_scan_requested(library.id).await?;
+        if full {
+            tracing::info!(library_id = %library.id, "scanning every file, skipping nothing");
+        }
         // Only a walk that reads no link is ever scoped: a folder reached
         // through a link is named by its target, and the watcher names the
         // path it saw, so the two could not be told to agree.
         let scope = match self.db.scan_scope(scan_id).await? {
-            Some(scope) if !follow_links => normalised_scope(&scope),
+            Some(scope) if !follow_links && !full => normalised_scope(&scope),
             _ => None,
         };
         if let Some(scope) = scope.as_ref() {
@@ -427,6 +438,11 @@ impl ScanManager {
             let root = root.clone();
             let scope = scope.clone();
             move || {
+                let link_roots = link_roots.map(|roots| roots.resolved()).unwrap_or_default();
+                let libraries: Vec<PathBuf> = other_roots
+                    .iter()
+                    .filter_map(|other| std::fs::canonicalize(other).ok())
+                    .collect();
                 discover_audio(
                     &Reach {
                         root: &root,
@@ -445,13 +461,6 @@ impl ScanManager {
             .collect();
         let discovered: HashSet<String> =
             paths.iter().map(|(_, relative)| relative.clone()).collect();
-        // Read here rather than taken as an argument: a scan that died halfway
-        // left the request standing, and the run picking up after it has to
-        // honour a request it never saw made.
-        let full = self.db.full_scan_requested(library.id).await?;
-        if full {
-            tracing::info!(library_id = %library.id, "scanning every file, skipping nothing");
-        }
         self.db
             .start_walked_scan_job(
                 scan_id,
@@ -1230,18 +1239,20 @@ pub(crate) fn normalised_scope(scope: &[String]) -> Option<Vec<String>> {
     }
     folders.sort();
     folders.dedup();
-    // Sorted, a folder's descendants follow it directly.
-    let mut kept: Vec<String> = Vec::with_capacity(folders.len());
-    for folder in folders {
-        let nested = kept.last().is_some_and(|parent| {
-            folder
-                .strip_prefix(parent.as_str())
-                .is_some_and(|rest| rest.starts_with('/'))
-        });
-        if !nested {
-            kept.push(folder);
-        }
-    }
+    // A folder is dropped when any of its ancestors is listed too. Sorting
+    // alone does not put a folder's descendants right after it — `-`, ` ` and
+    // `(` sort before `/`, so "Rock - Live" falls between "Rock" and
+    // "Rock/Album" — hence every ancestor is asked, not the last one kept.
+    let listed: HashSet<&str> = folders.iter().map(String::as_str).collect();
+    let kept: Vec<String> = folders
+        .iter()
+        .filter(|folder| {
+            !folder
+                .match_indices('/')
+                .any(|(at, _)| listed.contains(&folder[..at]))
+        })
+        .cloned()
+        .collect();
     (!kept.is_empty() && kept.len() <= MAX_SCOPE_FOLDERS).then_some(kept)
 }
 
@@ -2088,6 +2099,23 @@ mod tests {
             super::normalised_scope(&folders(&["b/c", "a", "a/x/y", "b/c/", "bc"])),
             Some(folders(&["a", "b/c", "bc"])),
             "nested folders are covered by their parent, and a prefix is not a parent"
+        );
+        // A sibling that sorts between a folder and its child: "-", " " and
+        // "(" all come before "/".
+        assert_eq!(
+            super::normalised_scope(&folders(&[
+                "Rock/Album",
+                "Rock - Live",
+                "Rock",
+                "Artist (Live)",
+                "Artist/Album/CD1"
+            ])),
+            Some(folders(&[
+                "Artist (Live)",
+                "Artist/Album/CD1",
+                "Rock",
+                "Rock - Live"
+            ])),
         );
         for whole in [&[""][..], &["a/../b"], &["/etc"], &["a//b"], &["."], &[]] {
             assert_eq!(super::normalised_scope(&folders(whole)), None, "{whole:?}");

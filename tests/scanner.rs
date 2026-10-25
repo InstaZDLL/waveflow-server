@@ -3248,3 +3248,140 @@ async fn a_library_is_watched_only_when_it_asks_and_in_the_folder_that_changed()
         ]
     );
 }
+
+/// A scoped scan is no answer to a pending full-scan request: it walks the
+/// whole library, reads every file, and only then is the request spent
+/// (review of #335).
+#[tokio::test]
+async fn a_pending_full_scan_is_not_spent_by_a_scoped_one() {
+    let (_temp, state, owner, library, root) = incremental_library("scoped-full", |music| {
+        for (folder, length) in [("A", 1_000), ("B", 1_100)] {
+            std::fs::create_dir_all(music.join(folder)).unwrap();
+            write_test_wav_of_len(&music.join(format!("{folder}/{folder}.wav")), length);
+        }
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    std::fs::remove_file(root.join("B/B.wav")).unwrap();
+    state.db.request_full_scan(library.id).await.unwrap();
+    let scan = state
+        .scanner
+        .trigger_scoped(library.clone(), "watch", &["A".to_owned()])
+        .await
+        .unwrap();
+    let record = settled(&state, owner, scan).await;
+    assert_eq!(record.status, "completed", "{:?}", record.message);
+    assert_eq!(
+        (record.unavailable, record.skipped),
+        (1, 0),
+        "the whole library walked, every file read"
+    );
+    assert!(
+        !state.db.full_scan_requested(library.id).await.unwrap(),
+        "the request was answered by a full walk"
+    );
+}
+
+/// A purge past its grace window is due for deletion: neither listed as
+/// restorable nor restored, even before the finishing pass has run (review of
+/// #335).
+#[tokio::test]
+async fn a_purge_past_its_window_is_neither_listed_nor_restored() {
+    use waveflow_server::services::{LibraryActor, PurgeRequest};
+
+    let (_temp, state, owner, library, root) = library_with_albums("past-window").await;
+    let actor = LibraryActor::operator(owner);
+    std::fs::remove_file(root.join("Second/2.flac")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    state
+        .services
+        .purge_unavailable_tracks(
+            actor,
+            library.id,
+            PurgeRequest {
+                track_ids: None,
+                all: true,
+            },
+        )
+        .await
+        .unwrap();
+    // Purged eight days ago, against a window of a week.
+    sqlx::query("UPDATE track SET purged_at = ? WHERE purged_at IS NOT NULL")
+        .bind(now_ms() - 8 * 24 * 60 * 60 * 1000)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let listed = state
+        .services
+        .purged_tracks(actor, library.id, Default::default())
+        .await
+        .unwrap();
+    assert_eq!((listed.total, listed.tracks.len()), (0, 0));
+    let restored = state
+        .services
+        .restore_purged_tracks(
+            actor,
+            library.id,
+            PurgeRequest {
+                track_ids: None,
+                all: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        restored.restored, 0,
+        "a purge past its window is due, not undone"
+    );
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM track WHERE purged_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+}
+
+/// With the grace window set to zero, the purges a former window left behind
+/// are deleted by the pass, which therefore runs whatever the settings
+/// (review of #335).
+#[tokio::test]
+async fn a_zero_window_deletes_the_purges_a_former_one_left() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.purge_grace = std::time::Duration::ZERO;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let owner = insert_account(&state, "zero-window", "admin").await;
+    let music = temp.path().join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("Gone.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let id = state
+        .db
+        .create_library(owner, "zero", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id,
+        name: "zero".into(),
+        root_path: root.clone(),
+    };
+    scan_once(&state, owner, library.clone()).await;
+    std::fs::remove_file(root.join("Gone.wav")).unwrap();
+    scan_once(&state, owner, library).await;
+    // Purged under a former window, an hour ago.
+    sqlx::query("UPDATE track SET purged_at = ? WHERE is_available = 0")
+        .bind(now_ms() - 60 * 60 * 1000)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    state.services.spawn_unavailable_purge();
+    for _ in 0..200 {
+        if count(&state, "SELECT COUNT(*) FROM track").await == 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("the purge a former window left was never deleted");
+}
