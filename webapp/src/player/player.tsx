@@ -328,13 +328,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       candidate.current = null;
       if (pending) void pending.close().catch(() => undefined);
       const active = graph.current;
-      if (!active) return;
-      graph.current = null;
-      setGainNode(null);
-      void active.context.close().catch(() => undefined);
-      // The element stays claimed by the context just closed, and would play
-      // as silence on an instance that remounts with its refs kept. It is
-      // dropped, and the mount effect makes a fresh one.
+      if (active) {
+        graph.current = null;
+        setGainNode(null);
+        void active.context.close().catch(() => undefined);
+      }
+      // The element is never in the document, so nothing else stops it: with
+      // ReplayGain off it would carry on over the sign-in page. With it on,
+      // it stays claimed by the context just closed, and would play as
+      // silence on an instance that remounts with its refs kept. Either way
+      // it is dropped, and the mount effect makes a fresh one.
       const element = audio.current;
       if (element) {
         element.pause();

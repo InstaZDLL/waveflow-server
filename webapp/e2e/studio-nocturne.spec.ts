@@ -7094,6 +7094,106 @@ for (const kind of ["running", "pending"] as const) {
 }
 
 /**
+ * Seconds of 8 kHz, 8-bit mono silence as a WAV file: something the browser
+ * decodes and plays for real, so `paused` and `currentTime` mean what they
+ * say, at a size a route can answer in one piece.
+ */
+function silentWav(seconds: number): Buffer {
+  const rate = 8_000;
+  const samples = rate * seconds;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + samples, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate, 28);
+  header.writeUInt16LE(1, 32);
+  header.writeUInt16LE(8, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(samples, 40);
+  // Unsigned 8-bit samples sit at 128 when silent.
+  return Buffer.concat([header, Buffer.alloc(samples, 128)]);
+}
+
+/**
+ * Signing out stops the music, whatever the ReplayGain mode.
+ *
+ * The cleanup that closes the audio contexts above also paused the element,
+ * but only on its way out of a graph: with ReplayGain off — the default, and
+ * so the common case — nothing paused it, and the music carried on over the
+ * sign-in page. The element is never in the document, so every one that was
+ * asked to play is recorded, and a real file is served so that it plays.
+ */
+test("stops the music when the listener signs out with ReplayGain off", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await page.addInitScript(() => {
+    const played = new Set<HTMLMediaElement>();
+    (window as unknown as { __played: Set<HTMLMediaElement> }).__played =
+      played;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      played.add(this);
+      return play.call(this);
+    };
+    const record = window as unknown as { __contexts: number };
+    record.__contexts = 0;
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        record.__contexts += 1;
+      }
+    };
+  });
+  const audio = silentWav(60);
+  await page.route("**/api/v2/tracks/*/stream-ticket", (route) =>
+    route.fulfill({
+      json: { url: "/api/v2/stream/ticket-e2e", expires_at: Date.now() + 60_000 },
+    }),
+  );
+  await page.route("**/api/v2/stream/*", (route) =>
+    route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
+  );
+  const playing = () =>
+    page.evaluate(() =>
+      [
+        ...(window as unknown as { __played: Set<HTMLMediaElement> }).__played,
+      ].filter((element) => !element.paused).length,
+    );
+
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  // Playing for real, and off the plain path: no graph was asked for.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        [
+          ...(window as unknown as { __played: Set<HTMLMediaElement> }).__played,
+        ].some((element) => !element.paused && element.currentTime > 0),
+      ),
+    )
+    .toBe(true);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __contexts: number }).__contexts,
+    ),
+  ).toBe(0);
+
+  // Dispatched rather than clicked, as in the cache test: the sidebar's
+  // footer sits under the fixed player bar at this viewport.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(playing).toBe(0);
+});
+
+/**
  * "Missing files" (RFC-021 decision 4): what the scans can no longer find, what
  * purging each would cost, and a purge that takes two clicks and only what was
  * chosen. A purge is not reversible, so the first click only arms it.
