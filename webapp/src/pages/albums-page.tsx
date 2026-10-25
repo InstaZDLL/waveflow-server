@@ -5,6 +5,7 @@ import type { AlbumSort } from "../api";
 import { albumsQuery } from "../api/queries";
 import { AlbumGrid } from "../components/album-grid";
 import { FilterField } from "../components/filter-field";
+import { MixShelves } from "../components/mix-shelves";
 import { EmptyState, Loading, PageHeader } from "../components/page-shell";
 import { matches, normalizeFilter } from "../lib/filter";
 import { type TranslationKey, useI18n } from "../state/i18n";
@@ -99,6 +100,9 @@ export function AlbumsPage() {
       >
         {controls}
       </PageHeader>
+      {/* Above the albums and not inside their filter: the shelf is what the
+          server suggests today, and narrowing the grid does not narrow it. */}
+      {needle ? null : <MixShelves />}
       {needle && shown.length === 0 ? (
         <EmptyState message={t("browse.noMatch")} />
       ) : (

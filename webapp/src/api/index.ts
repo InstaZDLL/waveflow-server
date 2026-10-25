@@ -86,6 +86,21 @@ export {
   SETUP_TOKEN_REJECTED,
   setupRequired,
 } from "./client";
+export type {
+  ListeningStats,
+  Mix,
+  MixKind,
+  MixSummary,
+  StatsBucket,
+  StatsPeriod,
+} from "./discovery";
+export {
+  getListeningStats,
+  getMix,
+  listMixes,
+  listSimilarSongs,
+  utcOffsetMinutes,
+} from "./discovery";
 export type { EntityKind, Favorite, Rating } from "./favorites";
 export {
   listFavorites,

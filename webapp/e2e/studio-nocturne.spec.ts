@@ -523,8 +523,28 @@ let lyricSheets = new Map<
     lang: string;
     synced: boolean;
     line: Array<{ start?: number; value: string }>;
+    /** Where the server says the sheet came from: `lrclib` since RFC-024. */
+    source?: string;
   }>
 >();
+
+/**
+ * The mixes `GET /api/v2/mixes` answers (RFC-024). Empty by default, which is
+ * what a server answers for an account with nothing to suggest — and what
+ * keeps the home page every other test reads exactly as it was.
+ */
+let mixes: Array<{
+  id: string;
+  kind: string;
+  genre: string | null;
+  decade: number | null;
+  track_count: number;
+  artwork_hashes: string[];
+}> = [];
+/** Every mix id the mock was asked for, in order. */
+let mixAsks: string[] = [];
+/** Every period the statistics route was asked for, in order. */
+let statsAsks: string[] = [];
 
 /** Held open by the late-sheet test; instant for everyone else. */
 let lyricsGate: Promise<void> = Promise.resolve();
@@ -571,12 +591,55 @@ async function expectNoWcagViolations(page: Page) {
   expect(results.violations).toEqual([]);
 }
 
+/**
+ * `GET /api/v2/stats` for one period, shaped as the server shapes it: a day
+ * per bucket for the two short periods, a month for the others, and the
+ * busiest bucket last so the bars have something to measure against.
+ */
+function statsFor(period: string) {
+  const buckets = period === "7d" ? 7 : period === "30d" ? 30 : 12;
+  const daily = period === "7d" || period === "30d";
+  const timeline = Array.from({ length: buckets }, (_, index) => ({
+    label: daily
+      ? `2026-10-${String(index + 1).padStart(2, "0")}`
+      : `2026-${String(index + 1).padStart(2, "0")}`,
+    plays: index === buckets - 1 ? 4 : index % 3 === 0 ? 1 : 0,
+    listening_ms: 0,
+  }));
+  const plays = timeline.reduce((sum, bucket) => sum + bucket.plays, 0);
+  return {
+    period,
+    from: period === "all" ? null : 1_790_000_000_000,
+    bucket: daily ? "day" : "month",
+    totals: {
+      plays,
+      listening_ms: plays * 234_000,
+      tracks: 2,
+      albums: 1,
+      artists: 1,
+    },
+    top_tracks: [
+      { song: song(1, "Hidden Place", 0, false), plays: 3 },
+      { song: song(2, "Cocoon", 0, false), plays: 1 },
+    ],
+    top_albums: [{ album: albums[1], plays: 4 }],
+    top_artists: [
+      { artist: { id: "artist-1", name: "Björk" }, artwork_hash: null, plays: 4 },
+    ],
+    top_genres: [{ name: "Art Pop", plays: 4 }],
+    timeline,
+    first_play: { song: song(2, "Cocoon", 0, false), played_at: 1_790_000_000_000 },
+    last_play: { song: song(1, "Hidden Place", 0, false), played_at: 1_790_100_000_000 },
+  };
+}
+
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
     {
       name: "waveflow-csrf",
       value: "e2e-csrf",
-      url: "http://127.0.0.1:4173",
+      // The preview's own origin, whichever port it was given.
+      url: test.info().project.use.baseURL ?? "http://127.0.0.1:4173",
     },
   ]);
   await page.route("**/api/v2/**", async (route) => {
@@ -1080,6 +1143,35 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: { ...song(1, `Track ${id}`, 0, false), id } });
       return;
     }
+    // RFC-024: the statistics and the mixes, as the server shapes them.
+    if (url.pathname === "/api/v2/stats") {
+      const period = url.searchParams.get("period") ?? "30d";
+      statsAsks.push(period);
+      await route.fulfill({ json: statsFor(period) });
+      return;
+    }
+    if (url.pathname === "/api/v2/mixes") {
+      await route.fulfill({ json: mixes });
+      return;
+    }
+    if (url.pathname.startsWith("/api/v2/mixes/")) {
+      const id = decodeURIComponent(
+        url.pathname.slice("/api/v2/mixes/".length),
+      );
+      mixAsks.push(id);
+      const found = mixes.find((mix) => mix.id === id);
+      if (!found) {
+        await route.fulfill({ status: 404, json: { error: "not found" } });
+        return;
+      }
+      await route.fulfill({
+        json: {
+          ...found,
+          songs: [song(1, "Hidden Place", 0, false), song(2, "Cocoon", 0, false)],
+        },
+      });
+      return;
+    }
     if (url.pathname === "/api/v2/genres") {
       await route.fulfill({ json: genres });
       return;
@@ -1227,6 +1319,9 @@ test.beforeEach(async ({ page }) => {
   loseAcknowledgementOf = null;
   lyricSheets = new Map();
   lyricsGate = Promise.resolve();
+  mixes = [];
+  mixAsks = [];
+  statsAsks = [];
   canvases = new Map();
   canvasWrites = [];
   refuseCanvasWith = null;
@@ -3634,12 +3729,12 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The fifteen the bar cannot hold — including the three this account is
+  // The sixteen the bar cannot hold — including the three this account is
   // entitled to as an administrator and owner of a library that takes files.
   // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
-  // `Needs attention` with RFC-015, `Quality` with RFC-016 and `Missing files`
-  // with RFC-021; this count is what said so: a new entry in
-  // the sidebar reaches the sheet, and the sheet is pinned.
+  // `Needs attention` with RFC-015, `Quality` with RFC-016, `Missing files`
+  // with RFC-021 and `Statistics` with RFC-024; this count is what said so: a
+  // new entry in the sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -3651,6 +3746,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Settings",
     "Random",
     "Recently played",
+    "Statistics",
     "Shares",
     "Radio",
     "Scrobbling",
@@ -3661,7 +3757,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(15);
+  await expect(sheet.getByRole("link")).toHaveCount(16);
 
   await expectNoWcagViolations(page);
 
@@ -7331,4 +7427,191 @@ test("shows the missing files to an administrator who only listens", async ({
   await expect(
     page.getByRole("button", { name: "Purge them all" }),
   ).toBeVisible();
+});
+
+// ── RFC-024: mixes, statistics and lyrics from LRCLIB ──
+
+const dailyMixes = () => [
+  {
+    id: "most-played",
+    kind: "most_played",
+    genre: null,
+    decade: null,
+    track_count: 2,
+    artwork_hashes: [],
+  },
+  {
+    id: "genre:art pop",
+    kind: "genre",
+    genre: "Art Pop",
+    decade: null,
+    track_count: 2,
+    artwork_hashes: [],
+  },
+  {
+    id: "decade:1990",
+    kind: "decade",
+    genre: null,
+    decade: 1990,
+    track_count: 2,
+    artwork_hashes: [],
+  },
+];
+
+test("offers the day's mixes above the albums, and plays one", async ({
+  page,
+}) => {
+  mixes = dailyMixes();
+  // Asked within the active library, like every other catalogue read.
+  const scopes: Array<string | null> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v2/mixes") {
+      scopes.push(url.searchParams.get("library_id"));
+    }
+  });
+  await page.goto("/");
+  const shelf = page.locator(".mix-shelf");
+  await expect(
+    shelf.getByRole("heading", { name: "Made for you today" }),
+  ).toBeVisible();
+  // Named by the client, in the listener's language, from what the server
+  // sent: a kind and its parameter, never a title.
+  await expect(shelf.getByRole("link")).toHaveText([
+    /Most played/,
+    /Art Pop mix/,
+    /The 1990s/,
+  ]);
+  // The albums below are what they were: the shelf takes no card from them.
+  await expect(page.locator(".grid li")).toHaveCount(2);
+  expect(scopes).toEqual(["library-1"]);
+
+  await shelf.getByRole("button", { name: "Play: Most played" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  expect(mixAsks).toEqual(["most-played"]);
+  await expectNoWcagViolations(page);
+
+  // A genre's name travels in the address whole, space and all.
+  await shelf.getByRole("link", { name: /Art Pop mix/ }).click();
+  await expect(page.getByRole("heading", { name: "Art Pop mix" })).toBeVisible();
+  await expect(page.getByText("2 tracks, drawn for today")).toBeVisible();
+  expect(mixAsks).toEqual(["most-played", "genre:art pop"]);
+  await expectNoWcagViolations(page);
+
+  // Filtering the albums leaves the suggestion out of the way.
+  await page.goto("/");
+  await expect(shelf).toBeVisible();
+  await page.getByLabel("Filter by title or artist").fill("Post");
+  await expect(shelf).toHaveCount(0);
+});
+
+test("shows no shelf when the server has nothing to suggest", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(page.locator(".grid li")).toHaveCount(2);
+  await expect(page.locator(".mix-shelf")).toHaveCount(0);
+});
+
+test("says a mix that is gone is gone, rather than drawing an empty one", async ({
+  page,
+}) => {
+  await page.goto("/mixes/never-played");
+  await expect(page.getByRole("alert")).toContainText(
+    "We could not load this view",
+  );
+});
+
+test("shows this account's listening, period by period", async ({ page }) => {
+  await page.goto("/stats");
+  await expect(page.getByRole("heading", { name: "Statistics" })).toBeVisible();
+  const totals = page.locator(".stats-totals");
+  await expect(totals).toContainText("Listens");
+  await expect(totals).toContainText("Listening time");
+  // A bar per day of the default thirty, the empty ones included.
+  await expect(page.locator(".stats-timeline li")).toHaveCount(30);
+  await expect(
+    page.getByRole("listitem", { name: "2026-10-30: 4 listens" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Top tracks" })).toBeVisible();
+  const columns = page.locator(".stats-columns");
+  await expect(
+    columns.getByRole("link", { name: "Björk", exact: true }),
+  ).toBeVisible();
+  await expect(columns.getByRole("link", { name: "Art Pop" })).toBeVisible();
+  await expect(columns.getByRole("link", { name: /Vespertine/ })).toBeVisible();
+  await expect(page.locator(".stats-moments")).toContainText("Cocoon, ");
+  await expectNoWcagViolations(page);
+
+  await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
+  await expect(page.locator(".stats-timeline li")).toHaveCount(7);
+  await page.getByRole("combobox", { name: "Period" }).selectOption("365d");
+  await expect(page.locator(".stats-timeline li")).toHaveCount(12);
+  await expect(
+    page.getByRole("heading", { name: "Listens per month" }),
+  ).toBeVisible();
+  expect(statsAsks).toEqual(["30d", "7d", "365d"]);
+
+  // A top track plays from the list, with the others after it.
+  await columns.getByRole("button", { name: /Cocoon/ }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
+});
+
+test("keeps the statistics and the shelf readable in the light", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("waveflow.theme", "default");
+  });
+  mixes = dailyMixes();
+  await page.goto("/");
+  await expect(page.locator(".mix-shelf")).toBeVisible();
+  await expectNoWcagViolations(page);
+  await page.goto("/stats");
+  await expect(page.locator(".stats-timeline li")).toHaveCount(30);
+  await expectNoWcagViolations(page);
+});
+
+test("credits LRCLIB for words the server looked up", async ({ page }) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Björk",
+      displayTitle: "Army of Me",
+      lang: "xxx",
+      synced: true,
+      line: [
+        { start: 1_000, value: "If you complain once more" },
+        { start: 4_500, value: "You'll meet an army of me" },
+      ],
+      source: "lrclib",
+    },
+  ]);
+  await page.goto("/playing");
+  await expect(page.locator(".playing .lyrics")).toContainText(
+    "Lyrics from LRCLIB",
+  );
+  await page.getByRole("link", { name: "Lyrics", exact: true }).click();
+  await expect(page.locator(".lyrics-view")).toContainText(
+    "Lyrics from LRCLIB",
+  );
+  await expectNoWcagViolations(page);
+});
+
+test("credits nobody for words that travel with the file", async ({ page }) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Björk",
+      displayTitle: "Army of Me",
+      lang: "eng",
+      synced: false,
+      line: [{ value: "If you complain once more" }],
+      source: "embedded",
+    },
+  ]);
+  await page.goto("/playing");
+  await expect(page.locator(".playing .lyrics")).toContainText(
+    "If you complain once more",
+  );
+  await expect(page.getByText("Lyrics from LRCLIB")).toHaveCount(0);
 });

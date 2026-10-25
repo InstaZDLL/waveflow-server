@@ -116,7 +116,9 @@ export type LyricsSource =
   | "upload_txt"
   | "sidecar_lrc"
   | "sidecar_text"
-  | "embedded";
+  | "embedded"
+  /** Looked up on LRCLIB for a track with no lyrics of its own (RFC-024). */
+  | "lrclib";
 
 /** The formats a sheet can be uploaded in. */
 export type LyricsFormat = "lrc" | "txt" | "ttml";

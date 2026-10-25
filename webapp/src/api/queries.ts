@@ -11,7 +11,9 @@ import {
   getArtist,
   getAttentionSummary,
   getLibrarySettings,
+  getListeningStats,
   getLyrics,
+  getMix,
   getQualitySummary,
   getTrack,
   getTrackCredits,
@@ -34,6 +36,7 @@ import {
   listHistory,
   listLibraries,
   listLibraryMembers,
+  listMixes,
   listNowPlaying,
   listOwnApiTokens,
   listQualityTracks,
@@ -52,6 +55,7 @@ import {
   readOwnSubsonicCredential,
   SONG_PAGE,
   type SongSort,
+  type StatsPeriod,
   search,
   type TrackCategory,
   UNAVAILABLE_PAGE,
@@ -347,6 +351,35 @@ export const folderTracksQuery = (libraryId: string, folder: string) =>
       last.length < FOLDER_TRACKS_PAGE
         ? undefined
         : lastParam + FOLDER_TRACKS_PAGE,
+  });
+
+/**
+ * One account's listening over a period (RFC-024 decision 6). The period is
+ * the key: switching it asks again rather than relabelling the last answer.
+ */
+export const statsQuery = (period: StatsPeriod) =>
+  queryOptions({
+    queryKey: ["stats", period],
+    queryFn: () => getListeningStats(period),
+  });
+
+/**
+ * The mixes on the home page (RFC-024 decision 7). The server draws them once
+ * a day, so the answer is held for a while rather than re-asked on every
+ * visit to the albums.
+ */
+export const mixesQuery = (scope: string | undefined) =>
+  queryOptions({
+    queryKey: ["mixes", scope ?? null],
+    queryFn: () => listMixes(scope),
+    staleTime: 5 * 60_000,
+  });
+
+export const mixQuery = (mixId: string, scope: string | undefined) =>
+  queryOptions({
+    queryKey: ["mix", mixId, scope ?? null],
+    queryFn: () => getMix(mixId, scope),
+    staleTime: 5 * 60_000,
   });
 
 export const lyricsQuery = (trackId: string) =>

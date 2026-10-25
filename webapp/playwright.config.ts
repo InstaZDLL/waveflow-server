@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// `WAVEFLOW_E2E_PORT` moves the preview off its usual port, so two checkouts
+// can run the suite side by side without one reusing the other's server —
+// and its build.
+const port = Number(process.env.WAVEFLOW_E2E_PORT ?? 4173);
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -7,7 +13,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL,
     trace: "retain-on-failure",
   },
   projects: [
@@ -15,8 +21,8 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
-    command: "bun run preview --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173",
+    command: `bun run preview --host 127.0.0.1 --port ${port} --strictPort`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
   },
 });
