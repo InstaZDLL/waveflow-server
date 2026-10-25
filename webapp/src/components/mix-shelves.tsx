@@ -28,14 +28,18 @@ export function MixShelves() {
   // A set, for the reason the album grid gives: two cards may be fetching at
   // once, and one slot let the first answer re-enable the other's buttons.
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  // The mix a press could not open, named in the message: a button that
+  // does nothing when pressed reads as a button that is broken.
+  const [failed, setFailed] = useState<string | null>(null);
 
   async function withSongs(mix: MixSummary, use: (songs: Song[]) => void) {
     setPending((current) => new Set(current).add(mix.id));
+    setFailed(null);
     try {
       const full = await getMix(mix.id, scope);
       if (full.songs.length) use(full.songs);
     } catch {
-      // The mix stays reachable through its link.
+      setFailed(mixTitle(mix, t));
     } finally {
       setPending((current) => {
         const next = new Set(current);
@@ -49,6 +53,11 @@ export function MixShelves() {
   return (
     <section className="mix-shelf" aria-labelledby="mix-shelf-title">
       <h3 id="mix-shelf-title">{t("mixes.title")}</h3>
+      {failed ? (
+        <p className="error" role="alert">
+          {t("mixes.failed", { title: failed })}
+        </p>
+      ) : null}
       <ul>
         {mixes.map((mix) => {
           const title = mixTitle(mix, t);

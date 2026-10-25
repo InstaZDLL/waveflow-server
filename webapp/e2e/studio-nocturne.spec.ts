@@ -543,6 +543,8 @@ let mixes: Array<{
 }> = [];
 /** Every mix id the mock was asked for, in order. */
 let mixAsks: string[] = [];
+/** Set by the test that checks a mix which cannot be read says so. */
+let mixFails = false;
 /** Every period the statistics route was asked for, in order. */
 let statsAsks: string[] = [];
 
@@ -1159,6 +1161,10 @@ async function mockAuthenticatedApi(page: Page) {
         url.pathname.slice("/api/v2/mixes/".length),
       );
       mixAsks.push(id);
+      if (mixFails) {
+        await route.fulfill({ status: 500, json: { error: "internal" } });
+        return;
+      }
       const found = mixes.find((mix) => mix.id === id);
       if (!found) {
         await route.fulfill({ status: 404, json: { error: "not found" } });
@@ -1334,6 +1340,7 @@ test.beforeEach(async ({ page }) => {
   lyricsGate = Promise.resolve();
   mixes = [];
   mixAsks = [];
+  mixFails = false;
   statsAsks = [];
   canvases = new Map();
   canvasWrites = [];
@@ -7518,6 +7525,30 @@ test("offers the day's mixes above the albums, and plays one", async ({
   await expect(shelf).toBeVisible();
   await page.getByLabel("Filter by title or artist").fill("Post");
   await expect(shelf).toHaveCount(0);
+});
+
+test("says so when a mix cannot be opened, and lets the press be tried again", async ({
+  page,
+}) => {
+  mixes = dailyMixes();
+  mixFails = true;
+  await page.goto("/");
+  const shelf = page.locator(".mix-shelf");
+  await shelf.getByRole("button", { name: "Play: Most played" }).click();
+  await expect(shelf.getByRole("alert")).toHaveText(
+    "“Most played” could not be opened. Try again.",
+  );
+  // Both actions say it, and neither stays disabled after the failure.
+  await shelf.getByRole("button", { name: "Add to queue: Art Pop mix" }).click();
+  await expect(shelf.getByRole("alert")).toHaveText(
+    "“Art Pop mix” could not be opened. Try again.",
+  );
+  await expectNoWcagViolations(page);
+
+  mixFails = false;
+  await shelf.getByRole("button", { name: "Play: Most played" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expect(shelf.getByRole("alert")).toHaveCount(0);
 });
 
 test("shows no shelf when the server has nothing to suggest", async ({

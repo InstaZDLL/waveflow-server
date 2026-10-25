@@ -39,6 +39,17 @@ describe("mix titles", () => {
   });
 });
 
+describe("a mix that cannot be opened", () => {
+  it("is named in both languages", () => {
+    expect(translate("en", "mixes.failed", { title: "Jazz mix" })).toBe(
+      "“Jazz mix” could not be opened. Try again.",
+    );
+    expect(translate("fr", "mixes.failed", { title: "Mix Jazz" })).toBe(
+      "Impossible d’ouvrir « Mix Jazz ». Réessayez.",
+    );
+  });
+});
+
 describe("listening time", () => {
   const en = (
     key: Parameters<typeof translate>[1],

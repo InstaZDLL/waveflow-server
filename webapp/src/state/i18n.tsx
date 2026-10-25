@@ -959,6 +959,7 @@ const en = {
   "mixes.recentlyAdded": "Recently added",
   "mixes.genre": "{genre} mix",
   "mixes.decade": "The {decade}s",
+  "mixes.failed": "“{title}” could not be opened. Try again.",
   // Smart playlists and podcasts (RFC-025), kept together at the end.
   "smart.title": "Smart playlists",
   "smart.detail":
@@ -2047,6 +2048,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "mixes.recentlyAdded": "Ajouts récents",
   "mixes.genre": "Mix {genre}",
   "mixes.decade": "Les années {decade}",
+  "mixes.failed": "Impossible d’ouvrir « {title} ». Réessayez.",
   "smart.title": "Listes intelligentes",
   "smart.detail":
     "Définies par des règles et recalculées à chaque ouverture : elles suivent la bibliothèque.",
