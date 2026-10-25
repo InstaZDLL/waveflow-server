@@ -3647,12 +3647,12 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The fifteen the bar cannot hold — including the three this account is
+  // The sixteen the bar cannot hold — including the three this account is
   // entitled to as an administrator and owner of a library that takes files.
   // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
   // `Needs attention` with RFC-015, `Quality` with RFC-016 and `Missing files`
-  // with RFC-021; this count is what said so: a new entry in
-  // the sidebar reaches the sheet, and the sheet is pinned.
+  // with RFC-021, `Podcasts` with RFC-025; this count is what said so: a new
+  // entry in the sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -3666,6 +3666,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Recently played",
     "Shares",
     "Radio",
+    "Podcasts",
     "Scrobbling",
     "Upload",
     "Admin",
@@ -3674,7 +3675,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(15);
+  await expect(sheet.getByRole("link")).toHaveCount(16);
 
   await expectNoWcagViolations(page);
 
