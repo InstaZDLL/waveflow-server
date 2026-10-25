@@ -22,6 +22,7 @@ import {
 
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
+import { connectWhenRunning, needsWaking } from "../lib/audio-graph";
 import { replayGainFactor, routableThroughWebAudio } from "../lib/replay-gain";
 import { useI18n } from "../state/i18n";
 import { useReplayGainPreference } from "../state/preferences";
@@ -306,7 +307,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // element cannot be detached from its source node — so turning ReplayGain
   // off afterwards sets the gain to one, and a reload restores the plain path.
   const graph = useRef<{ context: AudioContext; gain: GainNode } | null>(null);
+  // A context created but not yet running, so the element is not yet claimed.
+  // Kept so a later gesture resumes this one rather than making another.
+  const candidate = useRef<AudioContext | null>(null);
   const [gainNode, setGainNode] = useState<GainNode | null>(null);
+
+  /**
+   * Asks a stopped graph to run again. A play that starts by itself — the
+   * next track, repeat-one — is not a gesture, and a browser may refuse; but
+   * Safari's `interrupted` state, after a call or a timer, resumes this way.
+   */
+  const wakeGraph = useCallback(() => {
+    const context = graph.current?.context;
+    if (context && context.state !== "running") {
+      void context.resume().catch(() => undefined);
+    }
+  }, []);
 
   /**
    * Builds the graph if ReplayGain wants it, and wakes it if it sleeps.
@@ -314,41 +330,62 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
    * Called from the plays a listener starts, which are always a gesture: a
    * browser creates a context suspended outside one, and refuses to resume it
    * there. Never on page load, so a listener who never asked for ReplayGain
-   * keeps the element exactly as it was.
+   * keeps the element exactly as it was. The element is claimed only once the
+   * context runs (`connectWhenRunning`): claimed by a suspended context, it
+   * would play as silence.
    */
   const prepareGraph = useCallback(() => {
     const element = audio.current;
     if (!element) return;
-    if (!graph.current && replayGainOn) {
-      // A cross-origin source would play as silence through the graph. The
-      // tickets are relative, so this holds by construction; checked anyway.
-      const source = element.currentSrc || element.src;
-      if (source && !routableThroughWebAudio(source, window.location.href))
-        return;
-      const Context =
-        window.AudioContext ??
-        (window as { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (!Context) return;
-      try {
-        const context = new Context();
-        const gain = context.createGain();
-        context
-          .createMediaElementSource(element)
-          .connect(gain)
-          .connect(context.destination);
-        graph.current = { context, gain };
-        setGainNode(gain);
-      } catch {
-        // No graph: the element keeps playing as it did, unlevelled.
-        return;
-      }
+    if (graph.current) {
+      wakeGraph();
+      return;
     }
-    const context = graph.current?.context;
-    if (context && context.state !== "running") {
-      void context.resume().catch(() => undefined);
+    if (!replayGainOn) return;
+    if (candidate.current) {
+      // Still waiting to run: this gesture may be the one it needed.
+      void candidate.current.resume().catch(() => undefined);
+      return;
     }
-  }, [replayGainOn]);
+    // A cross-origin source would play as silence through the graph. The
+    // tickets are relative, so this holds by construction; checked anyway.
+    const source = element.currentSrc || element.src;
+    if (source && !routableThroughWebAudio(source, window.location.href))
+      return;
+    const Context =
+      window.AudioContext ??
+      (window as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Context) return;
+    let context: AudioContext;
+    try {
+      context = new Context();
+    } catch {
+      return;
+    }
+    candidate.current = context;
+    void connectWhenRunning(context, () => {
+      const gain = context.createGain();
+      // Last, because it is the step that cannot be undone.
+      context
+        .createMediaElementSource(element)
+        .connect(gain)
+        .connect(context.destination);
+      return gain;
+    }).then((gain) => {
+      if (candidate.current === context) candidate.current = null;
+      // No graph: the element keeps playing as it did, unlevelled.
+      if (!gain) return;
+      graph.current = { context, gain };
+      setGainNode(gain);
+      // Stopped under a playing element — Safari interrupts a context for a
+      // call or a timer — it is asked to run again rather than left silent.
+      context.addEventListener("statechange", () => {
+        if (needsWaking(context.state, audio.current?.paused ?? true))
+          wakeGraph();
+      });
+    });
+  }, [replayGainOn, wakeGraph]);
 
   const current = queue[index] ?? null;
   orderRef.current =
@@ -429,6 +466,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // would not restart the element. Rewind and play it again by hand.
         element.currentTime = 0;
         submitted.current = null;
+        wakeGraph();
         void element.play().catch(() => undefined);
         return;
       }
@@ -466,7 +504,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
     };
-  }, [hydrated, persistQueue]);
+  }, [hydrated, persistQueue, wakeGraph]);
 
   // Loading a track needs a round-trip for its ticket, so guard against a
   // stale response overwriting a newer selection.
@@ -511,6 +549,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           resumeTrack.current = null;
         }
         if (!shouldAutoplay) return;
+        wakeGraph();
         await element.play();
         void scrobble(current.id, false).catch(() => undefined);
       } catch {
@@ -525,7 +564,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       element.removeEventListener("error", onError);
     };
-  }, [current, resolveStream]);
+  }, [current, resolveStream, wakeGraph]);
 
   useEffect(() => {
     const upcoming = queue[index + 1];

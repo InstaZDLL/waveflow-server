@@ -6776,3 +6776,60 @@ test("keeps the playback settings and the discography readable in light", async 
   ]);
   await expectNoWcagViolations(page);
 });
+
+/**
+ * A context the browser will not let run never claims the element.
+ *
+ * Once `createMediaElementSource` has the element, its sound reaches the
+ * speakers only through the context, so a context left suspended would play
+ * the music as silence while the player said it was playing. Here the
+ * browser's context is replaced by one that stays suspended and whose resume
+ * never settles — what a browser does when it does not count the gesture —
+ * and the element must stay unclaimed, playing as it always did.
+ */
+test("leaves the element alone when the audio context will not run", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "waveflow.replayGain",
+      JSON.stringify({ mode: "album", preampDb: 0 }),
+    );
+    const record = window as unknown as { __contexts: number; __claims: number };
+    record.__contexts = 0;
+    record.__claims = 0;
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        record.__contexts += 1;
+      }
+      override get state(): AudioContextState {
+        return "suspended";
+      }
+      override resume(): Promise<void> {
+        return new Promise(() => undefined);
+      }
+      override createMediaElementSource(element: HTMLMediaElement) {
+        record.__claims += 1;
+        return super.createMediaElementSource(element);
+      }
+    };
+  });
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __contexts: number }).__contexts),
+    )
+    .toBe(1);
+  // A second gesture asks the same candidate again rather than making another.
+  await page.locator(".album-songs .song-title").nth(1).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
+  const seen = await page.evaluate(() => {
+    const record = window as unknown as { __contexts: number; __claims: number };
+    return { contexts: record.__contexts, claims: record.__claims };
+  });
+  expect(seen).toEqual({ contexts: 1, claims: 0 });
+});
