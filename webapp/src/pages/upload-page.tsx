@@ -393,7 +393,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     return (
       <section className="upload-page">
         {back}
-        <PageHeader kicker={t("nav.group.account")} title={t("nav.upload")} />
+        <PageHeader kicker={t("nav.settings")} title={t("nav.upload")} />
         <p className="notice">{t("upload.noLibrary")}</p>
       </section>
     );
@@ -408,7 +408,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
       <section className="upload-page">
         {back}
         <PageHeader
-          kicker={t("nav.group.account")}
+          kicker={t("nav.settings")}
           title={t("upload.title", { library: active.name })}
         />
         <p className="notice">
@@ -422,7 +422,7 @@ export function UploadPage({ folder }: { folder?: string } = {}) {
     <section className="upload-page">
       {back}
       <PageHeader
-        kicker={t("nav.group.account")}
+        kicker={t("nav.settings")}
         title={t("upload.title", { library: active.name })}
       />
       <p className="muted upload-detail">{t("upload.detail")}</p>

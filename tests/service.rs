@@ -210,8 +210,9 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     );
 }
 
-/// The files that make the client installable are served as themselves, or
-/// answered a JSON 404 — never the shell (RFC-022 decision 4).
+/// The files that make the client installable, and the brand's images, are
+/// served as themselves, or answered a JSON 404 — never the shell (RFC-022
+/// decision 4).
 ///
 /// Which of the two is required depends on what is embedded, and the test
 /// asks the binary rather than the source tree: `build.rs` embeds the real
@@ -245,6 +246,13 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
         ("/icons/icon-192.png", "image/png"),
         ("/icons/icon-512.png", "image/png"),
         ("/icons/maskable-512.png", "image/png"),
+        // The two favicons `index.html` declares, and the logo the sidebar
+        // and the first-load screen draw: all from the logo kit, all images.
+        ("/favicon.ico", "image/x-icon"),
+        ("/favicon.svg", "image/svg+xml"),
+        ("/brand/waveflow-logo-horizontal-color.svg", "image/svg+xml"),
+        ("/brand/waveflow-logo-horizontal-dark.svg", "image/svg+xml"),
+        ("/brand/waveflow-symbol-mint.svg", "image/svg+xml"),
         // The service worker (RFC-022): a script, never the shell, and never
         // frozen in a cache, or a deploy could not replace it.
         ("/sw.js", "javascript"),
@@ -273,6 +281,10 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
                 assert!(manifest["icons"]
                     .as_array()
                     .is_some_and(|icons| icons.iter().any(|icon| icon["purpose"] == "maskable")));
+                // The brand's Wave green, as the logo kit's own manifest sets
+                // both.
+                assert_eq!(manifest["theme_color"], "#10B981");
+                assert_eq!(manifest["background_color"], "#10B981");
             }
         } else {
             assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
@@ -283,14 +295,19 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
     // A name no build ships is a JSON 404 whatever is embedded: the case that
     // still tells the asset-only rule from the fallback when a real client is
     // embedded and every shipped icon exists.
-    let missing = get("/icons/not-shipped.png").await;
-    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
-    assert!(missing
-        .headers()
-        .get("content-type")
-        .map(|value| value.to_str().unwrap().to_owned())
-        .unwrap_or_default()
-        .starts_with("application/json"));
+    for path in ["/icons/not-shipped.png", "/brand/not-shipped.svg"] {
+        let missing = get(path).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            missing
+                .headers()
+                .get("content-type")
+                .map(|value| value.to_str().unwrap().to_owned())
+                .unwrap_or_default()
+                .starts_with("application/json"),
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -374,25 +391,32 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
 
     // An icon request is answered once, or not at all — never with the shell.
     //
-    // No build produces a `favicon.ico`, so the fallback used to hand the
-    // browser the client page. It cannot decode HTML as an image, learns
-    // nothing from a 200, and asks again: sixty-six requests in fifty-one
-    // seconds on a real session, forty kilobytes of markup spent on a tab icon.
-    // A 404 is a definitive answer. Asserted on the content type rather than on
-    // the status alone, because that is what the browser choked on — and this
-    // holds whether or not a client build is embedded in the binary under test.
+    // Before a build shipped a `favicon.ico`, the fallback handed the browser
+    // the client page. It cannot decode HTML as an image, learns nothing from
+    // a 200, and asks again: sixty-six requests in fifty-one seconds on a real
+    // session, forty kilobytes of markup spent on a tab icon. The real client
+    // ships the logo kit's icon now, and the placeholder ships none, so the
+    // answer is the icon or a definitive 404 — whichever this binary embeds.
     //
     // Stated as what it *is* rather than as what it is not: "not HTML" is also
     // satisfied by a header that never arrived, so it would pin nothing about
     // the answer actually given.
+    let built = !body_text(get("/").await)
+        .await
+        .contains("The web client is not built");
     let icon = get("/favicon.ico").await;
-    assert_eq!(icon.status(), StatusCode::NOT_FOUND);
-    assert!(icon
+    let kind = icon
         .headers()
         .get("content-type")
         .map(|value| value.to_str().unwrap().to_owned())
-        .unwrap_or_default()
-        .starts_with("application/json"));
+        .unwrap_or_default();
+    if built {
+        assert_eq!(icon.status(), StatusCode::OK);
+        assert_eq!(kind, "image/x-icon");
+    } else {
+        assert_eq!(icon.status(), StatusCode::NOT_FOUND);
+        assert!(kind.starts_with("application/json"), "{kind}");
+    }
 
     // A client route that merely starts like a reserved endpoint is not one.
     let lookalike = get("/reference-guide").await;
@@ -435,7 +459,7 @@ async fn the_web_client_and_shares_carry_security_headers_and_rest_does_not() {
     };
 
     // The shell, a client route, and a refusal from the fallback alike.
-    for uri in ["/", "/albums/some-client-route", "/favicon.ico"] {
+    for uri in ["/", "/albums/some-client-route", "/icons/not-shipped.png"] {
         let response = get(uri).await;
         assert_eq!(
             header(&response, "x-content-type-options").as_deref(),

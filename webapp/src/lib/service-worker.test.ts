@@ -102,6 +102,11 @@ describe("the service worker", () => {
     expect(classify(url("/icons/icon-192.png"), "GET", "cors", origin)).toBe(
       "static",
     );
+    // The `.ico` beside the SVG favicon: an icon of the client's like the
+    // rest, kept for the tab offline.
+    expect(classify(url("/favicon.ico"), "GET", "no-cors", origin)).toBe(
+      "static",
+    );
     expect(classify(url("/offline/tracks/t1"), "GET", "cors", origin)).toBe(
       "offline-track",
     );

@@ -347,14 +347,24 @@ h3 {
   text-transform: uppercase;
 }
 
-/* The mark is `/logo.svg`, the same five-bar file the desktop application
-   carries, so the two cannot drift again. It was drawn here in CSS — four bars,
-   an asymmetric profile, a flat accent square — and that is what diverged.
-   Sizing only from now on. */
-.brand-mark {
-  width: 1.7rem;
-  height: 1.7rem;
+/* The logo is the kit's file, never redrawn here: sizing and the choice of
+   version only. 2rem tall puts it at 131px wide, above the guide's 120px
+   minimum for the horizontal version, and its own viewBox carries the clear
+   space above and below the symbol. No filter, shadow or animation: the guide
+   rules all three out.
+
+   The colour version on a light theme and the dark one on a dark theme, by the
+   class `applyTheme` sets on the root — the reader's choice, which the system
+   colour scheme does not know about. */
+.brand-logo {
+  width: auto;
+  height: 2rem;
   flex: none;
+}
+
+:root.dark .brand-logo-light,
+:root:not(.dark) .brand-logo-dark {
+  display: none;
 }
 
 /**
@@ -445,12 +455,14 @@ h3 {
   color: var(--text);
 }
 
-.primary-navigation a[data-status="active"] {
+.primary-navigation a[data-status="active"],
+.sidebar-footer a[data-status="active"] {
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.primary-navigation a[data-status="active"]::after {
+.primary-navigation a[data-status="active"]::after,
+.sidebar-footer a[data-status="active"]::after {
   width: 0.26rem;
   height: 0.26rem;
   margin-left: auto;
@@ -2054,6 +2066,60 @@ button.danger {
 .view-switcher a[aria-current="page"] {
   background: var(--panel-strong);
   color: var(--text);
+}
+
+/* The Settings sections: a row of tabs over the open section. They are links,
+   one route each, and the open one is the router's `aria-current`. */
+.settings-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: var(--space-8);
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+}
+
+.settings-sections .settings-section {
+  display: flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-4);
+  border-radius: 0.5rem;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.settings-sections .settings-section:hover {
+  color: var(--text);
+}
+
+.settings-sections .settings-section[aria-current="page"] {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+/* On a phone the row would not fit and a scrolling strip hides what is past
+   its edge, so the same links become a list, two to a row, each a full
+   touch target. */
+@media (max-width: 820px) {
+  .settings-sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: auto;
+    margin-bottom: var(--space-6);
+  }
+
+  .settings-sections .settings-section {
+    min-height: 2.75rem;
+    white-space: normal;
+  }
 }
 
 /* The words as the subject: one column, centred, wide type, and the sung line

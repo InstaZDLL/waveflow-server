@@ -728,7 +728,7 @@ export function AdminPage() {
   return (
     <section className="admin-page">
       <PageHeader
-        kicker={t("nav.group.account")}
+        kicker={t("nav.settings")}
         title={t("admin.title")}
         detail={t("admin.detail")}
       />

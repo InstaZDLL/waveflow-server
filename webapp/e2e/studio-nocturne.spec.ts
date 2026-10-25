@@ -1344,6 +1344,12 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: sorted });
       return;
     }
+    if (url.pathname === "/api/v2/shares" && route.request().method() === "GET") {
+      // None yet. Answered so that the Shares section of Settings draws as a
+      // page rather than as its failure when the hub's tests walk through it.
+      await route.fulfill({ json: [] });
+      return;
+    }
     await route.fulfill({ status: 404, json: { error: "not found" } });
   });
 }
@@ -1425,9 +1431,10 @@ test("renders the studio shell and persists appearance preferences", async ({
   // and not in the mobile header. They are settings and not destinations, and
   // they sat under thirteen navigation entries; there is no copy left behind,
   // because two ways to ask one question is the thing that move was about.
+  // Settings opens on its Account section, which holds them.
   await page.goto("/settings");
   await expect(
-    page.getByRole("heading", { name: "Settings" }),
+    page.getByRole("heading", { name: "Account", exact: true }),
   ).toBeVisible();
   const preferences = page.locator(".settings-panel").first();
   const theme = preferences.getByLabel("Theme");
@@ -1582,19 +1589,22 @@ test("shows one current navigation item and separates administration panels", as
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "sidebar layout is desktop-only");
+  // A section of Settings: the rail has no entry of its own for it any more,
+  // and the one entry that leads there is the current one — in the rail's
+  // foot, so the whole sidebar is counted and not only the rail.
   await page.goto("/settings/scrobbling");
-  const current = page.locator(".primary-navigation a[data-status='active']");
+  const current = page.locator(".sidebar a[data-status='active']");
   await expect(current).toHaveCount(1);
-  await expect(current).toHaveText("Scrobbling");
+  await expect(current).toHaveText("Settings");
 
-  const settings = page.locator(".primary-navigation").getByRole("link", {
-    name: "Settings",
+  const genres = page.locator(".primary-navigation").getByRole("link", {
+    name: "Genres",
   });
-  await settings.hover();
+  await genres.hover();
   const activeBackground = await current.evaluate((node) =>
     getComputedStyle(node).backgroundColor,
   );
-  const hoverBackground = await settings.evaluate((node) =>
+  const hoverBackground = await genres.evaluate((node) =>
     getComputedStyle(node).backgroundColor,
   );
   expect(hoverBackground).not.toBe(activeBackground);
@@ -1612,6 +1622,273 @@ test("shows one current navigation item and separates administration panels", as
   });
   expect(gap).toBeGreaterThanOrEqual(24);
 });
+
+/**
+ * The sections of Settings, in the order the menu offers them, with the
+ * heading each one opens on. Shared by the tests below, which walk the whole
+ * menu: a section added to the hub and not here fails them by count.
+ */
+const SETTINGS_SECTIONS = [
+  { link: "Account", path: "/settings", heading: "Account" },
+  { link: "Playback", path: "/settings/playback", heading: "Playback" },
+  {
+    link: "Scrobbling",
+    path: "/settings/scrobbling",
+    heading: "External scrobbling",
+  },
+  { link: "Shares", path: "/settings/shares", heading: "Shares" },
+  { link: "Upload", path: "/settings/upload", heading: "Upload to Ma musique" },
+  { link: "Admin", path: "/settings/admin", heading: "Administration" },
+];
+
+/**
+ * The rail carried an "Account" group of five entries — Shares, Settings,
+ * Scrobbling, Upload and Admin. One Settings entry replaces it, in the rail's
+ * foot beside the account, and the five are the Settings page's sections.
+ *
+ * Asked of the longest rail any account sees: an administrator owning a
+ * library that takes files, for whom every one of the five used to show.
+ */
+test("gathers the account's places behind one Settings entry", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the rail is desktop-only");
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  const sidebar = page.locator(".sidebar");
+  // Drawn in full before anything is counted: an entry gated on the library
+  // arrives with the library, and a count taken earlier proves nothing.
+  await expect(sidebar.locator('a[href="/missing"]')).toHaveCount(1);
+
+  await expect(sidebar.locator('.nav-group[data-group="account"]')).toHaveCount(0);
+  await expect(sidebar.locator(".nav-label")).toHaveText(["Library", "Listening"]);
+  const settings = sidebar.getByRole("link", { name: "Settings" });
+  await expect(settings).toHaveCount(1);
+  await expect(page.locator(".sidebar-footer").getByRole("link")).toHaveText([
+    "Settings",
+  ]);
+  for (const href of [
+    "/shares",
+    "/upload",
+    "/admin",
+    "/settings/scrobbling",
+    "/settings/shares",
+    "/settings/upload",
+    "/settings/admin",
+  ]) {
+    await expect(sidebar.locator(`a[href="${href}"]`), href).toHaveCount(0);
+  }
+
+  await settings.click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+});
+
+/**
+ * Taking the five entries out shortens the rail by their height, and the
+ * Settings entry that replaces them sits in the foot, which never scrolls:
+ * at a laptop's 1366×768 and a desktop's 1440×900 it is in view without
+ * scrolling anything. Where the five sat, at the end of the rail, both
+ * heights left Settings below the fold.
+ *
+ * The rail itself is measured as well, and printed, because at those heights
+ * it still scrolls: nineteen destinations do not fit in 456 pixels.
+ */
+test("keeps Settings in view and the rail shorter at common desktop heights", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the rail is desktop-only");
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  for (const [width, height] of [
+    [1366, 768],
+    [1440, 900],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+    const rail = page.locator(".primary-navigation");
+    await expect(rail.locator('a[href="/missing"]')).toHaveCount(1);
+    const measured = await rail.evaluate((node) => ({
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    }));
+    testInfo.annotations.push({
+      type: "rail",
+      description: `${width}x${height}: scrollHeight ${measured.scrollHeight}, clientHeight ${measured.clientHeight}`,
+    });
+    const settings = page.locator(".sidebar").getByRole("link", { name: "Settings" });
+    await expect(settings, `at ${width}x${height}`).toBeInViewport({ ratio: 1 });
+    // And not under the player bar, which runs across the rail's foot.
+    const overlap = await settings.evaluate((link) => {
+      const player = document.querySelector(".player")?.getBoundingClientRect();
+      return link.getBoundingClientRect().bottom - (player?.top ?? 0);
+    });
+    expect(overlap, `at ${width}x${height}`).toBeLessThanOrEqual(0);
+  }
+});
+
+/**
+ * Every section opens from the hub's own menu, on a desktop from the rail's
+ * Settings entry and on a phone from the More sheet's — the phone has no
+ * other way in, so this is also the proof that nothing became unreachable
+ * there when the sheet lost four entries.
+ *
+ * Each section is its own address, marked as the current one in the menu,
+ * and Back walks the sections in the order they were opened.
+ */
+test("opens every section of Settings from its menu", async ({
+  page,
+}, testInfo) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  if (testInfo.project.name === "mobile") {
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
+    await page.getByRole("dialog").getByRole("link", { name: "Settings" }).click();
+  } else {
+    await page.locator(".sidebar").getByRole("link", { name: "Settings" }).click();
+  }
+
+  const menu = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(menu.getByRole("link")).toHaveText(
+    SETTINGS_SECTIONS.map((section) => section.link),
+  );
+  // The order is reversed so that every click moves the open section, Account
+  // included, and so that Back has a different section to return to each time.
+  const visited: typeof SETTINGS_SECTIONS = [];
+  for (const section of [...SETTINGS_SECTIONS.slice(1), SETTINGS_SECTIONS[0]]) {
+    await menu.getByRole("link", { name: section.link, exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === section.path);
+    await expect(
+      page.getByRole("heading", { name: section.heading, exact: true }),
+    ).toBeVisible();
+    await expect(menu.locator('a[aria-current="page"]')).toHaveText([
+      section.link,
+    ]);
+    visited.push(section);
+  }
+  // The menu is new, so it is audited in the dark theme here and in the light
+  // one below, open on a short section and on a long one.
+  await expectNoWcagViolations(page);
+
+  if (testInfo.project.name === "mobile") {
+    // A list two to a row, not a strip running off the side of the phone.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+    const columns = await menu.evaluate(
+      (node) => getComputedStyle(node).gridTemplateColumns.split(" ").length,
+    );
+    expect(columns).toBe(2);
+  }
+
+  // Back returns to the section opened before, as a page would.
+  visited.pop();
+  const previous = visited.pop();
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === previous?.path);
+  await expect(
+    page.getByRole("heading", { name: previous?.heading, exact: true }),
+  ).toBeVisible();
+});
+
+/**
+ * Every address the moved pages had still arrives at its section. The three
+ * old ones are redirects, and the redirect replaces its own history entry:
+ * Back from the section leaves for where the visitor was before, rather than
+ * landing on an address that would only send them forward again.
+ */
+test("lands every old address on its section of Settings", async ({ page }) => {
+  libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  for (const [address, path, heading] of [
+    ["/settings", "/settings", "Account"],
+    ["/settings/scrobbling", "/settings/scrobbling", "External scrobbling"],
+    ["/shares", "/settings/shares", "Shares"],
+    ["/upload", "/settings/upload", "Upload to Ma musique"],
+    ["/admin", "/settings/admin", "Administration"],
+  ]) {
+    await page.goto(address);
+    await expect(page).toHaveURL((url) => url.pathname === path);
+    await expect(
+      page.getByRole("heading", { name: heading, exact: true }),
+    ).toBeVisible();
+  }
+
+  // The folder an upload was started from survives the move.
+  await page.goto("/upload?folder=folder-1");
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/settings/upload" &&
+      url.searchParams.get("folder") === "folder-1",
+  );
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await page.goto("/shares");
+  await expect(page).toHaveURL((url) => url.pathname === "/settings/shares");
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+});
+
+/**
+ * The gates the rail entries had moved with them onto the menu: someone who
+ * is not an administrator sees no Admin section, and someone who may not
+ * upload sees no Upload one. Neither address opens for them either.
+ */
+test("hides Admin and Upload from the Settings menu of an account without them", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: { ...session, user: { ...session.user, role: "user" } },
+    }),
+  );
+  libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true, role: "listener" },
+  ];
+  await page.goto("/settings");
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+  const menu = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(menu.getByRole("link")).toHaveText([
+    "Account",
+    "Playback",
+    "Scrobbling",
+    "Shares",
+  ]);
+
+  for (const address of ["/admin", "/settings/admin"]) {
+    await page.goto(address);
+    await expect(page).toHaveURL((url) => url.pathname === "/");
+    await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  }
+});
+
+// One test per section rather than one walking all six: each audit takes a
+// few seconds, and six in a row overran the timeout under a full parallel run.
+for (const section of SETTINGS_SECTIONS) {
+  test(`keeps the Settings menu readable in the light on ${section.link}`, async ({
+    page,
+  }) => {
+    libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+    await chooseLightTheme(page);
+    await page.goto(section.path);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+    await expect(
+      page.getByRole("heading", { name: section.heading, exact: true }),
+    ).toBeVisible();
+    await expectNoWcagViolations(page);
+  });
+}
 
 test("puts the songs playback action beside the sort and names its scope", async ({
   page,
@@ -3238,19 +3515,21 @@ test("fails a file whose fingerprinting worker cannot load, and moves on", async
 test("offers the upload only where the library takes files and the role may add them", async ({
   page,
 }) => {
-  // Counted in the DOM, not by role: a role query skips hidden elements, and
-  // the sidebar is hidden on a phone — the count would be 0 there whether the
-  // link exists or not, which makes the zero below prove nothing.
-  const link = page.locator('.primary-navigation a[href="/upload"]');
+  // The link is a section of Settings now, and the gate moved with it. The
+  // section menu is drawn at every width, so a zero below is a zero on a
+  // phone as well — the rail entry it replaces was counted in the DOM because
+  // the rail is hidden there.
+  const link = page.locator('.settings-sections a[href="/settings/upload"]');
+  const account = page.getByRole("heading", { name: "Account", exact: true });
 
   // The fixture's default: an owner, in a library closed to files.
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await page.goto("/settings");
+  await expect(account).toBeVisible();
   await expect(link).toHaveCount(0);
 
   libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(account).toBeVisible();
   await expect(link).toHaveCount(1);
 
   libraries = [
@@ -3261,7 +3540,7 @@ test("offers the upload only where the library takes files and the role may add 
     },
   ];
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
+  await expect(account).toBeVisible();
   await expect(link).toHaveCount(0);
   await page.goto("/upload");
   await expect(
@@ -3811,13 +4090,16 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The eighteen the bar cannot hold — including the three this account is
-  // entitled to as an administrator and owner of a library that takes files.
-  // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
-  // `Needs attention` with RFC-015, `Quality` with RFC-016, `Missing files`
-  // with RFC-021, `Offline` with RFC-022, `Statistics` with RFC-024 and
-  // `Podcasts` with RFC-025; this count is what said so: a new entry in the
-  // sidebar reaches the sheet, and the sheet is pinned.
+  // The fourteen the bar cannot hold — including the two this account is
+  // entitled to as an administrator and owner of a library: `Needs attention`
+  // and `Missing files`. `Radio` joined them with #217, `Folders` with
+  // RFC-012's filed folders and `Needs attention` with RFC-015, `Quality`
+  // with RFC-016, `Missing files` with RFC-021, `Offline` with RFC-022,
+  // `Statistics` with RFC-024 and `Podcasts` with RFC-025. Shares,
+  // Scrobbling, Upload and Admin left it when they became sections of
+  // Settings, which is how the eighteen became fourteen; this count is what
+  // said so: a new entry in the sidebar reaches the sheet, and the sheet is
+  // pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -3831,18 +4113,14 @@ test("opens the rest of the client from the mobile bar", async ({
     "Recently played",
     "Statistics",
     "Offline",
-    "Shares",
     "Radio",
     "Podcasts",
-    "Scrobbling",
-    "Upload",
-    "Admin",
   ]) {
     await expect(sheet.getByRole("link", { name })).toBeVisible();
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(18);
+  await expect(sheet.getByRole("link")).toHaveCount(14);
 
   await expectNoWcagViolations(page);
 
@@ -3852,9 +4130,9 @@ test("opens the rest of the client from the mobile bar", async ({
   await expect(sheet).toBeHidden();
 
   await bar.getByRole("button", { name: "More" }).click();
-  await sheet.getByRole("link", { name: "Scrobbling" }).click();
+  await sheet.getByRole("link", { name: "Settings" }).click();
   await expect(
-    page.getByRole("heading", { name: "External scrobbling" }),
+    page.getByRole("heading", { name: "Account", exact: true }),
   ).toBeVisible();
   // Closed on the way out: a sheet left open would sit over the page it just
   // reached.
@@ -3878,7 +4156,9 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
 
   const sheet = page.getByRole("dialog");
-  await expect(sheet.getByRole("link", { name: "Shares" })).toBeVisible();
+  // Settings is everyone's. What sits behind it is gated in its own menu, and
+  // the test of that menu for this account is with the hub's.
+  await expect(sheet.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(sheet.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await expect(sheet.getByRole("link", { name: "Upload" })).toHaveCount(0);
   // Every member reads the quality of the files (RFC-016).
@@ -4455,24 +4735,103 @@ test("re-asks a held listing after a correction is saved", async ({
  * in CI for a reason that has nothing to do with the code. This project's
  * preview server holds the actual build.
  *
- * What the server does with `/favicon.ico` — a 404 rather than the shell, which
- * is what stopped a browser asking for it once a second — belongs to the
- * fallback and is pinned in `tests/service.rs`.
+ * Both icons are the logo kit's, as its head snippet declares them: the `.ico`
+ * sized for the browsers that read nothing else, and the SVG. Both carry the
+ * kit's small drawing, the heavier stroke the guide asks for below 24px — a
+ * flat Wave green W, where the old icon was five bars cut out of a gradient.
+ *
+ * What the server does with them — the file when the build has it, a JSON 404
+ * when it does not, never the shell, which a browser cannot decode and asks
+ * for again — belongs to the fallback and is pinned in `tests/service.rs`.
  */
-test("declares an icon, and serves the one it declares", async ({
+test("declares the logo kit's icons, and serves the ones it declares", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
 
   await page.goto("/");
-  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
-    "href",
-    "/favicon.svg",
+  const icons = page.locator('link[rel="icon"]');
+  await expect(icons).toHaveCount(2);
+  await expect(icons.nth(0)).toHaveAttribute("href", "/favicon.ico");
+  await expect(icons.nth(0)).toHaveAttribute("sizes", "48x48");
+  await expect(icons.nth(1)).toHaveAttribute("href", "/favicon.svg");
+  await expect(icons.nth(1)).toHaveAttribute("type", "image/svg+xml");
+
+  const svg = await page.request.get("/favicon.svg");
+  expect(svg.status()).toBe(200);
+  expect(svg.headers()["content-type"]).toContain("image/svg+xml");
+  const drawing = await svg.text();
+  expect(drawing).toContain('fill="#10B981"');
+  expect(drawing).not.toContain("Gradient");
+  expect(drawing).not.toContain("<rect");
+
+  const ico = await page.request.get("/favicon.ico");
+  expect(ico.status()).toBe(200);
+  // An ICO directory: reserved zero, then type 1, then the image count.
+  const bytes = await ico.body();
+  expect([...bytes.subarray(0, 4)]).toEqual([0, 0, 1, 0]);
+  expect(bytes.readUInt16LE(4)).toBeGreaterThan(0);
+});
+
+/**
+ * The sidebar's brand is the logo kit's horizontal logo, in the version the
+ * guide gives for the background it sits on: the colour file on a light
+ * theme, the dark file (mint and white) on a dark one. The theme is the
+ * reader's preference rather than the system's, so the choice is made by the
+ * root's `dark` class — and both themes are asked here, because a rule that
+ * showed one file everywhere would pass on either alone.
+ *
+ * On a phone the same brand sits in the header instead of the rail; the
+ * mobile project asks there.
+ */
+test("draws the brand from the logo kit, in the version for the theme", async ({
+  page,
+}, testInfo) => {
+  const where = testInfo.project.name === "mobile" ? ".mobile-header" : ".sidebar";
+  const brand = page.locator(`${where} .brand`);
+
+  const expectLogo = async (file: string, hidden: string) => {
+    const shown = brand.locator(`img[src="/brand/${file}"]`);
+    await expect(shown).toBeVisible();
+    await expect(brand.locator(`img[src="/brand/${hidden}"]`)).toBeHidden();
+    // Really drawn, not a broken image the size of its attributes.
+    await expect
+      .poll(() => shown.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .toBeGreaterThan(0);
+    const drawn = await shown.evaluate((image) => {
+      const style = getComputedStyle(image);
+      return {
+        width: image.getBoundingClientRect().width,
+        animation: style.animationName,
+        filter: style.filter,
+      };
+    });
+    // The guide's minimum for the horizontal version, and none of what it
+    // rules out: no pulsing, no glow or shadow.
+    expect(drawn.width).toBeGreaterThanOrEqual(120);
+    expect(drawn.animation).toBe("none");
+    expect(drawn.filter).toBe("none");
+    // The logo and the label beside it fit their row.
+    expect(
+      await brand.evaluate((link) => link.scrollWidth <= link.clientWidth),
+    ).toBe(true);
+  };
+
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+  await expectLogo(
+    "waveflow-logo-horizontal-dark.svg",
+    "waveflow-logo-horizontal-color.svg",
   );
 
-  const icon = await page.request.get("/favicon.svg");
-  expect(icon.status()).toBe(200);
-  expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+  await page.evaluate(() => localStorage.setItem("waveflow.theme", "default"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+  await expectLogo(
+    "waveflow-logo-horizontal-color.svg",
+    "waveflow-logo-horizontal-dark.svg",
+  );
 });
 
 /**
@@ -4486,11 +4845,13 @@ test("declares an icon, and serves the one it declares", async ({
  *
  * What this adds is the half a unit test cannot see: that the markup ships in
  * `index.html` rather than in the bundle — a splash inside the bundle could
- * only appear after the wait it exists to dress — and that it points at
- * `/logo.svg`, the same file the sidebar uses. A fourth hand-drawn copy of the
- * mark is the defect this screen's own issue was filed about.
+ * only appear after the wait it exists to dress — and that it points at the
+ * logo kit's symbol, in mint because this screen is always the dark
+ * background. A hand-drawn copy of the mark is the defect this screen's own
+ * issue was filed about. And that it holds still: the mark used to breathe
+ * here, and the brand guide rules a pulsing logo out.
  */
-test("ships the first-load screen in the document, drawn from the one logo", async ({
+test("ships the first-load screen in the document, drawn from the logo kit", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
@@ -4500,16 +4861,22 @@ test("ships the first-load screen in the document, drawn from the one logo", asy
   const document_ = await page.request.get("/");
   const html = await document_.text();
   expect(html).toContain('id="splash"');
-  expect(html).toContain('src="/logo.svg"');
+  expect(html).toContain('src="/brand/waveflow-symbol-mint.svg"');
+  const inlineStyle = html.split("<style>")[1]?.split("</style>")[0] ?? "";
+  expect(inlineStyle).toContain("#splash");
+  expect(inlineStyle).not.toContain("animation");
+  expect(inlineStyle).not.toContain("@keyframes");
 
-  const logo = await page.request.get("/logo.svg");
+  const logo = await page.request.get("/brand/waveflow-symbol-mint.svg");
   expect(logo.status()).toBe(200);
   expect(logo.headers()["content-type"]).toContain("image/svg+xml");
-  // The desktop profile, so a divergence in the shared file fails here too:
-  // five bars, symmetric, and a gradient rather than a flat fill.
+  // The kit's symbol: one flat path in mint, no gradient — so a file swapped
+  // back to the old five bars fails here.
   const svg = await logo.text();
-  expect(svg.match(/<rect/g)).toHaveLength(5);
-  expect(svg).toContain("linearGradient");
+  expect(svg.match(/<path/g)).toHaveLength(1);
+  expect(svg).toContain('fill="#34D399"');
+  expect(svg).not.toContain("Gradient");
+  expect(svg).not.toContain("<rect");
 
   await page.goto("/");
   // Gone from the document once the application is up — removed rather than
@@ -6784,7 +7151,9 @@ test("keeps settings and the sign-in screen readable in the light", async ({
 }) => {
   await chooseLightTheme(page);
   await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
   await expectNoWcagViolations(page);
 
   await page.context().clearCookies();
@@ -7423,9 +7792,9 @@ test("levels a track by its ReplayGain only once asked to, and remembers how", a
   await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
   expect(await contexts()).toBe(0);
 
-  await page.goto("/settings");
+  await page.goto("/settings/playback");
   const playback = page.locator(".settings-panel", {
-    has: page.getByRole("heading", { name: "Playback" }),
+    has: page.getByRole("heading", { name: "Volume levelling" }),
   });
   // The preamp changes nothing while ReplayGain is off, so it is not offered.
   await expect(playback.getByRole("slider", { name: "Preamp" })).toHaveCount(0);
@@ -7452,7 +7821,7 @@ test("levels a track by its ReplayGain only once asked to, and remembers how", a
     .toBeCloseTo(10 ** (-5 / 20), 4);
 
   // Track mode levels by the track's own gain: −7 dB for the first track.
-  await page.goto("/settings");
+  await page.goto("/settings/playback");
   await page.getByLabel("ReplayGain").selectOption("track");
   await page.goto("/albums/album-2");
   await page.getByRole("button", { name: "Play album" }).click();
@@ -7486,21 +7855,37 @@ test("declares an install manifest whose icons are all served", async ({
   const manifest = (await response.json()) as {
     start_url: string;
     display: string;
+    theme_color: string;
+    background_color: string;
     icons: Array<{ src: string; sizes: string; purpose: string }>;
   };
   expect(manifest.start_url).toBe("/");
   expect(manifest.display).toBe("standalone");
+  // Wave green for both, as the logo kit's own manifest and head snippet set
+  // them: the launch screen is the icon's tile, edge to edge.
+  expect(manifest.theme_color).toBe("#10B981");
+  expect(manifest.background_color).toBe("#10B981");
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+    "content",
+    "#10B981",
+  );
   expect(manifest.icons.map((icon) => icon.sizes)).toEqual(
     expect.arrayContaining(["192x192", "512x512"]),
   );
   expect(manifest.icons.some((icon) => icon.purpose === "maskable")).toBe(true);
-  for (const src of [
-    ...manifest.icons.map((icon) => icon.src),
-    "/apple-touch-icon.png",
+  for (const { src, sizes } of [
+    ...manifest.icons,
+    { src: "/apple-touch-icon.png", sizes: "180x180" },
   ]) {
     const icon = await page.request.get(src);
     expect(icon.status(), src).toBe(200);
     expect(icon.headers()["content-type"], src).toContain("image/png");
+    // The size it claims is the size it is: a PNG's IHDR carries both.
+    const bytes = await icon.body();
+    expect(
+      `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`,
+      src,
+    ).toBe(sizes);
   }
 });
 
@@ -7519,7 +7904,7 @@ test("keeps the playback settings and the discography readable in light", async 
       JSON.stringify({ mode: "track", preampDb: -2 }),
     );
   });
-  await page.goto("/settings");
+  await page.goto("/settings/playback");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
   await expect(page.getByRole("slider", { name: "Preamp" })).toHaveValue("-2");
   await expect(page.locator(".replay-gain-preamp output")).toHaveText("−2 dB");

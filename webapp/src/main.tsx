@@ -31,7 +31,6 @@ import {
   onSessionOwner,
 } from "./api";
 import {
-  administrationQuery,
   albumsQuery,
   artistsQuery,
   favoriteTracksQuery,
@@ -42,11 +41,8 @@ import {
   playlistsQuery,
   podcastsQuery,
   radioStationsQuery,
-  scrobbleRowsQuery,
-  sharesQuery,
   songsQuery,
   statsQuery,
-  uncertainScrobblesQuery,
 } from "./api/queries";
 import { createQueryClient } from "./api/query-client";
 import { CoverLight } from "./components/cover-light";
@@ -86,7 +82,8 @@ import { RadioPage } from "./pages/radio-page";
 import { RandomPage } from "./pages/random-page";
 import { ScrobblingPage } from "./pages/scrobbling-page";
 import { SearchPage } from "./pages/search-page";
-import { SettingsPage } from "./pages/settings-page";
+import { SettingsHub } from "./pages/settings-hub";
+import { PlaybackSettingsPage, SettingsPage } from "./pages/settings-page";
 import { SharePage } from "./pages/share-page";
 import { SharesPage } from "./pages/shares-page";
 import { SongsPage } from "./pages/songs-page";
@@ -99,7 +96,6 @@ import {
   LibraryScopeProvider,
   mayCorrectTracks,
   mayManageMissing,
-  mayUploadTo,
   useLibraryScope,
 } from "./state/library-scope";
 import { PreferencesProvider } from "./state/preferences";
@@ -116,17 +112,21 @@ import "./styles/fluid.css";
  *
  * `pinned` is the four places reached for most, drawn as tiles two to a row;
  * the others carry a label.
+ *
+ * Settings is not among them. It sits in the rail's foot, beside the account
+ * it belongs to and above Sign out, where it stays in view however long the
+ * rail above it grows. It used to head a fourth group, "Account", of five
+ * entries; those are the Settings page's own sections now.
  */
-const NAVIGATION_GROUPS = ["pinned", "library", "listen", "account"] as const;
-type NavigationGroup = (typeof NAVIGATION_GROUPS)[number];
+const NAVIGATION_GROUPS = ["pinned", "library", "listen"] as const;
+type NavigationGroup = (typeof NAVIGATION_GROUPS)[number] | "footer";
 
 const GROUP_LABELS: Record<
-  Exclude<NavigationGroup, "pinned">,
+  Exclude<NavigationGroup, "pinned" | "footer">,
   TranslationKey
 > = {
   library: "nav.group.library",
   listen: "nav.group.listen",
-  account: "nav.group.account",
 };
 
 const navigation: Array<{
@@ -148,18 +148,11 @@ const navigation: Array<{
     | "/playlists"
     | "/queue"
     | "/offline"
-    | "/shares"
     | "/radio"
     | "/podcasts"
-    | "/settings"
-    | "/settings/scrobbling"
-    | "/upload"
-    | "/admin";
+    | "/settings";
   labelKey: TranslationKey;
   icon: IconName;
-  admin?: boolean;
-  /** Shown only where the active library takes files from this account. */
-  upload?: boolean;
   /** Shown only to the active library's owners and managers. */
   curate?: boolean;
   /**
@@ -261,7 +254,6 @@ const navigation: Array<{
     icon: "download",
     group: "listen",
   },
-  { to: "/shares", labelKey: "nav.shares", icon: "shares", group: "account" },
   { to: "/radio", labelKey: "nav.radio", icon: "radio", group: "listen" },
   {
     to: "/podcasts",
@@ -269,31 +261,14 @@ const navigation: Array<{
     icon: "podcasts",
     group: "listen",
   },
+  // One entry for everything about the account, where five used to be: the
+  // sections behind it (shares, scrobbling, upload, administration) are the
+  // Settings page's own menu now, and each keeps its gate there.
   {
     to: "/settings",
     labelKey: "nav.settings",
     icon: "admin",
-    group: "account",
-  },
-  {
-    to: "/settings/scrobbling",
-    labelKey: "nav.scrobbling",
-    icon: "scrobbling",
-    group: "account",
-  },
-  {
-    to: "/upload",
-    labelKey: "nav.upload",
-    icon: "upload",
-    upload: true,
-    group: "account",
-  },
-  {
-    to: "/admin",
-    labelKey: "nav.admin",
-    icon: "admin",
-    admin: true,
-    group: "account",
+    group: "footer",
   },
 ];
 
@@ -341,29 +316,18 @@ async function prepareTab(
     case "/playlists":
       await client.ensureQueryData(playlistsQuery());
       break;
-    case "/shares":
-      await client.ensureQueryData(sharesQuery());
-      break;
     case "/radio":
       await client.ensureQueryData(radioStationsQuery());
       break;
     case "/podcasts":
       await client.ensureQueryData(podcastsQuery());
       break;
+    // The section the entry opens on, which is Account.
     case "/settings":
       await Promise.all([
         client.ensureQueryData(ownApiTokensQuery()),
         client.ensureQueryData(ownSubsonicCredentialQuery()),
       ]);
-      break;
-    case "/settings/scrobbling":
-      await Promise.all([
-        client.ensureQueryData(scrobbleRowsQuery()),
-        client.ensureQueryData(uncertainScrobblesQuery()),
-      ]);
-      break;
-    case "/admin":
-      await client.ensureQueryData(administrationQuery());
       break;
     // These screens draw their frame immediately or read state already held
     // by the player. They have no page-wide answer to wait for.
@@ -372,7 +336,6 @@ async function prepareTab(
     case "/queue":
     // Read from this browser, not from the server.
     case "/offline":
-    case "/upload":
     // The folder is in the address, and the rail links to the root: the
     // page draws its own frame and waits for its folder there.
     case "/folders":
@@ -390,20 +353,41 @@ async function prepareTab(
 }
 
 /**
+ * The horizontal logo, the brand guide's primary version, from the logo kit
+ * unchanged: its wordmark is Inter outlined, which the guide asks for instead
+ * of the name typed in an interface face. Two files, because the guide gives
+ * one per background — the colour version on light, the dark one (mint and
+ * white) on dark — and the theme is the reader's preference, not the system's,
+ * so no `<picture>` media query can choose. Both are in the document and the
+ * stylesheet shows the one that matches the root's `dark` class, which
+ * `applyTheme` sets before the first render: nothing swaps after paint.
+ *
  * The name has to contain the words on screen, in order (WCAG 2.5.3, which
  * axe checks as `label-content-name-mismatch`): someone who says "click
- * WaveFlow server" to voice control must land on this link. The space between
- * the two pieces is load-bearing for the same reason — axe reads the visible
- * text by joining the children with nothing, so without it the label is the
- * one word "WaveFlowserver", which no name contains. The flex row drops the
- * space from the layout, so it changes nothing that is drawn.
+ * WaveFlow server" to voice control must land on this link, and "WaveFlow
+ * server, home" is what they would read off the logo and the label beside it.
  */
 function Brand() {
   const { t } = useI18n();
   return (
     <Link className="brand" to="/" aria-label={t("nav.home")}>
-      <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
-      <span>WaveFlow</span> <small>{t("nav.server")}</small>
+      <img
+        className="brand-logo brand-logo-light"
+        src="/brand/waveflow-logo-horizontal-color.svg"
+        alt=""
+        aria-hidden="true"
+        width={131}
+        height={32}
+      />
+      <img
+        className="brand-logo brand-logo-dark"
+        src="/brand/waveflow-logo-horizontal-dark.svg"
+        alt=""
+        aria-hidden="true"
+        width={131}
+        height={32}
+      />
+      <small>{t("nav.server")}</small>
     </Link>
   );
 }
@@ -411,18 +395,17 @@ function Brand() {
 /**
  * Whether this account may see an entry at all.
  *
- * The two flags are about authority and not about width, so they apply
- * wherever the entry is rendered — bar or sheet. `primary` is the separate
- * question of what fits on a phone.
+ * The flags are about authority and not about width, so they apply wherever
+ * the entry is rendered — bar or sheet. `primary` is the separate question of
+ * what fits on a phone. The upload and administration gates moved with their
+ * entries, onto the Settings page's section menu.
  */
 function permitted(
   item: (typeof navigation)[number],
   role: string | undefined,
-  library: Parameters<typeof mayUploadTo>[0],
+  library: Parameters<typeof mayCorrectTracks>[0] | null,
 ): boolean {
   return (
-    (!item.admin || role === "admin") &&
-    (!item.upload || mayUploadTo(library)) &&
     (!item.curate || mayCorrectTracks(library ?? undefined)) &&
     (!item.missing || mayManageMissing(library ?? undefined, role))
   );
@@ -495,16 +478,17 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
     })();
   }
 
-  const entry = (item: (typeof navigation)[number]) => (
+  const entry = (item: (typeof navigation)[number], className?: string) => (
     <Link
       key={item.to}
       to={item.to}
+      className={className}
       onClick={(event) => openTab(event, item.to)}
       aria-busy={pendingTab === item.to}
       aria-label={mobile ? t(item.labelKey) : undefined}
-      activeOptions={{
-        exact: item.to === "/" || item.to === "/settings",
-      }}
+      // Settings is not exact: every section of the page is under it, and
+      // the entry stays the current one in whichever is open.
+      activeOptions={{ exact: item.to === "/" }}
     >
       <Icon name={item.icon} />
       <span>{t(item.labelKey)}</span>
@@ -515,7 +499,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
     <>
       <nav className={mobile ? "mobile-navigation" : "primary-navigation"}>
         {mobile
-          ? visible.filter((item) => item.primary).map(entry)
+          ? visible.filter((item) => item.primary).map((item) => entry(item))
           : NAVIGATION_GROUPS.map((group) => {
               const entries = visible.filter((item) => item.group === group);
               if (entries.length === 0) return null;
@@ -524,7 +508,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
                   {group === "pinned" ? null : (
                     <span className="nav-label">{t(GROUP_LABELS[group])}</span>
                   )}
-                  {entries.map(entry)}
+                  {entries.map((item) => entry(item))}
                 </div>
               );
             })}
@@ -540,6 +524,41 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           </button>
         ) : null}
       </nav>
+      {mobile ? null : (
+        // In the same component as the rail rather than in the shell, so a
+        // click on Settings and a click on a rail entry share one pending tab:
+        // the later one cancels the earlier, as two rail entries do.
+        <div className="sidebar-footer">
+          <div className="account-chip">
+            <span aria-hidden="true">
+              {user?.username.slice(0, 1).toUpperCase()}
+            </span>
+            <div>
+              <strong>{user?.username}</strong>
+              <small>{user?.role}</small>
+            </div>
+          </div>
+          {visible
+            .filter((item) => item.group === "footer")
+            .map((item) => entry(item, "nav-action"))}
+          <button
+            type="button"
+            className="nav-action"
+            onClick={async () => {
+              try {
+                await logout();
+              } catch {
+                // logout always clears local session state in its finally
+                // block; an unavailable server must not trap the user here.
+              }
+              await navigate({ to: "/login" });
+            }}
+          >
+            <Icon name="logout" />
+            {t("nav.signOut")}
+          </button>
+        </div>
+      )}
       {/* Beside the bar and not inside it. The sheet's own links would
           otherwise count as the bar's, and a closed `<dialog>` is
           `display: none` — so a test measuring how many rows the bar occupies
@@ -638,9 +657,7 @@ function MoreSheet({
                   sheet.current?.close();
                 }
               }}
-              activeOptions={{
-                exact: item.to === "/" || item.to === "/settings",
-              }}
+              activeOptions={{ exact: item.to === "/" }}
             >
               <Icon name={item.icon} />
               <span>{t(item.labelKey)}</span>
@@ -698,8 +715,6 @@ function ScopedOutlet() {
 
 /** Compose the authenticated desktop and mobile application chrome. */
 function Shell() {
-  const navigate = useNavigate();
-  const user = currentUser();
   const { t } = useI18n();
   return (
     <LibraryScopeProvider>
@@ -712,38 +727,12 @@ function Shell() {
           <aside className="sidebar">
             <Brand />
             <LibraryPicker />
+            {/* The rail and, under it, the account: who is signed in, the
+                Settings entry and Sign out. The theme and the language used to
+                sit here too; they are settings and not destinations, so they
+                live on the Settings page — and only there, because a copy left
+                behind would give two ways to ask one question. */}
             <Navigation />
-            {/* The theme and the language used to sit here, under thirteen
-                navigation entries. They are settings and not destinations, so
-                they live on the Settings page now — and only there, because a
-                copy left behind would give two ways to ask one question. */}
-            <div className="sidebar-footer">
-              <div className="account-chip">
-                <span aria-hidden="true">
-                  {user?.username.slice(0, 1).toUpperCase()}
-                </span>
-                <div>
-                  <strong>{user?.username}</strong>
-                  <small>{user?.role}</small>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="nav-action"
-                onClick={async () => {
-                  try {
-                    await logout();
-                  } catch {
-                    // logout always clears local session state in its finally
-                    // block; an unavailable server must not trap the user here.
-                  }
-                  await navigate({ to: "/login" });
-                }}
-              >
-                <Icon name="logout" />
-                {t("nav.signOut")}
-              </button>
-            </div>
           </aside>
           <header className="mobile-header">
             <Brand />
@@ -947,12 +936,6 @@ const queueRoute = createRoute({
   component: QueuePage,
 });
 
-const sharesRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/shares",
-  component: SharesPage,
-});
-
 const radioRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/radio",
@@ -965,28 +948,104 @@ const podcastsRoute = createRoute({
   component: PodcastsPage,
 });
 
-// The path is the server's, not a preference. `lastfm_callback` redirects
-// here when a journey completes, so spelling it any other way puts the last
-// step of that journey on the not-found page.
+/**
+ * Settings, and everything about the account behind its one rail entry.
+ *
+ * A frame rather than a page: the section menu over whichever section is
+ * open. Each section is its own route, so it can be linked to and Back walks
+ * between them; `/settings` itself is the first section, Account.
+ */
 const settingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings",
+  component: SettingsHub,
+});
+
+const accountSettingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/",
   component: SettingsPage,
 });
 
+const playbackSettingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/playback",
+  component: PlaybackSettingsPage,
+});
+
+// The path is the server's, not a preference. `lastfm_callback` redirects
+// here when a journey completes, so spelling it any other way puts the last
+// step of that journey on the not-found page.
 const scrobblingRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/settings/scrobbling",
+  getParentRoute: () => settingsRoute,
+  path: "/scrobbling",
   component: ScrobblingPage,
 });
 
+const sharesRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/shares",
+  component: SharesPage,
+});
+
+const uploadRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/upload",
+  // A filed folder to put what is received into (RFC-012 decision 7).
+  validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
+    folder: typeof search.folder === "string" ? search.folder : undefined,
+  }),
+  component: function UploadRoute() {
+    const { folder } = uploadRoute.useSearch();
+    return <UploadPage folder={folder} />;
+  },
+});
+
 const adminRoute = createRoute({
-  getParentRoute: () => authedRoute,
+  getParentRoute: () => settingsRoute,
   path: "/admin",
   beforeLoad: () => {
     if (currentUser()?.role !== "admin") throw redirect({ to: "/" });
   },
   component: AdminPage,
+});
+
+/**
+ * The addresses these sections had before they moved under Settings, kept so
+ * a bookmark or a link written elsewhere still arrives.
+ *
+ * Redirects rather than second homes: one address per screen, and the rail's
+ * Settings entry is current on every one of them because they all sit under
+ * `/settings`. The router replaces the history entry it redirects from, so
+ * Back from the section returns to wherever the visitor was before rather
+ * than to an address that would only send them forward again.
+ */
+const legacySharesRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/shares",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/shares", replace: true });
+  },
+});
+
+const legacyUploadRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/upload",
+  // Carried across, so `/upload?folder=…` still fills that folder.
+  validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
+    folder: typeof search.folder === "string" ? search.folder : undefined,
+  }),
+  beforeLoad: ({ search }) => {
+    throw redirect({ to: "/settings/upload", search, replace: true });
+  },
+});
+
+const legacyAdminRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/admin",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/admin", replace: true });
+  },
 });
 
 // The folder is a search parameter rather than a path segment: a folder's
@@ -1042,19 +1101,6 @@ const qualityRoute = createRoute({
   },
 });
 
-const uploadRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/upload",
-  // A filed folder to put what is received into (RFC-012 decision 7).
-  validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
-    folder: typeof search.folder === "string" ? search.folder : undefined,
-  }),
-  component: function UploadRoute() {
-    const { folder } = uploadRoute.useSearch();
-    return <UploadPage folder={folder} />;
-  },
-});
-
 const trackEditRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/tracks/$trackId/edit",
@@ -1089,15 +1135,21 @@ const routeTree = rootRoute.addChildren([
     favoritesRoute,
     playlistsRoute,
     queueRoute,
-    sharesRoute,
     radioRoute,
     podcastsRoute,
-    settingsRoute,
-    scrobblingRoute,
-    adminRoute,
+    settingsRoute.addChildren([
+      accountSettingsRoute,
+      playbackSettingsRoute,
+      scrobblingRoute,
+      sharesRoute,
+      uploadRoute,
+      adminRoute,
+    ]),
+    legacySharesRoute,
+    legacyUploadRoute,
+    legacyAdminRoute,
     authorizeRoute,
     trackEditRoute,
-    uploadRoute,
   ]),
 ]);
 

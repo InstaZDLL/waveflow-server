@@ -77,9 +77,11 @@ const en = {
     "Appearance, language, and the clients allowed to read your library.",
   "settings.appearance": "Appearance",
   "settings.playback": "Playback",
-  "settings.scrobblingDetail":
-    "Send what you listen to to ListenBrainz, Last.fm or Maloja.",
-  "settings.scrobblingOpen": "Open scrobbling settings",
+  "settings.sections": "Settings sections",
+  "settings.section.account": "Account",
+  "settings.playbackDetail":
+    "How this browser plays your tracks. Kept in this browser, not on your account.",
+  "settings.levelling": "Volume levelling",
   "clients.title": "Registered clients",
   "clients.detail":
     "Devices and scripts holding a credential on your library. Revoking one stops it at once.",
@@ -696,7 +698,6 @@ const en = {
   "upload.checkAgain": "Check again",
   "nav.group.library": "Library",
   "nav.group.listen": "Listening",
-  "nav.group.account": "Account",
   "upload.title": "Upload to {library}",
   "upload.detail":
     "Each file is fingerprinted in your browser first, so a file the library already holds is never sent again, and an interrupted transfer picks up where it stopped.",
@@ -1203,9 +1204,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
     "Apparence, langue, et les clients autorisés à lire votre bibliothèque.",
   "settings.appearance": "Apparence",
   "settings.playback": "Lecture",
-  "settings.scrobblingDetail":
-    "Envoyer ce que vous écoutez vers ListenBrainz, Last.fm ou Maloja.",
-  "settings.scrobblingOpen": "Ouvrir les réglages de scrobbling",
+  "settings.sections": "Sections des réglages",
+  "settings.section.account": "Compte",
+  "settings.playbackDetail":
+    "Comment ce navigateur lit vos titres. Gardé dans ce navigateur, pas sur votre compte.",
+  "settings.levelling": "Normalisation du volume",
   "clients.title": "Clients enregistrés",
   "clients.detail":
     "Appareils et scripts détenant un justificatif sur votre bibliothèque. En révoquer un l’arrête aussitôt.",
@@ -1829,7 +1832,6 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "upload.checkAgain": "Vérifier à nouveau",
   "nav.group.library": "Bibliothèque",
   "nav.group.listen": "Écoute",
-  "nav.group.account": "Compte",
   "upload.title": "Téléverser dans {library}",
   "upload.detail":
     "Chaque fichier est d’abord identifié dans votre navigateur : un fichier que la bibliothèque possède déjà n’est jamais renvoyé, et un transfert interrompu reprend là où il s’était arrêté.",
