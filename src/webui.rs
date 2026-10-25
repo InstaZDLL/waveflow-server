@@ -62,6 +62,15 @@ pub async fn handler(uri: Uri) -> Response {
     if let Some(response) = asset(path) {
         return response;
     }
+    shell()
+}
+
+/// The client's shell, for a route the client renders.
+///
+/// Also what `/share/{token}` hands a browser (RFC-020 decision 3): `share/`
+/// stays reserved above, so nothing under it falls through to the client by
+/// accident, and the one address that does is chosen by its own route.
+pub fn shell() -> Response {
     asset(INDEX).unwrap_or_else(missing_client)
 }
 

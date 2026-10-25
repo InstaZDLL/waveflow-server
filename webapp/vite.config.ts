@@ -15,6 +15,16 @@ export default defineConfig({
     // so same-origin calls keep working without a CORS allow-list.
     proxy: {
       "/api": "http://127.0.0.1:4533",
+      // The share address answers the page to a browser and the share to the
+      // page (RFC-020): in development the page is Vite's to serve, and only
+      // the JSON request goes through to the server.
+      "/share": {
+        target: "http://127.0.0.1:4533",
+        bypass: (request) =>
+          request.headers.accept?.includes("text/html")
+            ? "/index.html"
+            : undefined,
+      },
     },
   },
 });

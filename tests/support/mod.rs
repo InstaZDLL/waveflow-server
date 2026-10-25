@@ -416,3 +416,106 @@ pub fn browse_input(
         ..blank_input()
     }
 }
+
+/// A library of `account`'s holding one catalogue row per title, and the ids of
+/// those rows in the order the titles were given.
+///
+/// No file is written: what this serves is tests about who may see a track and
+/// where it sits in a list, not about its bytes. `first_index` keeps the paths
+/// and hashes of two libraries in one test apart.
+pub async fn seed_titles(
+    state: &waveflow_server::AppState,
+    config: &waveflow_server::Config,
+    account: uuid::Uuid,
+    name: &str,
+    first_index: usize,
+    titles: &[&str],
+) -> (uuid::Uuid, Vec<uuid::Uuid>) {
+    let root = config.data_dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    let library = state
+        .db
+        .create_library(
+            account,
+            name,
+            &std::fs::canonicalize(&root).unwrap(),
+            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::authentication::now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(account), "manual")
+        .await
+        .unwrap();
+    state
+        .db
+        .start_scan_job(scan, titles.len() as i64, false)
+        .await
+        .unwrap();
+    for (offset, title) in titles.iter().enumerate() {
+        let input = browse_input(
+            first_index + offset,
+            title,
+            &format!("{name} album"),
+            &format!("{name} artist"),
+            Some(offset as i64 + 1),
+            Some(1),
+        );
+        state
+            .db
+            .apply_catalog_track(library, scan, &input, None, false)
+            .await
+            .unwrap();
+    }
+    state
+        .db
+        .consolidate_catalog_derivations(library)
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let mut ids = Vec::with_capacity(titles.len());
+    for title in titles {
+        let id: String = sqlx::query_scalar("SELECT id FROM track WHERE library_id=? AND title=?")
+            .bind(library.to_string())
+            .bind(*title)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        ids.push(id.parse().unwrap());
+    }
+    (library, ids)
+}
+
+/// One request to the router, with a bearer and an optional JSON body.
+pub async fn send_json(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<serde_json::Value>,
+) -> axum::response::Response {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"));
+    let request = match body {
+        Some(body) => request
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+        None => request.body(Body::empty()).unwrap(),
+    };
+    router.clone().oneshot(request).await.unwrap()
+}
+
+/// The ids of a JSON list of songs, in order.
+pub fn song_ids(songs: &serde_json::Value) -> Vec<String> {
+    songs
+        .as_array()
+        .expect("a list of songs")
+        .iter()
+        .map(|song| song["id"].as_str().expect("a song id").to_owned())
+        .collect()
+}

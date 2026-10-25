@@ -1107,6 +1107,11 @@ pub struct SearchResult {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlaylistItem {
     pub id: Uuid,
+    /// Whose playlist it is. A reader may be shown another account's public
+    /// playlist beside its own (RFC-020 decision 2), and only the owner may
+    /// change one.
+    pub owner_id: Uuid,
+    pub owner_username: String,
     pub name: String,
     pub comment: Option<String>,
     pub public: bool,
@@ -1164,9 +1169,12 @@ pub enum UnresolvedReason {
     Ambiguous,
     /// The target is not a path into a library — a web radio, most often.
     NotAPath,
-    /// It resolved to a track the playlist already holds. A playlist carries a
-    /// track once: `playlist_track` is keyed on the pair, so the second copy
-    /// has nowhere to go, and dropping it in silence is what this reports.
+    /// It resolved to a track the playlist already holds.
+    ///
+    /// No longer produced: a playlist holds a track as many times as it is
+    /// listed (RFC-020 decision 1), so a file naming one twice is imported
+    /// with both copies. Kept in the schema so that a client generated against
+    /// it still reads every value it was told to expect.
     Duplicate,
 }
 
@@ -1237,6 +1245,8 @@ pub struct HistoryItem {
 pub struct ShareClear {
     pub description: bool,
     pub expires_at: bool,
+    /// Lift the visit cap (RFC-020 decision 6).
+    pub max_visits: bool,
 }
 
 /// Optional fields a playlist update may blank out. See [`ShareClear`].
@@ -1261,6 +1271,9 @@ pub struct ShareItem {
     pub expires_at: Option<i64>,
     pub created_at: i64,
     pub visit_count: i64,
+    /// How many times the share may be opened, or `None` for no cap (RFC-020
+    /// decision 6).
+    pub max_visits: Option<i64>,
     pub songs: Vec<SongItem>,
 }
 

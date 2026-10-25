@@ -34,25 +34,33 @@ use crate::security::{SecretBox, SecurityError};
 pub enum TicketKind {
     Audio,
     Canvas,
+    /// One visit to a public share (RFC-020 decision 4). Its first identifier
+    /// is the **share**, not an account: an anonymous visitor has none, and a
+    /// ticket naming the owner would open the owner's whole catalogue on the
+    /// routes that redeem the other two kinds.
+    ShareVisit,
 }
 
 impl TicketKind {
     const AUDIO: u8 = 0x01;
     const CANVAS: u8 = 0x02;
+    const SHARE_VISIT: u8 = 0x03;
 
     const fn as_byte(self) -> u8 {
         match self {
             Self::Audio => Self::AUDIO,
             Self::Canvas => Self::CANVAS,
+            Self::ShareVisit => Self::SHARE_VISIT,
         }
     }
 
-    /// `None` for any byte that is not one of the two fixed values — including
+    /// `None` for any byte that is not one of the fixed values — including
     /// `0x00`, and including whatever a later version might add.
     const fn from_byte(byte: u8) -> Option<Self> {
         match byte {
             Self::AUDIO => Some(Self::Audio),
             Self::CANVAS => Some(Self::Canvas),
+            Self::SHARE_VISIT => Some(Self::ShareVisit),
             _ => None,
         }
     }
@@ -68,7 +76,7 @@ impl TicketKind {
 const PAYLOAD_LEN: usize = 41;
 const NONCE_LEN: usize = 12;
 
-/// Only the two kinds can be minted: the parameter is an enum, so an unknown
+/// Only the known kinds can be minted: the parameter is an enum, so an unknown
 /// discriminator is not something a caller can express.
 pub fn mint(
     secret: &SecretBox,
@@ -142,7 +150,11 @@ mod tests {
     #[test]
     fn round_trip_returns_the_authorised_triple() {
         let secret = secret();
-        for kind in [TicketKind::Audio, TicketKind::Canvas] {
+        for kind in [
+            TicketKind::Audio,
+            TicketKind::Canvas,
+            TicketKind::ShareVisit,
+        ] {
             let user = Uuid::new_v4();
             let track = Uuid::new_v4();
             let ticket = mint(&secret, kind, user, track, 1_000).unwrap();
@@ -151,12 +163,13 @@ mod tests {
     }
 
     #[test]
-    fn the_two_kinds_do_not_answer_for_each_other() {
+    fn the_kinds_do_not_answer_for_each_other() {
         let secret = secret();
         let user = Uuid::new_v4();
         let track = Uuid::new_v4();
         let audio = mint(&secret, TicketKind::Audio, user, track, 1_000).unwrap();
         let canvas = mint(&secret, TicketKind::Canvas, user, track, 1_000).unwrap();
+        let visit = mint(&secret, TicketKind::ShareVisit, user, track, 1_000).unwrap();
         assert_ne!(audio, canvas, "the kind is inside the sealed payload");
         assert_eq!(
             verify(&secret, &audio, 999).map(|(kind, ..)| kind),
@@ -165,6 +178,10 @@ mod tests {
         assert_eq!(
             verify(&secret, &canvas, 999).map(|(kind, ..)| kind),
             Some(TicketKind::Canvas)
+        );
+        assert_eq!(
+            verify(&secret, &visit, 999).map(|(kind, ..)| kind),
+            Some(TicketKind::ShareVisit)
         );
     }
 
@@ -176,12 +193,12 @@ mod tests {
         // Sealed under the real key, correct length, live expiry: the kind byte
         // is the only thing wrong with it. A forged ticket would prove nothing
         // about this contract, since it already fails to decrypt.
-        for byte in [0x00, 0x03, 0xff] {
+        for byte in [0x00, 0x04, 0xff] {
             let ticket = seal(&secret, &payload_with_kind(byte, user, track, 1_000));
             assert_eq!(
                 verify(&secret, &ticket, 999),
                 None,
-                "kind {byte:#04x} is not one of the two"
+                "kind {byte:#04x} is not one of the kinds"
             );
         }
     }

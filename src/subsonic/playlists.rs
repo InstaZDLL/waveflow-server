@@ -4,20 +4,25 @@
 
 use super::*;
 
+/// `getPlaylists`: this account's playlists, then every other account's
+/// public ones, each under the name of the account that owns it (RFC-020
+/// decision 2).
+///
+/// What the specification calls "all playlists a user is allowed to play".
+/// Until that RFC the list was the caller's own whatever the `public` flag
+/// said, so the flag this façade accepted had no effect anywhere. A client
+/// reads `owner` to decide what it may edit, which is why the field has to be
+/// the owner's and not the caller's; the writes stay refused to anyone else.
 pub(super) async fn playlists(
     state: &AppState,
     principal: &Principal,
 ) -> Result<Node, ProtocolError> {
     let playlists = state
         .services
-        .playlists(principal.id)
+        .visible_playlists(principal.id)
         .await
         .map_err(internal)?;
-    Ok(Node::new("playlists").children(
-        playlists
-            .iter()
-            .map(|playlist| playlist_node(playlist, &principal.username)),
-    ))
+    Ok(Node::new("playlists").children(playlists.iter().map(playlist_node)))
 }
 
 pub(super) async fn get_playlist(
@@ -30,7 +35,7 @@ pub(super) async fn get_playlist(
         .playlist(principal.id, params.uuid("id")?)
         .await
         .map_err(service_protocol)?;
-    Ok(playlist_node(&playlist, &principal.username).children(
+    Ok(playlist_node(&playlist).children(
         playlist
             .songs
             .iter()
@@ -80,7 +85,7 @@ pub(super) async fn create_playlist(
             .await
             .map_err(service_protocol)?
     };
-    Ok(playlist_node(&playlist, &principal.username).children(
+    Ok(playlist_node(&playlist).children(
         playlist
             .songs
             .iter()
@@ -107,7 +112,7 @@ pub(super) async fn update_playlist(
         )
         .await
         .map_err(service_protocol)?;
-    Ok(playlist_node(&playlist, &principal.username))
+    Ok(playlist_node(&playlist))
 }
 
 pub(super) async fn delete_playlist(

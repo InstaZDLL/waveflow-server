@@ -283,12 +283,12 @@ pub(super) fn bookmark_node(bookmark: &crate::services::BookmarkItem, owner: &st
         )
 }
 
-pub(super) fn playlist_node(playlist: &PlaylistItem, owner: &str) -> Node {
+pub(super) fn playlist_node(playlist: &PlaylistItem) -> Node {
     Node::new("playlist")
         .attr("id", playlist.id.to_string())
         .attr("name", playlist.name.clone())
         .maybe_attr("comment", playlist.comment.clone())
-        .attr("owner", owner)
+        .attr("owner", playlist.owner_username.clone())
         .attr("public", playlist.public)
         .attr("songCount", playlist.songs.len() as i64)
         .attr(

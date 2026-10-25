@@ -143,7 +143,11 @@ export {
   exportPlaylist,
   importPlaylist,
   listPlaylists,
+  listVisiblePlaylists,
+  setPlaylistPublic,
 } from "./playlists";
+export type { PublicShare, PublicShareTrack } from "./public-share";
+export { openPublicShare } from "./public-share";
 export type {
   AnalysisState,
   QualityAnalysis,

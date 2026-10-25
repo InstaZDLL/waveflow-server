@@ -74,6 +74,7 @@ import { RandomPage } from "./pages/random-page";
 import { ScrobblingPage } from "./pages/scrobbling-page";
 import { SearchPage } from "./pages/search-page";
 import { SettingsPage } from "./pages/settings-page";
+import { SharePage } from "./pages/share-page";
 import { SharesPage } from "./pages/shares-page";
 import { SongsPage } from "./pages/songs-page";
 import { UploadPage } from "./pages/upload-page";
@@ -724,6 +725,21 @@ const loginRoute = createRoute({
   component: LoginPage,
 });
 
+/**
+ * What a share link opens (RFC-020 decision 3). Beside the sign-in page and
+ * not under `authed`: the person a link is sent to has no account, and a
+ * session check would send them to a sign-in they cannot complete. The server
+ * hands this shell out only at `/share/{token}`, to a browser asking for HTML.
+ */
+const shareRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/share/$token",
+  component: function ShareRoute() {
+    const { token } = shareRoute.useParams();
+    return <SharePage token={token} />;
+  },
+});
+
 /** Everything below requires a session; unauthenticated visitors land on /login. */
 const authedRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -951,6 +967,7 @@ const trackEditRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  shareRoute,
   authedRoute.addChildren([
     albumsRoute,
     albumRoute,

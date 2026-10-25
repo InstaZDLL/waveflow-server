@@ -575,3 +575,82 @@ async fn a_caller_cannot_name_its_own_request() {
         "a caller has no business sending this one: {allowed}"
     );
 }
+
+/// A browser opening a share link is handed the web client, which plays the
+/// share; every other caller keeps the JSON it always had (RFC-020
+/// decision 3).
+///
+/// `/share/{token}` answered JSON to everyone, so the person a link was sent to
+/// saw a document of identifiers where a player should have been. And handing
+/// out the page costs no visit: a link preview fetching it to draw a card has
+/// not listened to anything, and a cap must not be spent on one.
+#[tokio::test]
+async fn a_browser_opening_a_share_link_is_handed_the_player() {
+    let (_temp, config, state) = test_app().await;
+    let hash = security::hash_password(&uuid::Uuid::new_v4().to_string()).unwrap();
+    let owner = state
+        .db
+        .create_account("page-owner", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let (_library, tracks) =
+        seed_titles(&state, &config, owner, "page-music", 5_000, &["Sent Over"]).await;
+    let share = state
+        .services
+        .create_share(owner, &tracks, Some("For you"), None)
+        .await
+        .unwrap();
+    let url = format!("/share/{}", share.url_token.clone().unwrap());
+    let router = waveflow_server::app(&config, state.clone());
+    let get = |uri: String, accept: Option<&'static str>| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::get(uri);
+            if let Some(accept) = accept {
+                request = request.header("accept", accept);
+            }
+            router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let content_type = |response: &axum::response::Response| {
+        response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    // What a browser sends when somebody clicks the link.
+    let navigation = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+    let page = get(url.clone(), Some(navigation)).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    assert!(content_type(&page).starts_with("text/html"));
+    assert_eq!(page.headers()["vary"], "accept");
+    assert_eq!(page.headers()["cache-control"], "no-store");
+    let visits = || async { state.services.shares(owner).await.unwrap()[0].visit_count };
+    assert_eq!(visits().await, 0, "handing out the page is not a visit");
+
+    // Everybody else, including a caller that says nothing, keeps the JSON.
+    for accept in [None, Some("*/*"), Some("application/json")] {
+        let document = get(url.clone(), accept).await;
+        assert_eq!(document.status(), StatusCode::OK, "{accept:?}");
+        assert!(
+            content_type(&document).starts_with("application/json"),
+            "{accept:?}"
+        );
+        assert_eq!(document.headers()["vary"], "accept");
+    }
+    assert_eq!(visits().await, 3);
+
+    // A link that opens nothing says so in the page, with the status a
+    // missing resource has.
+    let dead = get("/share/wfs_nothing-here".into(), Some(navigation)).await;
+    assert_eq!(dead.status(), StatusCode::NOT_FOUND);
+    assert!(content_type(&dead).starts_with("text/html"));
+    // The rest of the namespace stays the server's, whatever the caller accepts.
+    let below = get(format!("{url}/elsewhere"), Some(navigation)).await;
+    assert_eq!(below.status(), StatusCode::NOT_FOUND);
+    assert!(!content_type(&below).starts_with("text/html"));
+}

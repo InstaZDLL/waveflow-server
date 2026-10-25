@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use axum::{
     body::to_bytes,
-    extract::{Path, Query, Request, State},
-    http::{header, HeaderMap, Method, StatusCode},
+    extract::{Path, Request, State},
+    http::{header, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -164,90 +164,7 @@ struct ProtocolError {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/rest/{method}", get(handle).post(handle))
-        .route(
-            "/share/{token}/tracks/{track_id}/stream",
-            get(public_share_stream),
-        )
-        .route("/share/{token}", get(public_share))
         .with_state(state)
-}
-
-async fn public_share(State(state): State<AppState>, Path(token): Path<String>) -> Response {
-    match state.services.public_share(&token).await {
-        Ok(share) => {
-            let tracks = share
-                .songs
-                .iter()
-                .map(|song| {
-                    let mut value = serde_json::to_value(song).expect("song serialization");
-                    if let Value::Object(object) = &mut value {
-                        object.insert(
-                            "streamUrl".into(),
-                            Value::String(external_url(
-                                state.public_url.as_deref(),
-                                &format!("/share/{token}/tracks/{}/stream", song.id),
-                            )),
-                        );
-                    }
-                    value
-                })
-                .collect::<Vec<_>>();
-            (
-                [(header::CACHE_CONTROL, "no-store")],
-                axum::Json(serde_json::json!({
-                    "id": share.id,
-                    "description": share.description,
-                    "expiresAt": share.expires_at,
-                    "visitCount": share.visit_count,
-                    "tracks": tracks,
-                })),
-            )
-                .into_response()
-        }
-        Err(ServiceError::NotFound) => StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share lookup failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-async fn public_share_stream(
-    State(state): State<AppState>,
-    Path((token, track_id)): Path<(String, Uuid)>,
-    Query(query): Query<StreamQuery>,
-    headers: HeaderMap,
-) -> Response {
-    let share = match state.services.public_share(&token).await {
-        Ok(share) => share,
-        Err(ServiceError::NotFound) => return StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share stream lookup failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-    if !share.songs.iter().any(|song| song.id == track_id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let track = match state
-        .db
-        .stream_track_for_user(share.owner_id, track_id)
-        .await
-    {
-        Ok(Some(track)) => track,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "public share media lookup failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-    let range = headers
-        .get(header::RANGE)
-        .and_then(|value| value.to_str().ok());
-    match state.media.serve(share.owner_id, track, query, range).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    }
 }
 
 pub async fn handle(

@@ -16,6 +16,9 @@ export function SharesPage() {
   const player = usePlayer();
   const { t } = useI18n();
   const [description, setDescription] = useState("");
+  // Kept as typed: an empty field is "no cap", and the number input already
+  // refuses anything that is not a whole number of at least one.
+  const [maxVisits, setMaxVisits] = useState("");
   const [createdShare, setCreatedShare] = useState<Share | null>(null);
   const reload = useReload(sharesQuery().queryKey);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -44,9 +47,11 @@ export function SharesPage() {
       const share = await createShare(
         player.queue.map((song) => song.id),
         description,
+        maxVisits === "" ? null : Number(maxVisits),
       );
       setCreatedShare(share);
       setDescription("");
+      setMaxVisits("");
       reload();
     } catch {
       setMutationError(t("shares.createError"));
@@ -82,6 +87,16 @@ export function SharesPage() {
           aria-label={t("shares.description")}
           required
         />
+        <input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={maxVisits}
+          onChange={(event) => setMaxVisits(event.target.value)}
+          placeholder={t("shares.maxVisits")}
+          aria-label={t("shares.maxVisits")}
+        />
         <button type="submit" disabled={!player.queue.length}>
           {t("shares.create")}
         </button>
@@ -105,6 +120,13 @@ export function SharesPage() {
               </div>
               <span className="muted">
                 {t("common.tracks", { count: share.track_ids.length })}
+                {" · "}
+                {share.max_visits === null
+                  ? t("shares.visits", { count: share.visit_count })
+                  : t("shares.visitsOf", {
+                      count: share.visit_count,
+                      max: share.max_visits,
+                    })}
               </span>
               <button
                 type="button"

@@ -35,7 +35,6 @@ import {
   listLibraryMembers,
   listNowPlaying,
   listOwnApiTokens,
-  listPlaylists,
   listQualityTracks,
   listRadioStations,
   listRandomSongs,
@@ -45,6 +44,7 @@ import {
   listSongs,
   listUncertainScrobbles,
   listUsers,
+  listVisiblePlaylists,
   QUALITY_TRACKS_PAGE,
   type QualityVerdict,
   readOwnSubsonicCredential,
@@ -189,7 +189,7 @@ export const randomSongsQuery = (scope: string | undefined) =>
   });
 
 export const playlistsQuery = () =>
-  queryOptions({ queryKey: ["playlists"], queryFn: listPlaylists });
+  queryOptions({ queryKey: ["playlists"], queryFn: listVisiblePlaylists });
 
 export const sharesQuery = () =>
   queryOptions({ queryKey: ["shares"], queryFn: listShares });

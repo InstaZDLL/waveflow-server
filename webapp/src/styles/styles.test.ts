@@ -236,8 +236,9 @@ describe("the spacing and type scale", () => {
     // vacuous. Twenty-two, not the nineteen this said at first: three sit
     // inside a longer value — one wrapped in a `calc()` to negate it — and a
     // check that only read a `clamp()` occupying the whole value walked past
-    // all three while its count still looked thorough.
-    expect(checked).toBe(22);
+    // all three while its count still looked thorough. Twenty-four since the
+    // share page (RFC-020) added two, its padding and its title.
+    expect(checked).toBe(24);
   });
 
   it("finds the shapes it exists to refuse", () => {

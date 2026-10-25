@@ -4,10 +4,54 @@
 
 use super::*;
 
+/// The columns a playlist read answers, with its owner's name joined in.
+///
+/// Every read names the owner because a reader may be shown playlists that are
+/// not its own (RFC-020 decision 2), and `owner` is what a Subsonic client
+/// reads to decide whether it may edit one.
+macro_rules! playlist_columns {
+    () => {
+        "SELECT p.id, p.owner_user_id, a.username AS owner_username, p.name, p.comment, \
+                p.public, p.created_at, p.updated_at \
+         FROM playlist p JOIN account a ON a.id=p.owner_user_id "
+    };
+}
+
+/// Which playlists a read reaches.
+///
+/// **Visible** is the reader's own and every other account's public one, the
+/// owner's account still enabled — a disabled account publishes nothing. Every
+/// write reaches **owned** only, so a public playlist stays read-only to
+/// anyone but its owner, and the refusal is the same not-found a missing one
+/// answers. The predicate is written once per reach, in SQL, rather than
+/// checked after the read: tenancy lives in the queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Owned,
+    Visible,
+}
+
 impl DomainServices {
+    /// This account's own playlists. What the native list and the sync
+    /// snapshot answer: both are about what the account holds and may edit.
     pub async fn playlists(&self, user_id: Uuid) -> Result<Vec<PlaylistItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
         self.playlists_on(&mut connection, user_id).await
+    }
+
+    /// This account's playlists, then every other account's public ones.
+    ///
+    /// What Subsonic's `getPlaylists` means — "all playlists a user is allowed
+    /// to play" — and what the native list answers when asked for it. The
+    /// tracks of another account's playlist are read through **this**
+    /// account's libraries: one it cannot reach is not shown and not counted.
+    pub async fn visible_playlists(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<PlaylistItem>, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        self.read_playlists_on(&mut connection, user_id, Reach::Visible)
+            .await
     }
 
     pub(super) async fn playlists_on(
@@ -15,13 +59,39 @@ impl DomainServices {
         connection: &mut SqliteConnection,
         user_id: Uuid,
     ) -> Result<Vec<PlaylistItem>, ServiceError> {
-        let rows = sqlx::query(
-            "SELECT id, name, comment, public, created_at, updated_at FROM playlist \
-             WHERE owner_user_id=? ORDER BY updated_at DESC, id",
-        )
-        .bind(user_id.to_string())
-        .fetch_all(&mut *connection)
-        .await?;
+        self.read_playlists_on(connection, user_id, Reach::Owned)
+            .await
+    }
+
+    async fn read_playlists_on(
+        &self,
+        connection: &mut SqliteConnection,
+        user_id: Uuid,
+        reach: Reach,
+    ) -> Result<Vec<PlaylistItem>, ServiceError> {
+        let rows = match reach {
+            Reach::Owned => {
+                sqlx::query(concat!(
+                    playlist_columns!(),
+                    "WHERE p.owner_user_id=? ORDER BY p.updated_at DESC, p.id"
+                ))
+                .bind(user_id.to_string())
+                .fetch_all(&mut *connection)
+                .await?
+            }
+            // The reader's own first, as before, then the others newest first.
+            Reach::Visible => {
+                sqlx::query(concat!(
+                    playlist_columns!(),
+                    "WHERE p.owner_user_id=? OR (p.public=1 AND a.disabled=0) \
+                     ORDER BY p.owner_user_id<>?, p.updated_at DESC, p.id"
+                ))
+                .bind(user_id.to_string())
+                .bind(user_id.to_string())
+                .fetch_all(&mut *connection)
+                .await?
+            }
+        };
         // One query for every playlist's track list and one for the songs they
         // name, rather than two per playlist: an account with fifty playlists
         // was costing a hundred round trips to answer `getPlaylists`.
@@ -33,8 +103,15 @@ impl DomainServices {
         if !playlist_ids.is_empty() {
             let ids_json =
                 serde_json::to_string(&playlist_ids).map_err(|_| ServiceError::Invalid)?;
+            // The visibility predicate again, rather than trusting the ids:
+            // the list above is the reach, and this read must not be wider.
             for row in sqlx::query(
-                "SELECT pt.playlist_id, pt.track_id FROM playlist_track pt                  JOIN playlist p ON p.id=pt.playlist_id                  WHERE p.owner_user_id=? AND p.id IN (SELECT value FROM json_each(?))                  ORDER BY pt.playlist_id, pt.position",
+                "SELECT pt.playlist_id, pt.track_id FROM playlist_track pt \
+                 JOIN playlist p ON p.id=pt.playlist_id \
+                 JOIN account a ON a.id=p.owner_user_id \
+                 WHERE (p.owner_user_id=? OR (p.public=1 AND a.disabled=0)) \
+                   AND p.id IN (SELECT value FROM json_each(?)) \
+                 ORDER BY pt.playlist_id, pt.position",
             )
             .bind(user_id.to_string())
             .bind(ids_json)
@@ -61,27 +138,23 @@ impl DomainServices {
             .collect::<HashMap<_, _>>();
         let mut result = Vec::with_capacity(rows.len());
         for (row, id) in rows.into_iter().zip(playlist_ids) {
-            result.push(PlaylistItem {
-                id,
-                name: row.try_get("name")?,
-                comment: row.try_get("comment")?,
-                public: row.try_get::<i64, _>("public")? != 0,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                songs: ordered
-                    .get(&id)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|track| visible.get(track).cloned())
-                    .collect(),
-            });
+            let songs = ordered
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter_map(|track| visible.get(track).cloned())
+                .collect();
+            result.push(playlist_from_row(&row, id, songs)?);
         }
         Ok(result)
     }
 
+    /// One playlist this account may read: its own, or another account's
+    /// public one, its tracks read through this account's libraries.
     pub async fn playlist(&self, user_id: Uuid, id: Uuid) -> Result<PlaylistItem, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        self.playlist_on(&mut connection, user_id, id).await
+        self.playlist_on(&mut connection, user_id, id, Reach::Visible)
+            .await
     }
 
     async fn playlist_on(
@@ -89,58 +162,36 @@ impl DomainServices {
         connection: &mut SqliteConnection,
         user_id: Uuid,
         id: Uuid,
+        reach: Reach,
     ) -> Result<PlaylistItem, ServiceError> {
-        let row = sqlx::query(
-            "SELECT id, name, comment, public, created_at, updated_at FROM playlist \
-             WHERE id=? AND owner_user_id=?",
-        )
-        .bind(id.to_string())
-        .bind(user_id.to_string())
-        .fetch_optional(&mut *connection)
-        .await?
+        let row = match reach {
+            Reach::Owned => {
+                sqlx::query(concat!(
+                    playlist_columns!(),
+                    "WHERE p.owner_user_id=? AND p.id=?"
+                ))
+                .bind(user_id.to_string())
+                .bind(id.to_string())
+                .fetch_optional(&mut *connection)
+                .await?
+            }
+            Reach::Visible => {
+                sqlx::query(concat!(
+                    playlist_columns!(),
+                    "WHERE (p.owner_user_id=? OR (p.public=1 AND a.disabled=0)) AND p.id=?"
+                ))
+                .bind(user_id.to_string())
+                .bind(id.to_string())
+                .fetch_optional(&mut *connection)
+                .await?
+            }
+        }
         .ok_or(ServiceError::NotFound)?;
-        Ok(PlaylistItem {
-            id,
-            name: row.try_get("name")?,
-            comment: row.try_get("comment")?,
-            public: row.try_get::<i64, _>("public")? != 0,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            songs: self.playlist_songs_on(connection, user_id, id).await?,
-        })
-    }
-
-    async fn playlist_songs_on(
-        &self,
-        connection: &mut SqliteConnection,
-        user_id: Uuid,
-        playlist_id: Uuid,
-    ) -> Result<Vec<SongItem>, ServiceError> {
-        let ids = self
-            .playlist_track_ids_on(connection, user_id, playlist_id)
+        let ids = playlist_track_ids_on(connection, user_id, id).await?;
+        let songs = self
+            .songs_by_ids_lenient_on(connection, user_id, &ids)
             .await?;
-        self.songs_by_ids_lenient_on(connection, user_id, &ids)
-            .await
-    }
-
-    async fn playlist_track_ids_on(
-        &self,
-        connection: &mut SqliteConnection,
-        user_id: Uuid,
-        playlist_id: Uuid,
-    ) -> Result<Vec<Uuid>, ServiceError> {
-        sqlx::query_scalar::<_, String>(
-            "SELECT pt.track_id FROM playlist_track pt JOIN playlist p ON p.id=pt.playlist_id \
-             WHERE p.id=? AND p.owner_user_id=? ORDER BY pt.position",
-        )
-        .bind(playlist_id.to_string())
-        .bind(user_id.to_string())
-        .fetch_all(&mut *connection)
-        .await?
-        .into_iter()
-        .map(parse_uuid)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        playlist_from_row(&row, id, songs)
     }
 
     pub async fn create_playlist(
@@ -299,7 +350,9 @@ impl DomainServices {
         if add.len() > MAX_PLAYLIST_TRACKS {
             return Err(ServiceError::Invalid);
         }
-        let current = self.playlist_on(&mut tx, user_id, id).await?;
+        // Owned, not visible: another account's public playlist answers as
+        // one that does not exist, before anything is written.
+        let current = self.playlist_on(&mut tx, user_id, id, Reach::Owned).await?;
         if let Some(name) = name {
             validate_name(name)?;
         }
@@ -307,13 +360,31 @@ impl DomainServices {
         let mut ids = if clear.tracks {
             Vec::new()
         } else {
-            self.playlist_track_ids_on(&mut tx, user_id, id).await?
+            playlist_track_ids_on(&mut tx, user_id, id).await?
         };
+        // A position names an entry of the list the caller was shown, which
+        // is the stored list without the tracks this account cannot read — a
+        // file gone from disk, a library it left. Applied to the stored list,
+        // an index past a hidden entry removed its neighbour, and the entry
+        // the listener pointed at stayed. With duplicates allowed (RFC-020
+        // decision 1) a position is the only way to say which copy goes, so it
+        // has to be the position the listener saw. The hidden entries
+        // themselves are kept, for when the track comes back.
+        let shown: std::collections::HashSet<Uuid> =
+            current.songs.iter().map(|song| song.id).collect();
+        let shown_positions = ids
+            .iter()
+            .enumerate()
+            .filter(|(_, track)| shown.contains(track))
+            .map(|(position, _)| position)
+            .collect::<Vec<_>>();
+        // Highest first, so each removal leaves the positions still to come
+        // where they were.
         for index in removes {
-            if index >= ids.len() {
+            let Some(&position) = shown_positions.get(index) else {
                 return Err(ServiceError::Invalid);
-            }
-            ids.remove(index);
+            };
+            ids.remove(position);
         }
         ids.extend_from_slice(add);
         // Checked on the result rather than on `add`: an update that adds one
@@ -506,11 +577,6 @@ impl DomainServices {
         drop(connection);
 
         let mut track_ids: Vec<Uuid> = Vec::new();
-        // Beside the list rather than in place of it: the order is the file's
-        // and has to be kept, while the question asked of it — "already in
-        // here?" — is asked once per entry. Scanning the list instead was
-        // quadratic in a length the caller chooses, up to ten thousand.
-        let mut placed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let mut unresolved: Vec<UnresolvedEntry> = Vec::new();
         for (entry, rung) in climbed {
             let report = |reason| UnresolvedEntry {
@@ -535,17 +601,12 @@ impl DomainServices {
                 },
             };
             match outcome {
-                // A playlist carries a track once, so a file naming one twice
-                // has a second copy with nowhere to go. Reported rather than
-                // dropped, because a shorter playlist with no explanation is
-                // the failure this whole report exists to prevent.
-                Ok(id) if placed.contains(&id) => {
-                    unresolved.push(report(UnresolvedReason::Duplicate));
-                }
-                Ok(id) => {
-                    placed.insert(id);
-                    track_ids.push(id);
-                }
+                // Every copy is placed: a file that names a track twice means
+                // it twice, and a playlist now holds what it is given (RFC-020
+                // decision 1). It used to be reported as a duplicate and left
+                // out, which made the export of a playlist with a repeat
+                // import as a shorter one.
+                Ok(id) => track_ids.push(id),
                 Err(reason) => unresolved.push(report(reason)),
             }
         }
@@ -713,7 +774,9 @@ impl DomainServices {
         Ok(found)
     }
 
-    /// Renders one of this account's playlists back as an extended `.m3u8`.
+    /// Renders a playlist this account may read back as an extended `.m3u8`:
+    /// its own, or another account's public one, which an export reads as any
+    /// other read does — through this account's libraries.
     ///
     /// The paths are library-relative, which is what the import reads: a
     /// playlist exported here and imported again resolves by the same ladder,
@@ -739,14 +802,16 @@ impl DomainServices {
         playlist_id: Uuid,
     ) -> Result<(String, String), ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        // The name, and the refusal: a playlist of another account answers as
-        // one that does not exist. One column rather than `playlist_on`, which
-        // would hydrate every track of it to read a string.
+        // The name, and the refusal: a playlist this account may not read
+        // answers as one that does not exist. One column rather than
+        // `playlist_on`, which would hydrate every track of it to read a
+        // string.
         let name = sqlx::query_scalar::<_, String>(
-            "SELECT name FROM playlist WHERE id=? AND owner_user_id=?",
+            "SELECT p.name FROM playlist p JOIN account a ON a.id=p.owner_user_id \
+             WHERE (p.owner_user_id=? OR (p.public=1 AND a.disabled=0)) AND p.id=?",
         )
-        .bind(playlist_id.to_string())
         .bind(user_id.to_string())
+        .bind(playlist_id.to_string())
         .fetch_optional(&mut *connection)
         .await?
         .ok_or(ServiceError::NotFound)?;
@@ -755,15 +820,17 @@ impl DomainServices {
                     t.artist_display, t.duration_ms \
              FROM playlist_track pt \
              JOIN playlist p ON p.id=pt.playlist_id \
+             JOIN account a ON a.id=p.owner_user_id \
              JOIN track t ON t.id=pt.track_id \
              JOIN library_member m ON m.library_id=t.library_id \
              LEFT JOIN track_override ovr ON ovr.track_id=t.id \
-             WHERE p.id=? AND p.owner_user_id=? AND m.user_id=? AND t.is_available=1 \
+             WHERE m.user_id=? AND (p.owner_user_id=? OR (p.public=1 AND a.disabled=0)) \
+               AND p.id=? AND t.is_available=1 \
              ORDER BY pt.position",
         )
+        .bind(user_id.to_string())
+        .bind(user_id.to_string())
         .bind(playlist_id.to_string())
-        .bind(user_id.to_string())
-        .bind(user_id.to_string())
         .fetch_all(&mut *connection)
         .await?;
         let mut out = String::from("#EXTM3U\n");
@@ -808,6 +875,52 @@ impl DomainServices {
         }
         Ok((name, out))
     }
+}
+
+/// A playlist read through `playlist_columns!`, with the songs already
+/// resolved for whoever is reading it.
+fn playlist_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+    id: Uuid,
+    songs: Vec<SongItem>,
+) -> Result<PlaylistItem, ServiceError> {
+    Ok(PlaylistItem {
+        id,
+        owner_id: parse_uuid(row.try_get("owner_user_id")?)?,
+        owner_username: row.try_get("owner_username")?,
+        name: row.try_get("name")?,
+        comment: row.try_get("comment")?,
+        public: row.try_get::<i64, _>("public")? != 0,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        songs,
+    })
+}
+
+/// Every track a playlist holds, hidden ones included, in its order.
+///
+/// Behind the same reach as a read, the wider of the two: a writer has already
+/// proved ownership by the time it asks, and asking here again costs a join.
+async fn playlist_track_ids_on(
+    connection: &mut SqliteConnection,
+    user_id: Uuid,
+    playlist_id: Uuid,
+) -> Result<Vec<Uuid>, ServiceError> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT pt.track_id FROM playlist_track pt \
+         JOIN playlist p ON p.id=pt.playlist_id \
+         JOIN account a ON a.id=p.owner_user_id \
+         WHERE (p.owner_user_id=? OR (p.public=1 AND a.disabled=0)) AND p.id=? \
+         ORDER BY pt.position",
+    )
+    .bind(user_id.to_string())
+    .bind(playlist_id.to_string())
+    .fetch_all(&mut *connection)
+    .await?
+    .into_iter()
+    .map(parse_uuid)
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(Into::into)
 }
 
 /// What the path rung made of one entry.

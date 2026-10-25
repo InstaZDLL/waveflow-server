@@ -4,8 +4,10 @@ import { type FormEvent, useState } from "react";
 import {
   appendToPlaylist,
   createPlaylist,
+  currentUser,
   deletePlaylist,
   type Playlist,
+  setPlaylistPublic,
 } from "../api";
 import { playlistsQuery } from "../api/queries";
 import {
@@ -66,6 +68,16 @@ export function PlaylistsPage() {
     }
   }
 
+  async function publish(playlist: Playlist, isPublic: boolean) {
+    setMutationError(null);
+    try {
+      await setPlaylistPublic(playlist.id, isPublic);
+      reload();
+    } catch {
+      setMutationError(t("playlists.publicError"));
+    }
+  }
+
   async function save(playlist: Playlist) {
     setMutationError(null);
     try {
@@ -76,12 +88,86 @@ export function PlaylistsPage() {
   }
 
   if (!value) return <Loading error={error} />;
+  // The list answers this account's playlists, then the public ones of every
+  // other account (RFC-020). Only the first are this account's to change: the
+  // server answers an edit of the others 404, so the page offers none.
+  const me = currentUser()?.id;
+  const own = value.filter((playlist) => playlist.owner_id === me);
+  const others = value.filter((playlist) => playlist.owner_id !== me);
+
+  const card = (playlist: Playlist, mine: boolean) => (
+    <article className="collection" key={playlist.id}>
+      <header className="collection-header">
+        <div>
+          <h3>{playlist.name}</h3>
+          <span className="muted">
+            {t("common.tracks", { count: playlist.songs.length })}
+            {mine
+              ? null
+              : ` · ${t("playlists.by", { owner: playlist.owner_username })}`}
+          </span>
+        </div>
+        <div className="actions">
+          <button
+            type="button"
+            onClick={() => player.play(playlist.songs, 0)}
+            disabled={!playlist.songs.length}
+          >
+            {t("playlists.play")}
+          </button>
+          {mine ? (
+            <button
+              type="button"
+              onClick={() => void addQueue(playlist)}
+              disabled={!player.queue.length}
+            >
+              {t("playlists.addQueue")}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void save(playlist)}
+            disabled={!playlist.songs.length}
+          >
+            {t("playlists.export")}
+          </button>
+          {mine ? (
+            <>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={playlist.public}
+                  onChange={(event) =>
+                    void publish(playlist, event.target.checked)
+                  }
+                />
+                {t("playlists.public")}
+              </label>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void removePlaylist(playlist.id)}
+              >
+                {t("common.delete")}
+              </button>
+            </>
+          ) : null}
+        </div>
+      </header>
+      {playlist.songs.length ? (
+        <SongTable songs={playlist.songs} />
+      ) : (
+        <p className="muted">{t("playlists.emptyOne")}</p>
+      )}
+    </article>
+  );
+
   return (
     <section>
       <PageHeader
         kicker={t("nav.group.library")}
         title={t("nav.playlists")}
-        detail={t("playlists.detail", { count: value.length })}
+        detail={t("playlists.detail", { count: own.length })}
       />
       <form className="inline-form" onSubmit={(event) => void create(event)}>
         <input
@@ -95,59 +181,22 @@ export function PlaylistsPage() {
       </form>
       <PlaylistImportPanel onImported={reload} />
       {mutationError ? <p className="error">{mutationError}</p> : null}
-      {value.length ? (
+      {own.length ? (
         <div className="stack">
-          {value.map((playlist) => (
-            <article className="collection" key={playlist.id}>
-              <header className="collection-header">
-                <div>
-                  <h3>{playlist.name}</h3>
-                  <span className="muted">
-                    {t("common.tracks", { count: playlist.songs.length })}
-                  </span>
-                </div>
-                <div className="actions">
-                  <button
-                    type="button"
-                    onClick={() => player.play(playlist.songs, 0)}
-                    disabled={!playlist.songs.length}
-                  >
-                    {t("playlists.play")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void addQueue(playlist)}
-                    disabled={!player.queue.length}
-                  >
-                    {t("playlists.addQueue")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void save(playlist)}
-                    disabled={!playlist.songs.length}
-                  >
-                    {t("playlists.export")}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => void removePlaylist(playlist.id)}
-                  >
-                    {t("common.delete")}
-                  </button>
-                </div>
-              </header>
-              {playlist.songs.length ? (
-                <SongTable songs={playlist.songs} />
-              ) : (
-                <p className="muted">{t("playlists.emptyOne")}</p>
-              )}
-            </article>
-          ))}
+          {own.map((playlist) => card(playlist, true))}
         </div>
       ) : (
         <EmptyState message={t("playlists.empty")} />
       )}
+      {others.length ? (
+        <section className="stack" aria-labelledby="other-playlists">
+          <header>
+            <h3 id="other-playlists">{t("playlists.others")}</h3>
+            <p className="muted">{t("playlists.othersDetail")}</p>
+          </header>
+          {others.map((playlist) => card(playlist, false))}
+        </section>
+      ) : null}
     </section>
   );
 }

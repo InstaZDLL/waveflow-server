@@ -31,18 +31,28 @@ pub struct UpdatePlaylistRequest {
     pub clear: Vec<String>,
 }
 
-#[utoipa::path(get, path = "/api/v2/playlists", tag = "user-data", responses((status = 200, body = [crate::services::PlaylistItem]), (status = 401, body = ErrorResponse)))]
+#[derive(Debug, Deserialize)]
+pub struct PlaylistListQuery {
+    /// Adds every other account's public playlists after this account's own
+    /// (RFC-020 decision 2). Off by default: a client that lists playlists to
+    /// edit them, or to mirror them, is asking about its own, and handing it
+    /// someone else's would offer an edit that answers 404.
+    #[serde(default)]
+    pub include_public: bool,
+}
+
+#[utoipa::path(get, path = "/api/v2/playlists", tag = "user-data", params(("include_public" = Option<bool>, Query, description = "Also list other accounts' public playlists, read through this account's libraries")), responses((status = 200, body = [crate::services::PlaylistItem]), (status = 401, body = ErrorResponse)))]
 pub async fn list_playlists(
     State(state): State<AppState>,
+    Query(query): Query<PlaylistListQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::services::PlaylistItem>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
-    state
-        .services
-        .playlists(user.id)
-        .await
-        .map(Json)
-        .map_err(service_error)
+    let playlists = match query.include_public {
+        true => state.services.visible_playlists(user.id).await,
+        false => state.services.playlists(user.id).await,
+    };
+    playlists.map(Json).map_err(service_error)
 }
 
 #[utoipa::path(post, path = "/api/v2/playlists", tag = "user-data", request_body = CreatePlaylistRequest, responses((status = 201, body = crate::services::PlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]

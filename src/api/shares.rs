@@ -9,13 +9,23 @@ pub struct CreateShareRequest {
     pub track_ids: Vec<Uuid>,
     pub description: Option<String>,
     pub expires_at: Option<i64>,
+    /// How many times the share may be opened; absent for no cap (RFC-020
+    /// decision 6). A visit is one opening of the share, not one stream
+    /// request, and the visit that reaches the cap keeps playing.
+    #[schema(minimum = 1)]
+    pub max_visits: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateShareRequest {
     pub description: Option<String>,
     pub expires_at: Option<i64>,
-    /// Optional fields to blank out, by name: `description`, `expires_at`.
+    /// A new visit cap. Lowering it to the count already reached closes the
+    /// share at once.
+    #[schema(minimum = 1)]
+    pub max_visits: Option<i64>,
+    /// Optional fields to blank out, by name: `description`, `expires_at`,
+    /// `max_visits`.
     ///
     /// Without this, an expiry set by mistake is permanent — `COALESCE` reads an
     /// absent field and an explicit null identically, so the owner's only
@@ -33,6 +43,7 @@ pub struct ShareResponse {
     pub expires_at: Option<i64>,
     pub created_at: i64,
     pub visit_count: i64,
+    pub max_visits: Option<i64>,
     pub track_ids: Vec<Uuid>,
 }
 
@@ -43,6 +54,7 @@ pub(super) fn share_clear(names: &[String]) -> Result<crate::services::ShareClea
         match name.as_str() {
             "description" => clear.description = true,
             "expires_at" => clear.expires_at = true,
+            "max_visits" => clear.max_visits = true,
             _ => return Err(ApiError::Validation),
         }
     }
@@ -81,6 +93,7 @@ pub async fn create_share(
             &request.track_ids,
             request.description.as_deref(),
             request.expires_at,
+            request.max_visits,
             context,
         )
         .await
@@ -104,6 +117,7 @@ pub async fn update_share(
             share_id,
             request.description.as_deref(),
             request.expires_at,
+            request.max_visits,
             share_clear(&request.clear)?,
             context,
         )
@@ -143,6 +157,7 @@ pub(super) fn share_response(state: &AppState, share: crate::services::ShareItem
         expires_at: share.expires_at,
         created_at: share.created_at,
         visit_count: share.visit_count,
+        max_visits: share.max_visits,
         track_ids: share.songs.into_iter().map(|song| song.id).collect(),
     }
 }
