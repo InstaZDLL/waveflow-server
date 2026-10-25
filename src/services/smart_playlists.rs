@@ -30,10 +30,9 @@ use super::*;
 /// The most tracks one smart playlist answers, and the default when it names
 /// no limit.
 ///
-/// A smart playlist is evaluated on every read, and `getPlaylists` reads every
-/// one an account can see; a bound on what one evaluation may return is what
-/// keeps that listing's cost proportional to the playlists rather than to the
-/// catalogue.
+/// A smart playlist is evaluated when it is opened — never by a listing
+/// (decision 4) — and this bounds what one evaluation returns and what the
+/// reader's projection then loads, whatever the size of the catalogue.
 pub const MAX_SMART_PLAYLIST_TRACKS: u32 = 1_000;
 
 /// How many conditions one playlist may carry.
@@ -78,16 +77,30 @@ pub(super) struct SmartRuntime {
     extents: Arc<dashmap::DashMap<(Uuid, Uuid), RememberedExtent>>,
     evaluations: Arc<std::sync::atomic::AtomicU64>,
     budget_ops: Arc<std::sync::atomic::AtomicU64>,
+    /// How many evaluations may run at once: half the pool, at least one
+    /// (decision 4). Each holds a connection for as long as its budget lets
+    /// it, so without this bound a burst of them from any account would hold
+    /// every connection the server has.
+    permits: Arc<tokio::sync::Semaphore>,
+    /// Evaluations running now, and the most there have been at once: what
+    /// the suite reads to prove the bound holds.
+    running: Arc<std::sync::atomic::AtomicU64>,
+    peak: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SmartRuntime {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(db_max_connections: u32) -> Self {
         Self {
             extents: Arc::new(dashmap::DashMap::new()),
             evaluations: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             budget_ops: Arc::new(std::sync::atomic::AtomicU64::new(
                 SMART_EVALUATION_BUDGET_OPS,
             )),
+            permits: Arc::new(tokio::sync::Semaphore::new(
+                usize::try_from(db_max_connections / 2).unwrap_or(1).max(1),
+            )),
+            running: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -593,13 +606,18 @@ fn parse_condition(index: usize, item: &serde_json::Value) -> Result<SmartCondit
             _ => return invalid("must be a file extension in lower case, such as flac"),
         },
         Kind::Identifier => {
-            if value
-                .as_str()
-                .and_then(|id| Uuid::parse_str(id).ok())
-                .is_none()
-            {
+            // Kept in its canonical spelling — hyphenated, lower case — which
+            // is how `library.id` is stored. An id sent in capitals or braces
+            // parses, and compared as sent it would match no library under
+            // `is` and every library under `is_not`.
+            let Some(id) = value.as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
                 return invalid("must be a library id");
-            }
+            };
+            return Ok(SmartCondition {
+                field,
+                operator,
+                value: serde_json::Value::String(id.to_string()),
+            });
         }
     }
     Ok(SmartCondition {
@@ -1081,18 +1099,21 @@ impl DomainServices {
         user_id: Uuid,
         id: Uuid,
     ) -> Result<SmartPlaylistItem, ServiceError> {
-        let mut connection = self.db.pool().acquire().await?;
+        // No connection is held across the evaluation, which takes one of its
+        // own: with every pooled connection held by a reader waiting for a
+        // second, the pool would deadlock until its acquire timeout.
         let row = sqlx::query(concat!(
             smart_playlist_columns!(),
             "WHERE sp.id=? AND (sp.owner_user_id=? OR (sp.public=1 AND a.disabled=0))"
         ))
         .bind(id.to_string())
         .bind(user_id.to_string())
-        .fetch_optional(&mut *connection)
+        .fetch_optional(self.db.pool())
         .await?
         .ok_or(ServiceError::NotFound)?;
         let mut playlist = smart_playlist_from_row(&row)?.ok_or(ServiceError::NotFound)?;
         let ids = self.evaluate(playlist.owner_id, &playlist.rules).await?;
+        let mut connection = self.db.pool().acquire().await?;
         let songs = self
             .songs_by_ids_lenient_on(&mut connection, user_id, &ids)
             .await?;
@@ -1264,32 +1285,23 @@ impl DomainServices {
         let pool = self.db.pool().clone();
         let exhausted = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = Arc::clone(&exhausted);
+        // Waited for holding no connection, and moved into the task, so it is
+        // held for the whole evaluation even when the request is dropped.
+        let permit = Arc::clone(&self.smart.permits)
+            .acquire_owned()
+            .await
+            .map_err(|_| ServiceError::Unavailable)?;
+        let running = Arc::clone(&self.smart.running);
+        let peak = Arc::clone(&self.smart.peak);
         let ids = tokio::spawn(async move {
-            let mut connection = pool.acquire().await?;
-            let started = std::time::Instant::now();
-            let mut spent: u64 = 0;
-            connection
-                .lock_handle()
-                .await?
-                .set_progress_handler(BUDGET_STEP_OPS, move || {
-                    spent = spent.saturating_add(BUDGET_STEP_OPS as u64);
-                    let go_on = spent <= budget && started.elapsed() < SMART_EVALUATION_DEADLINE;
-                    if !go_on {
-                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    go_on
-                });
-            let ids: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(EVALUATE)
-                .bind(owner.to_string())
-                .bind(mode)
-                .bind(conditions)
-                .bind(count)
-                .bind(sort)
-                .bind(owner.to_string())
-                .bind(i64::from(limit))
-                .fetch_all(&mut *connection)
-                .await;
-            connection.lock_handle().await?.remove_progress_handler();
+            let _permit = permit;
+            let now = running.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+            let ids = evaluate_on_its_own_connection(
+                pool, owner, mode, conditions, count, sort, limit, budget, flag,
+            )
+            .await;
+            running.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             ids
         })
         .await
@@ -1303,6 +1315,55 @@ impl DomainServices {
             .collect()
     }
 
+    /// The most evaluations that have run at once in this process.
+    #[doc(hidden)]
+    pub fn smart_playlist_peak_evaluations(&self) -> u64 {
+        self.smart.peak.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The statement on a connection of its own, under the progress handler.
+#[allow(clippy::too_many_arguments)]
+async fn evaluate_on_its_own_connection(
+    pool: sqlx::SqlitePool,
+    owner: Uuid,
+    mode: &'static str,
+    conditions: String,
+    count: i64,
+    sort: i64,
+    limit: u32,
+    budget: u64,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    let started = std::time::Instant::now();
+    let mut spent: u64 = 0;
+    connection
+        .lock_handle()
+        .await?
+        .set_progress_handler(BUDGET_STEP_OPS, move || {
+            spent = spent.saturating_add(BUDGET_STEP_OPS as u64);
+            let go_on = spent <= budget && started.elapsed() < SMART_EVALUATION_DEADLINE;
+            if !go_on {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            go_on
+        });
+    let ids: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(EVALUATE)
+        .bind(owner.to_string())
+        .bind(mode)
+        .bind(conditions)
+        .bind(count)
+        .bind(sort)
+        .bind(owner.to_string())
+        .bind(i64::from(limit))
+        .fetch_all(&mut *connection)
+        .await;
+    connection.lock_handle().await?.remove_progress_handler();
+    ids
+}
+
+impl DomainServices {
     /// How many rule sets this process has evaluated. Observability, and what
     /// the suite counts to prove a listing evaluates none.
     #[doc(hidden)]
@@ -1535,6 +1596,28 @@ mod tests {
         let random = parse(json!({"sort": "random", "order": "desc"})).unwrap();
         assert_eq!(random.sort_code(), SORT_RANDOM);
         assert!(EVALUATE.contains("p.sort_key = 99 THEN random()"));
+    }
+
+    /// A library id is compared in the spelling `library.id` is stored in,
+    /// whatever spelling the client sent.
+    #[test]
+    fn a_library_id_is_kept_in_its_canonical_spelling() {
+        let id = Uuid::new_v4();
+        for sent in [
+            id.to_string().to_uppercase(),
+            format!("{{{id}}}"),
+            id.simple().to_string(),
+        ] {
+            let rules = parse(json!({
+                "conditions": [{"field": "library", "operator": "is_not", "value": sent}],
+            }))
+            .unwrap();
+            assert_eq!(rules.conditions[0].value, json!(id.to_string()));
+            let bound: serde_json::Value =
+                serde_json::from_str(&rules.bound_conditions(0)).unwrap();
+            assert_eq!(bound[0]["v"], json!(id.to_string()));
+            assert_eq!(bound[0]["o"], "ne");
+        }
     }
 
     /// What reaches the statement is built from the validated types: the

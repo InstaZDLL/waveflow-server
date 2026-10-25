@@ -786,3 +786,99 @@ async fn an_evaluation_that_passes_its_budget_is_stopped() {
         assert_eq!(full.status(), StatusCode::OK);
     }
 }
+
+/// Decision 4, and a deadlock a review found: reading a smart playlist held a
+/// pooled connection while its evaluation waited for a second one, so as many
+/// concurrent reads as the pool has connections stalled the whole server until
+/// the acquire timeout. Twelve concurrent reads, and twelve previews, against
+/// a pool of four: every one completes, and no more evaluations than half the
+/// pool ever run at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reads_beyond_the_pool_size_all_complete() {
+    let (_temp, config, state) = test_app().await;
+    assert_eq!(config.db_max_connections, 4);
+    let (owner, _, _) = account(&state, "smart-pool").await;
+    library(&state, &config, owner, "smart-pool", 7_600, &SEEDS).await;
+    let rules = waveflow_server::services::SmartRules::parse(&json!({
+        "conditions": [{"field": "play_count", "operator": "less_than", "value": 5}],
+        "sort": "play_count",
+    }))
+    .unwrap();
+    let created = state
+        .services
+        .create_smart_playlist(owner, "Pool", None, true, &rules)
+        .await
+        .unwrap();
+    let reads: Vec<_> = (0..12)
+        .map(|_| {
+            let services = state.services.clone();
+            tokio::spawn(async move { services.smart_playlist(owner, created.id).await })
+        })
+        .collect();
+    let previews: Vec<_> = (0..12)
+        .map(|_| {
+            let services = state.services.clone();
+            let rules = rules.clone();
+            tokio::spawn(async move {
+                services
+                    .preview_smart_playlist(owner, &rules)
+                    .await
+                    .map(|preview| preview.song_count)
+            })
+        })
+        .collect();
+    let all = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let mut counts = Vec::new();
+        for read in reads {
+            counts.push(read.await.unwrap().unwrap().song_count.unwrap());
+        }
+        for preview in previews {
+            counts.push(preview.await.unwrap().unwrap());
+        }
+        counts
+    })
+    .await
+    .expect("concurrent reads stalled on the pool");
+    assert_eq!(all, vec![5; 24]);
+    assert!(
+        state.services.smart_playlist_peak_evaluations() <= 2,
+        "{} evaluations ran at once against a pool of four",
+        state.services.smart_playlist_peak_evaluations()
+    );
+}
+
+/// A library id is matched whatever spelling the client sent it in: compared
+/// as sent, capitals made `is` match nothing and `is_not` match everything.
+#[tokio::test]
+async fn a_library_condition_matches_whatever_spelling_the_id_was_sent_in() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, password, _) = account(&state, "smart-library").await;
+    let (first, _) = library(&state, &config, owner, "smart-lib-a", 7_700, &SEEDS[..2]).await;
+    library(&state, &config, owner, "smart-lib-b", 7_800, &SEEDS[2..4]).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "smart-library", &password).await;
+    for sent in [first.to_string().to_uppercase(), format!("{{{first}}}")] {
+        assert_eq!(
+            preview(
+                &router,
+                &token,
+                json!({"conditions": [{"field": "library", "operator": "is", "value": sent}],
+                       "sort": "title"})
+            )
+            .await,
+            vec!["Army of Me", "Hyperballad"],
+            "{sent}"
+        );
+        assert_eq!(
+            preview(
+                &router,
+                &token,
+                json!({"conditions": [{"field": "library", "operator": "is_not", "value": sent}],
+                       "sort": "title"})
+            )
+            .await,
+            vec!["Idioteque", "Paranoid Android"],
+            "{sent}"
+        );
+    }
+}

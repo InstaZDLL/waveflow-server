@@ -46,9 +46,10 @@ each time it is read.
   `entity_type` is CHECK-constrained; admitting a new one is a contract change
   the desktop client has to be ready for, and a mirrored smart playlist would
   be one it cannot evaluate.
-- **A hundred per account.** Every one an account can see is evaluated by
-  `getPlaylists` (decision 4), so the number is bounded the way radio stations
-  are; the refusal is 409.
+- **A hundred per account.** `getPlaylists` lists every one an account can
+  see without evaluating any (decision 4), so the bound is on the rows a
+  listing reads and on what one account may publish, the way radio stations
+  are bounded; the refusal is 409.
 
 ## Decision 2 — the rules, and the allowlist they are held to
 

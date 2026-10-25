@@ -16,8 +16,11 @@ building one sends nothing.
 
 All outbound clients are built by one function, `src/outbound.rs`:
 
-- **No redirect is followed.** A provider cannot bounce a request to another
-  host.
+- **No redirect is followed by the client.** A provider cannot bounce a
+  request to another host. The one exception is the podcast fetcher, below:
+  it follows at most five redirects by hand, and puts every hop through the
+  same scheme and public-address checks as the first address before
+  contacting it.
 - **`HTTP_PROXY` and the other proxy variables are ignored.**
 - **The User-Agent is `WaveFlowServer/<version>`**, for example
   `WaveFlowServer/2.0.0-beta.1`. Nothing else in it identifies the instance.

@@ -1639,7 +1639,7 @@ impl DomainServices {
                 config.request_timeout,
             ),
             podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
-            smart: smart_playlists::SmartRuntime::new(),
+            smart: smart_playlists::SmartRuntime::new(config.db_max_connections),
         }
     }
 

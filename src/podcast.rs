@@ -369,6 +369,9 @@ fn collect_text(node: roxmltree::Node<'_, '_>, limit: usize) -> String {
 /// collapsed, at most `limit` characters.
 fn plain_text(raw: &str, limit: usize) -> String {
     let mut out = String::new();
+    // Counted as they are pushed: `out.chars().count()` on every character
+    // was quadratic in the limit, and ran once per text of every item.
+    let mut pushed = 0usize;
     let mut in_tag = false;
     let mut last_space = true;
     for character in raw.chars() {
@@ -378,6 +381,7 @@ fn plain_text(raw: &str, limit: usize) -> String {
                 in_tag = false;
                 if !last_space {
                     out.push(' ');
+                    pushed += 1;
                     last_space = true;
                 }
             }
@@ -385,16 +389,18 @@ fn plain_text(raw: &str, limit: usize) -> String {
             c if c.is_whitespace() => {
                 if !last_space {
                     out.push(' ');
+                    pushed += 1;
                     last_space = true;
                 }
             }
             c if c.is_control() => {}
             c => {
                 out.push(c);
+                pushed += 1;
                 last_space = false;
             }
         }
-        if out.chars().count() >= limit {
+        if pushed >= limit {
             break;
         }
     }
@@ -721,6 +727,39 @@ mod tests {
         assert_eq!(sniff_audio(b"OggS\0\x02").map(|f| f.0), Some("ogg"));
         assert_eq!(sniff_audio(b"<html>").map(|f| f.0), None);
         assert_eq!(sniff_audio(b"MZ\x90\0").map(|f| f.0), None);
+    }
+
+    /// Text is cut where it passes its bound, and finding where costs one pass:
+    /// five hundred items of long descriptions are read in a fraction of the
+    /// time the quadratic count took (tens of seconds in a debug build).
+    #[test]
+    fn long_texts_are_cut_in_one_pass() {
+        let description = "word ".repeat(1_600);
+        let items: String = (0..MAX_EPISODES_PER_FEED)
+            .map(|index| {
+                format!(
+                    "<item><title>Episode {index}</title><description>{description}</description>\
+                     <enclosure url=\"https://cdn.example.org/{index}.mp3\"/></item>"
+                )
+            })
+            .collect();
+        let document = format!("<rss><channel><title>Long</title>{items}</channel></rss>");
+        let started = std::time::Instant::now();
+        let feed = parse_feed(document.as_bytes(), &base()).unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "parsing took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(feed.episodes.len(), MAX_EPISODES_PER_FEED);
+        let kept = feed.episodes[0].description.as_deref().unwrap();
+        assert_eq!(
+            kept.chars().count(),
+            MAX_DESCRIPTION_CHARS - 1,
+            "trimmed of its last space"
+        );
+        assert_eq!(plain_text("a <b>b</b>  c", 100), "a b c");
+        assert_eq!(plain_text("abcdef", 3), "abc");
     }
 
     #[test]
