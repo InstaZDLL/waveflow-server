@@ -1,10 +1,15 @@
 /**
  * Renders the install icons in `public/` from the one mark (RFC-022 decision 4).
  *
- * Run by hand when the mark changes — `node scripts/render-icons.ts` from
- * `webapp/` — and commit what it writes. Not part of the build: the PNGs are
- * assets like `favicon.svg`, and a build that needed a browser to produce its
- * icons would need one on every machine that builds the server.
+ * Run by hand when the mark changes —
+ * `node --experimental-strip-types scripts/render-icons.ts` from `webapp/` —
+ * and commit what it writes. The flag is what lets Node 22.6 to 22.17 read
+ * TypeScript; later versions strip types without it and still accept it. Not
+ * under Bun: Playwright's browser launch hangs there.
+ *
+ * Not part of the build: the PNGs are assets like `favicon.svg`, and a build
+ * that needed a browser to produce its icons would need one on every machine
+ * that builds the server.
  *
  * The geometry is `logo.svg`'s, never redrawn: five bars, 140/80/40/80/140, in
  * a 256 box. Two framings:
