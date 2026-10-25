@@ -245,6 +245,9 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
         ("/icons/icon-192.png", "image/png"),
         ("/icons/icon-512.png", "image/png"),
         ("/icons/maskable-512.png", "image/png"),
+        // The service worker (RFC-022): a script, never the shell, and never
+        // frozen in a cache, or a deploy could not replace it.
+        ("/sw.js", "javascript"),
     ] {
         let response = get(path).await;
         let status = response.status();
@@ -256,6 +259,11 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
         assert!(!kind.starts_with("text/html"), "{path} answered the shell");
         if built {
             assert_eq!(status, StatusCode::OK, "{path} is missing from the build");
+            if path == "/sw.js" {
+                assert!(kind.contains(expected), "{path}: {kind}");
+                assert_eq!(response.headers()["cache-control"], "no-cache");
+                continue;
+            }
             assert_eq!(kind, expected, "{path}");
             if path == "/manifest.webmanifest" {
                 let manifest: serde_json::Value =

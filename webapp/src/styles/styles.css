@@ -588,8 +588,8 @@ h3 {
 .share-tracks button {
   display: grid;
   width: 100%;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
-  align-items: baseline;
+  grid-template-columns: 40px minmax(0, 2fr) minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line);
@@ -601,6 +601,27 @@ h3 {
 
 .share-tracks li[aria-current="true"] button {
   border-color: var(--accent);
+}
+
+.share-track-cover {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.playlist-entry-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* A grid item grows to its content's minimum width unless told otherwise, and
+   a playlist's table with its entry controls is wider than a phone: the card
+   pushed past the screen instead of letting the table scroll inside it. */
+.stack > .collection {
+  min-width: 0;
 }
 
 .share-track-title {

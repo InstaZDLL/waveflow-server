@@ -6,10 +6,14 @@ import {
   createPlaylist,
   currentUser,
   deletePlaylist,
+  movePlaylistEntry,
   type Playlist,
+  removePlaylistEntry,
+  type Song,
   setPlaylistPublic,
 } from "../api";
 import { playlistsQuery } from "../api/queries";
+import { Icon } from "../components/icons";
 import {
   EmptyState,
   Loading,
@@ -77,6 +81,68 @@ export function PlaylistsPage() {
       setMutationError(t("playlists.publicError"));
     }
   }
+
+  /**
+   * Moves the entry shown at `from` to `to`, naming the track the page
+   * believes is there: a list edited elsewhere since it was read is refused
+   * rather than having another entry moved, and re-read.
+   */
+  async function move(playlist: Playlist, from: number, to: number) {
+    const song = playlist.songs[from];
+    if (!song || to < 0 || to >= playlist.songs.length) return;
+    setMutationError(null);
+    try {
+      await movePlaylistEntry(playlist.id, from, to, song.id);
+    } catch {
+      setMutationError(t("playlists.moveError"));
+    }
+    reload();
+  }
+
+  async function removeEntry(playlist: Playlist, position: number) {
+    setMutationError(null);
+    try {
+      await removePlaylistEntry(playlist.id, position);
+    } catch {
+      setMutationError(t("playlists.removeEntryError"));
+    }
+    reload();
+  }
+
+  const entryActions =
+    (playlist: Playlist) => (song: Song, position: number, count: number) => (
+      <span className="playlist-entry-actions">
+        <button
+          type="button"
+          className="row-action"
+          disabled={position === 0}
+          onClick={() => void move(playlist, position, position - 1)}
+          aria-label={t("playlists.moveUp", { title: song.title })}
+          title={t("playlists.moveUp", { title: song.title })}
+        >
+          <span aria-hidden="true">↑</span>
+        </button>
+        <button
+          type="button"
+          className="row-action"
+          disabled={position === count - 1}
+          onClick={() => void move(playlist, position, position + 1)}
+          aria-label={t("playlists.moveDown", { title: song.title })}
+          title={t("playlists.moveDown", { title: song.title })}
+        >
+          <span aria-hidden="true">↓</span>
+        </button>
+        <button
+          type="button"
+          className="row-action"
+          onClick={() => void removeEntry(playlist, position)}
+          aria-label={t("playlists.removeEntry", { title: song.title })}
+          title={t("playlists.removeEntry", { title: song.title })}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      </span>
+    );
 
   async function save(playlist: Playlist) {
     setMutationError(null);
@@ -155,7 +221,10 @@ export function PlaylistsPage() {
         </div>
       </header>
       {playlist.songs.length ? (
-        <SongTable songs={playlist.songs} />
+        <SongTable
+          songs={playlist.songs}
+          rowActions={mine ? entryActions(playlist) : undefined}
+        />
       ) : (
         <p className="muted">{t("playlists.emptyOne")}</p>
       )}

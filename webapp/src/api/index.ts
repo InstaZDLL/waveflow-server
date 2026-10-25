@@ -123,9 +123,11 @@ export {
   getScan,
   listLibraries,
   listLibraryMembers,
+  listPurgedTracks,
   listUnavailableTracks,
   purgeUnavailableTracks,
   removeLibraryMember,
+  restorePurgedTracks,
   setLibraryMember,
   startScan,
   UNAVAILABLE_PAGE,
@@ -153,6 +155,8 @@ export {
   importPlaylist,
   listPlaylists,
   listVisiblePlaylists,
+  movePlaylistEntry,
+  removePlaylistEntry,
   setPlaylistPublic,
 } from "./playlists";
 export type { PublicShare, PublicShareTrack } from "./public-share";

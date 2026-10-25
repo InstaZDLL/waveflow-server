@@ -33,6 +33,11 @@ export type LibrarySettings = {
   name: string;
   path: string;
   follow_links: boolean;
+  /**
+   * Whether the server watches the library's folder and scans what changes
+   * (RFC-021). Off for a library on a share where watching finds nothing.
+   */
+  watch: boolean;
 };
 
 export const getLibrarySettings = (libraryId: string) =>
@@ -45,7 +50,12 @@ export const getLibrarySettings = (libraryId: string) =>
  */
 export const updateLibrary = (
   libraryId: string,
-  update: { name?: string; path?: string; follow_links?: boolean },
+  update: {
+    name?: string;
+    path?: string;
+    follow_links?: boolean;
+    watch?: boolean;
+  },
 ) =>
   call<{ scan_id: string | null }>(`/api/v2/libraries/${libraryId}`, {
     method: "PATCH",
@@ -74,6 +84,10 @@ export type UnavailableTrack = {
   playlist_entries: number;
   favorites: number;
   plays: number;
+  /** When a purge took it out of sight; `null` while it is only missing. */
+  purged_at: number | null;
+  /** When a purged track is deleted for good unless restored first. */
+  deleted_after: number | null;
 };
 
 export const UNAVAILABLE_PAGE = 100;
@@ -89,13 +103,39 @@ export const listUnavailableTracks = (
     { signal },
   );
 
-/** Purges named missing tracks, or all of them. Never neither. */
+/**
+ * Purges named missing tracks, or all of them. Never neither. With a grace
+ * window on the server, `restorable_until` says until when the purge can be
+ * taken back; `null` means the tracks are already gone.
+ */
 export const purgeUnavailableTracks = (
   libraryId: string,
   selection: { track_ids: string[] } | { all: true },
 ) =>
-  call<{ purged: number }>(
+  call<{ purged: number; restorable_until: number | null }>(
     `/api/v2/libraries/${libraryId}/unavailable-tracks/purge`,
+    { method: "POST", body: JSON.stringify(selection) },
+  );
+
+/** The purged tracks still within their grace window, soonest deleted first. */
+export const listPurgedTracks = (
+  libraryId: string,
+  offset: number,
+  limit: number,
+  signal?: AbortSignal,
+) =>
+  call<{ total: number; tracks: UnavailableTrack[] }>(
+    `/api/v2/libraries/${libraryId}/purged-tracks?offset=${offset}&limit=${limit}`,
+    { signal },
+  );
+
+/** Takes a purge back, for named tracks or all of them. Never neither. */
+export const restorePurgedTracks = (
+  libraryId: string,
+  selection: { track_ids: string[] } | { all: true },
+) =>
+  call<{ restored: number }>(
+    `/api/v2/libraries/${libraryId}/purged-tracks/restore`,
     { method: "POST", body: JSON.stringify(selection) },
   );
 

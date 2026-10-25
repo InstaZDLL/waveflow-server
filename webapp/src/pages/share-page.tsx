@@ -127,6 +127,20 @@ export function SharePage({ token }: { token: string }) {
                 aria-current={position === current ? "true" : undefined}
               >
                 <button type="button" onClick={() => play(position)}>
+                  {/* Decorative: the title beside it says what it is. A
+                      plain address under the visit's pass, so no session is
+                      needed to load it (RFC-020). */}
+                  {track.coverUrl ? (
+                    <img
+                      className="share-track-cover"
+                      src={track.coverUrl}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span className="share-track-cover" aria-hidden="true" />
+                  )}
                   <span className="share-track-title">{track.title}</span>
                   <span className="muted">
                     {track.artist ?? t("common.unknownArtist")}

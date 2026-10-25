@@ -36,6 +36,7 @@ import {
   listLibraryMembers,
   listNowPlaying,
   listOwnApiTokens,
+  listPurgedTracks,
   listQualityTracks,
   listRadioStations,
   listRandomSongs,
@@ -498,6 +499,18 @@ export const unavailableTracksQuery = (libraryId: string) =>
     queryKey: ["missing", libraryId],
     queryFn: ({ pageParam, signal }) =>
       listUnavailableTracks(libraryId, pageParam, UNAVAILABLE_PAGE, signal),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.tracks.length < UNAVAILABLE_PAGE
+        ? undefined
+        : lastParam + UNAVAILABLE_PAGE,
+  });
+
+export const purgedTracksQuery = (libraryId: string) =>
+  infiniteQueryOptions({
+    queryKey: ["missing", libraryId, "purged"],
+    queryFn: ({ pageParam, signal }) =>
+      listPurgedTracks(libraryId, pageParam, UNAVAILABLE_PAGE, signal),
     initialPageParam: 0,
     getNextPageParam: (last, _pages, lastParam) =>
       last.tracks.length < UNAVAILABLE_PAGE

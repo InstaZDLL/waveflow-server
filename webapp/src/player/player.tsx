@@ -23,6 +23,7 @@ import {
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import { connectWhenRunning, needsWaking } from "../lib/audio-graph";
+import { isKeptOffline, keptSongs, offlineTrackUrl } from "../lib/offline";
 import { replayGainFactor, routableThroughWebAudio } from "../lib/replay-gain";
 import { useI18n } from "../state/i18n";
 import { useReplayGainPreference } from "../state/preferences";
@@ -457,7 +458,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // What is kept is read once, so `isKeptOffline` can answer as a track
+  // starts; keeping or forgetting one updates the set as it happens.
+  useEffect(() => {
+    void keptSongs().catch(() => undefined);
+  }, []);
+
   const resolveStream = useCallback(async (trackId: string) => {
+    // A kept track plays from this browser when the service worker answers
+    // its address (RFC-022): no ticket, no network. Same origin, so the
+    // ReplayGain graph hears it.
+    if (isKeptOffline(trackId) && navigator.serviceWorker?.controller) {
+      return offlineTrackUrl(trackId);
+    }
     const cached = streamUrls.current.get(trackId);
     if (cached && cached.expiresAt > Date.now() + 5_000) return cached.url;
     const ticket = await streamUrl(trackId);
