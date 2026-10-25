@@ -24,6 +24,7 @@ const SOURCE_LABELS: Record<LyricsSource, TranslationKey> = {
   sidecar_lrc: "lyrics.source.sidecarLrc",
   sidecar_text: "lyrics.source.sidecarText",
   embedded: "lyrics.source.embedded",
+  lrclib: "lyrics.source.lrclib",
 };
 
 const UPLOADED: Partial<Record<LyricsSource, LyricsFormat>> = {

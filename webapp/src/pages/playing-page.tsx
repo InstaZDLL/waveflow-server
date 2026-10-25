@@ -172,6 +172,11 @@ function LyricsStrip({ trackId }: { trackId: string }) {
           </li>
         ))}
       </ol>
+      {sheet.source === "lrclib" ? (
+        <p className="muted lyrics-credit">
+          <small>{t("lyrics.fromLrclib")}</small>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -262,6 +267,11 @@ function LyricsView({ song }: { song: Song }) {
         {sheet.synced ? (
           <p className="muted">
             <small>{t("lyrics.seekHint")}</small>
+          </p>
+        ) : null}
+        {sheet.source === "lrclib" ? (
+          <p className="muted lyrics-credit">
+            <small>{t("lyrics.fromLrclib")}</small>
           </p>
         ) : null}
       </header>

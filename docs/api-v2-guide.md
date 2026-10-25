@@ -453,6 +453,63 @@ curl https://music.example.com/api/v2/tracks/TRACK_UUID/lyrics \
   -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
+Once an operator sets `WAVEFLOW_LYRICS_PROVIDERS=lrclib`, a track with no
+lyrics of its own — none embedded, no sidecar, no upload — is looked up on
+LRCLIB the first time it is asked for, and its sheet carries
+`"source": "lrclib"`, synced when LRCLIB has timings, in language `xxx`
+([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). The request waits at most
+four seconds for LRCLIB; a slower answer is in the next one. A track with
+lyrics of its own is never looked up.
+
+## Statistics, mixes and similar songs
+
+What an account's own listening and the catalogue suggest
+([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). Nothing here leaves the
+server.
+
+```bash
+# This account's listening over the last 7 days, in the listener's days
+curl "https://music.example.com/api/v2/stats?period=7d&utc_offset_minutes=120" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+# Today's mixes in one library, and one of them
+curl "https://music.example.com/api/v2/mixes?library_id=LIBRARY_UUID" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+curl "https://music.example.com/api/v2/mixes/genre%3Ajazz?limit=30" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+# Songs like an artist, an album or a track
+curl "https://music.example.com/api/v2/similar-songs/ARTIST_UUID?limit=20" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+`GET /api/v2/stats` takes `period` (`7d`, `30d` — the default —, `365d` or
+`all`), `utc_offset_minutes` (−840 to 840) and `limit` (each top list, 1 to
+50, default 10). It answers `totals` (listens, an estimated `listening_ms` —
+the listened tracks' durations summed —, distinct tracks, albums and artists),
+`top_tracks`, `top_albums`, `top_artists` and `top_genres` with their listen
+counts, a `timeline` of `{label, plays, listening_ms}` per day (`7d`, `30d`) or
+per month (`365d`, `all`) — every bucket of a bounded period present, empty ones
+included —, and the period's `first_play` and `last_play`. A listen is a
+scrobble with `submission=true`; only this account's, on tracks it can still
+reach, are counted.
+
+`GET /api/v2/mixes` lists today's mixes, each `{id, kind, genre, decade,
+track_count, artwork_hashes}`; `GET /api/v2/mixes/{mix_id}` answers one with its
+`songs`. The ids are `most-played`, `never-played`, `forgotten-favourites`,
+`recently-added`, `genre:<name>` and `decade:<first year>`; a client names a mix
+from its `kind` and parameter, since the server sends no display text. A mix is
+the same all day — it is seeded with the account, the mix and the day in
+`utc_offset_minutes` — holds at most `limit` tracks (1 to 100, default 50), and
+no artist fills more than a tenth of it. A mix with no track is not listed and
+answers `404`, like an unknown id. Mixes are not exposed on Subsonic.
+
+`GET /api/v2/similar-songs/{id}` is the native `getSimilarSongs`: a draw,
+balanced across artists, from the artist behind the id and its neighbours — a
+configured metadata provider's when it names any the account can see, the
+catalogue's own otherwise (co-credits, shared genres, a close era, this
+account's listening). `limit` is 0 to 500, default 50.
+
 ## Playback
 
 Clients able to send headers can stream directly:

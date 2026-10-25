@@ -95,6 +95,20 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > stream addresses carry a visit pass — neither is a `/rest` answer, and
 > `getShares` is unchanged.
 >
+> **And `getSimilarSongs` and `getSimilarSongs2` stopped answering an empty
+> container by default with [RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md).**
+> With no metadata provider configured they draw from the artist and from the
+> catalogue's own neighbours — co-credited artists, shared genres, a close era
+> and the caller's own listening — where they answered `{}`; with a provider
+> configured, its neighbours still come first. The Feishin and Juliet rows
+> below, which call them, predate this. **To check in the next campaign**: that
+> both render the list they are now given on a server with no provider.
+> The lyrics methods are unchanged by default; once an operator sets
+> `WAVEFLOW_LYRICS_PROVIDERS=lrclib`, `getLyricsBySongId` and `getLyrics` answer
+> a sheet looked up on LRCLIB for a track that has none of its own, in the
+> same `structuredLyrics` shape and with no new attribute. Mixes are not
+> exposed on Subsonic (RFC-024 decision 7).
+>
 > **How the four runs were told apart.** They shared one server and one log, and
 > the trace records path and status but never query strings, so no request names
 > its sender. Each run is bounded by a burst in the request rate, corroborated

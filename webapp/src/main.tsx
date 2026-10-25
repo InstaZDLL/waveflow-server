@@ -45,6 +45,7 @@ import {
   scrobbleRowsQuery,
   sharesQuery,
   songsQuery,
+  statsQuery,
   uncertainScrobblesQuery,
 } from "./api/queries";
 import { createQueryClient } from "./api/query-client";
@@ -52,6 +53,7 @@ import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
+import { localDayKey } from "./lib/local-day";
 import {
   claimOffline,
   forgetKnownOffline,
@@ -72,6 +74,7 @@ import { GenresPage } from "./pages/genres-page";
 import { HistoryPage } from "./pages/history-page";
 import { LoginPage } from "./pages/login-page";
 import { MissingPage } from "./pages/missing-page";
+import { MixPage } from "./pages/mix-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { OfflinePage } from "./pages/offline-page";
 import { PlayingPage } from "./pages/playing-page";
@@ -87,6 +90,7 @@ import { SettingsPage } from "./pages/settings-page";
 import { SharePage } from "./pages/share-page";
 import { SharesPage } from "./pages/shares-page";
 import { SongsPage } from "./pages/songs-page";
+import { StatsPage } from "./pages/stats-page";
 import { UploadPage } from "./pages/upload-page";
 import { PlayerBar, PlayerProvider } from "./player/player";
 import { I18nProvider, type TranslationKey, useI18n } from "./state/i18n";
@@ -138,6 +142,7 @@ const navigation: Array<{
     | "/search"
     | "/favourites"
     | "/history"
+    | "/stats"
     | "/random"
     | "/playing"
     | "/playlists"
@@ -221,6 +226,12 @@ const navigation: Array<{
     to: "/history",
     labelKey: "nav.history",
     icon: "history",
+    group: "library",
+  },
+  {
+    to: "/stats",
+    labelKey: "nav.stats",
+    icon: "stats",
     group: "library",
   },
   {
@@ -320,6 +331,9 @@ async function prepareTab(
       break;
     case "/history":
       await client.ensureQueryData(historyTracksQuery(50));
+      break;
+    case "/stats":
+      await client.ensureQueryData(statsQuery("30d", localDayKey()));
       break;
     case "/favourites":
       await client.ensureQueryData(favoriteTracksQuery());
@@ -881,6 +895,22 @@ const historyRoute = createRoute({
   component: HistoryPage,
 });
 
+// RFC-024: this account's listening, and the mixes drawn from it.
+const statsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/stats",
+  component: StatsPage,
+});
+
+const mixRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/mixes/$mixId",
+  component: function MixRoute() {
+    const { mixId } = mixRoute.useParams();
+    return <MixPage mixId={mixId} />;
+  },
+});
+
 const randomRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/random",
@@ -1051,6 +1081,8 @@ const routeTree = rootRoute.addChildren([
     genresRoute,
     genreRoute,
     historyRoute,
+    statsRoute,
+    mixRoute,
     randomRoute,
     playingRoute,
     searchRoute,

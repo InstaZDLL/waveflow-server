@@ -3,7 +3,7 @@
 Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
 the code is the authority if the two ever disagree: `src/outbound.rs`,
-`src/enrichment.rs`, `src/portrait.rs`, `src/podcast.rs` and
+`src/enrichment.rs`, `src/portrait.rs`, `src/lrclib.rs`, `src/podcast.rs` and
 `src/scrobblers/`.
 
 **A server left at its defaults sends nothing.** Booting makes no request, and
@@ -24,6 +24,7 @@ All outbound clients are built by one function, `src/outbound.rs`:
 - **`HTTP_PROXY` and the other proxy variables are ignored.**
 - **The User-Agent is `WaveFlowServer/<version>`**, for example
   `WaveFlowServer/2.0.0-beta.1`. Nothing else in it identifies the instance.
+  The LRCLIB lookup appends the project's address, as LRCLIB asks; see below.
 - TLS is rustls; a connection attempt may take a third of the request's
   timeout.
 - No URL and no response body is written to the log.
@@ -95,6 +96,47 @@ lookups waiting or running; each bounded by
 
 **Kept.** Last.fm's biography (HTML stripped) and similar artists' names and
 scores; image files, under `artwork/` in the data directory by content hash.
+
+## Lyrics: LRCLIB
+
+**Off by default.** On only when `WAVEFLOW_LYRICS_PROVIDERS` names `lrclib`
+([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). It is a separate switch
+from `WAVEFLOW_METADATA_PROVIDERS`, and naming a metadata provider does not turn
+it on. With the list empty the lookup is never built.
+
+**When.** Only when a signed-in user asks for the lyrics of a track that has
+none of its own — no embedded lyrics, no `.lrc` or `.txt` beside the file, no
+uploaded sheet: the native lyrics route and its download (which the web
+client's playing screen and properties panel read), Subsonic
+`getLyricsBySongId`, and `getLyrics` when no exactly matching track carries
+lyrics. A track that has lyrics of its own is never looked up. Nothing runs at
+scan time, at boot or on a timer. The answer is kept for
+`WAVEFLOW_LYRICS_TTL_DAYS` (30), or `WAVEFLOW_LYRICS_MISS_TTL_DAYS` (7) when
+LRCLIB had nothing; until then the track is not asked about again. A request
+that fails is not kept, and the next ask tries again. There is no per-user
+opt-in: the operator's switch covers every account.
+
+**What.** One request per track, to a fixed host, with no credential:
+
+| Host (fixed) | Request | Sent |
+| --- | --- | --- |
+| `lrclib.net` | `GET /api/get` | `artist_name` (the track's artist as displayed), `track_name` (its title), `album_name` (when it has one), `duration` (in seconds) |
+
+The User-Agent is `WaveFlowServer/<version> (https://github.com/InstaZDLL/waveflow-server)`,
+as LRCLIB asks clients to identify themselves; nothing in it names the instance
+or the person listening. The request says nothing about who asked, but it is
+made at the moment somebody plays the track, so LRCLIB sees this server's
+address and what is being listened to here.
+
+**Pacing.** `WAVEFLOW_LYRICS_RATE_PER_SEC` (2) requests a second; at most 64
+lookups waiting or running; one request per track however many people ask at
+once; each bounded by `WAVEFLOW_LYRICS_REQUEST_TIMEOUT_SECS` (10); replies
+capped at 1 MiB. The person asking waits at most four seconds; a slower answer
+is kept for the next listen.
+
+**Kept.** In `waveflow.db`, keyed by a digest of what was sent: the synced and
+plain lyrics, or that LRCLIB had none, and when to ask again. Nothing records
+who asked.
 
 ## Scrobbling: ListenBrainz, Maloja, Last.fm
 

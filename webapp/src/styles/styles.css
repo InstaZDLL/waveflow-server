@@ -3811,3 +3811,182 @@ button.danger {
 .podcast-episodes {
   margin-top: var(--space-6);
 }
+
+/* The mixes the server drew today (RFC-024), one shelf over the albums. A row
+   that scrolls sideways rather than a grid that wraps: a shelf is a glance at
+   what is on offer, and the albums below are what the page is for. */
+.mix-shelf {
+  margin-bottom: var(--space-8);
+}
+
+.mix-shelf h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+}
+
+.mix-shelf ul {
+  display: grid;
+  grid-auto-columns: minmax(9rem, 11rem);
+  grid-auto-flow: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+}
+
+.mix-shelf li {
+  position: relative;
+  min-width: 0;
+}
+
+.mix-card {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mix-card-title {
+  margin-top: var(--space-2);
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mix-card-detail {
+  font-size: var(--text-xs);
+}
+
+.mix-shelf li:hover .card-actions,
+.mix-shelf li:focus-within .card-actions {
+  opacity: 1;
+}
+
+/* Statistics (RFC-024): five figures, a timeline of bars, four top lists. */
+.stats-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+
+.stats-total {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel-soft);
+}
+
+.stats-totals dt {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.stats-totals dd {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-page h3 {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--text-lg);
+}
+
+/* Each bar is its bucket's share of the busiest one; an empty bucket keeps a
+   hairline so the period still reads as a row of days. */
+.stats-timeline {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  height: 8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stats-timeline li {
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  height: 100%;
+  min-width: 0.25rem;
+}
+
+.stats-timeline span {
+  width: 100%;
+  height: max(2px, calc(var(--share, 0) * 100%));
+  border-radius: 0.25rem 0.25rem 0 0;
+  background: var(--accent);
+}
+
+.stats-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0 var(--space-8);
+}
+
+.stats-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stats-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.stats-entry {
+  display: grid;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+.stats-name,
+.stats-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-sub {
+  font-size: var(--text-xs);
+}
+
+.stats-count {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-moments {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-6) 0 0;
+}
+
+.stats-moments dt {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.stats-moments dd {
+  margin: 0;
+}
+
+.lyrics-credit {
+  margin-top: var(--space-2);
+}

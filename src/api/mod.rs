@@ -27,6 +27,7 @@ mod attention;
 mod auth;
 mod bookmarks;
 mod catalog;
+mod discovery;
 mod error;
 mod favorites;
 mod folders;
@@ -56,6 +57,7 @@ pub use attention::*;
 pub use auth::*;
 pub use bookmarks::*;
 pub use catalog::*;
+pub use discovery::*;
 pub use error::*;
 pub use favorites::*;
 pub use folders::*;
@@ -273,6 +275,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v2/songs", get(list_songs))
         .route("/api/v2/songs/by-genre", get(list_songs_by_genre))
         .route("/api/v2/songs/random", get(list_random_songs))
+        // RFC-024: what the history and the catalogue suggest.
+        .route("/api/v2/stats", get(get_listening_stats))
+        .route("/api/v2/mixes", get(list_mixes))
+        .route("/api/v2/mixes/{mix_id}", get(get_mix))
+        .route("/api/v2/similar-songs/{id}", get(list_similar_songs))
         .route(
             "/api/v2/playlists",
             get(list_playlists).post(create_playlist),

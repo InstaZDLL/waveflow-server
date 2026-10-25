@@ -897,9 +897,21 @@ async fn an_album_id_and_a_song_id_reach_the_same_artist_as_the_artist_id() {
 
 /// "Songs from the given artist *and* similar artists": the artist is in the
 /// draw, before the neighbours are known and after.
+///
+/// Before the provider answers, the neighbours are the catalogue's own
+/// (RFC-024 decision 8). Here those share nothing with Björk — Sigur Rós's
+/// track loses the genre the fixture gives every track — so the artist is
+/// drawn alone until Last.fm names Sigur Rós.
 #[tokio::test]
 async fn the_artist_s_own_tracks_are_in_the_draw() {
     let (_temp, _config, state, owner, _outsider) = two_members().await;
+    sqlx::query(
+        "DELETE FROM track_genre WHERE track_id IN \
+           (SELECT id FROM track WHERE artist_display='Sigur Rós')",
+    )
+    .execute(state.db.pool())
+    .await
+    .unwrap();
     let listener = fake_lastfm(Mode::Hit, Duration::ZERO).await;
     let enrichment = engine(
         &state,
@@ -964,9 +976,11 @@ async fn no_track_from_a_library_the_caller_is_not_in() {
     assert!(songs.iter().all(|song| mine.contains(&song.library_id)));
 }
 
-/// The façade end to end: disabled, both methods are the empty container they
-/// always were; enabled, `count` absent draws the specification's fifty, the
-/// track list is an array, and a foreign id is error 70.
+/// The façade end to end: `count` absent draws the specification's fifty,
+/// the track list is an array, and a foreign id is error 70 — enabled, and
+/// since RFC-024 disabled too, where the catalogue's own neighbours stand in
+/// for a provider's and the empty container these methods used to answer is
+/// gone.
 #[tokio::test]
 async fn count_absent_yields_at_most_fifty() {
     let (_temp, config, state) = support::test_app().await;
@@ -985,10 +999,15 @@ async fn count_absent_yields_at_most_fifty() {
         ("getSimilarSongs2", "similarSongs2"),
     ] {
         let off = support::subsonic_json(&router, method, &api_key, &id).await;
+        let songs = off["subsonic-response"][container]["song"]
+            .as_array()
+            .unwrap_or_else(|| panic!("an array: {off}"));
+        assert_eq!(songs.len(), 50, "{method}");
+        let refused =
+            support::subsonic_json(&router, method, &api_key, &format!("&id={mum}")).await;
         assert_eq!(
-            off["subsonic-response"][container],
-            serde_json::json!({}),
-            "{off}"
+            refused["subsonic-response"]["error"]["code"], 70,
+            "{refused}"
         );
     }
 

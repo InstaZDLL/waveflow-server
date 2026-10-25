@@ -906,13 +906,13 @@ impl std::fmt::Display for Verdict {
 ///
 /// The reservation is taken under the lock and the wait happens outside it, so
 /// callers queue in order without one sleeping caller holding up the rest.
-struct Pace {
+pub(crate) struct Pace {
     interval: Duration,
     next: std::sync::Mutex<Instant>,
 }
 
 impl Pace {
-    fn new(rate_per_sec: u32) -> Self {
+    pub(crate) fn new(rate_per_sec: u32) -> Self {
         Self {
             interval: Duration::from_secs(1) / rate_per_sec.max(1),
             next: std::sync::Mutex::new(Instant::now()),
@@ -929,7 +929,7 @@ impl Pace {
         }
     }
 
-    async fn wait(&self) {
+    pub(crate) async fn wait(&self) {
         let slot = {
             let mut next = self
                 .next

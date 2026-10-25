@@ -1308,8 +1308,9 @@ async fn an_artists_most_played_comes_from_local_history_on_both_surfaces() {
         "a missing artist is a malformed request"
     );
 
-    // The two neighbours this change deliberately left empty, so filling one
-    // cannot be read as filling all three.
+    // The two neighbours this change left empty are filled since RFC-024 by
+    // the catalogue's own neighbours, and are not a history: what they draw
+    // is the artist and its neighbours, not this account's most played.
     for method in ["getSimilarSongs", "getSimilarSongs2"] {
         let body = subsonic_json(
             &router,
@@ -1322,9 +1323,12 @@ async fn an_artists_most_played_comes_from_local_history_on_both_surfaces() {
             "getSimilarSongs" => "similarSongs",
             _ => "similarSongs2",
         }];
+        let drawn = container["song"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{method} draws songs: {body}"));
         assert!(
-            container.is_object() && container.get("song").is_none(),
-            "{method} still answers an empty container"
+            drawn.iter().any(|song| song["title"] == "Lamp Silence"),
+            "{method} draws the artist's unplayed track too: {body}"
         );
     }
 }

@@ -35,9 +35,20 @@ export type IconName =
   | "back"
   | "inbox"
   | "quality"
+  | "stats"
   | "podcasts";
 
 const paths: Record<IconName, ReactNode> = {
+  // Three bars on a baseline: a count of listens, which is what the
+  // statistics are (RFC-024).
+  stats: (
+    <>
+      <path d="M4 20h16" />
+      <path d="M7 16v-5" />
+      <path d="M12 16V6" />
+      <path d="M17 16v-8" />
+    </>
+  ),
   // Bars that fall away to the right and stop: a spectrum, and where its highs
   // end.
   quality: (

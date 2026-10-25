@@ -312,6 +312,42 @@ impl std::fmt::Debug for MetadataSettings {
     }
 }
 
+/// Lyrics looked up on LRCLIB, as RFC-024 decision 1 lists its settings.
+///
+/// **Off unless `providers` names one**, and that is the only switch, exactly
+/// as for [`MetadataSettings`]. A separate list rather than a value of
+/// `WAVEFLOW_METADATA_PROVIDERS`, because a lyrics lookup sends a track title,
+/// its album and its duration at the moment somebody plays it, which is a
+/// different consent from asking about an artist's name.
+#[derive(Debug, Clone)]
+pub struct LyricsSettings {
+    /// `WAVEFLOW_LYRICS_PROVIDERS`: empty by default, or `lrclib`.
+    pub providers: Vec<crate::lrclib::LyricsProvider>,
+    /// `WAVEFLOW_LYRICS_TTL_DAYS`: how long lyrics found are kept.
+    pub ttl: Duration,
+    /// `WAVEFLOW_LYRICS_MISS_TTL_DAYS`: how long "nothing for this track" is
+    /// kept.
+    pub miss_ttl: Duration,
+    /// `WAVEFLOW_LYRICS_RATE_PER_SEC`: requests per second.
+    pub rate_per_sec: u32,
+    /// `WAVEFLOW_LYRICS_REQUEST_TIMEOUT_SECS`: how long one request may take
+    /// before it counts as unanswered.
+    pub request_timeout: Duration,
+}
+
+impl LyricsSettings {
+    /// Lookups switched off — what a server that is merely upgraded runs.
+    pub fn off() -> Self {
+        Self {
+            providers: Vec::new(),
+            ttl: Duration::from_secs(30 * 24 * 60 * 60),
+            miss_ttl: Duration::from_secs(7 * 24 * 60 * 60),
+            rate_per_sec: 2,
+            request_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind_addr: SocketAddr,
@@ -517,6 +553,8 @@ pub struct Config {
     pub outbound_allow_plaintext: bool,
     /// Metadata enrichment — RFC-011. See [`MetadataSettings`].
     pub metadata: MetadataSettings,
+    /// Lyrics looked up on LRCLIB — RFC-024. See [`LyricsSettings`].
+    pub lyrics: LyricsSettings,
     /// Podcasts — RFC-025. See [`PodcastSettings`].
     pub podcasts: PodcastSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
@@ -592,6 +630,7 @@ impl std::fmt::Debug for Config {
             .field("lastfm", &self.lastfm)
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("metadata", &self.metadata)
+            .field("lyrics", &self.lyrics)
             .field("podcasts", &self.podcasts)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
@@ -827,6 +866,7 @@ impl Config {
         };
 
         let metadata = parse_metadata_settings()?;
+        let lyrics = parse_lyrics_settings()?;
         let podcasts = parse_podcast_settings(&data_dir)?;
         // Absent is empty; a value that is not UTF-8 refuses to boot, rather
         // than starting with no trusted proxy and counting every client behind
@@ -929,6 +969,7 @@ impl Config {
             lastfm,
             outbound_allow_plaintext,
             metadata,
+            lyrics,
             podcasts,
             allowed_origins,
             trusted_proxies,
@@ -1051,6 +1092,9 @@ impl Config {
             // provider, and the targets that exercise enrichment build their
             // own engine against a listener of their own.
             metadata: MetadataSettings::off(),
+            // Off as well, and for the same reason: the targets that exercise
+            // LRCLIB build their own lookup against a listener of their own.
+            lyrics: LyricsSettings::off(),
             // Off, as production defaults, and small enough that a test can
             // reach every bound. The podcast targets switch it on and point
             // it at a listener of their own on loopback, which is the one
@@ -1343,6 +1387,48 @@ fn parse_metadata_settings() -> anyhow::Result<MetadataSettings> {
     })
 }
 
+/// Reads RFC-024 decision 1's settings.
+fn parse_lyrics_settings() -> anyhow::Result<LyricsSettings> {
+    let defaults = LyricsSettings::off();
+    let providers =
+        parse_lyrics_providers(&std::env::var("WAVEFLOW_LYRICS_PROVIDERS").unwrap_or_default())?;
+    let days = |name: &str, default: Duration| -> anyhow::Result<Duration> {
+        let days: u64 = parse_positive_env(name, default.as_secs() / (24 * 60 * 60))?;
+        days.checked_mul(24 * 60 * 60)
+            .map(Duration::from_secs)
+            .ok_or_else(|| anyhow::anyhow!("invalid {name}: too large"))
+    };
+    Ok(LyricsSettings {
+        providers,
+        ttl: days("WAVEFLOW_LYRICS_TTL_DAYS", defaults.ttl)?,
+        miss_ttl: days("WAVEFLOW_LYRICS_MISS_TTL_DAYS", defaults.miss_ttl)?,
+        rate_per_sec: parse_positive_env("WAVEFLOW_LYRICS_RATE_PER_SEC", defaults.rate_per_sec)?,
+        request_timeout: Duration::from_secs(parse_positive_env(
+            "WAVEFLOW_LYRICS_REQUEST_TIMEOUT_SECS",
+            defaults.request_timeout.as_secs(),
+        )?),
+    })
+}
+
+/// `WAVEFLOW_LYRICS_PROVIDERS`. An unknown name and a name given twice refuse
+/// to boot, for the reason [`parse_metadata_providers`] gives.
+fn parse_lyrics_providers(list: &str) -> anyhow::Result<Vec<crate::lrclib::LyricsProvider>> {
+    let mut providers = Vec::new();
+    for name in list
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let provider = crate::lrclib::LyricsProvider::parse(name)
+            .ok_or_else(|| anyhow::anyhow!("invalid WAVEFLOW_LYRICS_PROVIDERS entry {name:?}"))?;
+        if providers.contains(&provider) {
+            anyhow::bail!("WAVEFLOW_LYRICS_PROVIDERS names {name:?} twice");
+        }
+        providers.push(provider);
+    }
+    Ok(providers)
+}
+
 /// `WAVEFLOW_METADATA_PROVIDERS`, in the operator's order.
 ///
 /// A provider named without its key, an unknown name and a name given twice
@@ -1615,6 +1701,24 @@ mod tests {
             parse_metadata_providers("deezer, theaudiodb", false, true).unwrap(),
             [Provider::Deezer, Provider::TheAudioDb]
         );
+    }
+
+    /// RFC-024 decision 1: the list is the switch, and a typo refuses to boot
+    /// rather than leaving lyrics quietly off.
+    #[test]
+    fn lyrics_providers_are_read_strictly() {
+        use crate::lrclib::LyricsProvider;
+
+        assert_eq!(super::parse_lyrics_providers("").unwrap(), []);
+        assert_eq!(super::parse_lyrics_providers(" , ").unwrap(), []);
+        assert_eq!(
+            super::parse_lyrics_providers(" lrclib ").unwrap(),
+            [LyricsProvider::Lrclib]
+        );
+        assert!(super::parse_lyrics_providers("lrclib,lrclib").is_err());
+        assert!(super::parse_lyrics_providers("lrclib.net").is_err());
+        // An artist provider is not a lyrics provider.
+        assert!(super::parse_lyrics_providers("lastfm").is_err());
     }
 
     #[test]
