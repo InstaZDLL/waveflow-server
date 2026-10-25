@@ -230,7 +230,7 @@ async fn fetch_within(
         .resolve(&host, pinned)
         .build()
         .map_err(|_| Refusal::Unreached)?;
-    let mut response = client
+    let response = client
         .get(url)
         .send()
         .await
@@ -246,19 +246,14 @@ async fn fetch_within(
         .map(|value| value.trim().to_ascii_lowercase())
         .and_then(|value| format_of_mime(&value))
         .ok_or(Refusal::NotAnImage)?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_IMAGE_BYTES as u64)
-    {
-        return Err(Refusal::TooLarge);
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| Refusal::Unreached)? {
-        if bytes.len() + chunk.len() > MAX_IMAGE_BYTES {
-            return Err(Refusal::TooLarge);
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+    // The shared bounded read (RFC-023 decision 1), under this fetcher's own
+    // ceiling: an image is allowed to weigh more than an API answer.
+    let bytes = crate::outbound::read_bounded_body(response, MAX_IMAGE_BYTES)
+        .await
+        .map_err(|error| match error {
+            crate::outbound::BodyError::TooLarge => Refusal::TooLarge,
+            crate::outbound::BodyError::Unread => Refusal::Unreached,
+        })?;
     let format = sniff(&bytes).ok_or(Refusal::NotAnImage)?;
     if format != declared {
         return Err(Refusal::NotAnImage);

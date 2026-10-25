@@ -757,7 +757,12 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
                 };
                 scrobblers::outbound_client(config.scrobbling.request_timeout)
                     .and_then(|client| {
-                        scrobblers::lastfm::LastFm::new(client, &destination.url, application)
+                        scrobblers::lastfm::LastFm::new(
+                            client,
+                            &destination.url,
+                            application,
+                            config.scrobbling.request_timeout,
+                        )
                     })
                     .map(|target| {
                         let target = Arc::new(target);

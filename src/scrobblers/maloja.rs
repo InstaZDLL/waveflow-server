@@ -149,10 +149,24 @@ impl ScrobbleTarget for Maloja {
             // The narrowness is the safeguard: one enumerated word, nothing
             // textual, and a body that will not parse leaves the status line
             // deciding.
-            let refused = response
-                .json::<Answer>()
-                .await
-                .is_ok_and(|answer| answer.status.as_deref() == Some("failure"));
+            //
+            // **And the body is read under a ceiling** (RFC-023 decision 1). An
+            // answer over it, or one that breaks off, is not read at all, and
+            // the status line decides — exactly as for a body that will not
+            // parse. The verdict is logged; the body never is.
+            let refused = match crate::outbound::read_bounded_body(
+                response,
+                crate::outbound::MAX_ANSWER_BYTES,
+            )
+            .await
+            {
+                Ok(body) => serde_json::from_slice::<Answer>(&body)
+                    .is_ok_and(|answer| answer.status.as_deref() == Some("failure")),
+                Err(error) => {
+                    tracing::warn!(%error, "maloja's answer was not read; its status line decides");
+                    false
+                }
+            };
             if status.is_success() && refused {
                 tracing::warn!("maloja read the submission and refused it");
                 return ScrobbleVerdict::PermanentReject;
@@ -374,5 +388,28 @@ mod tests {
             status_verdict(reqwest::StatusCode::FOUND, None),
             ScrobbleVerdict::Retryable { after: None }
         ));
+    }
+
+    /// A `200` whose body is over the ceiling is not read, and the status line
+    /// decides (RFC-023 decision 1).
+    ///
+    /// The body is the one refusal this adapter reads, padded: a reader
+    /// without the ceiling reads all of it and rejects the listen for good,
+    /// which is the difference this tells apart.
+    #[tokio::test]
+    async fn an_answer_over_the_ceiling_leaves_the_status_line_deciding() {
+        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let (url, server) = crate::outbound::tests::answering(axum::body::Body::from(format!(
+            "{{\"status\":\"failure\"{padding}}}"
+        )))
+        .await;
+        let base = super::super::validate_destination(&url, true).expect("a destination");
+        let client = super::super::outbound_client(Duration::from_secs(5)).expect("a client");
+        let target = Maloja::new(client, &base).expect("an adapter");
+        let secret = uuid::Uuid::new_v4().to_string();
+        let envelope = an_envelope();
+        let verdict = target.submit(&envelope, &secret).await;
+        server.abort();
+        assert!(matches!(verdict, ScrobbleVerdict::Accepted));
     }
 }
