@@ -5616,6 +5616,50 @@ test("keeps a live station readable in the light, and closes back to the queue",
 });
 
 /**
+ * A station that failed can be tried again, from its page or from the bar.
+ *
+ * A source that fails leaves the element's `paused` at false — the failure
+ * steps reject the play, they do not pause — so a player that took `paused`
+ * for the truth thought the failed station was playing: Listen did nothing,
+ * and the bar's play button stopped it instead of starting it. The station
+ * answers 404 once, then plays.
+ */
+for (const from of ["page", "bar"] as const) {
+  test(`tries a failed station again from the ${from}`, async ({ page }) => {
+    await serveStationAndQueue(page);
+    let asked = 0;
+    const audio = silentWav(60);
+    await page.route(`${NOVA}**`, (route) => {
+      asked += 1;
+      return asked === 1
+        ? route.fulfill({ status: 404, body: "" })
+        : route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } });
+    });
+    await page.goto("/radio");
+    await page.getByRole("button", { name: "Listen" }).click();
+    await expect(
+      page.getByText("That station could not be played.", { exact: false }),
+    ).toBeVisible();
+    const bar = page.locator(".player");
+    await expect(bar.getByRole("alert")).toHaveText("This station could not be played.");
+    expect(asked).toBe(1);
+
+    if (from === "page") {
+      await page.getByRole("button", { name: "Listen" }).click();
+    } else {
+      await bar.getByRole("button", { name: "Play" }).click();
+    }
+    await expect.poll(() => asked).toBe(2);
+    await expect
+      .poll(async () => (await elements(page)).station?.time ?? 0)
+      .toBeGreaterThan(0.2);
+    expect((await elements(page)).station?.paused).toBe(false);
+    await expect(bar.getByRole("alert")).toHaveCount(0);
+    await expect(bar.getByRole("button", { name: "Stop the station" })).toBeVisible();
+  });
+}
+
+/**
  * Signing out stops a station too, as it stops the music (#329, #330): the
  * station's element is the player's, and the player goes with the session.
  */

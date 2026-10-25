@@ -89,6 +89,9 @@ let canManage = true;
 let channels: Array<Record<string, unknown> & { id: string; episodes: Episode[] }> = [];
 let podcastWrites: string[] = [];
 let bookmarkWrites: Array<{ id: string; body: unknown }> = [];
+/** Held open by the tests that need a request in flight; instant otherwise. */
+let bookmarkGate: Promise<void> = Promise.resolve();
+let ticketGate: Promise<void> = Promise.resolve();
 
 const episode = (id: string, title: string, extra: Partial<Episode> = {}): Episode => ({
   id,
@@ -325,6 +328,7 @@ async function mockApi(page: Page) {
     }
     const ticket = path.match(/^\/api\/v2\/tracks\/([^/]+)\/stream-ticket$/);
     if (ticket) {
+      await ticketGate;
       await route.fulfill({
         json: { url: `/api/v2/stream/ticket-${ticket[1]}`, expires_at: Date.now() + 3_600_000 },
       });
@@ -342,6 +346,9 @@ async function mockApi(page: Page) {
     if (bookmark) {
       const body = method === "PUT" ? request.postDataJSON() : method;
       bookmarkWrites.push({ id: bookmark[1], body });
+      // Held by the ordering test, after the arrival is recorded and before
+      // the write is applied: a request still in flight, as a slow one is.
+      if (method === "PUT") await bookmarkGate;
       // Kept, as the server keeps it: the episode reads back where it was
       // left, so a resume can be told from a start.
       for (const channel of channels) {
@@ -365,6 +372,8 @@ test.beforeEach(async ({ page }) => {
   channels = [];
   podcastWrites = [];
   bookmarkWrites = [];
+  bookmarkGate = Promise.resolve();
+  ticketGate = Promise.resolve();
   await mockApi(page);
 });
 
@@ -763,6 +772,97 @@ test("keeps an episode playing when another channel is opened", async ({
   await expect(page.getByRole("heading", { name: "Day Shift" })).toBeVisible();
   await expect(page.locator(".player .player-track strong")).toHaveText("First night");
   await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+});
+
+/**
+ * The bookmark writes go out one after the other.
+ *
+ * A seek writes the place; the end of the episode, moments later, forgets it.
+ * Sent together, the two can be served in either order, and the `PUT` landing
+ * last brought back the bookmark of an episode heard to the end — the next
+ * play resumed it at its last second. Here the seek's `PUT` is held in flight
+ * across the end of the episode, then let go.
+ */
+test("forgets an episode heard to the end even when a write before it was slow", async ({
+  page,
+}) => {
+  await recordPlayedElements(page);
+  channels = [
+    channelOf("channel-1", "Night Shift", [
+      episode("episode-1", "First night", { ...ready, duration_ms: 30_000 }),
+    ]),
+  ];
+  await page.goto("/podcasts");
+  await page.getByRole("button", { name: "Episodes" }).click();
+  await page.getByRole("button", { name: "Play First night" }).click();
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+
+  let release = () => {};
+  bookmarkGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // A second before the end: the seek's write is sent, and held.
+  const seek = page.locator(".player").getByRole("slider", { name: "Seek" });
+  await seek.fill("29");
+  await seek.dispatchEvent("mouseup");
+  await expect.poll(() => bookmarkWrites.length).toBe(1);
+  // The episode ends while that write is still out.
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
+  await expect(page.locator(".player").getByRole("button", { name: "Play" })).toBeVisible();
+
+  release();
+  // Both written, the forgetting last: what the server keeps is no place.
+  await expect
+    .poll(() => bookmarkWrites.map((write) => (typeof write.body === "string" ? write.body : "PUT")))
+    .toEqual(["PUT", "DELETE"]);
+  await expect
+    .poll(() => channels[0].episodes[0].position_ms, { timeout: 3_000 })
+    .toBeNull();
+  // And it stays so once the held write has been applied as well.
+  await page.waitForTimeout(500);
+  expect(channels[0].episodes[0].position_ms).toBeNull();
+});
+
+/**
+ * Signing out while an episode's ticket is on its way plays nothing when the
+ * ticket lands. The player is gone with the session; the episode would
+ * otherwise start on its element, with no bar left to stop it.
+ */
+test("plays no episode whose ticket lands after the listener signed out", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await recordPlayedElements(page);
+  channels = [
+    channelOf("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
+  ];
+  let release = () => {};
+  ticketGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.goto("/podcasts");
+  await page.getByRole("button", { name: "Episodes" }).click();
+  const asked = page.waitForRequest((request) =>
+    request.url().includes("/podcast-episodes/") || request.url().includes("/stream-ticket"),
+  );
+  await page.getByRole("button", { name: "Play First night" }).click();
+  await asked;
+
+  // Dispatched rather than clicked: the sidebar's footer sits under the
+  // fixed player bar at this viewport.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+
+  const answered = page.waitForResponse((response) =>
+    response.url().includes("/stream-ticket"),
+  );
+  release();
+  await answered;
+  // Nothing to wait for if the fix holds — so a fixed pause, long enough for
+  // the continuation to set a source and start it if it were going to.
+  await page.waitForTimeout(750);
+  const heard = await episodeElement(page, "ticket-episode-1");
+  expect(heard === null || heard.paused).toBe(true);
 });
 
 test("offers a listener no podcast control it may not use", async ({ page }) => {

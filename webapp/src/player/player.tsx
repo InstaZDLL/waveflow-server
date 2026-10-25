@@ -554,6 +554,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // the pending `play()` of the last, after the new one is on screen.
   const sideAttempt = useRef(0);
   const lastBookmark = useRef(0);
+  const bookmarkChain = useRef<Promise<void>>(Promise.resolve());
 
   /**
    * Writes the place of the episode playing aside to its bookmark — the same
@@ -572,11 +573,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const { id, channel_id: channel } = current.episode;
       const write = bookmarkWrite(element.currentTime, element.ended);
       lastBookmark.current = Date.now();
-      void (
-        write.kind === "delete"
-          ? deleteBookmark(id)
-          : setBookmark(id, write.positionMs)
-      )
+      // One after the other, each sent once the last has answered. Two
+      // requests in flight together may be served in either order: a seek's
+      // `PUT` still on its way when the episode ends would land after the
+      // `DELETE` and bring back the bookmark of an episode heard to the end.
+      bookmarkChain.current = bookmarkChain.current
+        .then(() =>
+          write.kind === "delete"
+            ? deleteBookmark(id)
+            : setBookmark(id, write.positionMs),
+        )
         .then(() => {
           if (refresh)
             void queryClient.invalidateQueries({
@@ -689,6 +695,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // with it, as the music does (#329, #330). The listeners go first: the
       // session that could write a bookmark is already gone, and the place
       // kept is the last periodic save.
+      //
+      // The attempt moves first. An episode whose ticket is still on its way
+      // would otherwise pass its own check when the ticket lands, and set its
+      // source and play on this element — after the sign-out, with no bar
+      // left to stop it.
+      sideAttempt.current += 1;
       element.pause();
       element.removeAttribute("src");
       element.load();
@@ -702,10 +714,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const element = side.current;
       if (!element) return;
       const previous = asideRef.current;
+      // Already playing it, unless it failed: a source that fails leaves
+      // `paused` false, and the station must be tried again rather than taken
+      // for one that plays.
       if (
         previous?.kind === "live" &&
         previous.station.id === station.id &&
-        !element.paused
+        !element.paused &&
+        !element.error
       )
         return;
       if (previous?.kind === "episode") saveEpisode(true);
@@ -782,7 +798,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const element = side.current;
     const current = asideRef.current;
     if (!element || !current) return;
-    if (!element.paused) {
+    // A failed source is not playing, whatever `paused` says (see `playLive`):
+    // pressing play on it tries it again.
+    if (!element.paused && !element.error) {
       if (current.kind === "live") {
         // Stopped rather than paused: a live stream left paused keeps its
         // connection, and resuming it would play the past.
