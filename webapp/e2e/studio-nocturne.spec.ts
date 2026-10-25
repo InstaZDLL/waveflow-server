@@ -4455,24 +4455,103 @@ test("re-asks a held listing after a correction is saved", async ({
  * in CI for a reason that has nothing to do with the code. This project's
  * preview server holds the actual build.
  *
- * What the server does with `/favicon.ico` — a 404 rather than the shell, which
- * is what stopped a browser asking for it once a second — belongs to the
- * fallback and is pinned in `tests/service.rs`.
+ * Both icons are the logo kit's, as its head snippet declares them: the `.ico`
+ * sized for the browsers that read nothing else, and the SVG. Both carry the
+ * kit's small drawing, the heavier stroke the guide asks for below 24px — a
+ * flat Wave green W, where the old icon was five bars cut out of a gradient.
+ *
+ * What the server does with them — the file when the build has it, a JSON 404
+ * when it does not, never the shell, which a browser cannot decode and asks
+ * for again — belongs to the fallback and is pinned in `tests/service.rs`.
  */
-test("declares an icon, and serves the one it declares", async ({
+test("declares the logo kit's icons, and serves the ones it declares", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
 
   await page.goto("/");
-  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
-    "href",
-    "/favicon.svg",
+  const icons = page.locator('link[rel="icon"]');
+  await expect(icons).toHaveCount(2);
+  await expect(icons.nth(0)).toHaveAttribute("href", "/favicon.ico");
+  await expect(icons.nth(0)).toHaveAttribute("sizes", "48x48");
+  await expect(icons.nth(1)).toHaveAttribute("href", "/favicon.svg");
+  await expect(icons.nth(1)).toHaveAttribute("type", "image/svg+xml");
+
+  const svg = await page.request.get("/favicon.svg");
+  expect(svg.status()).toBe(200);
+  expect(svg.headers()["content-type"]).toContain("image/svg+xml");
+  const drawing = await svg.text();
+  expect(drawing).toContain('fill="#10B981"');
+  expect(drawing).not.toContain("Gradient");
+  expect(drawing).not.toContain("<rect");
+
+  const ico = await page.request.get("/favicon.ico");
+  expect(ico.status()).toBe(200);
+  // An ICO directory: reserved zero, then type 1, then the image count.
+  const bytes = await ico.body();
+  expect([...bytes.subarray(0, 4)]).toEqual([0, 0, 1, 0]);
+  expect(bytes.readUInt16LE(4)).toBeGreaterThan(0);
+});
+
+/**
+ * The sidebar's brand is the logo kit's horizontal logo, in the version the
+ * guide gives for the background it sits on: the colour file on a light
+ * theme, the dark file (mint and white) on a dark one. The theme is the
+ * reader's preference rather than the system's, so the choice is made by the
+ * root's `dark` class — and both themes are asked here, because a rule that
+ * showed one file everywhere would pass on either alone.
+ *
+ * On a phone the same brand sits in the header instead of the rail; the
+ * mobile project asks there.
+ */
+test("draws the brand from the logo kit, in the version for the theme", async ({
+  page,
+}, testInfo) => {
+  const where = testInfo.project.name === "mobile" ? ".mobile-header" : ".sidebar";
+  const brand = page.locator(`${where} .brand`);
+
+  const expectLogo = async (file: string, hidden: string) => {
+    const shown = brand.locator(`img[src="/brand/${file}"]`);
+    await expect(shown).toBeVisible();
+    await expect(brand.locator(`img[src="/brand/${hidden}"]`)).toBeHidden();
+    // Really drawn, not a broken image the size of its attributes.
+    await expect
+      .poll(() => shown.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .toBeGreaterThan(0);
+    const drawn = await shown.evaluate((image) => {
+      const style = getComputedStyle(image);
+      return {
+        width: image.getBoundingClientRect().width,
+        animation: style.animationName,
+        filter: style.filter,
+      };
+    });
+    // The guide's minimum for the horizontal version, and none of what it
+    // rules out: no pulsing, no glow or shadow.
+    expect(drawn.width).toBeGreaterThanOrEqual(120);
+    expect(drawn.animation).toBe("none");
+    expect(drawn.filter).toBe("none");
+    // The logo and the label beside it fit their row.
+    expect(
+      await brand.evaluate((link) => link.scrollWidth <= link.clientWidth),
+    ).toBe(true);
+  };
+
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+  await expectLogo(
+    "waveflow-logo-horizontal-dark.svg",
+    "waveflow-logo-horizontal-color.svg",
   );
 
-  const icon = await page.request.get("/favicon.svg");
-  expect(icon.status()).toBe(200);
-  expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+  await page.evaluate(() => localStorage.setItem("waveflow.theme", "default"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+  await expectLogo(
+    "waveflow-logo-horizontal-color.svg",
+    "waveflow-logo-horizontal-dark.svg",
+  );
 });
 
 /**
@@ -4486,11 +4565,13 @@ test("declares an icon, and serves the one it declares", async ({
  *
  * What this adds is the half a unit test cannot see: that the markup ships in
  * `index.html` rather than in the bundle — a splash inside the bundle could
- * only appear after the wait it exists to dress — and that it points at
- * `/logo.svg`, the same file the sidebar uses. A fourth hand-drawn copy of the
- * mark is the defect this screen's own issue was filed about.
+ * only appear after the wait it exists to dress — and that it points at the
+ * logo kit's symbol, in mint because this screen is always the dark
+ * background. A hand-drawn copy of the mark is the defect this screen's own
+ * issue was filed about. And that it holds still: the mark used to breathe
+ * here, and the brand guide rules a pulsing logo out.
  */
-test("ships the first-load screen in the document, drawn from the one logo", async ({
+test("ships the first-load screen in the document, drawn from the logo kit", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "one viewport is enough");
@@ -4500,16 +4581,22 @@ test("ships the first-load screen in the document, drawn from the one logo", asy
   const document_ = await page.request.get("/");
   const html = await document_.text();
   expect(html).toContain('id="splash"');
-  expect(html).toContain('src="/logo.svg"');
+  expect(html).toContain('src="/brand/waveflow-symbol-mint.svg"');
+  const inlineStyle = html.split("<style>")[1]?.split("</style>")[0] ?? "";
+  expect(inlineStyle).toContain("#splash");
+  expect(inlineStyle).not.toContain("animation");
+  expect(inlineStyle).not.toContain("@keyframes");
 
-  const logo = await page.request.get("/logo.svg");
+  const logo = await page.request.get("/brand/waveflow-symbol-mint.svg");
   expect(logo.status()).toBe(200);
   expect(logo.headers()["content-type"]).toContain("image/svg+xml");
-  // The desktop profile, so a divergence in the shared file fails here too:
-  // five bars, symmetric, and a gradient rather than a flat fill.
+  // The kit's symbol: one flat path in mint, no gradient — so a file swapped
+  // back to the old five bars fails here.
   const svg = await logo.text();
-  expect(svg.match(/<rect/g)).toHaveLength(5);
-  expect(svg).toContain("linearGradient");
+  expect(svg.match(/<path/g)).toHaveLength(1);
+  expect(svg).toContain('fill="#34D399"');
+  expect(svg).not.toContain("Gradient");
+  expect(svg).not.toContain("<rect");
 
   await page.goto("/");
   // Gone from the document once the application is up — removed rather than
@@ -7177,21 +7264,37 @@ test("declares an install manifest whose icons are all served", async ({
   const manifest = (await response.json()) as {
     start_url: string;
     display: string;
+    theme_color: string;
+    background_color: string;
     icons: Array<{ src: string; sizes: string; purpose: string }>;
   };
   expect(manifest.start_url).toBe("/");
   expect(manifest.display).toBe("standalone");
+  // Wave green for both, as the logo kit's own manifest and head snippet set
+  // them: the launch screen is the icon's tile, edge to edge.
+  expect(manifest.theme_color).toBe("#10B981");
+  expect(manifest.background_color).toBe("#10B981");
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+    "content",
+    "#10B981",
+  );
   expect(manifest.icons.map((icon) => icon.sizes)).toEqual(
     expect.arrayContaining(["192x192", "512x512"]),
   );
   expect(manifest.icons.some((icon) => icon.purpose === "maskable")).toBe(true);
-  for (const src of [
-    ...manifest.icons.map((icon) => icon.src),
-    "/apple-touch-icon.png",
+  for (const { src, sizes } of [
+    ...manifest.icons,
+    { src: "/apple-touch-icon.png", sizes: "180x180" },
   ]) {
     const icon = await page.request.get(src);
     expect(icon.status(), src).toBe(200);
     expect(icon.headers()["content-type"], src).toContain("image/png");
+    // The size it claims is the size it is: a PNG's IHDR carries both.
+    const bytes = await icon.body();
+    expect(
+      `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`,
+      src,
+    ).toBe(sizes);
   }
 });
 

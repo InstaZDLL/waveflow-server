@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" width="80" alt="WaveFlow logo" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-logo-horizontal-dark.svg" />
+    <img src="assets/waveflow-logo-horizontal-color.svg" width="320" alt="WaveFlow" />
+  </picture>
 </p>
 
 <h1 align="center">WaveFlow Server</h1>
@@ -187,3 +190,5 @@ English and French both welcome.
 ## License
 
 WaveFlow Server is licensed under [**AGPL-3.0-only**](LICENSE): it hosts a network service, so anyone you serve it to is entitled to its source. The desktop application and `waveflow-core` are GPL-3.0-only.
+
+The WaveFlow logo, its favicons and app icons are copied unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.

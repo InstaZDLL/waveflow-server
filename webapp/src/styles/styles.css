@@ -347,14 +347,24 @@ h3 {
   text-transform: uppercase;
 }
 
-/* The mark is `/logo.svg`, the same five-bar file the desktop application
-   carries, so the two cannot drift again. It was drawn here in CSS — four bars,
-   an asymmetric profile, a flat accent square — and that is what diverged.
-   Sizing only from now on. */
-.brand-mark {
-  width: 1.7rem;
-  height: 1.7rem;
+/* The logo is the kit's file, never redrawn here: sizing and the choice of
+   version only. 2rem tall puts it at 131px wide, above the guide's 120px
+   minimum for the horizontal version, and its own viewBox carries the clear
+   space above and below the symbol. No filter, shadow or animation: the guide
+   rules all three out.
+
+   The colour version on a light theme and the dark one on a dark theme, by the
+   class `applyTheme` sets on the root — the reader's choice, which the system
+   colour scheme does not know about. */
+.brand-logo {
+  width: auto;
+  height: 2rem;
   flex: none;
+}
+
+:root.dark .brand-logo-light,
+:root:not(.dark) .brand-logo-dark {
+  display: none;
 }
 
 /**
