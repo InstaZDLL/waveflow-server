@@ -1,12 +1,15 @@
 //! The response headers that tell a browser how far to trust what this server
 //! sends (RFC-019 decision 2).
 //!
-//! Two surfaces carry them, and only two:
+//! Three surfaces carry them:
 //!
 //! - **the embedded web client** ([`crate::webui`]), every response of the
 //!   router fallback: the shell, its assets, and its refusals;
 //! - **the public shares** under `/share/`, whose token *is* the path, so a
-//!   referrer would hand it to whatever host a page linked to.
+//!   referrer would hand it to whatever host a page linked to;
+//! - **the API reference** at `/reference` ([`crate::reference`]), since
+//!   RFC-023 serves its script from the binary and can therefore hold it to a
+//!   policy that names no other host.
 //!
 //! The Subsonic façade is deliberately left alone: its observable wire
 //! behaviour is frozen (RFC-002), and a header a validated client has never
@@ -122,6 +125,48 @@ pub async fn share(mut response: Response) -> Response {
     );
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     response
+}
+
+/// The policy of `/reference` (RFC-023 decision 3), whose bundle is served by
+/// this server.
+///
+/// - **Scripts from this origin only**: the bundle, at its versioned address.
+///   No inline script and no `eval`. The specification block is
+///   `type="application/json"`, which no browser executes and no `script-src`
+///   governs.
+/// - **Styles from this origin and inline.** The one concession, and measured:
+///   Scalar injects several `<style>` elements at run time, and only the first
+///   carries the nonce it offers to read from `<meta property="csp-nonce">`.
+///   Under a nonce the rest were refused (Chromium reported six violations and
+///   the page rendered unstyled). A style cannot run code; what it could do —
+///   restyle the page — needs an injection point this page does not have.
+/// - **Images** from this origin, `data:` and `blob:`; **fonts** from this
+///   origin and `data:`; **workers** from this origin and `blob:`, which the
+///   bundle's editor spawns from.
+/// - **Connections to this origin only.** The page's "try it" client talks to
+///   this API; nothing Scalar would reach on its own — its fonts, its proxy,
+///   its registry — is admitted.
+/// - **No plugins, no `<base>`, no form posted anywhere, framed only here.**
+pub fn reference_policy() -> HeaderValue {
+    HeaderValue::from_static(
+        "default-src 'none'; \
+         script-src 'self'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob:; \
+         font-src 'self' data:; \
+         connect-src 'self'; \
+         worker-src 'self' blob:; \
+         object-src 'none'; \
+         base-uri 'none'; \
+         form-action 'none'; \
+         frame-ancestors 'self'",
+    )
+}
+
+/// The headers every `/reference` response carries: the web client's, under
+/// the given policy.
+pub fn apply_reference(headers: &mut HeaderMap, policy: &HeaderValue) {
+    apply_web_client(headers, policy);
 }
 
 /// `'sha256-…'` for each inline `<tag>` block of `html`, each preceded by a
