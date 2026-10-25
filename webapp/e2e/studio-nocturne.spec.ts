@@ -7194,6 +7194,64 @@ test("stops the music when the listener signs out with ReplayGain off", async ({
 });
 
 /**
+ * Signing out lets go of the next track too.
+ *
+ * The player loads the track after the current one into a second element so
+ * that skipping starts at once. That element never plays, but it holds its
+ * source and may still be fetching it, for an account that has just left. Every
+ * element that was asked to load is recorded, and none may keep a source once
+ * the listener is signed out.
+ */
+test("releases the next track's preload when the listener signs out", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await page.addInitScript(() => {
+    const loaded = new Set<HTMLMediaElement>();
+    (window as unknown as { __loaded: Set<HTMLMediaElement> }).__loaded =
+      loaded;
+    const load = HTMLMediaElement.prototype.load;
+    HTMLMediaElement.prototype.load = function () {
+      loaded.add(this);
+      return load.call(this);
+    };
+  });
+  const audio = silentWav(60);
+  await page.route("**/api/v2/tracks/*/stream-ticket", (route) => {
+    const trackId = new URL(route.request().url()).pathname.split("/")[4];
+    return route.fulfill({
+      json: {
+        url: `/api/v2/stream/ticket-${trackId}`,
+        expires_at: Date.now() + 60_000,
+      },
+    });
+  });
+  await page.route("**/api/v2/stream/*", (route) =>
+    route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
+  );
+  const sources = () =>
+    page.evaluate(() =>
+      [...(window as unknown as { __loaded: Set<HTMLMediaElement> }).__loaded]
+        .map((element) => element.getAttribute("src"))
+        .filter((source) => source !== null),
+    );
+
+  await page.goto("/albums/album-2");
+  await page.getByRole("button", { name: "Play album" }).click();
+  await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
+  // The next track, Cocoon, is being preloaded beside the one playing. Named
+  // rather than counted: the playing element is asked to load too, and its
+  // own source alone would let the sign-out run before the preload exists.
+  await expect.poll(sources).toContain("/api/v2/stream/ticket-song-2");
+
+  // Dispatched rather than clicked, as in the cache test: the sidebar's
+  // footer sits under the fixed player bar at this viewport.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(sources).toEqual([]);
+});
+
+/**
  * "Missing files" (RFC-021 decision 4): what the scans can no longer find, what
  * purging each would cost, and a purge that takes two clicks and only what was
  * chosen. A purge is not reversible, so the first click only arms it.
