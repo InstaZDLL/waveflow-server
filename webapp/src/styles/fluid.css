@@ -503,14 +503,16 @@
 }
 
 /* The open row: a tone and a 2 px edge in the accent, with a faint glow. */
-:where(:root) .primary-navigation a[data-status="active"] {
+:where(:root) .primary-navigation a[data-status="active"],
+:where(:root) .sidebar-footer a[data-status="active"] {
   position: relative;
   background: var(--fe-tone-2);
   color: var(--fe-ink);
   font-weight: 560;
 }
 
-:where(:root) .primary-navigation a[data-status="active"]::after {
+:where(:root) .primary-navigation a[data-status="active"]::after,
+:where(:root) .sidebar-footer a[data-status="active"]::after {
   position: absolute;
   top: 22%;
   bottom: 22%;
@@ -833,6 +835,36 @@
 
 :where(:root) .view-switcher a[aria-current="page"] {
   background: var(--fe-tone-3);
+}
+
+:where(:root) .settings-sections {
+  border: 0;
+  border-radius: 999px;
+  background: var(--fe-tone-1);
+}
+
+:where(:root) .settings-sections .settings-section {
+  border-radius: 999px;
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .settings-sections .settings-section:hover {
+  color: var(--fe-ink);
+}
+
+:where(:root) .settings-sections .settings-section[aria-current="page"] {
+  background: var(--fe-tone-3);
+  color: var(--fe-ink);
+}
+
+@media (max-width: 820px) {
+  :where(:root) .settings-sections {
+    border-radius: var(--fe-radius-card);
+  }
+
+  :where(:root) .settings-sections .settings-section {
+    border-radius: var(--fe-radius-tile);
+  }
 }
 
 /* ── Album and artist heads ─────────────────────────────────── */

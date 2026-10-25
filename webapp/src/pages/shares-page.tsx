@@ -78,7 +78,7 @@ export function SharesPage() {
   return (
     <section>
       <PageHeader
-        kicker={t("nav.group.account")}
+        kicker={t("nav.settings")}
         title={t("nav.shares")}
         detail={t("shares.detail")}
       />

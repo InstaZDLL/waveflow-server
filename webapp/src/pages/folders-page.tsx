@@ -290,7 +290,7 @@ export function FoldersPage({ folder }: { folder: string }) {
       ) : null}
       {here && mayUploadTo(active) ? (
         <Link
-          to="/upload"
+          to="/settings/upload"
           search={{ folder: here.id }}
           className="folder-upload"
         >

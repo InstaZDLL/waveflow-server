@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -14,7 +13,8 @@ import { LanguagePicker, type Locale, useI18n } from "../state/i18n";
 import { ReplayGainPicker, ThemePicker } from "../state/preferences";
 
 /**
- * Settings, and the clients allowed to read the library.
+ * The Account section of Settings, the clients allowed to read the library,
+ * and the Playback section beside it.
  *
  * The theme and the language used to sit in the sidebar footer, under thirteen
  * navigation entries — settings left in a corridor, because they are not
@@ -350,33 +350,48 @@ function SubsonicPassword() {
   );
 }
 
+/**
+ * The section `/settings` opens on.
+ *
+ * The playback panel that sat beside the appearance one is the Playback
+ * section now, and the panel that only linked to scrobbling is gone: the
+ * section menu above links to it, and a second link would be a second way to
+ * ask one question.
+ */
 export function SettingsPage() {
   const { t } = useI18n();
   return (
     <section className="settings-page">
       <PageHeader
-        kicker={t("nav.group.account")}
-        title={t("nav.settings")}
+        kicker={t("nav.settings")}
+        title={t("settings.section.account")}
         detail={t("settings.detail")}
       />
-      <div className="settings-grid">
-        <article className="settings-panel">
-          <h3>{t("settings.appearance")}</h3>
-          <ThemePicker />
-          <LanguagePicker />
-        </article>
-        <article className="settings-panel">
-          <h3>{t("settings.playback")}</h3>
-          <ReplayGainPicker />
-        </article>
-        <article className="settings-panel">
-          <h3>{t("nav.scrobbling")}</h3>
-          <p className="muted">{t("settings.scrobblingDetail")}</p>
-          <Link to="/settings/scrobbling">{t("settings.scrobblingOpen")}</Link>
-        </article>
-      </div>
+      <article className="settings-panel">
+        <h3>{t("settings.appearance")}</h3>
+        <ThemePicker />
+        <LanguagePicker />
+      </article>
       <RegisteredClients />
       <SubsonicPassword />
+    </section>
+  );
+}
+
+/** How this browser plays: ReplayGain, which is kept in this browser only. */
+export function PlaybackSettingsPage() {
+  const { t } = useI18n();
+  return (
+    <section className="settings-page">
+      <PageHeader
+        kicker={t("nav.settings")}
+        title={t("settings.playback")}
+        detail={t("settings.playbackDetail")}
+      />
+      <article className="settings-panel">
+        <h3>{t("settings.levelling")}</h3>
+        <ReplayGainPicker />
+      </article>
     </section>
   );
 }
