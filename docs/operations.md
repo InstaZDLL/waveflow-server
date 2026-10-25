@@ -13,8 +13,9 @@ administrator. So the setup screen, and `POST /api/v2/setup`, also ask for a
 one-time **setup token** ([RFC-019](rfcs/RFC-019-exposure-hardening.md)):
 
 - by default the server draws one at boot and writes it to `setup-token` in
-  the data directory, readable by its owner only. The log says where, and never
-  prints the token:
+  the data directory. On Unix the file is readable by its owner only; on other
+  platforms it takes the data directory's permissions, so protect that
+  directory yourself. The log says where, and never prints the token:
 
   ```
   WARN no account exists yet: the first administrator is created with the setup token stored in this file path=/data/setup-token

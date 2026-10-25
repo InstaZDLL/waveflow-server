@@ -64,10 +64,12 @@ docker exec waveflow waveflow-server library add --owner admin --name Music --pa
 
 Open `http://your-host:4533` and sign in. The scan starts on its own.
 
-You can also create the admin account from the browser instead: until one
-exists, the setup screen asks for the one-time token the server wrote to
-`setup-token` in its data directory (`docker exec waveflow cat /data/setup-token`),
-so a stranger who reaches a fresh server first cannot claim it. See
+The admin account can also be created from the browser's setup screen
+instead. From the release after 2.0.0-beta.1 — not the `2.0.0-beta.1` image
+pinned above, which asks for no token — that screen asks for the one-time token
+the server wrote to `setup-token` in its data directory
+(`docker exec waveflow cat /data/setup-token`), so a stranger who reaches a
+fresh server first cannot claim it. See
 [operations](docs/operations.md#the-first-account-needs-the-setup-token).
 
 ### From source

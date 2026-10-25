@@ -65,8 +65,11 @@ username, the password and the origin check, which stays.
   token and compares digests with `subtle`, so neither the content nor the
   length of a wrong guess changes how long the refusal takes. An absent token
   is compared like a wrong one.
-- **Checked before anything else in the request.** A caller without the token
-  learns nothing from the route, not even the password rules. A missing or
+- **Checked before the username and the password.** The order is: the JSON
+  body is parsed, then the `Origin` check runs, then the token, and only then
+  are the username and password validated. A caller without the token
+  therefore learns nothing about the account it would create, not even the
+  password rules. A missing or
   wrong token is `403` with its own code, `setup_token_rejected`, so the setup
   screen can say which field to correct; a missing `Origin` stays `403
   forbidden`.
