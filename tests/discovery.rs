@@ -580,6 +580,16 @@ async fn the_facade_serves_the_sheet_without_a_source() {
     assert_eq!(sheets.len(), 1);
     assert_eq!(sheets[0]["synced"], true);
     assert!(support::omits(&sheets[0], "source"), "{by_id}");
+    // And at the service the façade reads, not only in the node it builds:
+    // the sheet names no source there either.
+    let facade = shelf
+        .state
+        .services
+        .lyrics(shelf.owner, shelf.bare)
+        .await
+        .unwrap();
+    assert_eq!(facade.structured_lyrics.len(), 1);
+    assert!(facade.structured_lyrics[0].source.is_none());
 
     let by_name = support::subsonic_json(
         &router,
@@ -1169,29 +1179,20 @@ async fn a_shared_genre_makes_a_local_neighbour_and_nothing_foreign_does() {
         "similar-me",
         &[
             file("Hyperballad", "Björk", Some("Electronic"), Some(1995)),
-            file(
-                "Svefn-g-englar",
-                "Sigur Rós",
-                Some("Electronic"),
-                Some(1999),
-            ),
+            // No year, so its score is the genre alone — the score each
+            // foreign artist below would have.
+            file("Svefn-g-englar", "Sigur Rós", Some("Electronic"), None),
             file("Enter Sandman", "Metallica", Some("Metal"), Some(1995)),
         ],
     )
     .await;
-    library(
-        &state,
-        &config,
-        other,
-        "similar-other",
-        &[file(
-            "Windowlicker",
-            "Aphex Twin",
-            Some("Electronic"),
-            Some(1999),
-        )],
-    )
-    .await;
+    // Twenty artists sharing the genre, in a library the caller is not in,
+    // named to sort before Sigur Rós: counted as neighbours, they would take
+    // every place and push the visible one out of the draw.
+    let foreign: Vec<File> = (0..20)
+        .map(|n| file("Elsewhere", &format!("Aa {n:02}"), Some("Electronic"), None))
+        .collect();
+    library(&state, &config, other, "similar-other", &foreign).await;
     let bjork = artist_named(&state, me, "Björk").await;
 
     assert_eq!(drawn(&state, me, bjork).await, ["Björk", "Sigur Rós"]);
