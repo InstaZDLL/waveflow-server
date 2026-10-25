@@ -1,9 +1,10 @@
 # RFC-019 — Exposure hardening: first-run setup, browser headers, upgrade copies, and what leaves the server
 
 - **Status**: Proposed
-- **Implemented by**: this RFC and its implementation land in one pull
-  request. The *Status* field above never flips in this project; this line is
-  the one that says what is running.
+- **Implemented by**: [#325](https://github.com/InstaZDLL/waveflow-server/pull/325)
+  (this RFC, the setup token, the security headers, the pre-migration copy
+  and `docs/privacy.md`, in one pull request). The *Status* field above never
+  flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the credential
