@@ -1194,8 +1194,10 @@ pub async fn create_stream_ticket(
     // Minting proves access now; redeeming re-proves it, so a ticket cannot
     // outlive the membership that justified it.
     state
-        .db
-        .stream_track_for_user(user.id, track_id)
+        // A track this account reads, or a stored podcast episode (RFC-025
+        // decision 11): the one lookup every stream route makes.
+        .services
+        .stream_source_for_user(user.id, track_id)
         .await
         .map_err(|error| {
             tracing::error!(error = %error, "stream ticket authorization lookup failed");
@@ -1270,8 +1272,8 @@ pub async fn stream_with_ticket(
             .filter(|(kind, ..)| *kind == crate::stream_ticket::TicketKind::Audio)
             .ok_or(MediaError::NotFound)?;
     let track = state
-        .db
-        .stream_track_for_user(user_id, track_id)
+        .services
+        .stream_source_for_user(user_id, track_id)
         .await
         .map_err(|error| {
             tracing::error!(error = %error, "ticket stream authorization lookup failed");
@@ -1420,8 +1422,10 @@ pub async fn stream_track(
 ) -> Result<Response, MediaError> {
     let user = bearer_principal(&state, &headers).await?;
     let track = state
-        .db
-        .stream_track_for_user(user.id, track_id)
+        // A track this account reads, or a stored podcast episode (RFC-025
+        // decision 11): the one lookup every stream route makes.
+        .services
+        .stream_source_for_user(user.id, track_id)
         .await
         .map_err(|error| {
             tracing::error!(error = %error, "stream authorization lookup failed");

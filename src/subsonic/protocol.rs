@@ -250,6 +250,12 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             // record under another name, so its roles keep their shape too.
             | ("artistInfo" | "artistInfo2", "similarArtist")
             | ("similarArtist", "roles")
+            // The podcast containers, arrays from their first answer
+            // (RFC-025): they had never held anything, the case every entry
+            // above it was found in.
+            | ("podcasts", "channel")
+            | ("channel", "episode")
+            | ("newestPodcasts", "episode")
     )
 }
 
@@ -271,6 +277,12 @@ pub(super) fn empty_success_method(method: &str) -> bool {
             | "createInternetRadioStation"
             | "updateInternetRadioStation"
             | "deleteInternetRadioStation"
+            // The five podcast writes, as the specification has them.
+            | "refreshPodcasts"
+            | "createPodcastChannel"
+            | "deletePodcastChannel"
+            | "deletePodcastEpisode"
+            | "downloadPodcastEpisode"
             | "createUser"
             | "updateUser"
             | "deleteUser"

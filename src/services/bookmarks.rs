@@ -84,6 +84,14 @@ impl DomainServices {
         if position_ms < 0 {
             return Err(ServiceError::Invalid);
         }
+        // A podcast episode is bookmarked through the same door, and kept
+        // beside the track bookmarks rather than in them (RFC-025 decision
+        // 13): it is not a track, and not a synchronization entity.
+        if self.is_podcast_episode(track_id).await? {
+            return self
+                .set_episode_bookmark(user_id, track_id, position_ms, comment)
+                .await;
+        }
         let intent = MutationIntent::new(
             "set-bookmark",
             &format!("bookmark:{track_id}"),
@@ -156,6 +164,9 @@ impl DomainServices {
         track_id: Uuid,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        if self.is_podcast_episode(track_id).await? {
+            return self.delete_episode_bookmark(user_id, track_id).await;
+        }
         let intent = MutationIntent::new(
             "delete-bookmark",
             &format!("bookmark:{track_id}"),
