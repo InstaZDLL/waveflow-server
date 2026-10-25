@@ -360,29 +360,38 @@ export const folderTracksQuery = (libraryId: string, folder: string) =>
 
 /**
  * One account's listening over a period (RFC-024 decision 6). The period is
- * the key: switching it asks again rather than relabelling the last answer.
+ * the key, so switching it asks again rather than relabelling the last
+ * answer, and so is the listener's day (`useLocalDay`): the buckets are
+ * local days, and an answer from before midnight, or from another timezone,
+ * cuts them in the wrong place.
  */
-export const statsQuery = (period: StatsPeriod) =>
+export const statsQuery = (period: StatsPeriod, day: string) =>
   queryOptions({
-    queryKey: ["stats", period],
+    queryKey: ["stats", period, day],
     queryFn: () => getListeningStats(period),
   });
 
 /**
  * The mixes on the home page (RFC-024 decision 7). The server draws them once
  * a day, so the answer is held for a while rather than re-asked on every
- * visit to the albums.
+ * visit to the albums — and the listener's day is in the key, because a key
+ * that never changes is never asked again: past midnight the shelf would keep
+ * yesterday's draw for as long as the tab stayed open.
  */
-export const mixesQuery = (scope: string | undefined) =>
+export const mixesQuery = (scope: string | undefined, day: string) =>
   queryOptions({
-    queryKey: ["mixes", scope ?? null],
+    queryKey: ["mixes", scope ?? null, day],
     queryFn: () => listMixes(scope),
     staleTime: 5 * 60_000,
   });
 
-export const mixQuery = (mixId: string, scope: string | undefined) =>
+export const mixQuery = (
+  mixId: string,
+  scope: string | undefined,
+  day: string,
+) =>
   queryOptions({
-    queryKey: ["mix", mixId, scope ?? null],
+    queryKey: ["mix", mixId, scope ?? null, day],
     queryFn: () => getMix(mixId, scope),
     staleTime: 5 * 60_000,
   });

@@ -8,6 +8,7 @@ import { mixTitle } from "../lib/mixes";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
 import { useScopeId } from "../state/library-scope";
+import { useLocalDay } from "../state/local-day";
 import { Artwork } from "./artwork";
 import { Icon } from "./icons";
 
@@ -24,7 +25,8 @@ export function MixShelves() {
   const { t } = useI18n();
   const scope = useScopeId();
   const player = usePlayer();
-  const { data: mixes } = useQuery(mixesQuery(scope));
+  const day = useLocalDay();
+  const { data: mixes } = useQuery(mixesQuery(scope, day));
   // A set, for the reason the album grid gives: two cards may be fetching at
   // once, and one slot let the first answer re-enable the other's buttons.
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());

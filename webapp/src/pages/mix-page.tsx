@@ -7,6 +7,7 @@ import { SongTable } from "../components/song-table";
 import { mixTitle } from "../lib/mixes";
 import { useI18n } from "../state/i18n";
 import { useScopeId } from "../state/library-scope";
+import { useLocalDay } from "../state/local-day";
 
 /**
  * One mix and its tracks (RFC-024 decision 7). The server draws it once a
@@ -15,7 +16,8 @@ import { useScopeId } from "../state/library-scope";
 export function MixPage({ mixId }: { mixId: string }) {
   const { t } = useI18n();
   const scope = useScopeId();
-  const { data: mix, error } = useQuery(mixQuery(mixId, scope));
+  const day = useLocalDay();
+  const { data: mix, error } = useQuery(mixQuery(mixId, scope, day));
   if (!mix) return <Loading error={error} />;
   return (
     <section>

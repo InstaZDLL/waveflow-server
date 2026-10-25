@@ -53,6 +53,7 @@ import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
+import { localDayKey } from "./lib/local-day";
 import {
   claimOffline,
   forgetKnownOffline,
@@ -332,7 +333,7 @@ async function prepareTab(
       await client.ensureQueryData(historyTracksQuery(50));
       break;
     case "/stats":
-      await client.ensureQueryData(statsQuery("30d"));
+      await client.ensureQueryData(statsQuery("30d", localDayKey()));
       break;
     case "/favourites":
       await client.ensureQueryData(favoriteTracksQuery());

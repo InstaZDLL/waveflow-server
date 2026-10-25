@@ -8,6 +8,7 @@ import { EmptyState, Loading, PageHeader } from "../components/page-shell";
 import { barShares, listeningTime } from "../lib/mixes";
 import { usePlayer } from "../player/player";
 import { type TranslationKey, useI18n } from "../state/i18n";
+import { useLocalDay } from "../state/local-day";
 
 const PERIODS: Array<{ value: StatsPeriod; labelKey: TranslationKey }> = [
   { value: "7d", labelKey: "stats.period7d" },
@@ -25,7 +26,8 @@ export function StatsPage() {
   const { t, locale } = useI18n();
   const player = usePlayer();
   const [period, setPeriod] = useState<StatsPeriod>("30d");
-  const { data: stats, error } = useQuery(statsQuery(period));
+  const day = useLocalDay();
+  const { data: stats, error } = useQuery(statsQuery(period, day));
 
   const controls = (
     <label className="control">
