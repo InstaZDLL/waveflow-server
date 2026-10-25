@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: [#326](https://github.com/InstaZDLL/waveflow-server/pull/326)
-  (this RFC, and all seven decisions with it). The *Status* field above never
+  (this RFC, and all seven decisions with it), and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (the longer play
+  queue, ReplayGain on Subsonic transcodes and offline listening, from *What
+  is still open*). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project

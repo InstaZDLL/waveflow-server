@@ -3,8 +3,10 @@
 - **Status**: Proposed
 - **Implemented by**: [#328](https://github.com/InstaZDLL/waveflow-server/pull/328)
   (this RFC and its whole implementation: exclusions and `.waveflowignore`,
-  links, missing tracks and their purge, the library lifecycle, the watcher).
-  The *Status* field above never flips in this project; this line is the one
+  links, missing tracks and their purge, the library lifecycle, the watcher),
+  and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (everything *What is still open* listed: the journal on a
+  deletion, link roots, undoing a purge, the per-library watch and scoped
+  watched scans). The *Status* field above never flips in this project; this line is the one
   that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project

@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: [#327](https://github.com/InstaZDLL/waveflow-server/pull/327)
-  (this RFC and its implementation, together). The *Status* field above never
+  (this RFC and its implementation, together), and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (the move of a
+  playlist entry, removal in the web client, `getPlaylists?username=` and the
+  share page's covers, closing *What is still open* but one). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
