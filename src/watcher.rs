@@ -47,7 +47,10 @@ impl Settle {
     pub fn new(delay: Duration) -> Self {
         Self {
             delay,
-            max_wait: delay * MAX_WAIT_DELAYS,
+            // Saturating: `WAVEFLOW_WATCH_DELAY_SECS` has no ceiling, and an
+            // overflow here would panic inside the spawned task, which nothing
+            // watches — the watcher would be gone without a word.
+            max_wait: delay.saturating_mul(MAX_WAIT_DELAYS),
             pending: HashMap::new(),
         }
     }
@@ -177,18 +180,55 @@ pub fn spawn(scanner: ScanManager, db: Database, delay: Duration) -> tokio::task
                     }
                 }
                 _ = tick.tick() => {
-                    for library_id in settle.due(Instant::now(), |id| scanner.is_scanning(id)) {
-                        let Some(library) = watched.get(&library_id).cloned() else {
-                            continue;
-                        };
-                        if let Err(error) = scanner.trigger(library, None, "watch").await {
-                            tracing::warn!(%library_id, %error, "could not queue a scan for a watched change");
-                        }
-                    }
+                    dispatch_due(&mut settle, &watched, &scanner, Instant::now()).await;
                 }
             }
         }
     })
+}
+
+/// Queues a scan for every watched library whose changes have settled, and
+/// that no scan is running for.
+///
+/// A library whose scan cannot be queued goes back to pending: it has left
+/// `pending` to be dispatched, and dropping it there would leave the change to
+/// the periodic scan — which `WAVEFLOW_SCAN_INTERVAL_SECS=0` turns off. One the
+/// watcher no longer holds is dropped: it was deleted, and nothing is owed.
+pub async fn dispatch_due(
+    settle: &mut Settle,
+    watched: &HashMap<Uuid, LibraryRecord>,
+    scanner: &ScanManager,
+    now: Instant,
+) {
+    for library_id in settle.due(now, |id| scanner.is_scanning(id)) {
+        let Some(library) = watched.get(&library_id).cloned() else {
+            continue;
+        };
+        if let Err(error) = scanner.trigger(library, None, "watch").await {
+            tracing::warn!(%library_id, %error, "could not queue a scan for a watched change");
+            settle.touch(library_id, now);
+        }
+    }
+}
+
+/// The watched libraries a removed watch on `removed` may have taken down with
+/// it.
+///
+/// On inotify a recursive watch is one descriptor per folder, shared by every
+/// watch that covers that folder, and removing a recursive watch removes every
+/// descriptor beneath it. A library nested under the removed root loses its
+/// watch, and so does the library around it when the removed one was nested:
+/// both are watched again.
+pub fn sharing_watches_with(watched: &HashMap<Uuid, LibraryRecord>, removed: &Path) -> Vec<Uuid> {
+    let mut affected: Vec<Uuid> = watched
+        .values()
+        .filter(|library| {
+            library.root_path.starts_with(removed) || removed.starts_with(&library.root_path)
+        })
+        .map(|library| library.id)
+        .collect();
+    affected.sort();
+    affected
 }
 
 /// Watches what the catalogue holds and nothing else.
@@ -218,9 +258,13 @@ async fn reconcile(
         })
         .map(|(id, _)| *id)
         .collect();
+    // Every root whose watch was taken back, so the watches it shared can be
+    // put back once the set is settled.
+    let mut removed: Vec<PathBuf> = Vec::new();
     for library_id in gone {
         if let Some(library) = watched.remove(&library_id) {
             let _ = watcher.unwatch(&library.root_path);
+            removed.push(library.root_path);
         }
     }
     refused.retain(|(id, root)| current.get(id).is_some_and(|now| now.root_path == *root));
@@ -243,8 +287,34 @@ async fn reconcile(
                     %error,
                     "the library cannot be watched; it is scanned on the interval only"
                 );
+                removed.push(library.root_path.clone());
                 refused.insert((library_id, library.root_path));
             }
+        }
+    }
+    // What those removals took from libraries still watched is placed again.
+    let mut affected: Vec<Uuid> = removed
+        .iter()
+        .flat_map(|root| sharing_watches_with(watched, root))
+        .collect();
+    affected.sort();
+    affected.dedup();
+    for library_id in affected {
+        let Some(root) = watched
+            .get(&library_id)
+            .map(|library| library.root_path.clone())
+        else {
+            continue;
+        };
+        if let Err(error) = watcher.watch(&root, RecursiveMode::Recursive) {
+            let _ = watcher.unwatch(&root);
+            tracing::warn!(
+                %library_id,
+                %error,
+                "the library cannot be watched again; it is scanned on the interval only"
+            );
+            watched.remove(&library_id);
+            refused.insert((library_id, root));
         }
     }
 }
@@ -259,6 +329,42 @@ mod tests {
             name: "watched".into(),
             root_path: PathBuf::from(root),
         }
+    }
+
+    /// `WAVEFLOW_WATCH_DELAY_SECS` has no ceiling: a delay too long to
+    /// multiply must not panic the watcher's task.
+    #[test]
+    fn an_enormous_delay_does_not_panic() {
+        let mut settle = Settle::new(Duration::from_secs(u64::MAX));
+        let library = Uuid::new_v4();
+        let now = Instant::now();
+        settle.touch(library, now);
+        assert!(settle.due(now, |_| false).is_empty());
+    }
+
+    /// Removing a recursive inotify watch removes every descriptor beneath
+    /// it, so the libraries nested under it — and the one around it, when the
+    /// removed one was nested — are named to be watched again.
+    #[test]
+    fn a_removed_watch_names_the_libraries_it_shared_descriptors_with() {
+        let (outer, inner, beside) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let libraries = HashMap::from([
+            (outer, library(outer, "/music")),
+            (inner, library(inner, "/music/classical")),
+            (beside, library(beside, "/podcasts")),
+        ]);
+        let mut both = vec![outer, inner];
+        both.sort();
+        assert_eq!(sharing_watches_with(&libraries, Path::new("/music")), both);
+        assert_eq!(
+            sharing_watches_with(&libraries, Path::new("/music/classical")),
+            both
+        );
+        assert_eq!(
+            sharing_watches_with(&libraries, Path::new("/music/rock")),
+            vec![outer]
+        );
+        assert!(sharing_watches_with(&libraries, Path::new("/elsewhere")).is_empty());
     }
 
     #[test]

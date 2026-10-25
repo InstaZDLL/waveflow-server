@@ -878,9 +878,54 @@ struct WalkState {
     unreadable: Vec<Unreadable>,
     excluded: usize,
     skipped_links: usize,
+    /// A folder could not be read and could not be named as the catalogue
+    /// names its tracks: no track may be marked missing.
+    incomplete: bool,
 }
 
 impl WalkState {
+    /// Records a folder the walk could not read, or could not use the rules
+    /// of, under the name its tracks carry in the catalogue (RFC-018
+    /// decision 3, RFC-021 decision 3).
+    ///
+    /// With links followed, a track is stored under its canonical path, and a
+    /// folder reached through a link has another name: spared under the
+    /// link's, its tracks would be marked missing anyway. So the folder is
+    /// named by its target; one that cannot be resolved inside the root names
+    /// nothing, and the walk is then incomplete.
+    fn unreadable(&mut self, root: &Path, path: &Path, follow_links: bool, reason: &'static str) {
+        let folder = if follow_links {
+            fs::canonicalize(path)
+                .ok()
+                .filter(|canonical| canonical.starts_with(root))
+                .map(|canonical| relative_to(root, &canonical))
+        } else {
+            Some(relative_to(root, path))
+        };
+        match folder {
+            Some(folder) => {
+                tracing::warn!(
+                    path = %folder,
+                    reason,
+                    "a folder in the library could not be used; its tracks are left as they are"
+                );
+                self.unreadable.push(Unreadable { folder, reason });
+            }
+            None => {
+                tracing::warn!(
+                    path = %relative_to(root, path),
+                    reason,
+                    "a folder reached through a link could not be used, nor resolved; nothing is marked missing this scan"
+                );
+                self.incomplete = true;
+                self.unreadable.push(Unreadable {
+                    folder: "<unknown>".to_owned(),
+                    reason,
+                });
+            }
+        }
+    }
+
     /// Whether an ignore file of a folder above `path` leaves it out. The
     /// deepest file that has an opinion decides, as in git.
     fn ignored(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
@@ -976,13 +1021,7 @@ fn admit(
                 return false;
             }
             Rules::Unusable(reason) => {
-                let folder = relative_to(root, path);
-                tracing::warn!(
-                    path = %folder,
-                    reason,
-                    "a folder's ignore file cannot be used; its tracks are left as they are"
-                );
-                walk.unreadable.push(Unreadable { folder, reason });
+                walk.unreadable(root, path, follow_links, reason);
                 return false;
             }
         }
@@ -1036,12 +1075,9 @@ fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> 
                 } else {
                     None
                 };
-                let named = error
-                    .path()
-                    .filter(|path| path.starts_with(root))
-                    .map(|path| relative_to(root, path));
+                let named = error.path().filter(|path| path.starts_with(root));
                 match (link, named) {
-                    (Some(why), Some(path)) => walk.skip_link(&path, why),
+                    (Some(why), Some(path)) => walk.skip_link(&relative_to(root, path), why),
                     (_, None) => {
                         tracing::warn!("the library walk failed somewhere it could not name");
                         incomplete = true;
@@ -1050,15 +1086,8 @@ fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> 
                             reason: "folder could not be read",
                         });
                     }
-                    (None, Some(folder)) => {
-                        tracing::warn!(
-                            path = %folder,
-                            "a folder in the library could not be read; its tracks are left as they are"
-                        );
-                        walk.unreadable.push(Unreadable {
-                            folder,
-                            reason: "folder could not be read",
-                        });
+                    (None, Some(path)) => {
+                        walk.unreadable(root, path, follow_links, "folder could not be read");
                     }
                 }
                 continue;
@@ -1103,7 +1132,7 @@ fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> 
     Ok(Discovery {
         paths,
         unreadable: walk.unreadable,
-        incomplete,
+        incomplete: incomplete || walk.incomplete,
         excluded: walk.excluded,
         skipped_links: walk.skipped_links,
     })

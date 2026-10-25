@@ -784,6 +784,18 @@ impl DomainServices {
             ),
             _ => return Err(ServiceError::Invalid),
         };
+        // Standing before the scan lock: a `409` for a library the caller may
+        // not see would say that it exists, and that it is being scanned. Read
+        // again in the transaction below, for a membership revoked meanwhile.
+        {
+            let mut connection = self.db.pool().acquire().await?;
+            if !standing_on(&mut connection, actor, library_id)
+                .await?
+                .curates()
+            {
+                return Err(ServiceError::Forbidden);
+            }
+        }
         let _scan_lock = self
             .scanner
             .try_lock_library(library_id)

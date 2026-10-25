@@ -2014,6 +2014,34 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
             .await,
         Err(ServiceError::Conflict)
     ));
+    // During that scan, somebody who may not purge is refused as such, and a
+    // stranger is told there is no library: a `Conflict` would say there is
+    // one, and that it is being scanned.
+    let stranger = insert_account(&state, "purge-stranger", "user").await;
+    let refused = state
+        .services
+        .purge_unavailable_tracks(
+            waveflow_server::services::LibraryActor::operator(stranger),
+            library.id,
+            all(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(ServiceError::NotFound)),
+        "{refused:?}"
+    );
+    let refused = state
+        .services
+        .purge_unavailable_tracks(
+            waveflow_server::services::LibraryActor::operator(listener),
+            library.id,
+            all(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(ServiceError::Forbidden)),
+        "{refused:?}"
+    );
     assert_eq!(
         state
             .services
@@ -2427,4 +2455,68 @@ async fn a_queued_scan_reads_the_library_as_it_is_when_it_runs() {
     let record = settled(&state, owner, queued).await;
     assert_eq!(record.status, "completed", "{:?}", record.message);
     assert_eq!((record.added, record.unavailable), (0, 0));
+}
+
+/// RFC-021 decision 6: a settled change whose scan cannot be queued stays
+/// pending, rather than waiting for the periodic scan — which an interval of
+/// zero turns off. A library the catalogue no longer holds refuses the job, the
+/// simplest failure a test can provoke.
+#[tokio::test]
+async fn a_scan_the_watcher_cannot_queue_stays_pending() {
+    let (_temp, _config, state) = test_app().await;
+    let ghost = uuid::Uuid::new_v4();
+    let watched = std::collections::HashMap::from([(
+        ghost,
+        LibraryRecord {
+            id: ghost,
+            name: "ghost".into(),
+            root_path: std::path::PathBuf::from("/nowhere"),
+        },
+    )]);
+    let delay = std::time::Duration::from_millis(10);
+    let mut settle = waveflow_server::watcher::Settle::new(delay);
+    let start = tokio::time::Instant::now();
+    settle.touch(ghost, start);
+    waveflow_server::watcher::dispatch_due(&mut settle, &watched, &state.scanner, start + delay)
+        .await;
+    assert!(
+        settle.is_pending(ghost),
+        "a change whose scan could not be queued was dropped"
+    );
+}
+
+/// RFC-018 decision 3 under RFC-021's links: a folder reached only through a
+/// followed link, whose rules cannot be used, spares its tracks under the name
+/// the catalogue gives them — the target's — and not under the link's, where
+/// they would be marked missing anyway.
+#[tokio::test]
+async fn a_folder_reached_through_a_link_spares_its_tracks_when_it_cannot_be_used() {
+    let mut linked = true;
+    let (_temp, state, owner, library, root) = incremental_library("alias-unusable", |music| {
+        std::fs::create_dir_all(music.join(".hidden/Sub")).unwrap();
+        write_test_wav(&music.join(".hidden/Sub/One.wav"));
+        // The hidden folder is reached through the link only.
+        linked &= make_link(&music.join(".hidden"), &music.join("Alias"), true);
+    })
+    .await;
+    if !linked {
+        eprintln!("skipped: this system will not let the test make a symbolic link");
+        return;
+    }
+    sqlx::query("UPDATE library SET follow_links = 1 WHERE id = ?")
+        .bind(library.id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(available_paths(&state).await, [".hidden/Sub/One.wav"]);
+
+    std::fs::write(root.join(".hidden/Sub/.waveflowignore"), "[z-a]\n").unwrap();
+    let scan = job(&state, owner, scan_once(&state, owner, library).await).await;
+    assert_eq!(scan.errors, 1);
+    assert_eq!(
+        scan.unavailable, 0,
+        "a track under a folder the walk could not use was marked missing"
+    );
+    assert_eq!(available_paths(&state).await, [".hidden/Sub/One.wav"]);
 }
