@@ -1,8 +1,11 @@
 # RFC-024 — Discovery: LRCLIB lyrics, listening statistics, mixes and local similar songs
 
 - **Status**: Proposed
-- **Implemented by**: in progress. The *Status* field above never flips in
-  this project; this line is the one that says what is running.
+- **Implemented by**: [#334](https://github.com/InstaZDLL/waveflow-server/pull/334)
+  (this RFC, LRCLIB lyrics, statistics, mixes, the local similar-songs
+  fallback, and the web client's statistics page and shelf). The *Status*
+  field above never flips in this project; this line is the one that says
+  what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the frozen
