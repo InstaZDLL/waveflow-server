@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -6,10 +6,14 @@ import {
   createPlaylist,
   currentUser,
   deletePlaylist,
+  movePlaylistEntry,
   type Playlist,
+  removePlaylistEntry,
+  type Song,
   setPlaylistPublic,
 } from "../api";
 import { playlistsQuery } from "../api/queries";
+import { Icon } from "../components/icons";
 import {
   EmptyState,
   Loading,
@@ -29,6 +33,8 @@ export function PlaylistsPage() {
   const player = usePlayer();
   const { t } = useI18n();
   const reload = useReload(playlistsQuery().queryKey);
+  const client = useQueryClient();
+  const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
   const { data: value, error } = useQuery(playlistsQuery());
@@ -78,6 +84,90 @@ export function PlaylistsPage() {
       setMutationError(t("playlists.publicError"));
     }
   }
+
+  /**
+   * Moves the entry shown at `from` to `to`, naming the track the page
+   * believes is there: a list edited elsewhere since it was read is refused
+   * rather than having another entry moved, and re-read.
+   */
+  async function move(playlist: Playlist, from: number, to: number) {
+    const song = playlist.songs[from];
+    if (!song || to < 0 || to >= playlist.songs.length) return;
+    await editEntry(
+      () => movePlaylistEntry(playlist.id, from, to, song.id),
+      "playlists.moveError",
+    );
+  }
+
+  /** Removes the entry shown at `position`, guarded like a move. */
+  async function removeEntry(playlist: Playlist, position: number) {
+    const song = playlist.songs[position];
+    if (!song) return;
+    await editEntry(
+      () => removePlaylistEntry(playlist.id, position, song.id),
+      "playlists.removeEntryError",
+    );
+  }
+
+  /**
+   * One entry edit at a time, the controls held until the list is read
+   * again: a second click sent before the first edit's answer came back
+   * would name positions in a list that no longer exists.
+   */
+  async function editEntry(
+    edit: () => Promise<unknown>,
+    failure: "playlists.moveError" | "playlists.removeEntryError",
+  ) {
+    if (editing) return;
+    setEditing(true);
+    setMutationError(null);
+    try {
+      await edit();
+    } catch {
+      setMutationError(t(failure));
+    }
+    try {
+      await client.invalidateQueries({ queryKey: playlistsQuery().queryKey });
+    } finally {
+      setEditing(false);
+    }
+  }
+
+  const entryActions =
+    (playlist: Playlist) => (song: Song, position: number, count: number) => (
+      <span className="playlist-entry-actions">
+        <button
+          type="button"
+          className="row-action"
+          disabled={editing || position === 0}
+          onClick={() => void move(playlist, position, position - 1)}
+          aria-label={t("playlists.moveUp", { title: song.title })}
+          title={t("playlists.moveUp", { title: song.title })}
+        >
+          <span aria-hidden="true">↑</span>
+        </button>
+        <button
+          type="button"
+          className="row-action"
+          disabled={editing || position === count - 1}
+          onClick={() => void move(playlist, position, position + 1)}
+          aria-label={t("playlists.moveDown", { title: song.title })}
+          title={t("playlists.moveDown", { title: song.title })}
+        >
+          <span aria-hidden="true">↓</span>
+        </button>
+        <button
+          type="button"
+          className="row-action"
+          disabled={editing}
+          onClick={() => void removeEntry(playlist, position)}
+          aria-label={t("playlists.removeEntry", { title: song.title })}
+          title={t("playlists.removeEntry", { title: song.title })}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      </span>
+    );
 
   async function save(playlist: Playlist) {
     setMutationError(null);
@@ -156,7 +246,10 @@ export function PlaylistsPage() {
         </div>
       </header>
       {playlist.songs.length ? (
-        <SongTable songs={playlist.songs} />
+        <SongTable
+          songs={playlist.songs}
+          rowActions={mine ? entryActions(playlist) : undefined}
+        />
       ) : (
         <p className="muted">{t("playlists.emptyOne")}</p>
       )}

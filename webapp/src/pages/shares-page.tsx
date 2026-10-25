@@ -3,6 +3,7 @@ import { type FormEvent, useState } from "react";
 
 import { createShare, deleteShare, type Share } from "../api";
 import { sharesQuery } from "../api/queries";
+import { MAX_SHARE_TRACKS } from "../api/shares";
 import {
   EmptyState,
   Loading,
@@ -40,8 +41,13 @@ export function SharesPage() {
     );
   }
 
+  // A share holds what one opening can hand a pass to each of; a longer
+  // queue is refused by the server, so it is not sent.
+  const tooLong = player.queue.length > MAX_SHARE_TRACKS;
+
   async function shareQueue(event: FormEvent) {
     event.preventDefault();
+    if (tooLong) return;
     setMutationError(null);
     try {
       const share = await createShare(
@@ -97,12 +103,20 @@ export function SharesPage() {
           placeholder={t("shares.maxVisits")}
           aria-label={t("shares.maxVisits")}
         />
-        <button type="submit" disabled={!player.queue.length}>
+        <button type="submit" disabled={!player.queue.length || tooLong}>
           {t("shares.create")}
         </button>
       </form>
       {!player.queue.length ? (
         <p className="muted">{t("shares.needQueue")}</p>
+      ) : null}
+      {tooLong ? (
+        <p className="muted">
+          {t("shares.tooLong", {
+            count: player.queue.length,
+            limit: MAX_SHARE_TRACKS,
+          })}
+        </p>
       ) : null}
       {mutationError ? <p className="error">{mutationError}</p> : null}
       {createdShareNotice}

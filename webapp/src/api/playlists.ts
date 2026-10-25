@@ -115,3 +115,34 @@ export const appendToPlaylist = (id: string, trackIds: string[]) =>
     method: "PATCH",
     body: JSON.stringify({ add: trackIds }),
   });
+
+/**
+ * Moves the entry shown at `from` so it is shown at `to`. `trackId` is the
+ * track the caller believes sits at `from`: the server refuses the move (409)
+ * when it does not, rather than moving another entry of a list that changed.
+ */
+export const movePlaylistEntry = (
+  id: string,
+  from: number,
+  to: number,
+  trackId: string,
+) =>
+  call<Playlist>(`/api/v2/playlists/${id}/move`, {
+    method: "POST",
+    body: JSON.stringify({ from, to, track_id: trackId }),
+  });
+
+/**
+ * Removes one entry, by the position it is shown at: a playlist may hold a
+ * track twice, and the position is what says which copy goes. `trackId` is
+ * the track the caller believes is there, guarded as a move is (409).
+ */
+export const removePlaylistEntry = (
+  id: string,
+  position: number,
+  trackId: string,
+) =>
+  call<Playlist>(`/api/v2/playlists/${id}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ position, track_id: trackId }),
+  });

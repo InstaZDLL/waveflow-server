@@ -94,10 +94,21 @@ const missingTrack = (index: number, title: string) => ({
   playlist_entries: index,
   favorites: 1,
   plays: 3 * index,
+  purged_at: null as number | null,
+  deleted_after: null as number | null,
 });
 let missingTracks: Array<ReturnType<typeof missingTrack>> = [];
+/**
+ * What a purge took out of sight and the server still holds, restorable,
+ * as `GET /libraries/{id}/purged-tracks` answers it.
+ */
+let purgedTracks: Array<ReturnType<typeof missingTrack>> = [];
 /** What each purge asked for, in order. */
 let purgeAsks: unknown[] = [];
+/** What each restoration asked for, in order. */
+let restoreAsks: unknown[] = [];
+/** The grace window the mock server keeps a purge restorable for: a week. */
+const PURGE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
 let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
@@ -725,6 +736,7 @@ async function mockAuthenticatedApi(page: Page) {
           name: found?.name ?? id,
           path: `/srv/music/${id}`,
           follow_links: found?.follow_links ?? false,
+          watch: true,
         },
       });
       return;
@@ -734,12 +746,55 @@ async function mockAuthenticatedApi(page: Page) {
         | { all: true }
         | { track_ids: string[] };
       purgeAsks.push(asked);
-      const before = missingTracks.length;
-      missingTracks =
-        "all" in asked
-          ? []
-          : missingTracks.filter((entry) => !asked.track_ids.includes(entry.id));
-      await route.fulfill({ json: { purged: before - missingTracks.length } });
+      // As the server does with its default grace window: out of sight now,
+      // restorable for a week.
+      const now = Date.now();
+      const taken = missingTracks.filter(
+        (entry) => "all" in asked || asked.track_ids.includes(entry.id),
+      );
+      missingTracks = missingTracks.filter((entry) => !taken.includes(entry));
+      purgedTracks = [
+        ...purgedTracks,
+        ...taken.map((entry) => ({
+          ...entry,
+          purged_at: now,
+          deleted_after: now + PURGE_GRACE_MS,
+        })),
+      ];
+      await route.fulfill({
+        json: { purged: taken.length, restorable_until: now + PURGE_GRACE_MS },
+      });
+      return;
+    }
+    if (url.pathname.endsWith("/purged-tracks/restore")) {
+      const asked = route.request().postDataJSON() as
+        | { all: true }
+        | { track_ids: string[] };
+      restoreAsks.push(asked);
+      const back = purgedTracks.filter(
+        (entry) => "all" in asked || asked.track_ids.includes(entry.id),
+      );
+      purgedTracks = purgedTracks.filter((entry) => !back.includes(entry));
+      missingTracks = [
+        ...missingTracks,
+        ...back.map((entry) => ({
+          ...entry,
+          purged_at: null,
+          deleted_after: null,
+        })),
+      ];
+      await route.fulfill({ json: { restored: back.length } });
+      return;
+    }
+    if (url.pathname.endsWith("/purged-tracks")) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      await route.fulfill({
+        json: {
+          total: purgedTracks.length,
+          tracks: purgedTracks.slice(offset, offset + limit),
+        },
+      });
       return;
     }
     if (url.pathname.endsWith("/unavailable-tracks")) {
@@ -1296,7 +1351,9 @@ async function mockAuthenticatedApi(page: Page) {
 test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
   missingTracks = [];
+  purgedTracks = [];
   purgeAsks = [];
+  restoreAsks = [];
   membersFail = false;
   tokensFail = false;
   ownClients = freshClients();
@@ -1618,6 +1675,8 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "Play",
     "Add to queue",
     "Download",
+    // RFC-022: this browser supports Cache Storage, so it offers the copy.
+    "Keep for offline",
     "Properties",
     "Edit tags",
     "Move to folder…",
@@ -1628,6 +1687,8 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "outline-style",
     "solid",
   );
+  // Past "Keep for offline" (RFC-022), the fourth item.
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
@@ -1657,6 +1718,7 @@ test("opens a track's properties from its context menu", async ({ page }) => {
 
   // The backdrop, outside the panel's box, does close it.
   await page.keyboard.press("Shift+F10");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
@@ -3749,13 +3811,13 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The seventeen the bar cannot hold — including the three this account is
+  // The eighteen the bar cannot hold — including the three this account is
   // entitled to as an administrator and owner of a library that takes files.
   // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
   // `Needs attention` with RFC-015, `Quality` with RFC-016, `Missing files`
-  // with RFC-021, `Statistics` with RFC-024 and `Podcasts` with RFC-025; this
-  // count is what said so: a new entry in the sidebar reaches the sheet, and
-  // the sheet is pinned.
+  // with RFC-021, `Offline` with RFC-022, `Statistics` with RFC-024 and
+  // `Podcasts` with RFC-025; this count is what said so: a new entry in the
+  // sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
     "Songs",
@@ -3768,6 +3830,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Random",
     "Recently played",
     "Statistics",
+    "Offline",
     "Shares",
     "Radio",
     "Podcasts",
@@ -3779,7 +3842,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(17);
+  await expect(sheet.getByRole("link")).toHaveCount(18);
 
   await expectNoWcagViolations(page);
 
@@ -7404,8 +7467,15 @@ test("lists the missing files and purges only what was chosen", async ({
   await page.getByRole("button", { name: "Confirm: purge 1" }).click();
   await expect(page.getByText("1 track purged.")).toBeVisible();
   expect(purgeAsks).toEqual([{ track_ids: ["missing-1"] }]);
-  await expect(page.getByText("Gone/1 First light.flac")).toHaveCount(0);
-  await expect(page.getByText("Gone/2 Second wind.flac")).toBeVisible();
+  // Out of the missing files, and into the purged ones it can come back from.
+  const listed = page.locator("ul.missing-list").first();
+  await expect(listed.getByText("Gone/1 First light.flac")).toHaveCount(0);
+  await expect(listed.getByText("Gone/2 Second wind.flac")).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Purged, still restorable (1)" })
+      .getByText("Gone/1 First light.flac"),
+  ).toBeVisible();
 });
 
 /** Purging is a curator's: a listener is told so and asks for nothing. */
@@ -7660,4 +7730,525 @@ test("credits nobody for words that travel with the file", async ({ page }) => {
     "If you complain once more",
   );
   await expect(page.getByText("Lyrics from LRCLIB")).toHaveCount(0);
+});
+
+/**
+ * A playlist's owner moves an entry and removes one, each named by the
+ * position shown (RFC-020, what was still open): a move sends the track it
+ * believes is there, so a list changed elsewhere is refused rather than
+ * edited in the wrong place.
+ */
+test("moves and removes a playlist entry by the position it is shown at", async ({
+  page,
+}) => {
+  const asks: Array<[string, unknown]> = [];
+  const listed = {
+    ...playlists[0],
+    songs: [
+      song(1, "Hidden Place", 5, true),
+      song(2, "Cocoon", 0, false),
+      song(3, "Aurora", 0, false),
+    ],
+  };
+  await page.route("**/api/v2/playlists?*", (route) =>
+    route.fulfill({ json: [listed] }),
+  );
+  await page.route("**/api/v2/playlists/playlist-1/move", async (route) => {
+    asks.push(["move", route.request().postDataJSON()]);
+    await route.fulfill({ json: listed });
+  });
+  await page.route("**/api/v2/playlists/playlist-1/remove", async (route) => {
+    asks.push(["remove", route.request().postDataJSON()]);
+    await route.fulfill({ json: listed });
+  });
+  await page.route("**/api/v2/playlists/playlist-1", async (route) => {
+    asks.push([route.request().method(), route.request().postDataJSON()]);
+    await route.fulfill({ json: listed });
+  });
+  await page.goto("/playlists");
+  await expect(page.getByRole("heading", { name: "Evening" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Move Hidden Place up" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Move Aurora down" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Move Cocoon down" }).click();
+  await expect.poll(() => asks.length).toBe(1);
+  await page
+    .getByRole("button", { name: "Remove Aurora from this playlist" })
+    .click();
+  await expect.poll(() => asks.length).toBe(2);
+  expect(asks).toEqual([
+    ["move", { from: 1, to: 2, track_id: "song-2" }],
+    ["remove", { position: 2, track_id: "song-3" }],
+  ]);
+  await expectNoWcagViolations(page);
+});
+
+/** Another account's public playlist offers none of an owner's controls. */
+test("offers no move or removal on another account's playlist", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/playlists?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          ...playlists[0],
+          id: "playlist-2",
+          owner_id: "user-2",
+          owner_username: "guest",
+          name: "Guest picks",
+          public: true,
+          songs: [song(1, "Hidden Place", 5, true), song(2, "Cocoon", 0, false)],
+        },
+      ],
+    }),
+  );
+  await page.goto("/playlists");
+  await expect(page.getByRole("heading", { name: "Guest picks" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Move / })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /from this playlist$/ }),
+  ).toHaveCount(0);
+});
+
+/**
+ * A share page shows the covers the share hands out, from the addresses it
+ * hands out (RFC-020): plain image addresses under the visit's pass, loaded
+ * with no session. A track with no cover shows a plain square.
+ */
+test("a share page shows the covers its share hands out", async ({ page }) => {
+  const coverAsks: Array<string | null> = [];
+  await page.route("**/share/wfs_covers", async (route) => {
+    if (route.request().resourceType() === "document") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        id: "share-2",
+        description: "Covers",
+        expiresAt: null,
+        visitCount: 1,
+        tracks: [
+          {
+            ...song(1, "Hidden Place", 5, true),
+            streamUrl: "/share/wfs_covers/tracks/song-1/stream?visit=pass-1",
+            coverUrl: "/share/wfs_covers/tracks/song-1/cover?visit=pass-1",
+          },
+          {
+            ...song(2, "Cocoon", 0, false),
+            streamUrl: "/share/wfs_covers/tracks/song-2/stream?visit=pass-2",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/share/wfs_covers/tracks/*/cover?*", async (route) => {
+    coverAsks.push(await route.request().headerValue("authorization"));
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "image/png" },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4m8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+  });
+  await page.goto("/share/wfs_covers");
+  await expect(page.getByRole("heading", { name: "Covers" })).toBeVisible();
+  const covers = page.locator("img.share-track-cover");
+  await expect(covers).toHaveCount(1);
+  await expect(covers.first()).toHaveAttribute(
+    "src",
+    "/share/wfs_covers/tracks/song-1/cover?visit=pass-1",
+  );
+  await expect.poll(() => coverAsks).toEqual([null]);
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+/**
+ * A purge can be taken back while the server keeps it (RFC-021, undoing a
+ * purge): the purged track leaves the missing files for a list of its own,
+ * says until when it can come back, and restoring it puts it back.
+ */
+test("takes a purge back while the server still keeps it", async ({ page }) => {
+  missingTracks = [missingTrack(1, "First light"), missingTrack(2, "Second wind")];
+  await page.goto("/missing");
+  await page.getByRole("checkbox", { name: "Select First light" }).check();
+  await page.getByRole("button", { name: "Purge the selected (1)" }).click();
+  await page.getByRole("button", { name: "Confirm: purge 1" }).click();
+  await expect(
+    page.getByText(/1 track purged\. It can be restored until/),
+  ).toBeVisible();
+  const held = page.getByRole("region", {
+    name: "Purged, still restorable (1)",
+  });
+  await expect(held.getByText("Gone/1 First light.flac")).toBeVisible();
+  await expect(held.getByText(/deleted for good after/)).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await held.getByRole("button", { name: "Restore First light" }).click();
+  await expect(page.getByText("1 track restored.")).toBeVisible();
+  expect(restoreAsks).toEqual([{ track_ids: ["missing-1"] }]);
+  await expect(
+    page.getByRole("region", { name: /Purged, still restorable/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Gone/1 First light.flac")).toBeVisible();
+});
+
+/** A library's watch is an administrator's switch beside its links setting. */
+test("switches a library's watch off from its settings", async ({ page }) => {
+  const updates: unknown[] = [];
+  await page.route("**/api/v2/libraries/library-1", async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.fallback();
+      return;
+    }
+    updates.push(route.request().postDataJSON());
+    await route.fulfill({ json: { scan_id: null } });
+  });
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Name, folder and deletion" }).click();
+  const watch = page.getByRole("checkbox", { name: /Watch the folder/ });
+  await expect(watch).toBeChecked();
+  await watch.uncheck();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => updates).toEqual([{ watch: false }]);
+});
+
+/**
+ * "Keep for offline" stores a track in this browser under its id, fetched
+ * once through a ticket whose address is not what is kept (RFC-022), and the
+ * offline page lists it and plays it from there with no server to ask.
+ */
+test("keeps a track for offline, by its id, and plays it from the offline page", async ({
+  page,
+}) => {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9/stream-ticket", (route) =>
+    route.fulfill({
+      json: { url: "/api/v2/stream/ticket-9", expires_at: Date.now() + 60_000 },
+    }),
+  );
+  await page.route("**/api/v2/stream/ticket-9", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "content-type": "audio/flac" },
+      body: Buffer.from([0x66, 0x4c, 0x61, 0x43]),
+    }),
+  );
+  await page.goto("/songs");
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for Army Of Me" });
+  await menu.getByRole("menuitem", { name: "Keep for offline" }).click();
+  const stored = () =>
+    page.evaluate(async () => {
+      const cache = await caches.open("waveflow-offline-v1:user-1");
+      return (await cache.keys())
+        .map((request) => new URL(request.url).pathname)
+        .sort();
+    });
+  await expect
+    .poll(stored)
+    .toEqual(["/offline/meta/song-9", "/offline/tracks/song-9"]);
+  expect((await stored()).some((path) => path.includes("ticket"))).toBe(false);
+
+  // The offline page asks the server for nothing.
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/")) asked.push(path);
+  });
+  await page.goto("/offline");
+  await expect(
+    page.getByRole("heading", { name: "Kept for offline" }),
+  ).toBeVisible();
+  await expect(page.getByRole("navigation")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Army Of Me/ }).click();
+  await expect(page.getByLabel("Offline player")).toHaveAttribute(
+    "src",
+    /^(blob:|\/offline\/tracks\/song-9$)/,
+  );
+  expect(asked).toEqual([]);
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+
+  await page
+    .getByRole("button", { name: "Remove the offline copy of Army Of Me" })
+    .click();
+  await expect(page.getByText("Nothing is kept yet.", { exact: false })).toBeVisible();
+  await expect.poll(stored).toEqual([]);
+});
+
+/** Keeps the fixture's track for offline through its menu, as a listener does. */
+async function keepFirstSongOffline(page: Page) {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9/stream-ticket", (route) =>
+    route.fulfill({
+      json: { url: "/api/v2/stream/ticket-9", expires_at: Date.now() + 60_000 },
+    }),
+  );
+  await page.route("**/api/v2/stream/ticket-9", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "content-type": "audio/flac" },
+      body: Buffer.from([0x66, 0x4c, 0x61, 0x43]),
+    }),
+  );
+  await page.goto("/songs");
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
+  await page.keyboard.press("Shift+F10");
+  await page
+    .getByRole("menu", { name: "Actions for Army Of Me" })
+    .getByRole("menuitem", { name: "Keep for offline" })
+    .click();
+  await expect.poll(() => keptPaths(page)).toContain("/offline/tracks/song-9");
+}
+
+/** Every address this browser holds in an offline cache, whoever kept it. */
+function keptPaths(page: Page) {
+  return page.evaluate(async () => {
+    const paths: string[] = [];
+    for (const name of await caches.keys()) {
+      if (!name.startsWith("waveflow-offline-v1:")) continue;
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        paths.push(new URL(request.url).pathname);
+      }
+    }
+    return paths.sort();
+  });
+}
+
+/**
+ * The kept tracks are one account's (RFC-022): a sign-out deletes them, so
+ * the offline page opened afterwards — with no session at all — lists and
+ * plays nothing of the account that left.
+ */
+test("a sign-out deletes the tracks kept for offline", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await keepFirstSongOffline(page);
+  // Dispatched rather than clicked: the sidebar's footer sits under the
+  // fixed player bar at some viewports.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(() => keptPaths(page)).toEqual([]);
+
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { code: "invalid_refresh_token" } }),
+  );
+  await page.goto("/offline");
+  await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
+  await expect(page.getByLabel("Offline player")).toHaveCount(0);
+});
+
+/**
+ * Another account signing in on the same browser is shown none of the last
+ * one's copies, and they are gone before it could ask for them.
+ */
+test("another account signing in sees none of the tracks kept offline", async ({
+  page,
+}) => {
+  await keepFirstSongOffline(page);
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: {
+        ...session,
+        user: { id: "user-2", username: "guest", role: "user" },
+      },
+    }),
+  );
+  await page.goto("/songs");
+  await expect.poll(() => keptPaths(page)).toEqual([]);
+  await page.goto("/offline");
+  await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
+});
+
+/**
+ * One entry edit at a time: the controls stay held until the edited list
+ * has been read again, so a second click cannot name positions in a list the
+ * first edit already changed (review of #335).
+ */
+test("holds a playlist's entry controls until the edited list is read again", async ({
+  page,
+}) => {
+  const listed = {
+    ...playlists[0],
+    songs: [
+      song(1, "Hidden Place", 5, true),
+      song(2, "Cocoon", 0, false),
+      song(3, "Aurora", 0, false),
+    ],
+  };
+  await page.route("**/api/v2/playlists?*", (route) =>
+    route.fulfill({ json: [listed] }),
+  );
+  let answer: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  let moves = 0;
+  await page.route("**/api/v2/playlists/playlist-1/move", async (route) => {
+    moves += 1;
+    await held;
+    await route.fulfill({ json: listed });
+  });
+  await page.goto("/playlists");
+  await page.getByRole("button", { name: "Move Cocoon down" }).click();
+  await expect.poll(() => moves).toBe(1);
+  for (const name of [
+    "Move Cocoon up",
+    "Move Hidden Place down",
+    "Remove Aurora from this playlist",
+  ]) {
+    await expect(page.getByRole("button", { name })).toBeDisabled();
+  }
+  answer();
+  await expect(
+    page.getByRole("button", { name: "Move Cocoon up" }),
+  ).toBeEnabled();
+  expect(moves).toBe(1);
+});
+
+/** A queue longer than a share holds is not sent, and the page says why. */
+test("does not send a queue longer than a share holds", async ({ page }) => {
+  const long = Array.from({ length: 401 }, (_, index) =>
+    song(index + 1, `Track ${index + 1}`, 0, false),
+  );
+  await page.route("**/api/v2/queue", (route) =>
+    route.fulfill({
+      json: {
+        current: "song-1",
+        position_ms: 0,
+        changed_by: null,
+        updated_at: 1,
+        songs: long,
+      },
+    }),
+  );
+  const created: string[] = [];
+  await page.route("**/api/v2/shares", async (route) => {
+    if (route.request().method() === "POST") created.push(route.request().url());
+    await route.fulfill({ json: [] });
+  });
+  await page.goto("/shares");
+  await expect(
+    page.getByText(
+      "A share holds up to 400 tracks, and the queue holds 401. Shorten the queue to share it.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Share current queue" }),
+  ).toBeDisabled();
+  expect(created).toEqual([]);
+});
+
+/** A cover that will not load gives way to the plain square. */
+test("a share page falls back to a plain square when a cover will not load", async ({
+  page,
+}) => {
+  await page.route("**/share/wfs_broken", async (route) => {
+    if (route.request().resourceType() === "document") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        id: "share-3",
+        description: "Broken cover",
+        expiresAt: null,
+        visitCount: 1,
+        tracks: [
+          {
+            ...song(1, "Hidden Place", 5, true),
+            streamUrl: "/share/wfs_broken/tracks/song-1/stream?visit=pass-1",
+            coverUrl: "/share/wfs_broken/tracks/song-1/cover?visit=pass-1",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/share/wfs_broken/tracks/*/cover?*", (route) =>
+    route.fulfill({ status: 404, body: "" }),
+  );
+  await page.goto("/share/wfs_broken");
+  await expect(page.getByRole("heading", { name: "Broken cover" })).toBeVisible();
+  await expect(page.locator("img.share-track-cover")).toHaveCount(0);
+  await expect(page.locator("span.share-track-cover")).toHaveCount(1);
+});
+
+/**
+ * The offline page plays a track by its id: forgetting a track listed above
+ * it neither switches what plays nor starts it over (review of #335).
+ */
+test("keeps playing the same kept track when another is forgotten", async ({
+  page,
+}) => {
+  await page.goto("/offline");
+  await page.evaluate(async () => {
+    await (await caches.open("waveflow-offline-owner")).put(
+      "/offline/owner",
+      new Response("user-1"),
+    );
+    const cache = await caches.open("waveflow-offline-v1:user-1");
+    for (const [id, title, at] of [
+      ["k1", "First kept", 2],
+      ["k2", "Second kept", 1],
+    ] as const) {
+      await cache.put(
+        `/offline/tracks/${id}`,
+        new Response(new Blob([new Uint8Array([1, 2, 3])]), {
+          headers: { "content-type": "audio/flac" },
+        }),
+      );
+      await cache.put(
+        `/offline/meta/${id}`,
+        new Response(
+          JSON.stringify({
+            id,
+            title,
+            artist: "Ada Reed",
+            album: null,
+            duration_ms: 1_000,
+            suffix: "flac",
+            kept_at: at,
+            bytes: 3,
+          }),
+        ),
+      );
+    }
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /^Second kept/ }).click();
+  const player = page.getByLabel("Offline player");
+  await expect(player).toHaveAttribute("src", /^(blob:|\/offline\/)/);
+  const before = await player.getAttribute("src");
+  await page
+    .getByRole("button", { name: "Remove the offline copy of First kept" })
+    .click();
+  await expect(page.getByRole("button", { name: /^First kept/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Second kept" }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(player).toHaveAttribute("src", before ?? "");
 });

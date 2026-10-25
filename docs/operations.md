@@ -482,11 +482,14 @@ path in the library. To follow them, per library:
 waveflow-server library set-links --actor admin --library-id <uuid> --follow
 ```
 
-A followed link must lead **inside the library**: one whose target is outside
-the root, broken, or a loop back to a folder above it is skipped and counted. A
-file reached through links is one track, under its own path, however many links
-name it. A link farm whose files live in the same tree works best with the
-files' folder excluded from the direct walk:
+Only a library whose links setting is on follows any link, and a followed link
+must resolve **inside that library's root, or inside a folder listed in
+`WAVEFLOW_LINK_ROOTS`** (below), and **never into another library's root**. A
+link whose target is anywhere else, is broken, or loops back to a folder above
+it is skipped and counted. A file inside the root that links lead to is one
+track, stored under the file's own path, however many links name it. A link
+farm whose files live in the same tree works best with the files' folder
+excluded from the direct walk:
 
 ```text
 /music/.waveflowignore     /store/
@@ -494,8 +497,28 @@ files' folder excluded from the direct walk:
 /music/Artist/Album/…      links into ../../store/
 ```
 
-A link farm whose files live outside the root is not followed; make the root a
-common ancestor, or add the files' folder as a library of its own.
+A link farm whose files live outside the root, such as a beets `link: yes`
+import into a separate folder, is followed only into the folders you name in
+**`WAVEFLOW_LINK_ROOTS`**. Give absolute paths, separated as `PATH` is (`:`
+on Linux, `;` on Windows), for example
+`WAVEFLOW_LINK_ROOTS=/srv/beets/library`. The setting applies to every library
+whose links setting is on, so name only folders whose files the members of
+every such library may hear.
+
+A link that resolves into **another library's root** is skipped, even inside a
+named folder. A stored path that has come to resolve there since its scan is
+refused when it is played. No link shows one library's files to another
+library's members.
+
+The named folders are resolved again at every scan and every stream. A mount
+that appears after the server starts is honoured from the next scan. A mount
+that disappears no longer resolves: at a scan, links into it are skipped and
+counted; when a track stored through one is played, it is refused.
+
+A file reached through such a link is stored under the path the scan reached
+it by, and only once, however many links name it. Without the variable, make
+the library root a common ancestor of the links and their files, or add the
+files' folder as a library of its own.
 
 ### Missing files
 
@@ -510,16 +533,29 @@ waveflow-server library purge --actor admin --library-id <uuid> --all
 waveflow-server library purge --actor admin --library-id <uuid> --track-id <uuid>
 ```
 
-**A purge is not reversible.** It removes the tracks and everything that hangs
-off them for every member — playlist entries, favourites, ratings, plays, queue
-entries, corrections, lyrics — and the albums and artists left with nothing. A
-file that comes back afterwards is a new track. Only tracks still missing when
-the purge runs are removed, and a purge waits for no scan: it answers that the
-library is busy instead.
+**A purge can be taken back for a week.** It takes the tracks out of the
+missing files at once and keeps their rows for **`WAVEFLOW_PURGE_GRACE_HOURS`**
+(168 by default); until then the page lists them as purged and restores them,
+and so does the CLI:
+
+```bash
+waveflow-server library restore --actor admin --library-id <uuid> --all
+```
+
+A file that comes back within the window restores its track by itself. Once
+the window has passed, an hourly pass deletes the tracks and everything that
+hangs off them for every member — playlist entries, favourites, ratings, plays,
+queue entries, corrections, lyrics — and the albums and artists left with
+nothing; each account's sync journal is told what it lost, so a device drops
+it at its next pull. A file that comes back afterwards is a new track. Set
+`WAVEFLOW_PURGE_GRACE_HOURS=0` to delete at once, as purges did before there
+was a way back. Only tracks still missing when the purge runs are taken, and a
+purge waits for no scan: it answers that the library is busy instead.
 
 To purge on a schedule, set **`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`**: once an
-hour, tracks missing for longer than that are purged. It is off by default,
-because a share that stays unmounted for a week is not a deletion.
+hour, tracks missing for longer than that are purged, behind the same grace
+window. It is off by default, because a share that stays unmounted for a week
+is not a deletion.
 
 ### Renaming, moving and deleting a library
 
@@ -548,7 +584,17 @@ have been quiet for `WAVEFLOW_WATCH_DELAY_SECS` (10 by default); a copy that
 never pauses is still scanned every thirty delays. The periodic scan stays as
 the safety net — **as long as `WAVEFLOW_SCAN_INTERVAL_SECS` is not `0`**, which
 turns it off and leaves only the scan at boot. Set `WAVEFLOW_WATCH=false` to
-turn watching off.
+turn watching off everywhere, or switch one library off — from its settings on
+the administration page, or with
+`waveflow-server library set-watch --actor admin --library-id <uuid> --watch false`.
+
+In a library that does not follow links, a watched change scans **only the
+folders it happened in**: the scan reads those folders as a full one would,
+ignore files above them included, marks missing only what it walked, and moves
+no track it did not look for onto a file it found — a file moved in from a
+folder no event named arrives as a new track, and the next full scan settles
+the rest. A change at the library's root, a queue overflow, more than 64
+folders at once, or a library that follows links, scans the whole library.
 
 **Do not count on it for network mounts.** NFS and SMB report the changes this
 machine makes and usually not those another machine makes, so a library on a
@@ -559,6 +605,28 @@ scan, with the same condition. On Linux, a large library can exhaust the
 inotify watch limit; raise it with `sysctl fs.inotify.max_user_watches=524288`
 (and in `/etc/sysctl.d/` to keep it), or the library falls back to the periodic
 scan.
+
+## Levelling a Subsonic transcode
+
+Most Subsonic clients apply ReplayGain themselves. For those that cannot, set
+**`WAVEFLOW_SUBSONIC_REPLAYGAIN`** to `track` or `album` (`off` by default):
+a Subsonic `stream` that is transcoded anyway then carries the track's gain,
+with the album's or the track's as the fallback and never raising a peak past
+full scale. A client may ask for itself with `replayGain=off|track|album` on
+`stream`. The original file is never re-encoded for it: a request for the
+original is served as it is.
+
+## Offline listening in the web client
+
+The web client registers a service worker, `/sw.js`, that keeps its own shell
+and built files so it opens without a network, and the tracks a listener keeps
+from a track's menu, which play from the **Offline** page. It never keeps an
+API, Subsonic or share answer, a token or a stream ticket's address: a kept
+track is fetched once through a ticket and stored under its id, in that
+browser only, for the account that kept it: signing out deletes the copies,
+and another account signing in on the same browser deletes the previous one's
+before it sees them. Nothing needs configuring; a proxy must simply serve `/sw.js`
+from the same origin as the client, which it does already.
 
 ## Probes
 

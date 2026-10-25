@@ -6527,3 +6527,210 @@ async fn a_narrowed_admin_token_has_no_say_over_a_foreign_library() {
         StatusCode::OK
     );
 }
+
+/// Moving an entry of a playlist, the verb RFC-020 left open: positions are
+/// the ones the caller was shown, a hidden entry keeps its place, one copy of
+/// a repeated track moves and the other stays, a stale view is refused rather
+/// than applied to another entry, and the move reaches the owner's journal.
+#[tokio::test]
+async fn a_playlist_entry_moves_to_the_position_it_was_shown_at() {
+    let (_temp, config, state) = test_app().await;
+    let password = uuid::Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("move-owner", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    state
+        .db
+        .create_account("move-other", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let (_library, ids) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "move-music",
+        3_500,
+        &["First", "Hidden", "Second", "Third"],
+    )
+    .await;
+    let [a, hidden, b, c] = [ids[0], ids[1], ids[2], ids[3]].map(|id| id.to_string());
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "move-owner", &password).await;
+    let created = json_body(
+        send_json(
+            &router,
+            "POST",
+            "/api/v2/playlists",
+            &token,
+            Some(serde_json::json!({ "name": "Order", "track_ids": [a, hidden, b, c, a] })),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let uri = format!("/api/v2/playlists/{id}/move");
+    // The file goes, so the listener is shown four entries: a, b, c, a.
+    sqlx::query("UPDATE track SET is_available=0 WHERE id=?")
+        .bind(&hidden)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+
+    // The last copy of `a` to the front, past the hidden entry.
+    let moved = send_json(
+        &router,
+        "POST",
+        &uri,
+        &token,
+        Some(serde_json::json!({ "from": 3, "to": 0, "track_id": a })),
+    )
+    .await;
+    assert_eq!(moved.status(), StatusCode::OK);
+    assert_eq!(
+        song_ids(&json_body(moved).await["songs"]),
+        vec![a.as_str(), a.as_str(), b.as_str(), c.as_str()]
+    );
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM playlist_track WHERE playlist_id=? ORDER BY position",
+    )
+    .bind(&id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        vec![a.clone(), a.clone(), hidden.clone(), b.clone(), c.clone()],
+        "the hidden entry keeps its place among the others"
+    );
+    let journal: String = sqlx::query_scalar(
+        "SELECT payload_json FROM sync_event WHERE entity_type='playlist' \
+         ORDER BY cursor DESC LIMIT 1",
+    )
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    let journal: serde_json::Value = serde_json::from_str(&journal).unwrap();
+    assert_eq!(
+        journal["track_ids"],
+        serde_json::json!([a, a, hidden, b, c]),
+        "a device mirrors the new order from the journal"
+    );
+
+    // To the end.
+    let to_end = json_body(
+        send_json(
+            &router,
+            "POST",
+            &uri,
+            &token,
+            Some(serde_json::json!({ "from": 0, "to": 3 })),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        song_ids(&to_end["songs"]),
+        vec![a.as_str(), b.as_str(), c.as_str(), a.as_str()]
+    );
+
+    // A view gone stale: the caller believes `c` is first.
+    let stale = send_json(
+        &router,
+        "POST",
+        &uri,
+        &token,
+        Some(serde_json::json!({ "from": 0, "to": 2, "track_id": c })),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let beyond = send_json(
+        &router,
+        "POST",
+        &uri,
+        &token,
+        Some(serde_json::json!({ "from": 4, "to": 0 })),
+    )
+    .await;
+    assert_eq!(beyond.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Removal by the position shown, guarded the same way: a stale view is
+    // refused, and the hidden entry stays where it is.
+    let remove = format!("/api/v2/playlists/{id}/remove");
+    let stale = send_json(
+        &router,
+        "POST",
+        &remove,
+        &token,
+        Some(serde_json::json!({ "position": 1, "track_id": c })),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let removed = send_json(
+        &router,
+        "POST",
+        &remove,
+        &token,
+        Some(serde_json::json!({ "position": 3, "track_id": a })),
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert_eq!(
+        song_ids(&json_body(removed).await["songs"]),
+        vec![a.as_str(), b.as_str(), c.as_str()]
+    );
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM playlist_track WHERE playlist_id=? ORDER BY position",
+    )
+    .bind(&id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        vec![a.clone(), hidden.clone(), b.clone(), c.clone()]
+    );
+
+    // Someone else's playlist, public or not, answers as a missing one.
+    sqlx::query("UPDATE playlist SET public=1 WHERE id=?")
+        .bind(&id)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let other_token = login_token(&router, "move-other", &password).await;
+    let refused = send_json(
+        &router,
+        "POST",
+        &uri,
+        &other_token,
+        Some(serde_json::json!({ "from": 0, "to": 1 })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    let unchanged = json_body(
+        send_json(
+            &router,
+            "GET",
+            &format!("/api/v2/playlists/{id}"),
+            &token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        song_ids(&unchanged["songs"]),
+        vec![a.as_str(), b.as_str(), c.as_str()]
+    );
+    let refused = send_json(
+        &router,
+        "POST",
+        &remove,
+        &other_token,
+        Some(serde_json::json!({ "position": 0 })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+}

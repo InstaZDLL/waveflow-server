@@ -51,6 +51,24 @@ pub(super) async fn smart_playlist_nodes(
         .collect())
 }
 
+/// The smart playlists of the account named `username` that this account
+/// may read — its public ones — for an administrator's `getPlaylists?username=`.
+pub(super) async fn smart_playlist_nodes_of(
+    state: &AppState,
+    principal: &Principal,
+    username: &str,
+) -> Result<Vec<Node>, ProtocolError> {
+    Ok(state
+        .services
+        .smart_playlists(principal.id, true)
+        .await
+        .map_err(internal)?
+        .iter()
+        .filter(|playlist| playlist.owner_username.eq_ignore_ascii_case(username))
+        .map(smart_playlist_node)
+        .collect())
+}
+
 /// One smart playlist and its tracks, evaluated now; error 70 when there is
 /// none this account may read.
 pub(super) async fn get_smart_playlist(

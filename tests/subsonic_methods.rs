@@ -1495,3 +1495,440 @@ async fn a_format_the_facade_cannot_produce_falls_back_and_aac_is_produced() {
     assert_eq!(kind, "audio/wav");
     assert!(bytes.starts_with(b"RIFF"));
 }
+
+/// `getPlaylists?username=` is an administrator's view of another account's
+/// playlists, private ones included and read through the administrator's own
+/// libraries; to anyone else, and for a name no account carries, it answers
+/// error 70, the not-found every other refusal here gives. The writes stay
+/// the owner's.
+#[tokio::test]
+async fn subsonic_username_is_an_administrators_view_and_blurred_for_everyone_else() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, owner_key) = subsonic_account(&state, "named-owner").await;
+    let (admin, admin_key) = subsonic_account(&state, "named-admin").await;
+    let (_outsider, outsider_key) = subsonic_account(&state, "named-outsider").await;
+    sqlx::query("UPDATE account SET role='admin' WHERE id=?")
+        .bind(admin.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (shared, seen) =
+        seed_titles(&state, &config, owner, "named-shared", 4_300, &["Seen"]).await;
+    let (_kept, unseen) =
+        seed_titles(&state, &config, owner, "named-kept", 4_400, &["Unseen"]).await;
+    state
+        .db
+        .add_library_member(owner, shared, admin, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &owner_key,
+        &format!("&name=Private&songId={}&songId={}", seen[0], unseen[0]),
+    )
+    .await;
+    let id = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // That account's smart playlists (RFC-025): the public one is listed,
+    // the private one is its owner's own and stays out, as `getPlaylist`
+    // would answer it error 70.
+    let rules = waveflow_server::services::SmartRules::parse(&serde_json::json!({
+        "conditions": [{"field": "play_count", "operator": "less_than", "value": 5}],
+    }))
+    .unwrap();
+    let shown = state
+        .services
+        .create_smart_playlist(owner, "Smart open", None, true, &rules)
+        .await
+        .unwrap();
+    state
+        .services
+        .create_smart_playlist(owner, "Smart closed", None, false, &rules)
+        .await
+        .unwrap();
+
+    let listed = subsonic_json(&router, "getPlaylists", &admin_key, "&username=named-owner").await;
+    let listed = listed["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let names: Vec<&str> = listed
+        .iter()
+        .filter_map(|playlist| playlist["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Private", "Smart open"], "{listed:?}");
+    assert_eq!(listed[1]["id"], shown.id.to_string().as_str());
+    assert_eq!(listed[1]["readonly"], true);
+    assert_eq!(listed[0]["id"], id.as_str());
+    assert_eq!(listed[0]["owner"], "named-owner");
+    assert_eq!(listed[0]["public"], false);
+    assert_eq!(
+        listed[0]["songCount"], 1,
+        "counted through the administrator's libraries"
+    );
+    let opened = subsonic_json(&router, "getPlaylist", &admin_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&opened["subsonic-response"]["playlist"]),
+        vec![seen[0].to_string()]
+    );
+    // Its own listing is unchanged by the parameter naming itself: nothing
+    // of its own, and the other account's public smart playlist, as any
+    // reader is shown it.
+    let own = subsonic_json(&router, "getPlaylists", &admin_key, "&username=NAMED-ADMIN").await;
+    let own: Vec<String> = own["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|playlist| playlist["name"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(own, ["Smart open"]);
+
+    for (key, extra, who) in [
+        (
+            &outsider_key,
+            "&username=named-owner",
+            "a non-administrator",
+        ),
+        (&outsider_key, "&username=nobody-here", "an unknown name"),
+        (
+            &admin_key,
+            "&username=nobody-here",
+            "an unknown name to an admin",
+        ),
+    ] {
+        let refused = subsonic_json(&router, "getPlaylists", key, extra).await;
+        assert_eq!(
+            refused["subsonic-response"]["error"]["code"], 70,
+            "{who}: {refused}"
+        );
+    }
+    let outsider_open =
+        subsonic_json(&router, "getPlaylist", &outsider_key, &format!("&id={id}")).await;
+    assert_eq!(outsider_open["subsonic-response"]["error"]["code"], 70);
+    let outsider_self = subsonic_json(
+        &router,
+        "getPlaylists",
+        &outsider_key,
+        "&username=named-outsider",
+    )
+    .await;
+    assert_eq!(outsider_self["subsonic-response"]["status"], "ok");
+
+    let renamed = subsonic_json(
+        &router,
+        "updatePlaylist",
+        &admin_key,
+        &format!("&playlistId={id}&name=Taken"),
+    )
+    .await;
+    assert_eq!(
+        renamed["subsonic-response"]["error"]["code"], 70,
+        "the administrator reads, and writes nothing"
+    );
+}
+
+/// Subsonic has no move verb, so a client reorders by sending the whole list
+/// again through `createPlaylist?playlistId=` — which replaces the track list
+/// in the order given (RFC-020, what was still open).
+#[tokio::test]
+async fn subsonic_reorders_a_playlist_by_sending_it_again() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_key) = subsonic_account(&state, "reorder-subsonic").await;
+    let (_library, ids) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "reorder-sub",
+        4_500,
+        &["One", "Two", "Three"],
+    )
+    .await;
+    let router = waveflow_server::app(&config, state.clone());
+    let created = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!(
+            "&name=Order&songId={}&songId={}&songId={}",
+            ids[0], ids[1], ids[2]
+        ),
+    )
+    .await;
+    let id = created["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let reordered = subsonic_json(
+        &router,
+        "createPlaylist",
+        &api_key,
+        &format!(
+            "&playlistId={id}&songId={}&songId={}&songId={}",
+            ids[2], ids[0], ids[1]
+        ),
+    )
+    .await;
+    assert_eq!(
+        entry_ids(&reordered["subsonic-response"]["playlist"]),
+        vec![ids[2].to_string(), ids[0].to_string(), ids[1].to_string()]
+    );
+    let read = subsonic_json(&router, "getPlaylist", &api_key, &format!("&id={id}")).await;
+    assert_eq!(
+        entry_ids(&read["subsonic-response"]["playlist"]),
+        vec![ids[2].to_string(), ids[0].to_string(), ids[1].to_string()]
+    );
+}
+
+/// A play queue holds the largest playlist (RFC-022, what was still open), on
+/// both surfaces: a `savePlayQueue` of that many identifiers fits one form
+/// POST, the native queue route takes the same list in one JSON body beyond
+/// the 16 KiB every other body is held to, and one track more is refused.
+#[tokio::test]
+async fn a_play_queue_holds_the_largest_playlist_on_both_surfaces() {
+    let (_temp, config, state) = test_app().await;
+    let password = Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("long-queue", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4().simple());
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let (_library, ids) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "long-queue",
+        4_600,
+        &["Again", "Last"],
+    )
+    .await;
+    let (track, last) = (ids[0], ids[1]);
+    let ceiling = waveflow_server::services::MAX_QUEUE_TRACKS;
+    assert!(
+        ceiling >= waveflow_server::services::MAX_PLAYLIST_TRACKS,
+        "a playlist played whole must fit the queue"
+    );
+    let router = waveflow_server::app(&config, state.clone());
+
+    // Subsonic: one form POST naming the track as many times as the queue
+    // holds, the last entry a different track so the order is checked.
+    let mut body = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json&current={track}");
+    for _ in 1..ceiling {
+        body.push_str(&format!("&id={track}"));
+    }
+    body.push_str(&format!("&id={last}"));
+    assert!(body.len() <= waveflow_server::subsonic::MAX_FORM_BYTES);
+    let saved = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/savePlayQueue.view?f=json")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let saved = json_body(saved).await;
+    assert_eq!(saved["subsonic-response"]["status"], "ok", "{saved}");
+    let queue = state.services.queue(owner).await.unwrap().unwrap();
+    assert_eq!(queue.songs.len(), ceiling);
+    assert_eq!(queue.songs.last().unwrap().id, last);
+
+    // Native: the same list in one JSON body, then one track more.
+    let token = login_token(&router, "long-queue", &password).await;
+    let mut track_ids = vec![track; ceiling - 1];
+    track_ids.push(last);
+    let body = serde_json::json!({ "track_ids": track_ids, "current": track, "position_ms": 0 });
+    assert!(body.to_string().len() > 16 * 1024);
+    let saved = send_json(&router, "PUT", "/api/v2/queue", &token, Some(body)).await;
+    assert_eq!(saved.status(), StatusCode::NO_CONTENT);
+    track_ids.push(track);
+    let refused = send_json(
+        &router,
+        "PUT",
+        "/api/v2/queue",
+        &token,
+        Some(serde_json::json!({ "track_ids": track_ids, "position_ms": 0 })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    // A track this account cannot read still refuses the whole queue.
+    let foreign = send_json(
+        &router,
+        "PUT",
+        "/api/v2/queue",
+        &token,
+        Some(serde_json::json!({ "track_ids": [track, Uuid::new_v4()], "position_ms": 0 })),
+    )
+    .await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        state
+            .services
+            .queue(owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .songs
+            .len(),
+        ceiling,
+        "a refused save changes nothing"
+    );
+}
+
+/// The mean volume FFmpeg measures in an encoded stream, in dB.
+fn mean_volume(bytes: &[u8], scratch: &std::path::Path) -> f64 {
+    let path = scratch.join(format!("{}.mp3", Uuid::new_v4()));
+    std::fs::write(&path, bytes).unwrap();
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-nostats", "-i"])
+        .arg(&path)
+        .args(["-af", "volumedetect", "-f", "null", "-"])
+        .output()
+        .expect("FFmpeg is required");
+    let report = String::from_utf8_lossy(&output.stderr);
+    report
+        .lines()
+        .find_map(|line| line.split("mean_volume:").nth(1))
+        .and_then(|value| value.trim().trim_end_matches("dB").trim().parse().ok())
+        .unwrap_or_else(|| panic!("no mean volume in: {report}"))
+}
+
+/// ReplayGain on the Subsonic stream (RFC-022, what was still open): the
+/// operator's default levels a transcode, `replayGain=` overrides it either
+/// way, the original is served untouched whatever the mode, and a mode this
+/// server does not know is refused rather than guessed.
+#[tokio::test]
+async fn a_subsonic_transcode_carries_the_tracks_replay_gain_when_asked() {
+    use http_body_util::BodyExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
+    config.subsonic_replay_gain = waveflow_server::replay_gain::ReplayGainMode::Track;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let (owner, api_key) = subsonic_account(&state, "levelled").await;
+    let music = config.data_dir.join("levelled-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let source = music.join("Tone.flac");
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:a",
+            "flac",
+        ])
+        .arg(&source)
+        .output()
+        .expect("FFmpeg is required");
+    assert!(made.status.success());
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "levelled",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        waveflow_server::catalog::LibraryRecord {
+            id: library,
+            name: "levelled".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let track: String = sqlx::query_scalar("SELECT id FROM track WHERE library_id = ?")
+        .bind(library.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE track SET replay_gain_track_gain = -10.0, replay_gain_track_peak = NULL \
+         WHERE id = ?",
+    )
+    .bind(&track)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let stream = |extra: String| {
+        let router = router.clone();
+        let uri = format!(
+            "/rest/stream.view?apiKey={api_key}&v=1.16.1&c=golden&f=json&id={track}{extra}"
+        );
+        async move {
+            let response = router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let kind = response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (kind, bytes)
+        }
+    };
+
+    let (kind, plain) = stream("&format=mp3&replayGain=off".into()).await;
+    assert_eq!(kind, "audio/mpeg");
+    let (_, levelled) = stream("&format=mp3".into()).await;
+    let (_, asked) = stream("&format=mp3&replayGain=album".into()).await;
+    let plain = mean_volume(&plain, temp.path());
+    let levelled = mean_volume(&levelled, temp.path());
+    let asked = mean_volume(&asked, temp.path());
+    assert!(
+        (plain - levelled - 10.0).abs() < 1.0,
+        "the default levels the encode by the track gain: {plain} then {levelled}"
+    );
+    assert!(
+        (plain - asked - 10.0).abs() < 1.0,
+        "album falls back to the track's gain: {plain} then {asked}"
+    );
+
+    // The original is never re-encoded to carry it.
+    let (kind, original) = stream("&format=raw&replayGain=track".into()).await;
+    assert_ne!(kind, "audio/mpeg");
+    assert_eq!(
+        original.as_ref(),
+        std::fs::read(&source).unwrap().as_slice()
+    );
+
+    let (kind, refused) = stream("&format=mp3&replayGain=loud".into()).await;
+    assert!(kind.starts_with("application/json"), "{kind}");
+    let refused: serde_json::Value = serde_json::from_slice(&refused).unwrap();
+    assert_eq!(refused["subsonic-response"]["error"]["code"], 10);
+}

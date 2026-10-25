@@ -13,6 +13,12 @@ import { createPortal } from "react-dom";
 
 import { placeTracks, type Song, streamUrl } from "../api";
 import { downloadUrl, saveFrom } from "../lib/download";
+import {
+  forgetOffline,
+  isKeptOffline,
+  keepOffline,
+  offlineSupported,
+} from "../lib/offline";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
@@ -401,6 +407,28 @@ function TrackMenu({
           .then(({ url }) => saveFrom(downloadUrl(url)))
           .catch(onDownloadFailed),
     },
+    // Kept by its id, from the original fetched once through a ticket; the
+    // ticket's address is not what is stored (RFC-022, offline listening).
+    ...(offlineSupported()
+      ? [
+          isKeptOffline(song.id)
+            ? {
+                key: "offline",
+                icon: "close" as const,
+                label: t("trackMenu.forgetOffline"),
+                run: () => void forgetOffline(song.id).catch(onDownloadFailed),
+              }
+            : {
+                key: "offline",
+                icon: "download" as const,
+                label: t("trackMenu.keepOffline"),
+                run: () =>
+                  void streamUrl(song.id)
+                    .then(({ url }) => keepOffline(song, url))
+                    .catch(onDownloadFailed),
+              },
+        ]
+      : []),
     {
       key: "properties",
       icon: "info",

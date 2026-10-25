@@ -1,8 +1,13 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiError, currentUser, purgeUnavailableTracks } from "../api";
-import { unavailableTracksQuery } from "../api/queries";
+import {
+  ApiError,
+  currentUser,
+  purgeUnavailableTracks,
+  restorePurgedTracks,
+} from "../api";
+import { purgedTracksQuery, unavailableTracksQuery } from "../api/queries";
 import { Loading, PageHeader } from "../components/page-shell";
 import { useI18n } from "../state/i18n";
 import { mayManageMissing, useLibraryScope } from "../state/library-scope";
@@ -30,6 +35,17 @@ export function MissingPage() {
     enabled: active !== null && may,
     staleTime: 0,
   });
+  // What a purge took out of sight and can still give back (RFC-021).
+  const purged = useInfiniteQuery({
+    ...purgedTracksQuery(libraryId),
+    enabled: active !== null && may,
+    staleTime: 0,
+  });
+  const purgedTracks = useMemo(
+    () => purged.data?.pages.flatMap((page) => page.tracks) ?? [],
+    [purged.data],
+  );
+  const purgedTotal = purged.data?.pages[0]?.total ?? 0;
   const client = useQueryClient();
   const tracks = useMemo(
     () => missing.data?.pages.flatMap((page) => page.tracks) ?? [],
@@ -103,7 +119,13 @@ export function MissingPage() {
       setSelected(new Set());
       setNotice({
         error: false,
-        text: t("missing.purged", { count: outcome.purged }),
+        text:
+          outcome.restorable_until === null
+            ? t("missing.purged", { count: outcome.purged })
+            : t("missing.purgedUntil", {
+                count: outcome.purged,
+                date: day.format(new Date(outcome.restorable_until)),
+              }),
       });
       // Albums and artists left with nothing went with them, anywhere they
       // were drawn.
@@ -119,6 +141,23 @@ export function MissingPage() {
     } finally {
       setBusy(false);
       setArmed(null);
+    }
+  }
+
+  async function restore(selection: { track_ids: string[] } | { all: true }) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const outcome = await restorePurgedTracks(libraryId, selection);
+      setNotice({
+        error: false,
+        text: t("missing.restored", { count: outcome.restored }),
+      });
+      await client.invalidateQueries({ queryKey: ["missing", libraryId] });
+    } catch {
+      setNotice({ error: true, text: t("missing.restoreFailed") });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -217,6 +256,66 @@ export function MissingPage() {
           ) : null}
         </>
       )}
+      {purgedTracks.length ? (
+        <section className="stack" aria-labelledby="purged-tracks">
+          <header>
+            <h3 id="purged-tracks">
+              {t("missing.purgedTitle", { count: purgedTotal })}
+            </h3>
+            <p className="muted">{t("missing.purgedNote")}</p>
+          </header>
+          <div className="actions missing-actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void restore({ all: true })}
+            >
+              {t("missing.restoreAll")}
+            </button>
+          </div>
+          <ul className="list resource-list missing-list">
+            {purgedTracks.map((track) => (
+              <li key={track.id}>
+                <div className="missing-text">
+                  <strong>{track.title}</strong>
+                  <small className="muted">
+                    {[track.artist, track.album].filter(Boolean).join(" · ")}
+                  </small>
+                  <small className="muted missing-path">
+                    {track.relative_path}
+                  </small>
+                </div>
+                <div className="missing-facts">
+                  {track.deleted_after !== null ? (
+                    <small className="muted">
+                      {t("missing.deletedAfter", {
+                        date: day.format(new Date(track.deleted_after)),
+                      })}
+                    </small>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void restore({ track_ids: [track.id] })}
+                    aria-label={t("missing.restoreOne", { title: track.title })}
+                  >
+                    {t("missing.restore")}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {purged.hasNextPage ? (
+            <button
+              type="button"
+              disabled={purged.isFetchingNextPage}
+              onClick={() => void purged.fetchNextPage()}
+            >
+              {t("missing.more")}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
     </section>
   );
 }

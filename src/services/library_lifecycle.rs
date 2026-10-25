@@ -21,14 +21,19 @@ pub struct LibraryUpdate {
     /// Follow symbolic links that stay inside the root. An administrator only;
     /// queues a scan.
     pub follow_links: Option<bool>,
+    /// Watch the library for changes (RFC-021 decision 6). An administrator
+    /// only: a watch costs the server descriptors, and finds nothing on a
+    /// network share changed by another machine. Queues nothing; the periodic
+    /// scan stays either way.
+    pub watch: Option<bool>,
 }
 
 impl LibraryUpdate {
     /// Whether this needs an administrator, and an administrative credential:
     /// the path and the links setting decide which part of the server's file
-    /// system the server reads.
+    /// system the server reads, and the watch what the server spends on it.
     pub fn is_administrative(&self) -> bool {
-        self.path.is_some() || self.follow_links.is_some()
+        self.path.is_some() || self.follow_links.is_some() || self.watch.is_some()
     }
 }
 
@@ -48,6 +53,8 @@ pub struct LibrarySettings {
     pub name: String,
     pub path: String,
     pub follow_links: bool,
+    /// Whether the watcher observes this library.
+    pub watch: bool,
 }
 
 /// What a deletion removed from the catalogue. Nothing was removed from disk.
@@ -75,6 +82,12 @@ pub struct UnavailableTrack {
     pub playlist_entries: i64,
     pub favorites: i64,
     pub plays: i64,
+    /// When a purge took it out of sight, for a track purged and still
+    /// restorable; `null` on the missing-tracks listing.
+    pub purged_at: Option<i64>,
+    /// When it is deleted for good, unless restored first; `null` on the
+    /// missing-tracks listing.
+    pub deleted_after: Option<i64>,
 }
 
 /// One page of a library's missing tracks, oldest first.
@@ -94,10 +107,21 @@ pub struct PurgeRequest {
     pub all: bool,
 }
 
-/// What a purge removed.
+/// What a purge did.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PurgeOutcome {
+    /// How many tracks it purged.
     pub purged: i64,
+    /// Until when they can be restored, in epoch milliseconds; `null` when
+    /// the server keeps no grace window (`WAVEFLOW_PURGE_GRACE_HOURS=0`) and
+    /// they are already gone.
+    pub restorable_until: Option<i64>,
+}
+
+/// What a restoration put back.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RestoreOutcome {
+    pub restored: i64,
 }
 
 /// Which tracks one purge is about.
@@ -105,6 +129,15 @@ enum Selection {
     All,
     Named(String),
     OlderThan(i64),
+    /// Purged at or before this instant, and past their grace window.
+    PurgedBy(i64),
+}
+
+impl Selection {
+    /// Whether the selection names purged tracks rather than missing ones.
+    fn purged(&self) -> bool {
+        matches!(self, Self::PurgedBy(_))
+    }
 }
 
 /// What the caller is to one library.
@@ -221,45 +254,84 @@ async fn audit(
 }
 
 /// Deletes the favourites and ratings of the albums and artists among
-/// `albums` and `artists` (JSON arrays of ids) that no longer exist.
+/// `albums` and `artists` (JSON arrays of ids) that no longer exist, and
+/// answers them, so the accounts that held them can be told.
 async fn forget_vanished_entities(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     albums: &str,
     artists: &str,
+    removed: &mut Removed,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "DELETE FROM user_star WHERE entity_type = 'album' \
-           AND entity_id IN (SELECT value FROM json_each(?)) \
-           AND NOT EXISTS (SELECT 1 FROM album WHERE album.id = user_star.entity_id)",
-    )
-    .bind(albums)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM user_rating WHERE entity_type = 'album' \
-           AND entity_id IN (SELECT value FROM json_each(?)) \
-           AND NOT EXISTS (SELECT 1 FROM album WHERE album.id = user_rating.entity_id)",
-    )
-    .bind(albums)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM user_star WHERE entity_type = 'artist' \
-           AND entity_id IN (SELECT value FROM json_each(?)) \
-           AND NOT EXISTS (SELECT 1 FROM artist WHERE artist.id = user_star.entity_id)",
-    )
-    .bind(artists)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM user_rating WHERE entity_type = 'artist' \
-           AND entity_id IN (SELECT value FROM json_each(?)) \
-           AND NOT EXISTS (SELECT 1 FROM artist WHERE artist.id = user_rating.entity_id)",
-    )
-    .bind(artists)
-    .execute(&mut **tx)
-    .await?;
+    removed.stars.extend(
+        sqlx::query_as::<_, (String, String, String)>(
+            "DELETE FROM user_star WHERE entity_type = 'album' \
+               AND entity_id IN (SELECT value FROM json_each(?)) \
+               AND NOT EXISTS (SELECT 1 FROM album WHERE album.id = user_star.entity_id) \
+             RETURNING user_id, entity_type, entity_id",
+        )
+        .bind(albums)
+        .fetch_all(&mut **tx)
+        .await?,
+    );
+    removed.ratings.extend(
+        sqlx::query_as::<_, (String, String, String)>(
+            "DELETE FROM user_rating WHERE entity_type = 'album' \
+               AND entity_id IN (SELECT value FROM json_each(?)) \
+               AND NOT EXISTS (SELECT 1 FROM album WHERE album.id = user_rating.entity_id) \
+             RETURNING user_id, entity_type, entity_id",
+        )
+        .bind(albums)
+        .fetch_all(&mut **tx)
+        .await?,
+    );
+    removed.stars.extend(
+        sqlx::query_as::<_, (String, String, String)>(
+            "DELETE FROM user_star WHERE entity_type = 'artist' \
+               AND entity_id IN (SELECT value FROM json_each(?)) \
+               AND NOT EXISTS (SELECT 1 FROM artist WHERE artist.id = user_star.entity_id) \
+             RETURNING user_id, entity_type, entity_id",
+        )
+        .bind(artists)
+        .fetch_all(&mut **tx)
+        .await?,
+    );
+    removed.ratings.extend(
+        sqlx::query_as::<_, (String, String, String)>(
+            "DELETE FROM user_rating WHERE entity_type = 'artist' \
+               AND entity_id IN (SELECT value FROM json_each(?)) \
+               AND NOT EXISTS (SELECT 1 FROM artist WHERE artist.id = user_rating.entity_id) \
+             RETURNING user_id, entity_type, entity_id",
+        )
+        .bind(artists)
+        .fetch_all(&mut **tx)
+        .await?,
+    );
     Ok(())
+}
+
+/// What a removal took from accounts, so their sync journals can say so
+/// (RFC-021, what was still open): each `(account, entity type, entity id)`
+/// favourite and rating that went, and the playlists that lost an entry.
+#[derive(Default)]
+struct Removed {
+    stars: Vec<(String, String, String)>,
+    ratings: Vec<(String, String, String)>,
+    playlists: Vec<String>,
+}
+
+/// The playlists holding any of `tracks` (a JSON array of ids), read before
+/// the tracks go and take their entries with them.
+async fn playlists_holding(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tracks: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT playlist_id FROM playlist_track \
+         WHERE track_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(tracks)
+    .fetch_all(&mut **tx)
+    .await
 }
 
 /// What one purge removed, and the canvases it may have left with no link:
@@ -269,6 +341,7 @@ async fn forget_vanished_entities(
 struct Purged {
     tracks: i64,
     canvases: Vec<String>,
+    removed: Removed,
 }
 
 /// The purge itself, in the caller's transaction under the writer gate it
@@ -304,6 +377,16 @@ async fn purge_in(
             sqlx::query_as(
                 "SELECT id, album_id FROM track WHERE library_id = ? AND is_available = 0 \
                    AND COALESCE(unavailable_since, updated_at) < ?",
+            )
+            .bind(&library)
+            .bind(cutoff)
+            .fetch_all(&mut **tx)
+            .await?
+        }
+        Selection::PurgedBy(cutoff) => {
+            sqlx::query_as(
+                "SELECT id, album_id FROM track WHERE library_id = ? AND is_available = 0 \
+                   AND purged_at IS NOT NULL AND purged_at <= ?",
             )
             .bind(&library)
             .bind(cutoff)
@@ -356,22 +439,29 @@ async fn purge_in(
     .bind(&tracks)
     .fetch_all(&mut **tx)
     .await?;
+    let mut removed = Removed {
+        playlists: playlists_holding(tx, &tracks).await?,
+        ..Removed::default()
+    };
 
     // Neither has a foreign key to cascade through: an entity id names a
-    // track, an album or an artist, whichever the type says.
-    sqlx::query(
+    // track, an album or an artist, whichever the type says. Answered, so the
+    // accounts that held them are told through their journals.
+    removed.stars = sqlx::query_as(
         "DELETE FROM user_star WHERE entity_type = 'track' \
-           AND entity_id IN (SELECT value FROM json_each(?))",
+           AND entity_id IN (SELECT value FROM json_each(?)) \
+         RETURNING user_id, entity_type, entity_id",
     )
     .bind(&tracks)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await?;
-    sqlx::query(
+    removed.ratings = sqlx::query_as(
         "DELETE FROM user_rating WHERE entity_type = 'track' \
-           AND entity_id IN (SELECT value FROM json_each(?))",
+           AND entity_id IN (SELECT value FROM json_each(?)) \
+         RETURNING user_id, entity_type, entity_id",
     )
     .bind(&tracks)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await?;
     // A virtual table: nothing cascades into it.
     sqlx::query("DELETE FROM track_fts WHERE track_id IN (SELECT value FROM json_each(?))")
@@ -394,7 +484,7 @@ async fn purge_in(
     // and the counts, the artist search index — over what is left.
     Database::consolidate_sort_names_in(tx, library_id).await?;
     Database::consolidate_catalog_derivations_in(tx, library_id).await?;
-    forget_vanished_entities(tx, &albums, &artists).await?;
+    forget_vanished_entities(tx, &albums, &artists, &mut removed).await?;
     sqlx::query(
         "DELETE FROM genre WHERE library_id = ? \
            AND NOT EXISTS (SELECT 1 FROM track_genre tg WHERE tg.genre_id = genre.id)",
@@ -405,7 +495,129 @@ async fn purge_in(
     Ok(Purged {
         tracks: purged,
         canvases,
+        removed,
     })
+}
+
+/// Takes the selected missing tracks out of sight without deleting anything:
+/// the first half of a purge when the server keeps a grace window. Only those
+/// still unavailable and not already purged. Answers how many.
+async fn hide_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    library_id: Uuid,
+    selection: &Selection,
+    now: i64,
+) -> Result<i64, sqlx::Error> {
+    let library = library_id.to_string();
+    let hidden = match selection {
+        Selection::All => {
+            sqlx::query(
+                "UPDATE track SET purged_at = ? \
+                 WHERE library_id = ? AND is_available = 0 AND purged_at IS NULL",
+            )
+            .bind(now)
+            .bind(&library)
+            .execute(&mut **tx)
+            .await?
+        }
+        Selection::Named(ids) => {
+            sqlx::query(
+                "UPDATE track SET purged_at = ? \
+                 WHERE library_id = ? AND is_available = 0 AND purged_at IS NULL \
+                   AND id IN (SELECT value FROM json_each(?))",
+            )
+            .bind(now)
+            .bind(&library)
+            .bind(ids)
+            .execute(&mut **tx)
+            .await?
+        }
+        Selection::OlderThan(cutoff) => {
+            sqlx::query(
+                "UPDATE track SET purged_at = ? \
+                 WHERE library_id = ? AND is_available = 0 AND purged_at IS NULL \
+                   AND COALESCE(unavailable_since, updated_at) < ?",
+            )
+            .bind(now)
+            .bind(&library)
+            .bind(cutoff)
+            .execute(&mut **tx)
+            .await?
+        }
+        Selection::PurgedBy(_) => return Ok(0),
+    };
+    Ok(hidden.rows_affected() as i64)
+}
+
+/// One page of a library's missing tracks with what purging each would cost:
+/// those not purged, oldest missing first, when `grace` is `None`; those
+/// purged and still restorable, soonest deleted first, when it is the grace
+/// window in milliseconds.
+async fn list_missing_on(
+    connection: &mut SqliteConnection,
+    library_id: Uuid,
+    page: BrowsePage,
+    grace: Option<i64>,
+) -> Result<UnavailableTracks, ServiceError> {
+    let purged = grace.is_some();
+    // A purge past its window is due for deletion, not restorable: it is
+    // listed nowhere until the finishing pass takes it.
+    let restorable_after = grace.map(|grace| now_ms().saturating_sub(grace));
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM track WHERE library_id = ? AND is_available = 0 \
+           AND (purged_at IS NOT NULL) = ? AND (? IS NULL OR purged_at > ?)",
+    )
+    .bind(library_id.to_string())
+    .bind(purged)
+    .bind(restorable_after)
+    .bind(restorable_after)
+    .fetch_one(&mut *connection)
+    .await?;
+    let rows = sqlx::query(
+        "SELECT t.id, t.relative_path, COALESCE(ovr.title, t.title) AS title, \
+                t.artist_display, t.album_title, t.duration_ms, \
+                COALESCE(t.unavailable_since, t.updated_at) AS since, t.purged_at, \
+                (SELECT COUNT(*) FROM playlist_track pt WHERE pt.track_id = t.id) \
+                  AS playlist_entries, \
+                (SELECT COUNT(*) FROM user_star us \
+                  WHERE us.entity_type = 'track' AND us.entity_id = t.id) AS favorites, \
+                (SELECT COUNT(*) FROM play_event pe WHERE pe.track_id = t.id) AS plays \
+         FROM track t LEFT JOIN track_override ovr ON ovr.track_id = t.id \
+         WHERE t.library_id = ? AND t.is_available = 0 AND (t.purged_at IS NOT NULL) = ? \
+           AND (? IS NULL OR t.purged_at > ?) \
+         ORDER BY t.purged_at, since, t.relative_path, t.id LIMIT ? OFFSET ?",
+    )
+    .bind(library_id.to_string())
+    .bind(purged)
+    .bind(restorable_after)
+    .bind(restorable_after)
+    .bind(page.limit)
+    .bind(page.offset)
+    .fetch_all(&mut *connection)
+    .await?;
+    let tracks = rows
+        .into_iter()
+        .map(|row| {
+            let purged_at: Option<i64> = row.try_get("purged_at")?;
+            Ok(UnavailableTrack {
+                id: parse_uuid(row.try_get("id")?)?,
+                relative_path: row.try_get("relative_path")?,
+                title: row.try_get("title")?,
+                artist: row.try_get("artist_display")?,
+                album: row.try_get("album_title")?,
+                duration_ms: row.try_get("duration_ms")?,
+                unavailable_since: row.try_get("since")?,
+                playlist_entries: row.try_get("playlist_entries")?,
+                favorites: row.try_get("favorites")?,
+                plays: row.try_get("plays")?,
+                purged_at,
+                deleted_after: purged_at
+                    .zip(grace)
+                    .map(|(at, grace)| at.saturating_add(grace)),
+            })
+        })
+        .collect::<Result<Vec<_>, ServiceError>>()?;
+    Ok(UnavailableTracks { total, tracks })
 }
 
 impl DomainServices {
@@ -429,6 +641,7 @@ impl DomainServices {
             name: settings.library.name,
             path: settings.library.root_path.to_string_lossy().into_owned(),
             follow_links: settings.follow_links,
+            watch: settings.watch,
         })
     }
 
@@ -493,13 +706,15 @@ impl DomainServices {
         let relinked = update
             .follow_links
             .is_some_and(|follow| follow != before.follow_links);
+        let rewatched = update.watch.is_some_and(|watch| watch != before.watch);
         let scan_id = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
             let written = sqlx::query(
                 "UPDATE library SET name = COALESCE(?, name), \
                    root_path = COALESCE(?, root_path), \
-                   follow_links = COALESCE(?, follow_links), updated_at = ? \
+                   follow_links = COALESCE(?, follow_links), \
+                   watch = COALESCE(?, watch), updated_at = ? \
                  WHERE id = ?",
             )
             .bind(name.as_deref())
@@ -508,6 +723,7 @@ impl DomainServices {
                     .map(|root| root.to_string_lossy().into_owned()),
             )
             .bind(update.follow_links.map(i64::from))
+            .bind(update.watch.map(i64::from))
             .bind(now_ms())
             .bind(library_id.to_string())
             .execute(&mut *tx)
@@ -551,6 +767,16 @@ impl DomainServices {
                 )
                 .await?;
             }
+            if rewatched {
+                audit(
+                    &mut tx,
+                    Some(actor.id),
+                    "library.watch_set",
+                    library_id,
+                    serde_json::json!({ "watch": update.watch }),
+                )
+                .await?;
+            }
             // The scan a new root or links setting owes is queued in the same
             // transaction: a change committed without its job would leave the
             // catalogue on the old walk until some other scan came along —
@@ -572,7 +798,8 @@ impl DomainServices {
             scan_id
         };
         drop(_scan_lock);
-        if moved {
+        // The watcher reads which libraries to watch, and how, again.
+        if moved || rewatched || relinked {
             self.scanner.libraries_changed();
         }
         let Some(scan_id) = scan_id else {
@@ -634,6 +861,7 @@ impl DomainServices {
         let deleted;
         let staging: Vec<String>;
         let canvases: Vec<String>;
+        let receipts: Vec<(Uuid, MutationReceipt)>;
         {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
@@ -657,15 +885,39 @@ impl DomainServices {
             .bind(&library)
             .fetch_all(&mut *tx)
             .await?;
-            for statement in [
+            // What every account loses, read as it goes, so that each one's
+            // journal can say so (RFC-021, what was still open).
+            let mut removed = Removed {
+                playlists: sqlx::query_scalar(
+                    "SELECT DISTINCT pt.playlist_id FROM playlist_track pt \
+                     JOIN track t ON t.id = pt.track_id WHERE t.library_id = ?",
+                )
+                .bind(&library)
+                .fetch_all(&mut *tx)
+                .await?,
+                ..Removed::default()
+            };
+            removed.stars = sqlx::query_as(
                 "DELETE FROM user_star WHERE \
                    (entity_type = 'track' AND entity_id IN (SELECT id FROM track WHERE library_id = ?1)) \
                    OR (entity_type = 'album' AND entity_id IN (SELECT id FROM album WHERE library_id = ?1)) \
-                   OR (entity_type = 'artist' AND entity_id IN (SELECT id FROM artist WHERE library_id = ?1))",
+                   OR (entity_type = 'artist' AND entity_id IN (SELECT id FROM artist WHERE library_id = ?1)) \
+                 RETURNING user_id, entity_type, entity_id",
+            )
+            .bind(&library)
+            .fetch_all(&mut *tx)
+            .await?;
+            removed.ratings = sqlx::query_as(
                 "DELETE FROM user_rating WHERE \
                    (entity_type = 'track' AND entity_id IN (SELECT id FROM track WHERE library_id = ?1)) \
                    OR (entity_type = 'album' AND entity_id IN (SELECT id FROM album WHERE library_id = ?1)) \
-                   OR (entity_type = 'artist' AND entity_id IN (SELECT id FROM artist WHERE library_id = ?1))",
+                   OR (entity_type = 'artist' AND entity_id IN (SELECT id FROM artist WHERE library_id = ?1)) \
+                 RETURNING user_id, entity_type, entity_id",
+            )
+            .bind(&library)
+            .fetch_all(&mut *tx)
+            .await?;
+            for statement in [
                 // Virtual tables: nothing cascades into them.
                 "DELETE FROM track_fts WHERE library_id = ?1",
                 "DELETE FROM artist_fts WHERE library_id = ?1",
@@ -701,12 +953,16 @@ impl DomainServices {
                 .bind(&library)
                 .execute(&mut *tx)
                 .await?;
+            receipts = self.journal_removed(&_writer, &mut tx, &removed).await?;
             tx.commit().await?;
             deleted = LibraryDeleted {
                 tracks,
                 albums,
                 artists,
             };
+        }
+        for (user_id, receipt) in receipts {
+            self.sync.publish(user_id, receipt);
         }
         // After the commit, and best effort: a file left behind is litter in
         // the server's own folder, and the rows that named it are gone.
@@ -736,48 +992,27 @@ impl DomainServices {
         {
             return Err(ServiceError::Forbidden);
         }
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM track WHERE library_id = ? AND is_available = 0",
-        )
-        .bind(library_id.to_string())
-        .fetch_one(&mut *connection)
-        .await?;
-        let rows = sqlx::query(
-            "SELECT t.id, t.relative_path, COALESCE(ovr.title, t.title) AS title, \
-                    t.artist_display, t.album_title, t.duration_ms, \
-                    COALESCE(t.unavailable_since, t.updated_at) AS since, \
-                    (SELECT COUNT(*) FROM playlist_track pt WHERE pt.track_id = t.id) \
-                      AS playlist_entries, \
-                    (SELECT COUNT(*) FROM user_star us \
-                      WHERE us.entity_type = 'track' AND us.entity_id = t.id) AS favorites, \
-                    (SELECT COUNT(*) FROM play_event pe WHERE pe.track_id = t.id) AS plays \
-             FROM track t LEFT JOIN track_override ovr ON ovr.track_id = t.id \
-             WHERE t.library_id = ? AND t.is_available = 0 \
-             ORDER BY since, t.relative_path, t.id LIMIT ? OFFSET ?",
-        )
-        .bind(library_id.to_string())
-        .bind(page.limit)
-        .bind(page.offset)
-        .fetch_all(&mut *connection)
-        .await?;
-        let tracks = rows
-            .into_iter()
-            .map(|row| {
-                Ok(UnavailableTrack {
-                    id: parse_uuid(row.try_get("id")?)?,
-                    relative_path: row.try_get("relative_path")?,
-                    title: row.try_get("title")?,
-                    artist: row.try_get("artist_display")?,
-                    album: row.try_get("album_title")?,
-                    duration_ms: row.try_get("duration_ms")?,
-                    unavailable_since: row.try_get("since")?,
-                    playlist_entries: row.try_get("playlist_entries")?,
-                    favorites: row.try_get("favorites")?,
-                    plays: row.try_get("plays")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
-        Ok(UnavailableTracks { total, tracks })
+        list_missing_on(&mut connection, library_id, page, None).await
+    }
+
+    /// One page of a library's purged tracks still within their grace window,
+    /// soonest deleted first, for the people who may purge them and so may
+    /// take the purge back.
+    pub async fn purged_tracks(
+        &self,
+        actor: LibraryActor,
+        library_id: Uuid,
+        page: BrowsePage,
+    ) -> Result<UnavailableTracks, ServiceError> {
+        let mut connection = self.db.pool().acquire().await?;
+        if !standing_on(&mut connection, actor, library_id)
+            .await?
+            .curates()
+        {
+            return Err(ServiceError::Forbidden);
+        }
+        let grace = i64::try_from(self.purge_grace.as_millis()).unwrap_or(i64::MAX);
+        list_missing_on(&mut connection, library_id, page, Some(grace)).await
     }
 
     /// Purges missing tracks, explicitly (RFC-021 decision 4).
@@ -816,13 +1051,42 @@ impl DomainServices {
             .scanner
             .try_lock_library(library_id)
             .ok_or(ServiceError::Conflict)?;
+        // With a grace window, the purge only takes the tracks out of sight,
+        // and the finishing pass deletes them once it has passed (RFC-021,
+        // undoing a purge). Without one, it deletes them now, as it always did.
+        if !self.purge_grace.is_zero() {
+            let now = now_ms();
+            let _writer = self.db.writer_guard().await;
+            let mut tx = self.db.begin_write(&_writer).await?;
+            if !standing_on(&mut tx, actor, library_id).await?.curates() {
+                return Err(ServiceError::Forbidden);
+            }
+            let hidden = hide_in(&mut tx, library_id, &selection, now).await?;
+            let restorable_until =
+                now.saturating_add(i64::try_from(self.purge_grace.as_millis()).unwrap_or(i64::MAX));
+            if hidden > 0 {
+                audit(
+                    &mut tx,
+                    Some(actor.id),
+                    "library.tracks_purged",
+                    library_id,
+                    serde_json::json!({ "tracks": hidden, "restorable_until": restorable_until }),
+                )
+                .await?;
+            }
+            tx.commit().await?;
+            return Ok(PurgeOutcome {
+                purged: hidden,
+                restorable_until: Some(restorable_until),
+            });
+        }
         let purged = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
             if !standing_on(&mut tx, actor, library_id).await?.curates() {
                 return Err(ServiceError::Forbidden);
             }
-            let purged = purge_in(&mut tx, library_id, &selection).await?;
+            let mut purged = purge_in(&mut tx, library_id, &selection).await?;
             if purged.tracks > 0 {
                 audit(
                     &mut tx,
@@ -833,7 +1097,13 @@ impl DomainServices {
                 )
                 .await?;
             }
+            let receipts = self
+                .journal_removed(&_writer, &mut tx, &std::mem::take(&mut purged.removed))
+                .await?;
             tx.commit().await?;
+            for (user_id, receipt) in receipts {
+                self.sync.publish(user_id, receipt);
+            }
             purged
         };
         // After the commit and out of the writer gate, which releasing takes.
@@ -842,63 +1112,348 @@ impl DomainServices {
         }
         Ok(PurgeOutcome {
             purged: purged.tracks,
+            restorable_until: None,
         })
+    }
+
+    /// Takes a purge back, for tracks still within their grace window: they
+    /// return to the missing-tracks listing, every playlist entry, favourite
+    /// and play still attached, as if the purge had never been asked for.
+    /// Named tracks, or all of them, and never neither. Nothing is scanned:
+    /// a restored track is still missing until its file is found again.
+    pub async fn restore_purged_tracks(
+        &self,
+        actor: LibraryActor,
+        library_id: Uuid,
+        request: PurgeRequest,
+    ) -> Result<RestoreOutcome, ServiceError> {
+        let named = match (request.all, request.track_ids) {
+            (true, None) => None,
+            (false, Some(ids)) if !ids.is_empty() => Some(
+                serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
+                    .expect("a list of strings serializes"),
+            ),
+            _ => return Err(ServiceError::Invalid),
+        };
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.begin_write(&_writer).await?;
+        if !standing_on(&mut tx, actor, library_id).await?.curates() {
+            return Err(ServiceError::Forbidden);
+        }
+        // Under the writer gate, which the finishing pass takes too: a track
+        // is either restored here or deleted there, never both. Only within
+        // the window: one past it is due for deletion even if the pass has not
+        // reached it yet — it ran before, or the library was being scanned.
+        let restorable_after = now_ms()
+            .saturating_sub(i64::try_from(self.purge_grace.as_millis()).unwrap_or(i64::MAX));
+        let restored = sqlx::query(
+            "UPDATE track SET purged_at = NULL \
+             WHERE library_id = ? AND purged_at IS NOT NULL AND purged_at > ? \
+               AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))",
+        )
+        .bind(library_id.to_string())
+        .bind(restorable_after)
+        .bind(named.as_deref())
+        .bind(named.as_deref())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+        if restored > 0 {
+            audit(
+                &mut tx,
+                Some(actor.id),
+                "library.purge_restored",
+                library_id,
+                serde_json::json!({ "tracks": restored }),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(RestoreOutcome { restored })
+    }
+
+    /// Deletes for good, in every library not being scanned, the tracks
+    /// purged at or before `cutoff` (epoch milliseconds) — which the hourly
+    /// pass sets to now less the grace window. Public so a test can run it
+    /// rather than wait. Answers how many went.
+    pub async fn finish_purges(&self, cutoff: i64) -> Result<i64, ServiceError> {
+        let mut total = 0;
+        for library in self.db.all_libraries().await? {
+            let Some(_scan_lock) = self.scanner.try_lock_library(library.id) else {
+                continue;
+            };
+            total += self
+                .delete_purged(library.id, &Selection::PurgedBy(cutoff))
+                .await?;
+        }
+        Ok(total)
+    }
+
+    /// The deletion half of a purge, for one library whose scan lock the
+    /// caller holds: the selected tracks and everything that hangs off them,
+    /// each account told through its journal, the canvases released after.
+    async fn delete_purged(
+        &self,
+        library_id: Uuid,
+        selection: &Selection,
+    ) -> Result<i64, ServiceError> {
+        let purged = {
+            let _writer = self.db.writer_guard().await;
+            let mut tx = self.db.begin_write(&_writer).await?;
+            let mut purged = purge_in(&mut tx, library_id, selection).await?;
+            if purged.tracks > 0 && !selection.purged() {
+                audit(
+                    &mut tx,
+                    None,
+                    "library.tracks_purged",
+                    library_id,
+                    serde_json::json!({ "tracks": purged.tracks, "retention": true }),
+                )
+                .await?;
+            }
+            let receipts = self
+                .journal_removed(&_writer, &mut tx, &std::mem::take(&mut purged.removed))
+                .await?;
+            tx.commit().await?;
+            for (user_id, receipt) in receipts {
+                self.sync.publish(user_id, receipt);
+            }
+            purged
+        };
+        for hash in &purged.canvases {
+            self.release_canvas_blob(hash).await;
+        }
+        Ok(purged.tracks)
+    }
+
+    /// Tells each account what a removal took from it, through its own sync
+    /// journal (RFC-021, what was still open): a favourite or a rating that
+    /// went with its track, album or artist is a `delete`, and a playlist
+    /// that lost entries is an `upsert` of what it now holds, as an edit of
+    /// it would journal. A device mirroring the account then drops them at its
+    /// next pull instead of keeping them until the playlist next changes.
+    ///
+    /// In the removal's own transaction, under the writer gate it holds: the
+    /// journal and the catalogue land together or not at all. The receipts
+    /// are published by the caller once that transaction has committed.
+    async fn journal_removed(
+        &self,
+        writer: &tokio::sync::OwnedMutexGuard<()>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        removed: &Removed,
+    ) -> Result<Vec<(Uuid, MutationReceipt)>, ServiceError> {
+        let mut receipts = Vec::new();
+        for (kind, rows) in [("favorite", &removed.stars), ("rating", &removed.ratings)] {
+            for (user, entity_type, entity) in rows {
+                let user_id = parse_uuid(user.clone())?;
+                let entity_id = parse_uuid(entity.clone())?;
+                let action = if kind == "favorite" {
+                    "unstar"
+                } else {
+                    "set-rating"
+                };
+                let context = self
+                    .server_claim(
+                        writer,
+                        tx,
+                        user_id,
+                        action,
+                        &format!("{entity_type}:{entity_id}"),
+                    )
+                    .await?;
+                let payload = if kind == "favorite" {
+                    serde_json::json!({
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "starred": false,
+                    })
+                } else {
+                    serde_json::json!({
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "rating": 0,
+                    })
+                };
+                let receipt = self
+                    .sync
+                    .complete_operation(
+                        tx,
+                        user_id,
+                        context,
+                        kind,
+                        entity_id,
+                        "delete",
+                        &payload,
+                        Some(entity_id),
+                    )
+                    .await?;
+                receipts.push((user_id, receipt));
+            }
+        }
+        let now = now_ms();
+        for playlist in &removed.playlists {
+            // Gone with the library's own owner, or with nothing left to say.
+            let Some(row) = sqlx::query(
+                "UPDATE playlist SET updated_at = ? WHERE id = ? \
+                 RETURNING owner_user_id, name, comment, public",
+            )
+            .bind(now)
+            .bind(playlist)
+            .fetch_optional(&mut **tx)
+            .await?
+            else {
+                continue;
+            };
+            let user_id = parse_uuid(row.try_get("owner_user_id")?)?;
+            let playlist_id = parse_uuid(playlist.clone())?;
+            let track_ids: Vec<String> = sqlx::query_scalar(
+                "SELECT track_id FROM playlist_track WHERE playlist_id = ? ORDER BY position",
+            )
+            .bind(playlist)
+            .fetch_all(&mut **tx)
+            .await?;
+            let context = self
+                .server_claim(
+                    writer,
+                    tx,
+                    user_id,
+                    "update",
+                    &format!("playlist:{playlist_id}"),
+                )
+                .await?;
+            let receipt = self
+                .sync
+                .complete_operation(
+                    tx,
+                    user_id,
+                    context,
+                    "playlist",
+                    playlist_id,
+                    "upsert",
+                    &serde_json::json!({
+                        "id": playlist_id,
+                        "name": row.try_get::<String, _>("name")?,
+                        "comment": row.try_get::<Option<String>, _>("comment")?,
+                        "public": row.try_get::<i64, _>("public")? != 0,
+                        "track_ids": track_ids,
+                    }),
+                    Some(playlist_id),
+                )
+                .await?;
+            receipts.push((user_id, receipt));
+        }
+        Ok(receipts)
+    }
+
+    /// Opens a journal operation the server makes on an account's behalf. A
+    /// fresh operation id cannot be a replay, so anything but a new claim is a
+    /// fault rather than an answer.
+    async fn server_claim(
+        &self,
+        writer: &tokio::sync::OwnedMutexGuard<()>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_id: Uuid,
+        action: &str,
+        target: &str,
+    ) -> Result<MutationContext, ServiceError> {
+        let context = MutationContext::server_generated();
+        let intent = MutationIntent::new(
+            action,
+            target,
+            &serde_json::json!({ "removed_from_catalogue": true }),
+        );
+        match self
+            .sync
+            .claim_operation(writer, tx, user_id, context, intent)
+            .await?
+        {
+            OperationClaim::New => Ok(context),
+            OperationClaim::Replayed(_) => Err(ServiceError::Conflict),
+        }
     }
 
     /// One retention pass: in every library not being scanned, the tracks
     /// unavailable since before `cutoff` (epoch milliseconds). Public so a test
     /// can run it rather than wait an hour. Answers how many went.
+    ///
+    /// A purge like any other: with a grace window it takes them out of sight,
+    /// to be deleted once the window has passed, so a retention set too short
+    /// can still be taken back.
     pub async fn purge_expired_unavailable_tracks(&self, cutoff: i64) -> Result<i64, ServiceError> {
         let mut total = 0;
         for library in self.db.all_libraries().await? {
             let Some(_scan_lock) = self.scanner.try_lock_library(library.id) else {
                 continue;
             };
-            let purged = {
-                let _writer = self.db.writer_guard().await;
-                let mut tx = self.db.begin_write(&_writer).await?;
-                let purged = purge_in(&mut tx, library.id, &Selection::OlderThan(cutoff)).await?;
-                if purged.tracks > 0 {
-                    audit(
-                        &mut tx,
-                        None,
-                        "library.tracks_purged",
-                        library.id,
-                        serde_json::json!({ "tracks": purged.tracks, "retention": true }),
-                    )
+            if self.purge_grace.is_zero() {
+                total += self
+                    .delete_purged(library.id, &Selection::OlderThan(cutoff))
                     .await?;
-                }
-                tx.commit().await?;
-                purged
-            };
-            for hash in &purged.canvases {
-                self.release_canvas_blob(hash).await;
+                continue;
             }
-            total += purged.tracks;
+            let _writer = self.db.writer_guard().await;
+            let mut tx = self.db.begin_write(&_writer).await?;
+            let hidden =
+                hide_in(&mut tx, library.id, &Selection::OlderThan(cutoff), now_ms()).await?;
+            if hidden > 0 {
+                audit(
+                    &mut tx,
+                    None,
+                    "library.tracks_purged",
+                    library.id,
+                    serde_json::json!({ "tracks": hidden, "retention": true }),
+                )
+                .await?;
+            }
+            tx.commit().await?;
+            total += hidden;
         }
         Ok(total)
     }
 
-    /// The retention of missing tracks, when the operator set one
-    /// (`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`): once at boot, then hourly.
+    /// The hourly pass over missing tracks, once at boot and then every hour:
+    /// the retention, when the operator set one
+    /// (`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`), then the deletion of every
+    /// purge whose grace window (`WAVEFLOW_PURGE_GRACE_HOURS`) has passed.
+    ///
+    /// Runs whatever the settings: with no grace window, the purges a former
+    /// window left behind are due at once, and nothing else would delete them.
     pub fn spawn_unavailable_purge(&self) {
-        let Some(retention) = self.unavailable_retention else {
-            return;
-        };
+        let retention = self.unavailable_retention;
+        let grace = self.purge_grace;
         let services = self.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(RETENTION_INTERVAL);
             loop {
                 ticker.tick().await;
-                let cutoff = now_ms()
-                    .saturating_sub(i64::try_from(retention.as_millis()).unwrap_or(i64::MAX));
-                match services.purge_expired_unavailable_tracks(cutoff).await {
+                if let Some(retention) = retention {
+                    let cutoff = now_ms()
+                        .saturating_sub(i64::try_from(retention.as_millis()).unwrap_or(i64::MAX));
+                    match services.purge_expired_unavailable_tracks(cutoff).await {
+                        Ok(0) => {}
+                        Ok(purged) => {
+                            tracing::info!(
+                                purged,
+                                "missing tracks past their retention were purged"
+                            )
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "could not purge missing tracks past their retention")
+                        }
+                    }
+                }
+                let cutoff =
+                    now_ms().saturating_sub(i64::try_from(grace.as_millis()).unwrap_or(i64::MAX));
+                match services.finish_purges(cutoff).await {
                     Ok(0) => {}
-                    Ok(purged) => {
-                        tracing::info!(purged, "missing tracks past their retention were purged")
+                    Ok(deleted) => {
+                        tracing::info!(
+                            deleted,
+                            "purged tracks past their grace window were deleted"
+                        )
                     }
                     Err(error) => {
-                        tracing::warn!(%error, "could not purge missing tracks past their retention")
+                        tracing::warn!(%error, "could not delete purged tracks past their grace window")
                     }
                 }
             }

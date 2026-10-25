@@ -1302,7 +1302,37 @@ async fn the_cli_renames_moves_purges_and_deletes_a_library() {
     )
     .await
     .unwrap();
-    assert_eq!(count(&state, "SELECT COUNT(*) FROM track").await, 1);
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE purged_at IS NULL").await,
+        1
+    );
+    // Within the grace window, a purge is taken back.
+    run_cli(
+        &state,
+        &[
+            "library",
+            "restore",
+            "--actor",
+            "lifecycle-admin",
+            "--library-id",
+            &id,
+            "--all",
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM track WHERE purged_at IS NOT NULL"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(&state, "SELECT COUNT(*) FROM track WHERE is_available = 0").await,
+        1
+    );
 
     let mistyped = run_cli(
         &state,

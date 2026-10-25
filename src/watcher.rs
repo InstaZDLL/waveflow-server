@@ -1,10 +1,12 @@
 //! Watching library roots, so a change is scanned in seconds rather than at
 //! the next interval (RFC-021 decision 6).
 //!
-//! One `notify` watcher observes every root recursively. Its events are only a
-//! hint that something moved: they name a library, never what to read, and the
-//! scan they trigger is the ordinary incremental one, which works out by itself
-//! what changed. The debouncing is this module's own, per library: a library is
+//! One `notify` watcher observes every root whose library is watched (the
+//! per-library `watch` switch), recursively. Its events are a hint that
+//! something moved: they name a library and the folders the changes were in,
+//! never what to read. The scan they trigger is the ordinary incremental one,
+//! limited to those folders when the library reads no link (see
+//! [`Settle::touch_folder`]); it works out by itself what changed there. The debouncing is this module's own, per library: a library is
 //! scanned once its changes have been quiet for the configured delay, or once
 //! thirty delays have passed since the first of them when they never are.
 //!
@@ -13,7 +15,7 @@
 //! will not start — is logged once and the library is left to that net.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -40,7 +42,17 @@ const MAX_WAIT_DELAYS: u32 = 30;
 pub struct Settle {
     delay: Duration,
     max_wait: Duration,
-    pending: HashMap<Uuid, (Instant, Instant)>,
+    pending: HashMap<Uuid, Pending>,
+}
+
+/// One library's waiting changes: when the first and the last arrived, and
+/// the folders they were in — `None` once anything says the whole library
+/// must be walked.
+#[derive(Debug)]
+struct Pending {
+    first: Instant,
+    last: Instant,
+    folders: Option<BTreeSet<String>>,
 }
 
 impl Settle {
@@ -55,12 +67,43 @@ impl Settle {
         }
     }
 
-    /// Records a change in one library.
+    /// Records a change in one library that only a walk of the whole library
+    /// can answer: a queue overflow, an error, a change at its root, a
+    /// library whose walk follows links.
     pub fn touch(&mut self, library_id: Uuid, now: Instant) {
         self.pending
             .entry(library_id)
-            .and_modify(|(_, last)| *last = now)
-            .or_insert((now, now));
+            .and_modify(|pending| {
+                pending.last = now;
+                pending.folders = None;
+            })
+            .or_insert(Pending {
+                first: now,
+                last: now,
+                folders: None,
+            });
+    }
+
+    /// Records a change in one folder of a library, relative to its root.
+    ///
+    /// The scan this settles into walks those folders only, which is what
+    /// RFC-018's rules allow a scan that did not look everywhere: only what it
+    /// walked may be marked missing, and relocation claims nothing outside it.
+    /// Past [`crate::scanner::MAX_SCOPE_FOLDERS`] folders the changes were
+    /// everywhere, and the whole library is walked instead.
+    pub fn touch_folder(&mut self, library_id: Uuid, folder: String, now: Instant) {
+        let pending = self.pending.entry(library_id).or_insert(Pending {
+            first: now,
+            last: now,
+            folders: Some(BTreeSet::new()),
+        });
+        pending.last = now;
+        if let Some(folders) = pending.folders.as_mut() {
+            folders.insert(folder);
+            if folders.len() > crate::scanner::MAX_SCOPE_FOLDERS {
+                pending.folders = None;
+            }
+        }
     }
 
     /// The libraries whose changes have settled and that no scan is running
@@ -68,13 +111,32 @@ impl Settle {
     /// runs stays pending, and is answered here once that scan is over: the
     /// running scan may have walked past the change.
     pub fn due(&mut self, now: Instant, scanning: impl Fn(Uuid) -> bool) -> Vec<Uuid> {
+        self.due_with_scope(now, scanning)
+            .into_iter()
+            .map(|(library_id, _)| library_id)
+            .collect()
+    }
+
+    /// [`Self::due`], each library with the folders its changes were in, or
+    /// `None` for the whole library.
+    pub fn due_with_scope(
+        &mut self,
+        now: Instant,
+        scanning: impl Fn(Uuid) -> bool,
+    ) -> Vec<(Uuid, Option<Vec<String>>)> {
         let mut due = Vec::new();
         let (delay, max_wait) = (self.delay, self.max_wait);
-        self.pending.retain(|library_id, (first, last)| {
-            let settled =
-                now.duration_since(*last) >= delay || now.duration_since(*first) >= max_wait;
+        self.pending.retain(|library_id, pending| {
+            let settled = now.duration_since(pending.last) >= delay
+                || now.duration_since(pending.first) >= max_wait;
             if settled && !scanning(*library_id) {
-                due.push(*library_id);
+                due.push((
+                    *library_id,
+                    pending
+                        .folders
+                        .take()
+                        .map(|folders| folders.into_iter().collect()),
+                ));
                 false
             } else {
                 true
@@ -117,8 +179,32 @@ pub fn library_of(libraries: &HashMap<Uuid, LibraryRecord>, path: &Path) -> Opti
         .map(|(_, id)| id)
 }
 
-/// Starts watching every library, and keeps the watched set in step with the
-/// catalogue. Answers at once; the watcher runs until the process ends.
+/// The folder a change at `path` was in, relative to the root of the library
+/// that holds it, as a scoped scan names folders — or `None` when only the
+/// whole library can say what it was: a change at the root itself.
+///
+/// A folder that exists is its own scope; anything else — a file, or
+/// something gone — is in its parent's.
+pub fn folder_of(root: &Path, path: &Path) -> Option<String> {
+    let folder = if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+        path
+    } else {
+        path.parent()?
+    };
+    let relative = folder.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?.to_owned()),
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// Starts watching every watched library, and keeps the watched set in step
+/// with the catalogue. Answers at once; the watcher runs until the process
+/// ends.
 pub fn spawn(scanner: ScanManager, db: Database, delay: Duration) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let (sender, mut events) = mpsc::unbounded_channel::<notify::Result<Event>>();
@@ -135,6 +221,10 @@ pub fn spawn(scanner: ScanManager, db: Database, delay: Duration) -> tokio::task
             }
         };
         let mut watched: HashMap<Uuid, LibraryRecord> = HashMap::new();
+        // Those whose walk reads no link, and so may be scanned folder by
+        // folder: a folder reached through a link is named by its target in
+        // the catalogue, and the path an event names would not match it.
+        let mut scopable: HashSet<Uuid> = HashSet::new();
         let mut refused: HashSet<(Uuid, PathBuf)> = HashSet::new();
         let mut changes = scanner.library_changes();
         let mut refresh = tokio::time::interval(REFRESH_INTERVAL);
@@ -144,13 +234,13 @@ pub fn spawn(scanner: ScanManager, db: Database, delay: Duration) -> tokio::task
         loop {
             tokio::select! {
                 _ = refresh.tick() => {
-                    reconcile(&db, &mut watcher, &mut watched, &mut refused).await;
+                    reconcile(&db, &mut watcher, &mut watched, &mut scopable, &mut refused).await;
                 }
                 changed = changes.changed() => {
                     if changed.is_err() {
                         return;
                     }
-                    reconcile(&db, &mut watcher, &mut watched, &mut refused).await;
+                    reconcile(&db, &mut watcher, &mut watched, &mut scopable, &mut refused).await;
                 }
                 Some(event) = events.recv() => {
                     let now = Instant::now();
@@ -163,8 +253,17 @@ pub fn spawn(scanner: ScanManager, db: Database, delay: Duration) -> tokio::task
                         }
                         Ok(event) if relevant(&event) => {
                             for path in &event.paths {
-                                if let Some(library_id) = library_of(&watched, path) {
-                                    settle.touch(library_id, now);
+                                let Some(library_id) = library_of(&watched, path) else {
+                                    continue;
+                                };
+                                let folder = scopable
+                                    .contains(&library_id)
+                                    .then(|| watched.get(&library_id))
+                                    .flatten()
+                                    .and_then(|library| folder_of(&library.root_path, path));
+                                match folder {
+                                    Some(folder) => settle.touch_folder(library_id, folder, now),
+                                    None => settle.touch(library_id, now),
                                 }
                             }
                         }
@@ -200,13 +299,24 @@ pub async fn dispatch_due(
     scanner: &ScanManager,
     now: Instant,
 ) {
-    for library_id in settle.due(now, |id| scanner.is_scanning(id)) {
+    for (library_id, scope) in settle.due_with_scope(now, |id| scanner.is_scanning(id)) {
         let Some(library) = watched.get(&library_id).cloned() else {
             continue;
         };
-        if let Err(error) = scanner.trigger(library, None, "watch").await {
+        let queued = match scope.as_deref() {
+            Some(folders) => scanner.trigger_scoped(library, "watch", folders).await,
+            None => scanner.trigger(library, None, "watch").await,
+        };
+        if let Err(error) = queued {
             tracing::warn!(%library_id, %error, "could not queue a scan for a watched change");
-            settle.touch(library_id, now);
+            match scope {
+                Some(folders) => {
+                    for folder in folders {
+                        settle.touch_folder(library_id, folder, now);
+                    }
+                }
+                None => settle.touch(library_id, now),
+            }
         }
     }
 }
@@ -251,23 +361,31 @@ impl Watches for notify::RecommendedWatcher {
     }
 }
 
-/// Watches what the catalogue holds and nothing else.
+/// Watches what the catalogue holds and asks to be watched, and nothing else:
+/// a library whose `watch` switch is off is taken out of the watched set as
+/// a deleted one is, and left to the periodic scan.
 async fn reconcile(
     db: &Database,
     watcher: &mut impl Watches,
     watched: &mut HashMap<Uuid, LibraryRecord>,
+    scopable: &mut HashSet<Uuid>,
     refused: &mut HashSet<(Uuid, PathBuf)>,
 ) {
-    let libraries = match db.all_libraries().await {
+    let libraries = match db.watched_libraries().await {
         Ok(libraries) => libraries,
         Err(error) => {
             tracing::warn!(%error, "could not list the libraries to watch");
             return;
         }
     };
+    *scopable = libraries
+        .iter()
+        .filter(|(_, follow_links)| !follow_links)
+        .map(|(library, _)| library.id)
+        .collect();
     let current: HashMap<Uuid, LibraryRecord> = libraries
         .into_iter()
-        .map(|library| (library.id, library))
+        .map(|(library, _)| (library.id, library))
         .collect();
     let gone: Vec<Uuid> = watched
         .iter()
@@ -555,6 +673,59 @@ mod tests {
         assert_eq!(settle.due(later, |id| id == busy), vec![idle]);
         assert!(settle.is_pending(busy));
         assert_eq!(settle.due(later, |_| false), vec![busy]);
+    }
+
+    /// Folders gather until the library settles; anything that needs the
+    /// whole library, or too many folders, turns the scope into all of it.
+    #[test]
+    fn a_settled_library_names_the_folders_its_changes_were_in() {
+        let delay = Duration::from_secs(1);
+        let mut settle = Settle::new(delay);
+        let (scoped, whole, crowded) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let start = Instant::now();
+        settle.touch_folder(scoped, "Rock/Album".into(), start);
+        settle.touch_folder(scoped, "Jazz".into(), start);
+        settle.touch_folder(scoped, "Jazz".into(), start);
+        settle.touch_folder(whole, "Rock".into(), start);
+        settle.touch(whole, start);
+        settle.touch_folder(whole, "Jazz".into(), start);
+        for index in 0..=crate::scanner::MAX_SCOPE_FOLDERS {
+            settle.touch_folder(crowded, format!("f{index}"), start);
+        }
+        let mut due = settle.due_with_scope(start + delay, |_| false);
+        due.sort_by_key(|(id, _)| *id);
+        let scope = |id: Uuid| due.iter().find(|(due, _)| *due == id).unwrap().1.clone();
+        assert_eq!(
+            scope(scoped),
+            Some(vec!["Jazz".to_owned(), "Rock/Album".to_owned()])
+        );
+        assert_eq!(scope(whole), None, "once whole, a library stays whole");
+        assert_eq!(scope(crowded), None);
+    }
+
+    #[test]
+    fn a_change_is_scoped_to_the_folder_it_was_in() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("Artist/Album")).unwrap();
+        std::fs::write(root.join("Artist/Album/a.flac"), b"x").unwrap();
+        assert_eq!(
+            folder_of(root, &root.join("Artist/Album/a.flac")).as_deref(),
+            Some("Artist/Album")
+        );
+        assert_eq!(
+            folder_of(root, &root.join("Artist/Album")).as_deref(),
+            Some("Artist/Album"),
+            "a folder is its own scope"
+        );
+        assert_eq!(
+            folder_of(root, &root.join("Artist/Gone/b.flac")).as_deref(),
+            Some("Artist/Gone"),
+            "something gone is in its parent's"
+        );
+        assert_eq!(folder_of(root, &root.join("top.flac")), None);
+        assert_eq!(folder_of(root, root), None);
+        assert_eq!(folder_of(root, Path::new("/elsewhere/c.flac")), None);
     }
 
     #[test]

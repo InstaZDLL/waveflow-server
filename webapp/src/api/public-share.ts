@@ -8,6 +8,11 @@ export type PublicShareTrack = Song & {
    * built from the track id alone opens nothing.
    */
   streamUrl: string;
+  /**
+   * The track's cover, under the same pass (RFC-020): absent for a track that
+   * has none. A plain address, so `<img src>` loads it with no session.
+   */
+  coverUrl?: string;
 };
 
 export type PublicShare = {

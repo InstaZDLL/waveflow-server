@@ -63,7 +63,11 @@ const RESERVED_EXACT: [&str; 5] = [
 /// image; handed the shell, it fails to parse it and the client is not
 /// installable, with nothing in the response to say why. A build without them
 /// — the placeholder `build.rs` embeds — answers a JSON 404 instead.
-const ASSET_ONLY_EXACT: [&str; 2] = ["manifest.webmanifest", "apple-touch-icon.png"];
+///
+/// `sw.js`, the service worker (RFC-022, offline listening), for the same
+/// reason: a browser registering a worker and handed the shell refuses it as
+/// a script of the wrong type, and the client silently loses the offline copy.
+const ASSET_ONLY_EXACT: [&str; 3] = ["manifest.webmanifest", "apple-touch-icon.png", "sw.js"];
 const ASSET_ONLY_PREFIXES: [&str; 1] = ["icons/"];
 
 pub async fn handler(uri: Uri) -> Response {

@@ -154,6 +154,28 @@ export function forgetOnSessionChange(forget: () => void): void {
 }
 
 /**
+ * Told whose session this browser now holds — on a sign-in and on every
+ * renewal — and told `null` on a sign-out. **Not** on an expiry or a renewal
+ * that failed: a browser that boots with no network cannot renew, and that is
+ * not its account leaving. What belongs to one account and outlives the page
+ * — the tracks kept for offline listening — listens here (RFC-022).
+ */
+type OwnerListener = (userId: string | null) => void | Promise<void>;
+const ownerListeners: OwnerListener[] = [];
+
+export function onSessionOwner(listener: OwnerListener): void {
+  ownerListeners.push(listener);
+}
+
+async function announceOwner(userId: string | null): Promise<void> {
+  await Promise.allSettled(
+    ownerListeners.map((listener) =>
+      Promise.resolve().then(() => listener(userId)),
+    ),
+  );
+}
+
+/**
  * Which session the answers below belong to.
  *
  * Bumped every time one begins or ends, so work already in flight can tell
@@ -240,6 +262,7 @@ async function performRefresh(): Promise<boolean> {
     const renewed = await parse<WebSession>(response);
     if (stale()) return false;
     session = renewed;
+    await announceOwner(renewed.user.id);
     return true;
   } catch {
     if (stale()) return false;
@@ -355,6 +378,7 @@ export async function login(username: string, password: string): Promise<void> {
   }
   session = await parse<WebSession>(response);
   clearSessionState();
+  await announceOwner(session.user.id);
 }
 
 export const setupRequired = () =>
@@ -408,6 +432,7 @@ export async function logout(): Promise<void> {
   } finally {
     session = null;
     clearSessionState();
+    await announceOwner(null);
   }
 }
 

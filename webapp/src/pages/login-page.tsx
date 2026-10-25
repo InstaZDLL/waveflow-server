@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 
 import {
@@ -9,7 +9,34 @@ import {
   safeInternalPath,
   setupRequired,
 } from "../api";
+import { keptSongs, offlineSupported } from "../lib/offline";
 import { useI18n } from "../state/i18n";
+
+/**
+ * A way to what this browser kept for offline listening (RFC-022), shown only
+ * when it kept something: signed out, or with no server to sign in to, the
+ * music already here still plays.
+ */
+function OfflineLink() {
+  const { t } = useI18n();
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!offlineSupported()) return;
+    let live = true;
+    void keptSongs()
+      .then((songs) => live && setCount(songs.length))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (count === 0) return null;
+  return (
+    <p className="login-offline">
+      <Link to="/offline">{t("login.offline", { count })}</Link>
+    </p>
+  );
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -121,6 +148,7 @@ export function LoginPage() {
           </button>
         </form>
       </div>
+      <OfflineLink />
     </main>
   );
 }
