@@ -7027,14 +7027,38 @@ test("keeps the missing files from a listener", async ({ page }) => {
     const path = new URL(request.url()).pathname;
     if (path.includes("/unavailable-tracks")) asked.push(path);
   });
+  // A listener who is not an administrator either: the default session is
+  // one, and an administrator may see the page whatever their library role.
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: { ...session, user: { ...session.user, role: "user" } },
+    }),
+  );
   libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
   missingTracks = [missingTrack(1, "First light")];
   await page.goto("/missing");
   await expect(
     page.getByText(
-      "Only the owners and managers of this library see its missing files.",
+      "Only the owners and managers of this library, and administrators, see its missing files.",
     ),
   ).toBeVisible();
   await expect(page.getByText("Gone/1 First light.flac")).toHaveCount(0);
   expect(asked).toEqual([]);
+});
+
+/**
+ * The server grants the page to the instance's administrators whatever their
+ * role in the library (RFC-021 decision 4), so the client must not hide it
+ * from an administrator who only listens to it.
+ */
+test("shows the missing files to an administrator who only listens", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  missingTracks = [missingTrack(1, "First light")];
+  await page.goto("/missing");
+  await expect(page.getByText("Gone/1 First light.flac")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Purge them all" }),
+  ).toBeVisible();
 });

@@ -5976,7 +5976,11 @@ async fn the_library_lifecycle_routes_answer_by_standing() {
         .as_str()
         .unwrap()
         .to_owned();
-    for _ in 0..200 {
+    // Until the scan ends, and only a completed one counts: a failed or
+    // unfinished scan would leave the assertions below reading a catalogue
+    // halfway written.
+    let mut status = serde_json::Value::Null;
+    for _ in 0..500 {
         let job = send(bearer_json(
             "GET",
             &format!("/api/v2/scans/{scan_id}"),
@@ -5984,11 +5988,13 @@ async fn the_library_lifecycle_routes_answer_by_standing() {
             serde_json::json!({}),
         ))
         .await;
-        if json_body(job).await["status"] == "completed" {
+        status = json_body(job).await["status"].clone();
+        if status == "completed" || status == "failed" {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert_eq!(status, "completed", "the scan did not complete");
     let missing = send(bearer_json(
         "GET",
         &format!("{library}/unavailable-tracks"),

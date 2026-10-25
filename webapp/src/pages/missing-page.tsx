@@ -1,11 +1,11 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiError, purgeUnavailableTracks } from "../api";
+import { ApiError, currentUser, purgeUnavailableTracks } from "../api";
 import { unavailableTracksQuery } from "../api/queries";
 import { Loading, PageHeader } from "../components/page-shell";
 import { useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
+import { mayManageMissing, useLibraryScope } from "../state/library-scope";
 
 /** How long a purge waits for its second click, as Split does. */
 const CONFIRM_MS = 4000;
@@ -24,7 +24,7 @@ export function MissingPage() {
   const { t, locale } = useI18n();
   const { active, ready } = useLibraryScope();
   const libraryId = active?.id ?? "";
-  const may = mayCorrectTracks(active ?? undefined);
+  const may = mayManageMissing(active ?? undefined, currentUser()?.role);
   const missing = useInfiniteQuery({
     ...unavailableTracksQuery(libraryId),
     enabled: active !== null && may,

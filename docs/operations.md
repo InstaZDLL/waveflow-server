@@ -456,15 +456,19 @@ library's current name. None of these runs while the library is being scanned.
 The server watches every library folder and scans a library once its changes
 have been quiet for `WAVEFLOW_WATCH_DELAY_SECS` (10 by default); a copy that
 never pauses is still scanned every thirty delays. The periodic scan stays as
-the safety net. Set `WAVEFLOW_WATCH=false` to turn watching off.
+the safety net — **as long as `WAVEFLOW_SCAN_INTERVAL_SECS` is not `0`**, which
+turns it off and leaves only the scan at boot. Set `WAVEFLOW_WATCH=false` to
+turn watching off.
 
 **Do not count on it for network mounts.** NFS and SMB report the changes this
 machine makes and usually not those another machine makes, so a library on a
-share is found up to date at the next periodic scan. A folder that cannot be
-watched is logged once and left to the periodic scan. On Linux, a large
-library can exhaust the inotify watch limit; raise it with
-`sysctl fs.inotify.max_user_watches=524288` (and in `/etc/sysctl.d/` to keep
-it), or the library falls back to the periodic scan.
+share is found up to date at the next periodic scan — and with the interval at
+`0`, not before the server restarts. Keep the interval on for any library on a
+share. A folder that cannot be watched is logged once and left to the periodic
+scan, with the same condition. On Linux, a large library can exhaust the
+inotify watch limit; raise it with `sysctl fs.inotify.max_user_watches=524288`
+(and in `/etc/sysctl.d/` to keep it), or the library falls back to the periodic
+scan.
 
 ## Probes
 

@@ -804,7 +804,7 @@ const en = {
   },
   "missing.nothing": "Every file is where the catalogue expects it.",
   "missing.notYours":
-    "Only the owners and managers of this library see its missing files.",
+    "Only the owners and managers of this library, and administrators, see its missing files.",
   "missing.note":
     "These tracks stay in the catalogue, with their favourites, playlist entries and plays, until they are purged; a file that comes back first keeps its track. A purge is not reversible: the track, and everything that hangs off it for every member, goes for good.",
   "missing.since": "missing since {date}",
@@ -1709,7 +1709,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   },
   "missing.nothing": "Chaque fichier est là où le catalogue l’attend.",
   "missing.notYours":
-    "Seuls les propriétaires et gestionnaires de cette bibliothèque voient ses fichiers manquants.",
+    "Seuls les propriétaires et gestionnaires de cette bibliothèque, et les administrateurs, voient ses fichiers manquants.",
   "missing.note":
     "Ces titres restent au catalogue, avec leurs favoris, entrées de playlist et écoutes, jusqu’à leur purge ; un fichier qui revient avant garde son titre. Une purge est irréversible : le titre, et tout ce qui s’y rattache pour chaque membre, disparaît pour de bon.",
   "missing.since": "manquant depuis le {date}",
