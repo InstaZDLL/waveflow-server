@@ -97,13 +97,16 @@ export function Artwork({ artworkId, title, className = "" }: ArtworkProps) {
 
   const classes = `cover ${className}`.trim();
   if (src) return <img ref={observe} className={classes} src={src} alt="" />;
+  // A `span`, not a `div`: a cover can sit inside a `<button>` (a top track in
+  // the statistics plays when pressed), and a button holds phrasing content
+  // only. `.cover` sets `display: grid`, so the element changes nothing drawn.
   return (
-    <div
+    <span
       ref={observe}
       className={`${classes} cover-fallback`}
       aria-hidden="true"
     >
       <span>{title.slice(0, 1).toLocaleUpperCase()}</span>
-    </div>
+    </span>
   );
 }

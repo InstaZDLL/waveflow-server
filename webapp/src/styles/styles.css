@@ -2096,7 +2096,9 @@ button.danger {
 }
 
 /* A seekable line is a button and has to look like the text it is, not like a
-   control: what makes it pressable is already said by its label. */
+   control: what makes it pressable is already said by its label. The strip
+   beside the cover seeks the same way, so it shares the rule. */
+.lyrics .link,
 .lyrics-view .link {
   display: block;
   width: 100%;
@@ -2109,6 +2111,7 @@ button.danger {
   cursor: pointer;
 }
 
+.lyrics .link:hover,
 .lyrics-view .link:hover {
   color: var(--text);
   text-decoration: underline;
@@ -3944,14 +3947,37 @@ button.danger {
   min-width: 0;
 }
 
+/* The cover, then the names stacked beside it. */
 .stats-entry {
-  display: grid;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   text-align: left;
+}
+
+.stats-art {
+  width: 2.75rem;
+  flex: 0 0 auto;
+  border-radius: 0.45rem;
+}
+
+/* An artist is a portrait, round as on the artists page. */
+.stats-art-round {
+  border-radius: 50%;
+}
+
+.stats-art span {
+  font-size: var(--text-base);
+}
+
+.stats-text {
+  display: grid;
+  min-width: 0;
 }
 
 .stats-name,

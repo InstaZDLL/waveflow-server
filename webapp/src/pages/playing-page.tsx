@@ -1,6 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type RefObject,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   deleteBookmark,
@@ -146,66 +152,23 @@ function useLyricSheet(trackId: string) {
   };
 }
 
-/** The words beside the cover, as the detail view has always shown them. */
-function LyricsStrip({ trackId }: { trackId: string }) {
-  const { t } = useI18n();
-  const { sheet, active, keys, state } = useLyricSheet(trackId);
-
-  if (state === "waiting")
-    return <p className="muted">{t("common.loading")}</p>;
-  if (state === "none" || !sheet)
-    return <p className="muted">{t("lyrics.none")}</p>;
-  return (
-    <div className="lyrics">
-      <h3>
-        {sheet.displayTitle}
-        {sheet.displayArtist ? <small>{sheet.displayArtist}</small> : null}
-      </h3>
-      <ol aria-label={t("lyrics.label")}>
-        {sheet.line.map((line, index) => (
-          <li
-            key={keys[index]}
-            className={index === active ? "on" : undefined}
-            aria-current={index === active ? "true" : undefined}
-          >
-            {line.value || BLANK_LINE}
-          </li>
-        ))}
-      </ol>
-      {sheet.source === "lrclib" ? (
-        <p className="muted lyrics-credit">
-          <small>{t("lyrics.fromLrclib")}</small>
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 /**
- * The words as the subject of the screen.
+ * Holds the sung line in the middle of `column`, and only `column`.
  *
- * Two things the strip cannot do, and they are why this view exists rather
- * than being the strip with a larger font. It **holds the sung line in view**,
- * so a listener reads along without touching anything — which is the whole
- * point of a server that supplies timings. And where those timings exist, a
- * line is a **button that seeks to it**: the sheet becomes a way to move
- * through the track, not only a thing to read.
- *
- * A sheet without timings gets neither, and says so by having no buttons at
- * all. Rendering an unsynced line as something pressable would promise a seek
- * the sheet cannot compute.
+ * Shared by the strip beside the cover and the lyrics view, so the two follow
+ * the words the same way: the strip used to bold the sung line and leave it to
+ * scroll out of its own box, which marked a line nobody could see.
  */
-function LyricsView({ song }: { song: Song }) {
-  const { t } = useI18n();
-  const player = usePlayer();
+function useFollowSungLine(
+  column: RefObject<HTMLOListElement | null>,
+  sheet: StructuredLyrics | undefined,
+  active: number,
+) {
   const reduced = usePrefersReducedMotion();
-  const { sheet, active, keys, state } = useLyricSheet(song.id);
-  const column = useRef<HTMLOListElement | null>(null);
-
   // **Before paint, and only when there is something to do.** `useEffect`
   // would let the new line show at the bottom of the column for a frame before
   // the scroll caught up. And a progress tick that stays on the same line
-  // changes none of the three dependencies, so it costs nothing.
+  // changes none of the dependencies, so it costs nothing.
   useLayoutEffect(() => {
     // `sheet` is read here and not only named below: there is no column
     // without one, and a dependency the body never touches is a decorative
@@ -230,8 +193,8 @@ function LyricsView({ song }: { song: Song }) {
         (lineBox.top - listBox.top) -
         (listBox.height - lineBox.height) / 2,
       // A sheet that jumps rather than glides, for whoever asked for less
-      // motion. The following itself is not decoration — it is how the view
-      // works — so it is the gliding that goes, not the following.
+      // motion. The following itself is not decoration — it is how the words
+      // are read — so it is the gliding that goes, not the following.
       behavior: reduced ? "auto" : "smooth",
     });
     // `sheet` as well as `active`, for the track change where the two
@@ -240,7 +203,115 @@ function LyricsView({ song }: { song: Song }) {
     // the previous track's scroll and the opening line of the new one is above
     // the fold. The object is react-query's and stable between renders, so
     // naming it costs no extra run.
-  }, [active, reduced, sheet]);
+  }, [active, column, reduced, sheet]);
+}
+
+/**
+ * A sheet's lines, the sung one marked.
+ *
+ * Where the sheet carries timings, each line is a **button that seeks to it**,
+ * in the strip as in the lyrics view. A sheet without timings gets no buttons
+ * at all: rendering an unsynced line as something pressable would promise a
+ * seek the sheet cannot compute.
+ */
+function LyricLines({
+  sheet,
+  active,
+  keys,
+  column,
+}: {
+  sheet: StructuredLyrics;
+  active: number;
+  keys: string[];
+  column: RefObject<HTMLOListElement | null>;
+}) {
+  const { t } = useI18n();
+  const player = usePlayer();
+  return (
+    <ol ref={column} aria-label={t("lyrics.label")}>
+      {sheet.line.map((line, index) => {
+        const at = line.start;
+        const on = index === active;
+        return (
+          <li
+            key={keys[index]}
+            className={on ? "on" : undefined}
+            aria-current={on ? "true" : undefined}
+          >
+            {sheet.synced && at !== undefined ? (
+              <button
+                type="button"
+                className="link"
+                onClick={() => player.seek(at / 1000)}
+                // The words first, then what pressing does. The name must
+                // contain the text on screen (WCAG 2.5.3), or someone saying
+                // "click the lamps come on" to voice control reaches
+                // nothing; the time after it is what a bare line leaves
+                // unsaid. A blank line has no words to repeat.
+                aria-label={
+                  line.value
+                    ? t("lyrics.seekLine", {
+                        line: line.value,
+                        when: formatDuration(at),
+                      })
+                    : t("lyrics.seekTo", { when: formatDuration(at) })
+                }
+              >
+                {line.value || BLANK_LINE}
+              </button>
+            ) : (
+              line.value || BLANK_LINE
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * The words beside the cover, in the detail view.
+ *
+ * Smaller than the lyrics view and inside a box of its own, but reading the
+ * same way: the sung line is held in view and, where the sheet is synced, a
+ * line seeks to itself.
+ */
+function LyricsStrip({ trackId }: { trackId: string }) {
+  const { t } = useI18n();
+  const { sheet, active, keys, state } = useLyricSheet(trackId);
+  const column = useRef<HTMLOListElement | null>(null);
+  useFollowSungLine(column, sheet, active);
+
+  if (state === "waiting")
+    return <p className="muted">{t("common.loading")}</p>;
+  if (state === "none" || !sheet)
+    return <p className="muted">{t("lyrics.none")}</p>;
+  return (
+    <div className="lyrics">
+      <h3>
+        {sheet.displayTitle}
+        {sheet.displayArtist ? <small>{sheet.displayArtist}</small> : null}
+      </h3>
+      <LyricLines sheet={sheet} active={active} keys={keys} column={column} />
+      {sheet.source === "lrclib" ? (
+        <p className="muted lyrics-credit">
+          <small>{t("lyrics.fromLrclib")}</small>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The words as the subject of the screen: one wide column, centred, with the
+ * names and the hint above it. It follows and seeks as the strip does; what it
+ * adds is the room.
+ */
+function LyricsView({ song }: { song: Song }) {
+  const { t } = useI18n();
+  const { sheet, active, keys, state } = useLyricSheet(song.id);
+  const column = useRef<HTMLOListElement | null>(null);
+  useFollowSungLine(column, sheet, active);
 
   // Inside the view's own frame, like the empty state below it: a column that
   // appears out of nowhere once the words land is a jump the wrapper absorbs.
@@ -275,44 +346,7 @@ function LyricsView({ song }: { song: Song }) {
           </p>
         ) : null}
       </header>
-      <ol ref={column} aria-label={t("lyrics.label")}>
-        {sheet.line.map((line, index) => {
-          const at = line.start;
-          const on = index === active;
-          return (
-            <li
-              key={keys[index]}
-              className={on ? "on" : undefined}
-              aria-current={on ? "true" : undefined}
-            >
-              {sheet.synced && at !== undefined ? (
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => player.seek(at / 1000)}
-                  // The words first, then what pressing does. The name must
-                  // contain the text on screen (WCAG 2.5.3), or someone saying
-                  // "click the lamps come on" to voice control reaches
-                  // nothing; the time after it is what a bare line leaves
-                  // unsaid. A blank line has no words to repeat.
-                  aria-label={
-                    line.value
-                      ? t("lyrics.seekLine", {
-                          line: line.value,
-                          when: formatDuration(at),
-                        })
-                      : t("lyrics.seekTo", { when: formatDuration(at) })
-                  }
-                >
-                  {line.value || BLANK_LINE}
-                </button>
-              ) : (
-                line.value || BLANK_LINE
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <LyricLines sheet={sheet} active={active} keys={keys} column={column} />
     </div>
   );
 }
