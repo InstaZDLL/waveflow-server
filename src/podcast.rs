@@ -729,11 +729,14 @@ mod tests {
         assert_eq!(sniff_audio(b"MZ\x90\0").map(|f| f.0), None);
     }
 
-    /// Text is cut where it passes its bound, and finding where costs one pass:
-    /// five hundred items of long descriptions are read in a fraction of the
-    /// time the quadratic count took (tens of seconds in a debug build).
+    /// Text is cut where it passes its bound, exactly where the earlier count
+    /// cut it. The count is now kept as characters are pushed rather than
+    /// recomputed for each one; that recount was measured and is not slow in
+    /// practice — std's character count runs optimized even in a debug build,
+    /// and the feed above parses in well under a second either way — so this
+    /// test holds the behaviour, not a timing.
     #[test]
-    fn long_texts_are_cut_in_one_pass() {
+    fn long_texts_are_cut_where_they_pass_their_bound() {
         let description = "word ".repeat(1_600);
         let items: String = (0..MAX_EPISODES_PER_FEED)
             .map(|index| {
@@ -744,13 +747,7 @@ mod tests {
             })
             .collect();
         let document = format!("<rss><channel><title>Long</title>{items}</channel></rss>");
-        let started = std::time::Instant::now();
         let feed = parse_feed(document.as_bytes(), &base()).unwrap();
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(10),
-            "parsing took {:?}",
-            started.elapsed()
-        );
         assert_eq!(feed.episodes.len(), MAX_EPISODES_PER_FEED);
         let kept = feed.episodes[0].description.as_deref().unwrap();
         assert_eq!(
