@@ -512,23 +512,16 @@ fn judge(record: Record, duration_ms: i64) -> Answer {
     }
 }
 
-/// A body read whole, unless it outgrows `limit`. `Content-Length` is checked
-/// first, and the running count covers an answer that announces nothing.
-async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Verdict> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(Verdict::TooLarge);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(Verdict::from_transport)? {
-        if body.len() + chunk.len() > limit {
-            return Err(Verdict::TooLarge);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+/// The body, through the reader every outbound answer shares
+/// (`outbound::read_bounded_body`), under the lyrics cap rather than its
+/// general one: a sheet is held to what an upload or a sidecar may weigh.
+async fn read_bounded(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Verdict> {
+    crate::outbound::read_bounded_body(response, limit)
+        .await
+        .map_err(|error| match error {
+            crate::outbound::BodyError::TooLarge => Verdict::TooLarge,
+            crate::outbound::BodyError::Unread => Verdict::Transport,
+        })
 }
 
 /// Releases a lookup's key and count when it ends, and tells its waiters.
