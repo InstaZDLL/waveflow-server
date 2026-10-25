@@ -620,6 +620,30 @@ impl Database {
         Ok(id)
     }
 
+    /// A queued job, in a transaction the caller holds under the writer gate:
+    /// for a change that owes a scan and must not commit without it (RFC-021
+    /// decision 5).
+    pub(crate) async fn insert_scan_job_in(
+        tx: &mut Transaction<'_, Sqlite>,
+        library_id: Uuid,
+        requested_by: Option<Uuid>,
+        trigger: &str,
+    ) -> Result<Uuid, sqlx::Error> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO scan_job (id, library_id, requested_by, trigger, status, created_at) \
+             VALUES (?, ?, ?, ?, 'queued', ?)",
+        )
+        .bind(id.to_string())
+        .bind(library_id.to_string())
+        .bind(requested_by.map(|id| id.to_string()))
+        .bind(trigger)
+        .bind(now_ms())
+        .execute(&mut **tx)
+        .await?;
+        Ok(id)
+    }
+
     /// Creates a scan job only if the user is entitled to one, testing that
     /// inside the insert rather than before it.
     ///

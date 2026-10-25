@@ -493,7 +493,7 @@ impl DomainServices {
         let relinked = update
             .follow_links
             .is_some_and(|follow| follow != before.follow_links);
-        {
+        let scan_id = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.pool().begin().await?;
             let written = sqlx::query(
@@ -551,28 +551,38 @@ impl DomainServices {
                 )
                 .await?;
             }
+            // The scan a new root or links setting owes is queued in the same
+            // transaction: a change committed without its job would leave the
+            // catalogue on the old walk until some other scan came along —
+            // and with no interval set, none would.
+            let scan_id = if moved || relinked {
+                Some(
+                    Database::insert_scan_job_in(
+                        &mut tx,
+                        library_id,
+                        Some(actor.id),
+                        if moved { "library_moved" } else { "manual" },
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             tx.commit().await?;
-        }
+            scan_id
+        };
         drop(_scan_lock);
         if moved {
             self.scanner.libraries_changed();
         }
-        if !(moved || relinked) {
+        let Some(scan_id) = scan_id else {
             return Ok(LibraryUpdated { scan_id: None });
-        }
+        };
         let after = self
             .db
             .library_scan_settings(library_id)
             .await?
             .ok_or(ServiceError::NotFound)?;
-        let scan_id = self
-            .db
-            .create_scan_job(
-                library_id,
-                Some(actor.id),
-                if moved { "library_moved" } else { "manual" },
-            )
-            .await?;
         self.scanner.spawn(scan_id, after.library);
         Ok(LibraryUpdated {
             scan_id: Some(scan_id),

@@ -2520,3 +2520,44 @@ async fn a_folder_reached_through_a_link_spares_its_tracks_when_it_cannot_be_use
     );
     assert_eq!(available_paths(&state).await, [".hidden/Sub/One.wav"]);
 }
+
+/// RFC-021 decision 5: a new root is never stored without the scan it owes.
+/// Here the job cannot be queued — a trigger refuses it — and the root must
+/// stay where it was, rather than commit and wait for a scan nobody queued.
+#[tokio::test]
+async fn a_move_whose_scan_cannot_be_queued_is_not_stored() {
+    let (temp, state, owner, library, root) = library_with_albums("move-unqueued").await;
+    sqlx::query(
+        "CREATE TRIGGER refuse_moved_scans BEFORE INSERT ON scan_job \
+         WHEN NEW.trigger = 'library_moved' \
+         BEGIN SELECT RAISE(ABORT, 'no scan for you'); END",
+    )
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let elsewhere = temp.path().join("move-unqueued-elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+
+    let refused = state
+        .services
+        .update_library(
+            waveflow_server::services::LibraryActor::operator(owner),
+            library.id,
+            waveflow_server::services::LibraryUpdate {
+                path: Some(elsewhere.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+    let stored: String = sqlx::query_scalar("SELECT root_path FROM library WHERE id = ?")
+        .bind(library.id.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::path::PathBuf::from(stored),
+        root,
+        "the new root was stored without the scan it owes"
+    );
+}
