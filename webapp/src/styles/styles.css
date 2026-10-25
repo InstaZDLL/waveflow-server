@@ -3947,14 +3947,37 @@ button.danger {
   min-width: 0;
 }
 
+/* The cover, then the names stacked beside it. */
 .stats-entry {
-  display: grid;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   text-align: left;
+}
+
+.stats-art {
+  width: 2.75rem;
+  flex: 0 0 auto;
+  border-radius: 0.45rem;
+}
+
+/* An artist is a portrait, round as on the artists page. */
+.stats-art-round {
+  border-radius: 50%;
+}
+
+.stats-art span {
+  font-size: var(--text-base);
+}
+
+.stats-text {
+  display: grid;
+  min-width: 0;
 }
 
 .stats-name,

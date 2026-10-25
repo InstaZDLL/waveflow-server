@@ -7733,6 +7733,20 @@ test("shows this account's listening, period by period", async ({ page }) => {
   await expect(columns.getByRole("link", { name: "Art Pop" })).toBeVisible();
   await expect(columns.getByRole("link", { name: /Vespertine/ })).toBeVisible();
   await expect(page.locator(".stats-moments")).toContainText("Cocoon, ");
+  // Every track, artist and album entry carries its cover (or the lettered
+  // placeholder when there is none); a genre has no artwork to show.
+  const entries = columns.locator(".stats-entry");
+  await expect(columns.locator(".stats-entry .stats-art")).toHaveCount(
+    (await entries.count()) - 1,
+  );
+  await expect(
+    columns
+      .getByRole("link", { name: "Björk", exact: true })
+      .locator(".stats-art-round"),
+  ).toHaveCount(1);
+  await expect(
+    columns.getByRole("link", { name: "Art Pop" }).locator(".stats-art"),
+  ).toHaveCount(0);
   await expectNoWcagViolations(page);
 
   await page.getByRole("combobox", { name: "Period" }).selectOption("7d");

@@ -4,6 +4,7 @@ import { type CSSProperties, useState } from "react";
 
 import type { StatsPeriod } from "../api";
 import { statsQuery } from "../api/queries";
+import { Artwork } from "../components/artwork";
 import { EmptyState, Loading, PageHeader } from "../components/page-shell";
 import { barShares, listeningTime } from "../lib/mixes";
 import { usePlayer } from "../player/player";
@@ -147,9 +148,18 @@ export function StatsPage() {
                         )
                       }
                     >
-                      <strong className="stats-name">{entry.song.title}</strong>
-                      <span className="muted stats-sub">
-                        {entry.song.artist ?? t("common.unknownArtist")}
+                      <Artwork
+                        artworkId={entry.song.artwork_hash}
+                        title={entry.song.title}
+                        className="stats-art"
+                      />
+                      <span className="stats-text">
+                        <strong className="stats-name">
+                          {entry.song.title}
+                        </strong>
+                        <span className="muted stats-sub">
+                          {entry.song.artist ?? t("common.unknownArtist")}
+                        </span>
                       </span>
                     </button>
                     <span className="stats-count">
@@ -169,9 +179,16 @@ export function StatsPage() {
                       to="/artists/$artistId"
                       params={{ artistId: entry.artist.id }}
                     >
-                      <strong className="stats-name">
-                        {entry.artist.name}
-                      </strong>
+                      <Artwork
+                        artworkId={entry.artwork_hash}
+                        title={entry.artist.name}
+                        className="stats-art stats-art-round"
+                      />
+                      <span className="stats-text">
+                        <strong className="stats-name">
+                          {entry.artist.name}
+                        </strong>
+                      </span>
                     </Link>
                     <span className="stats-count">
                       {t("stats.playCount", { count: entry.plays })}
@@ -190,11 +207,18 @@ export function StatsPage() {
                       to="/albums/$albumId"
                       params={{ albumId: entry.album.id }}
                     >
-                      <strong className="stats-name">
-                        {entry.album.title}
-                      </strong>
-                      <span className="muted stats-sub">
-                        {entry.album.artist ?? t("common.variousArtists")}
+                      <Artwork
+                        artworkId={entry.album.artwork_hash}
+                        title={entry.album.title}
+                        className="stats-art"
+                      />
+                      <span className="stats-text">
+                        <strong className="stats-name">
+                          {entry.album.title}
+                        </strong>
+                        <span className="muted stats-sub">
+                          {entry.album.artist ?? t("common.variousArtists")}
+                        </span>
                       </span>
                     </Link>
                     <span className="stats-count">
