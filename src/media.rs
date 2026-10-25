@@ -34,7 +34,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
-use crate::{catalog::StreamTrack, config::Config, AppState};
+use crate::{
+    catalog::StreamTrack,
+    config::Config,
+    replay_gain::{Gain, ReplayGainMode},
+    AppState,
+};
 
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
@@ -77,6 +82,9 @@ struct MediaInner {
     /// The folders outside every library a stored path may lead into through
     /// a link (`WAVEFLOW_LINK_ROOTS`).
     link_roots: crate::link_roots::LinkRoots,
+    /// What a Subsonic transcode applies of ReplayGain unless the request
+    /// says otherwise (`WAVEFLOW_SUBSONIC_REPLAYGAIN`).
+    subsonic_replay_gain: ReplayGainMode,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -177,6 +185,7 @@ impl MediaService {
                 cache_access: DashMap::new(),
                 pending_fills: DashSet::new(),
                 link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
+                subsonic_replay_gain: config.subsonic_replay_gain,
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
                 ffmpeg_digest: crate::quality::decoder_digest(&ffmpeg_version),
@@ -207,6 +216,12 @@ impl MediaService {
         (self.inner.global_limit, self.inner.per_user_limit)
     }
 
+    /// What a Subsonic transcode applies of ReplayGain when the request does
+    /// not say.
+    pub fn subsonic_replay_gain(&self) -> ReplayGainMode {
+        self.inner.subsonic_replay_gain
+    }
+
     /// The service is only constructed after both FFmpeg tools pass startup
     /// detection, so an initialized instance is the capability signal.
     pub fn transcoding_available(&self) -> bool {
@@ -220,6 +235,25 @@ impl MediaService {
         query: StreamQuery,
         range: Option<&str>,
     ) -> Result<Response, MediaError> {
+        self.serve_with_replay_gain(user_id, track, query, range, ReplayGainMode::Off)
+            .await
+    }
+
+    /// [`Self::serve`], a transcode levelled by the track's ReplayGain under
+    /// `mode` (RFC-022, what was still open). The original is served as it is
+    /// whatever the mode says: the gain rides on an encode that happens anyway,
+    /// and never causes one. A gain is part of the cache key, so a levelled
+    /// encode is never handed to a request that did not ask for it; no gain —
+    /// the mode off, or a track with no tags — keeps the key it always had.
+    pub async fn serve_with_replay_gain(
+        &self,
+        user_id: Uuid,
+        track: StreamTrack,
+        query: StreamQuery,
+        range: Option<&str>,
+        mode: ReplayGainMode,
+    ) -> Result<Response, MediaError> {
+        let gain = crate::replay_gain::gain(track.replay_gain, mode);
         if !track.available {
             return Err(MediaError::NotFound);
         }
@@ -246,7 +280,7 @@ impl MediaService {
         if query.offset_ms > track.duration_ms.max(0) as u64 {
             return Err(MediaError::InvalidRequest);
         }
-        let key = cache_key(&track.full_hash, query.format, bitrate);
+        let key = cache_key(&track.full_hash, query.format, bitrate, gain);
         let cache_path = self
             .inner
             .cache_dir
@@ -277,6 +311,7 @@ impl MediaService {
                     source.clone(),
                     query.format,
                     bitrate,
+                    gain,
                     query.offset_ms,
                     None,
                 )
@@ -289,6 +324,7 @@ impl MediaService {
                     source,
                     query.format,
                     bitrate,
+                    gain,
                     key,
                     cache_path,
                     fill_deadline(track.duration_ms),
@@ -320,6 +356,7 @@ impl MediaService {
             source,
             query.format,
             bitrate,
+            gain,
             0,
             Some((cache_path, guard)),
         )
@@ -337,6 +374,7 @@ impl MediaService {
         source: &Path,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         offset_ms: u64,
     ) -> Result<Command, MediaError> {
         let mut command = Command::new(&self.inner.ffmpeg);
@@ -350,6 +388,9 @@ impl MediaService {
             .arg("-i")
             .arg(source)
             .args(["-vn", "-map_metadata", "-1"]);
+        if let Some(gain) = gain {
+            command.arg("-af").arg(gain.filter());
+        }
         let bitrate_arg = format!("{bitrate}k");
         match format {
             OutputFormat::Mp3 => {
@@ -406,11 +447,13 @@ impl MediaService {
     /// a fill has no listener, so without a deadline an encode that never
     /// finished would hold its slot and its key until the server restarted.
     /// Past it, FFmpeg is killed and nothing it wrote is kept.
+    #[allow(clippy::too_many_arguments)]
     fn fill_cache_behind_a_seek(
         &self,
         source: PathBuf,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         key: String,
         cache_path: PathBuf,
         deadline: Duration,
@@ -431,7 +474,7 @@ impl MediaService {
             return;
         };
         drop(global.split(1));
-        let Ok(mut command) = self.transcode_command(&source, format, bitrate, 0) else {
+        let Ok(mut command) = self.transcode_command(&source, format, bitrate, gain, 0) else {
             return;
         };
         let staging = staging_path(&cache_path);
@@ -493,12 +536,14 @@ impl MediaService {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn stream_transcode(
         &self,
         user_id: Uuid,
         source: PathBuf,
         format: OutputFormat,
         bitrate: u32,
+        gain: Option<Gain>,
         offset_ms: u64,
         cache: Option<(PathBuf, tokio::sync::OwnedMutexGuard<()>)>,
     ) -> Result<Response, MediaError> {
@@ -515,7 +560,7 @@ impl MediaService {
             .try_acquire_owned()
             .map_err(|_| MediaError::Busy)?;
 
-        let mut command = self.transcode_command(&source, format, bitrate, offset_ms)?;
+        let mut command = self.transcode_command(&source, format, bitrate, gain, offset_ms)?;
         command
             .arg("pipe:1")
             .stdin(Stdio::null())
@@ -1766,9 +1811,14 @@ fn staging_path(cache_path: &Path) -> PathBuf {
     ))
 }
 
-fn cache_key(source_hash: &str, format: OutputFormat, bitrate: u32) -> String {
+fn cache_key(source_hash: &str, format: OutputFormat, bitrate: u32, gain: Option<Gain>) -> String {
+    // A gain is named only when there is one, so every key written before
+    // ReplayGain existed is still the key of the same encode.
+    let gain = gain
+        .map(|gain| format!(":{}", gain.key()))
+        .unwrap_or_default();
     blake3::hash(
-        format!("{source_hash}:{format:?}:{bitrate}:{TRANSCODE_PROFILE_VERSION}").as_bytes(),
+        format!("{source_hash}:{format:?}:{bitrate}:{TRANSCODE_PROFILE_VERSION}{gain}").as_bytes(),
     )
     .to_hex()
     .to_string()
@@ -2061,6 +2111,7 @@ mod tests {
             transcoding_available: true,
             ffmpeg_digest: String::new(),
             link_roots: crate::link_roots::LinkRoots::default(),
+            subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
         };
         prune_cache(&inner).await;
         assert!(!old.exists());
@@ -2081,7 +2132,7 @@ mod tests {
         let source = temp.path().join("track.wav");
         silent_wav(&source, 2);
 
-        let key = cache_key("abandoned", OutputFormat::Mp3, 96);
+        let key = cache_key("abandoned", OutputFormat::Mp3, 96, None);
         let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
         let lock = media
             .inner
@@ -2095,6 +2146,7 @@ mod tests {
             source,
             OutputFormat::Mp3,
             96,
+            None,
             key,
             cache_path.clone(),
             Duration::from_secs(60),
@@ -2134,13 +2186,14 @@ mod tests {
         let source = temp.path().join("track.wav");
         silent_wav(&source, 30);
 
-        let key = cache_key("overdue", OutputFormat::Mp3, 96);
+        let key = cache_key("overdue", OutputFormat::Mp3, 96, None);
         let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
         // A millisecond: less than FFmpeg takes to start, let alone to finish.
         media.fill_cache_behind_a_seek(
             source,
             OutputFormat::Mp3,
             96,
+            None,
             key,
             cache_path.clone(),
             Duration::from_millis(1),

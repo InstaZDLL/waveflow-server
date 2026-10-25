@@ -20,6 +20,7 @@ pub mod playlist_file;
 pub mod portrait;
 pub mod public_share;
 pub mod quality;
+pub mod replay_gain;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;

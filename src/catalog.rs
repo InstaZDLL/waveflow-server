@@ -97,6 +97,8 @@ pub struct StreamTrack {
     /// Whether, and how far, a link in `relative_path` may be followed when
     /// the file is opened (RFC-021, links outside the root).
     pub link_policy: crate::link_roots::LinkPolicy,
+    /// The track's ReplayGain tags, for a transcode asked to apply them.
+    pub replay_gain: crate::replay_gain::ReplayGainTags,
 }
 
 #[derive(Debug, Clone)]
@@ -1932,6 +1934,8 @@ impl Database {
         let row = sqlx::query(
             "SELECT t.id, t.library_id, l.root_path, t.relative_path, t.full_hash, \
                t.codec, t.bitrate, t.duration_ms, t.is_available, \
+               t.replay_gain_track_gain, t.replay_gain_track_peak, \
+               t.replay_gain_album_gain, t.replay_gain_album_peak, \
                l.follow_links, (SELECT json_group_array(o.root_path) FROM library o WHERE o.id <> l.id) AS other_roots FROM track t \
              JOIN library l ON l.id = t.library_id \
              JOIN library_member m ON m.library_id = t.library_id \
@@ -2541,6 +2545,12 @@ fn stream_track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StreamTrack, sq
             row.try_get("follow_links")?,
             row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
         ),
+        replay_gain: crate::replay_gain::ReplayGainTags {
+            track_gain: row.try_get("replay_gain_track_gain")?,
+            track_peak: row.try_get("replay_gain_track_peak")?,
+            album_gain: row.try_get("replay_gain_album_gain")?,
+            album_peak: row.try_get("replay_gain_album_peak")?,
+        },
     })
 }
 

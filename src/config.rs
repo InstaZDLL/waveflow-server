@@ -356,6 +356,12 @@ pub struct Config {
     /// links setting is on, and resolved again at every scan, so a mount that
     /// appears later is honoured and one that vanished is skipped.
     pub link_roots: Vec<PathBuf>,
+    /// The ReplayGain a Subsonic `stream` that is transcoded applies when the
+    /// request does not say (RFC-022, what was still open).
+    /// `WAVEFLOW_SUBSONIC_REPLAYGAIN`: `off`, the default, `track` or
+    /// `album`. A request overrides it with `replayGain=`; the original file
+    /// is never transcoded to apply it.
+    pub subsonic_replay_gain: crate::replay_gain::ReplayGainMode,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
@@ -524,6 +530,7 @@ impl std::fmt::Debug for Config {
             .field("unavailable_retention", &self.unavailable_retention)
             .field("purge_grace", &self.purge_grace)
             .field("link_roots", &self.link_roots)
+            .field("subsonic_replay_gain", &self.subsonic_replay_gain)
             .field("ffmpeg_path", &self.ffmpeg_path)
             .field("ffprobe_path", &self.ffprobe_path)
             .field("transcode_cache_dir", &self.transcode_cache_dir)
@@ -616,6 +623,15 @@ impl Config {
             .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_PURGE_GRACE_HOURS: {error}"))?;
         let purge_grace = Duration::from_secs(purge_grace_hours.saturating_mul(60 * 60));
         let link_roots = parse_link_roots(std::env::var_os("WAVEFLOW_LINK_ROOTS"))?;
+        let subsonic_replay_gain = match std::env::var("WAVEFLOW_SUBSONIC_REPLAYGAIN") {
+            Err(_) => crate::replay_gain::ReplayGainMode::Off,
+            Ok(raw) if raw.trim().is_empty() => crate::replay_gain::ReplayGainMode::Off,
+            Ok(raw) => crate::replay_gain::ReplayGainMode::parse(&raw).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid WAVEFLOW_SUBSONIC_REPLAYGAIN: expected off, track or album, found {raw:?}"
+                )
+            })?,
+        };
         let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("ffmpeg"));
@@ -849,6 +865,7 @@ impl Config {
             unavailable_retention,
             purge_grace,
             link_roots,
+            subsonic_replay_gain,
             ffmpeg_path,
             ffprobe_path,
             transcode_cache_dir,
@@ -912,6 +929,7 @@ impl Config {
             // Production's default: the suite purges the way a server does.
             purge_grace: Duration::from_secs(168 * 60 * 60),
             link_roots: Vec::new(),
+            subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             transcode_cache_dir,
