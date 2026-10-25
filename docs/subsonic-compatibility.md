@@ -202,6 +202,37 @@ in JSON and in XML.
 
 Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW_ALLOWED_ORIGINS` setting. The server permits GET, form POST and OPTIONS from those origins and exposes the byte-range response headers used by web audio players. Wildcard origins are deliberately unsupported.
 
+## Deviation for RFC-022: a format the server cannot produce falls back, and AAC
+
+Two changes to `stream` land with
+[RFC-022](rfcs/RFC-022-playback-and-web-client.md), after the 2026-09-16
+replay, and no client has been replayed against them yet.
+
+- **`format=aac` is produced** — also spelled `m4a` or `adts`, in any case — as
+  AAC-LC in an ADTS stream, `Content-Type: audio/aac`, 192 kbit/s unless
+  `maxBitRate` names a rate. ADTS rather than an MP4 because a transcode is
+  written down a pipe as it is made: ADTS streams from its first byte and a
+  cached file seeks by byte range, while a regular MP4 cannot be written to a
+  pipe at all and a fragmented one has no index to seek by.
+- **A format the server cannot produce is read as no format at all**, where it
+  used to be answered error 10 (`Unsupported format`): `flac`, `wav`, `alac`
+  or a typo now get the original while `maxBitRate` admits it, and MP3 at the
+  cap when it does not — the same answers a request naming no format gets. The
+  `Content-Type` names what was sent. A client asking for FLAC over a FLAC
+  library gets the file it wanted; one asking for FLAC over an MP3 gets an MP3
+  that plays, which is what Navidrome does too.
+
+This changes observable behaviour under a frozen contract, and the reason it is
+taken anyway is that the old answer was a refusal to play: no validated client
+depends on error 10 here, because a client receiving it plays nothing. A request
+that worked before is answered exactly as it was.
+
+The same RFC raises the `formPost` body bound from 64 KiB to
+`MAX_PLAYLIST_TRACKS × 64 + 64 KiB` (705,536 bytes), so a playlist of the ten
+thousand tracks the domain allows can be written in one `updatePlaylist` or
+`createPlaylist`. Only requests that used to be refused with
+`Invalid form body` are affected.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist

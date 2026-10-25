@@ -45,6 +45,10 @@ pub struct TranscodeStatusResponse {
     /// concurrency except by being refused.
     pub global_limit: usize,
     pub per_user_limit: usize,
+    /// The formats a transcode can produce, as `format=` spells them on the
+    /// stream routes: `mp3`, `opus` and, since RFC-022, `aac`. `raw` is
+    /// always accepted and is not a transcode, so it is not listed.
+    pub formats: Vec<&'static str>,
 }
 
 #[utoipa::path(post, path = "/api/v2/scrobbles", tag = "user-data", request_body = ScrobbleRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
@@ -158,5 +162,9 @@ pub async fn transcode_status(
         active: state.media.active_transcodes(),
         global_limit,
         per_user_limit,
+        formats: crate::media::OutputFormat::TRANSCODED
+            .iter()
+            .map(|format| format.name())
+            .collect(),
     }))
 }

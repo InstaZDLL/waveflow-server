@@ -83,6 +83,27 @@ pub enum OutputFormat {
     Raw,
     Mp3,
     Opus,
+    /// AAC-LC in an ADTS stream (RFC-022 decision 5): self-describing frames
+    /// that stream from the first byte down a pipe and seek by byte range once
+    /// cached. A regular MP4 cannot be written to a pipe, and a fragmented one
+    /// carries no index to seek by.
+    Aac,
+}
+
+impl OutputFormat {
+    /// Every format a transcode can produce, as the native API spells them.
+    /// `GET /api/v2/transcode/status` lists them so a client can offer AAC
+    /// without inferring it from a version number.
+    pub const TRANSCODED: [Self; 3] = [Self::Mp3, Self::Opus, Self::Aac];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Mp3 => "mp3",
+            Self::Opus => "opus",
+            Self::Aac => "aac",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +357,12 @@ impl MediaService {
                     "-f",
                     "ogg",
                 ]);
+            }
+            OutputFormat::Aac => {
+                // FFmpeg's own encoder, which every build has: `libfdk_aac` is
+                // better at low rates and missing from most builds, since its
+                // licence is not GPL-compatible.
+                command.args(["-c:a", "aac", "-b:a", &bitrate_arg, "-f", "adts"]);
             }
             OutputFormat::Raw => return Err(MediaError::InvalidRequest),
         }
@@ -1213,7 +1240,7 @@ pub async fn create_stream_ticket(
     tag = "media",
     params(
         ("ticket" = String, Path),
-        ("format" = Option<String>, Query, description = "raw, mp3 or opus"),
+        ("format" = Option<String>, Query, description = "raw, mp3, opus or aac (ADTS)"),
         ("bitrate" = Option<u32>, Query),
         ("offset_ms" = Option<u64>, Query),
         ("download" = Option<String>, Query, description = "1: the original, as an attachment named after the file (RFC-012)")
@@ -1372,7 +1399,7 @@ const ATTR_CHAR: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMER
     tag = "media",
     params(
         ("track_id" = Uuid, Path),
-        ("format" = Option<String>, Query, description = "raw, mp3 or opus"),
+        ("format" = Option<String>, Query, description = "raw, mp3, opus or aac (ADTS)"),
         ("bitrate" = Option<u32>, Query),
         ("offset_ms" = Option<u64>, Query)
     ),
@@ -1669,6 +1696,7 @@ fn validate_bitrate(format: OutputFormat, bitrate: Option<u32>) -> Result<u32, M
     let bitrate = bitrate.unwrap_or(match format {
         OutputFormat::Mp3 => 192,
         OutputFormat::Opus => 128,
+        OutputFormat::Aac => 192,
         OutputFormat::Raw => return Err(MediaError::InvalidRequest),
     });
     if !(32..=512).contains(&bitrate) {
@@ -1718,6 +1746,7 @@ fn extension(format: OutputFormat) -> &'static str {
         OutputFormat::Raw => "bin",
         OutputFormat::Mp3 => "mp3",
         OutputFormat::Opus => "opus",
+        OutputFormat::Aac => "aac",
     }
 }
 
@@ -1726,6 +1755,7 @@ fn mime_for_format(format: OutputFormat) -> &'static str {
         OutputFormat::Raw => "application/octet-stream",
         OutputFormat::Mp3 => "audio/mpeg",
         OutputFormat::Opus => "audio/ogg",
+        OutputFormat::Aac => "audio/aac",
     }
 }
 

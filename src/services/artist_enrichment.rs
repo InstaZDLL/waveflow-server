@@ -28,6 +28,9 @@ impl DomainServices {
         artist_id: Uuid,
     ) -> Result<ArtistDetail, ServiceError> {
         let mut detail = self.artist(user_id, artist_id).await?;
+        // After `artist`, whose lookup is the tenancy check: an artist this
+        // account cannot see has answered 404 before anything here runs.
+        detail.appears_on = Some(self.artist_appearances(user_id, artist_id).await?);
         detail.enrichment = Some(
             self.enrichment_of(user_id, artist_id, &detail.artist.name, ARTIST_PAGE_SIMILAR)
                 .await?,
