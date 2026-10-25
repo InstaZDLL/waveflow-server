@@ -231,10 +231,30 @@ pub fn sharing_watches_with(watched: &HashMap<Uuid, LibraryRecord>, removed: &Pa
     affected
 }
 
+/// What [`reconcile`] needs of a file system watcher: place a recursive watch
+/// on a root, and take one back. A trait so the order of those calls — which
+/// is what decides whether a library stays watched on inotify — can be tested
+/// against a model of the kernel's sharing rather than against Linux alone.
+pub trait Watches {
+    fn watch(&mut self, root: &Path) -> Result<(), String>;
+    /// Best effort: a watch that was never placed is nothing to take back.
+    fn unwatch(&mut self, root: &Path);
+}
+
+impl Watches for notify::RecommendedWatcher {
+    fn watch(&mut self, root: &Path) -> Result<(), String> {
+        Watcher::watch(self, root, RecursiveMode::Recursive).map_err(|error| error.to_string())
+    }
+
+    fn unwatch(&mut self, root: &Path) {
+        let _ = Watcher::unwatch(self, root);
+    }
+}
+
 /// Watches what the catalogue holds and nothing else.
 async fn reconcile(
     db: &Database,
-    watcher: &mut notify::RecommendedWatcher,
+    watcher: &mut impl Watches,
     watched: &mut HashMap<Uuid, LibraryRecord>,
     refused: &mut HashSet<(Uuid, PathBuf)>,
 ) {
@@ -263,7 +283,7 @@ async fn reconcile(
     let mut removed: Vec<PathBuf> = Vec::new();
     for library_id in gone {
         if let Some(library) = watched.remove(&library_id) {
-            let _ = watcher.unwatch(&library.root_path);
+            watcher.unwatch(&library.root_path);
             removed.push(library.root_path);
         }
     }
@@ -274,14 +294,14 @@ async fn reconcile(
         {
             continue;
         }
-        match watcher.watch(&library.root_path, RecursiveMode::Recursive) {
+        match watcher.watch(&library.root_path) {
             Ok(()) => {
                 tracing::debug!(%library_id, "watching the library for changes");
                 watched.insert(library_id, library);
             }
             Err(error) => {
                 // A recursive watch can fail halfway; take back what it set.
-                let _ = watcher.unwatch(&library.root_path);
+                watcher.unwatch(&library.root_path);
                 tracing::warn!(
                     %library_id,
                     %error,
@@ -292,29 +312,57 @@ async fn reconcile(
             }
         }
     }
-    // What those removals took from libraries still watched is placed again.
-    let mut affected: Vec<Uuid> = removed
-        .iter()
-        .flat_map(|root| sharing_watches_with(watched, root))
-        .collect();
-    affected.sort();
-    affected.dedup();
-    for library_id in affected {
-        let Some(root) = watched
-            .get(&library_id)
-            .map(|library| library.root_path.clone())
-        else {
-            continue;
-        };
-        if let Err(error) = watcher.watch(&root, RecursiveMode::Recursive) {
-            let _ = watcher.unwatch(&root);
-            tracing::warn!(
-                %library_id,
-                %error,
-                "the library cannot be watched again; it is scanned on the interval only"
-            );
-            watched.remove(&library_id);
-            refused.insert((library_id, root));
+    rewatch(watcher, watched, refused, removed);
+}
+
+/// Places again what the removals took from libraries still watched.
+///
+/// A worklist rather than one pass, because the cleanup of a re-install that
+/// fails is itself a removal: on inotify it strips the descriptors of an
+/// enclosing library that was just re-installed. So every failed root goes
+/// back on the list, and what it shared is watched again in turn.
+///
+/// It ends: a root only joins the list when its library leaves `watched`,
+/// which happens once per library, and a successful re-install adds nothing.
+/// Enclosing roots go first, the order in which a nested failure does the most
+/// damage — so the worklist, not the order, is what keeps them watched.
+pub fn rewatch(
+    watcher: &mut impl Watches,
+    watched: &mut HashMap<Uuid, LibraryRecord>,
+    refused: &mut HashSet<(Uuid, PathBuf)>,
+    removed: Vec<PathBuf>,
+) {
+    let mut cleared = removed;
+    while let Some(root_removed) = cleared.pop() {
+        let mut affected: Vec<(usize, Uuid, PathBuf)> =
+            sharing_watches_with(watched, &root_removed)
+                .into_iter()
+                .filter_map(|id| {
+                    watched.get(&id).map(|library| {
+                        (
+                            library.root_path.components().count(),
+                            id,
+                            library.root_path.clone(),
+                        )
+                    })
+                })
+                .collect();
+        affected.sort();
+        for (_, library_id, root) in affected {
+            if !watched.contains_key(&library_id) {
+                continue;
+            }
+            if let Err(error) = watcher.watch(&root) {
+                watcher.unwatch(&root);
+                tracing::warn!(
+                    %library_id,
+                    %error,
+                    "the library cannot be watched again; it is scanned on the interval only"
+                );
+                watched.remove(&library_id);
+                refused.insert((library_id, root.clone()));
+                cleared.push(root);
+            }
         }
     }
 }
@@ -329,6 +377,90 @@ mod tests {
             name: "watched".into(),
             root_path: PathBuf::from(root),
         }
+    }
+
+    /// inotify, as far as sharing goes: one descriptor per folder, shared by
+    /// every watch that covers it, and taking a recursive watch back clears
+    /// every descriptor beneath its root. A refused root fails partway, after
+    /// placing its own descriptor, as a watch limit reached mid-tree does.
+    struct SharedDescriptors {
+        folders: Vec<PathBuf>,
+        descriptors: HashSet<PathBuf>,
+        refuse: HashSet<PathBuf>,
+    }
+
+    impl Watches for SharedDescriptors {
+        fn watch(&mut self, root: &Path) -> Result<(), String> {
+            for folder in self
+                .folders
+                .iter()
+                .filter(|folder| folder.starts_with(root))
+            {
+                if self.refuse.contains(root) && folder != root {
+                    return Err("no space left for another watch".into());
+                }
+                self.descriptors.insert(folder.clone());
+            }
+            Ok(())
+        }
+
+        fn unwatch(&mut self, root: &Path) {
+            self.descriptors.retain(|folder| !folder.starts_with(root));
+        }
+    }
+
+    impl SharedDescriptors {
+        fn covers(&self, root: &str) -> bool {
+            self.folders
+                .iter()
+                .filter(|folder| folder.starts_with(root))
+                .all(|folder| self.descriptors.contains(folder))
+        }
+    }
+
+    /// The enclosing library is re-installed, then the nested one fails and
+    /// is cleaned up — which strips the enclosing library's descriptors in the
+    /// nested tree. The enclosing library must end up watched whole.
+    #[test]
+    fn a_nested_failure_does_not_leave_the_library_around_it_half_watched() {
+        let folders: Vec<PathBuf> = [
+            "/music",
+            "/music/rock",
+            "/music/classical",
+            "/music/classical/bach",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let mut kernel = SharedDescriptors {
+            descriptors: folders.iter().cloned().collect(),
+            folders,
+            refuse: HashSet::from([PathBuf::from("/music/classical")]),
+        };
+        let (outer, inner) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut watched = HashMap::from([
+            (outer, library(outer, "/music")),
+            (inner, library(inner, "/music/classical")),
+        ]);
+        let mut refused = HashSet::new();
+        // A library at the bottom of both went away, and took its folder's
+        // descriptor with it.
+        kernel.unwatch(Path::new("/music/classical/bach"));
+
+        rewatch(
+            &mut kernel,
+            &mut watched,
+            &mut refused,
+            vec![PathBuf::from("/music/classical/bach")],
+        );
+
+        assert!(
+            kernel.covers("/music"),
+            "the enclosing library was left without its nested folders"
+        );
+        assert!(watched.contains_key(&outer));
+        assert!(!watched.contains_key(&inner));
+        assert!(refused.contains(&(inner, PathBuf::from("/music/classical"))));
     }
 
     /// `WAVEFLOW_WATCH_DELAY_SECS` has no ceiling: a delay too long to
