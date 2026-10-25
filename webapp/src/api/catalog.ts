@@ -1,3 +1,4 @@
+import type { ReleaseGroup } from "../lib/discography";
 import { call, collect, request, scoped } from "./client";
 
 export type Album = {
@@ -10,6 +11,11 @@ export type Album = {
   year: number | null;
   starred_at: number | null;
   user_rating: number | null;
+  /**
+   * The discography section the server files the album under (RFC-022
+   * decision 2). Optional so an older server parses; absent reads as an album.
+   */
+  release_group?: ReleaseGroup;
 };
 
 export type Song = {
@@ -47,6 +53,16 @@ export type Song = {
   sample_rate: number | null;
   channels: number | null;
   bit_depth: number | null;
+  /**
+   * ReplayGain as tagged: decibel gains and linear peaks, `null` where the
+   * file carries none. On the wire since `SongItem` gained them; declared here
+   * for the player (RFC-022 decision 1), and optional so a mock that leaves
+   * them out is a track with no tags rather than a type error.
+   */
+  replay_gain_track_gain?: number | null;
+  replay_gain_track_peak?: number | null;
+  replay_gain_album_gain?: number | null;
+  replay_gain_album_peak?: number | null;
 };
 
 export type AlbumDetail = Album & { songs: Song[] };
@@ -102,6 +118,12 @@ export type ArtistDetail = Artist & {
   /** The library the artist belongs to: whose owners may choose its images. */
   library_id: string;
   albums: Album[];
+  /**
+   * Albums a track of which credits the artist, by someone else (RFC-022
+   * decision 3). Present on the artist page only; optional so an older
+   * server parses.
+   */
+  appears_on?: Album[];
   /** Always present on the native page; optional so an older server parses. */
   enrichment?: ArtistEnrichment;
   /** The banner chosen by hand, absent when none was. */
