@@ -85,13 +85,23 @@ pub struct PlaylistFile {
     pub entries: Vec<PlaylistFileEntry>,
 }
 
-/// Reads the file.
+/// The file names more entries than the caller would take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TooManyEntries;
+
+/// Reads the file, up to `max_entries` entries.
 ///
-/// Never fails: a line this does not understand is a line it reports nothing
-/// about, and an empty result is an empty playlist rather than an error. The
-/// caller decides what an empty import means, which is a policy question and
-/// not a parsing one.
-pub fn parse(bytes: &[u8]) -> PlaylistFile {
+/// Fails on one thing only: a file naming more than `max_entries` entries,
+/// noticed at the first entry past the line, before it is built (RFC-023
+/// decision 5). The caller's ceiling used to be applied once the whole file
+/// was read, and a five-megabyte body of one-letter lines is millions of
+/// entries, each with its own strings, before anything refused it.
+///
+/// Otherwise lenient: a line this does not understand is a line it reports
+/// nothing about, and an empty result is an empty playlist rather than an
+/// error. The caller decides what an empty import means, which is a policy
+/// question and not a parsing one.
+pub fn parse(bytes: &[u8], max_entries: usize) -> Result<PlaylistFile, TooManyEntries> {
     let (text, encoding) = decode(bytes);
     let mut name = None;
     let mut pending: Option<(Option<i64>, Option<String>)> = None;
@@ -118,6 +128,9 @@ pub fn parse(bytes: &[u8]) -> PlaylistFile {
             // comment — says nothing this import can act on.
             continue;
         }
+        if entries.len() == max_entries {
+            return Err(TooManyEntries);
+        }
         let (duration_secs, title) = pending.take().unwrap_or((None, None));
         entries.push(PlaylistFileEntry {
             line: index + 1,
@@ -127,11 +140,11 @@ pub fn parse(bytes: &[u8]) -> PlaylistFile {
             title,
         });
     }
-    PlaylistFile {
+    Ok(PlaylistFile {
         name,
         encoding,
         entries,
-    }
+    })
 }
 
 /// The text, read by `waveflow_core::text_encoding`, and the encoding it was
@@ -242,6 +255,22 @@ fn percent_decode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The parser with no ceiling: what these tests are about is the reading.
+    fn parse(bytes: &[u8]) -> PlaylistFile {
+        super::parse(bytes, usize::MAX).expect("no ceiling to reach")
+    }
+
+    /// The ceiling is noticed at the first entry past it, and a file exactly
+    /// at it is read (RFC-023 decision 5). Comments and directives are not
+    /// entries and count for nothing.
+    #[test]
+    fn a_file_past_the_ceiling_is_refused_and_one_at_it_is_read() {
+        let at = "#EXTM3U\n#EXTINF:1,A - B\na.flac\nb.flac\nc.flac\n";
+        assert_eq!(super::parse(at.as_bytes(), 3).unwrap().entries.len(), 3);
+        let past = format!("{at}d.flac\n");
+        assert_eq!(super::parse(past.as_bytes(), 3).err(), Some(TooManyEntries));
+    }
 
     fn targets(file: &PlaylistFile) -> Vec<String> {
         file.entries

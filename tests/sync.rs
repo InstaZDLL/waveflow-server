@@ -1333,3 +1333,78 @@ async fn the_library_feed_reports_what_a_scan_changed() {
         "the page advanced it"
     );
 }
+
+/// The sync socket closes on a message larger than it would ever need to read,
+/// instead of buffering it whole (RFC-023 decision 5).
+///
+/// Told apart by what follows: a ping sent after the oversized message is
+/// answered by a socket that kept going, and never by one that closed.
+#[tokio::test]
+async fn the_sync_socket_closes_on_an_oversized_message() {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (_temp, config, state) = test_app().await;
+    let (_owner, token) = admin_with_api_token(&state, "socket-sender").await;
+    let router = waveflow_server::app(&config, state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let connect = || async {
+        let mut request = format!("ws://{address}/api/v2/sync/socket?after=0")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        tokio_tungstenite::connect_async(request).await.unwrap().0
+    };
+    // Whether a ping sent now is answered; anything else the socket says first
+    // is read past.
+    async fn answers_a_ping(
+        socket: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> bool {
+        if socket
+            .send(Message::Ping(b"still there".to_vec().into()))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(10), socket.next()).await {
+                Ok(Some(Ok(Message::Pong(_)))) => return true,
+                Ok(Some(Ok(Message::Close(_)))) | Ok(Some(Err(_))) | Ok(None) => return false,
+                Ok(Some(Ok(_))) => continue,
+                Err(_) => panic!("the socket neither answered nor closed"),
+            }
+        }
+    }
+
+    // A message within the ceiling is read past, and the socket goes on.
+    let mut socket = connect().await;
+    socket
+        .send(Message::Text("x".repeat(1024).into()))
+        .await
+        .unwrap();
+    assert!(
+        answers_a_ping(&mut socket).await,
+        "a small message is harmless"
+    );
+
+    // One past it closes the connection.
+    let mut socket = connect().await;
+    // Sixteen times the 4 KiB the socket accepts.
+    let oversized = "x".repeat(64 * 1024);
+    // The send itself may already fail once the server has closed.
+    let _ = socket.send(Message::Text(oversized.into())).await;
+    assert!(
+        !answers_a_ping(&mut socket).await,
+        "an oversized message must close the socket"
+    );
+    server.abort();
+}
