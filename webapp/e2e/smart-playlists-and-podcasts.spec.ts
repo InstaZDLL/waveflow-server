@@ -709,19 +709,23 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
     .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0)
     .toBeGreaterThanOrEqual(12);
 
-  // Pausing from the bar writes the place, under the episode's id.
-  await bar.getByRole("button", { name: "Pause" }).click();
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
-  await expect
-    .poll(() =>
-      bookmarkWrites.some(
+  // Pausing from the bar writes the place, under the episode's id. A seek
+  // writes it too, so the writes are counted from after the seek's has landed:
+  // otherwise that one would answer for a pause that wrote nothing.
+  const placed = (from: number) =>
+    bookmarkWrites
+      .slice(from)
+      .some(
         (write) =>
           write.id === "episode-1" &&
           typeof write.body === "object" &&
           (write.body as { position_ms: number }).position_ms >= 12_000,
-      ),
-    )
-    .toBe(true);
+      );
+  await expect.poll(() => placed(0)).toBe(true);
+  const beforePause = bookmarkWrites.length;
+  await bar.getByRole("button", { name: "Pause" }).click();
+  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
+  await expect.poll(() => placed(beforePause)).toBe(true);
 
   // Taken out of the bar, then started again from its page: it resumes where
   // the bookmark says, which the page now shows too.
