@@ -389,7 +389,17 @@ pub fn router(state: AppState) -> Router {
             "/api/v2/scrobble-queue/uncertain/{entry_id}/retry",
             post(retry_uncertain_scrobble),
         )
-        .route("/api/v2/queue", get(get_queue).put(save_queue))
+        // Its own ceiling, derived from the queue's (RFC-022): a queue as long
+        // as the largest playlist does not fit the 16 KiB every other JSON
+        // body is held to.
+        .route(
+            "/api/v2/queue",
+            get(get_queue)
+                .put(save_queue)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::queue_body_limit(),
+                )),
+        )
         .route("/api/v2/shares", get(list_shares).post(create_share))
         .route(
             "/api/v2/shares/{share_id}",

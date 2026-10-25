@@ -800,11 +800,29 @@ pub struct CatalogSearch {
 pub const MAX_BROWSE_LIMIT: i64 = 500;
 const DEFAULT_BROWSE_LIMIT: i64 = 100;
 pub const MAX_HISTORY_LIMIT: i64 = 500;
-/// Fits a UUID-only queue request below the server's 16 KiB body limit while
-/// also bounding the work performed under the global SQLite writer gate.
-pub const MAX_QUEUE_TRACKS: usize = 400;
-/// Applies the same request-size and writer-gate bound to public shares.
-pub const MAX_SHARE_TRACKS: usize = MAX_QUEUE_TRACKS;
+/// How many identifiers one request may name when each costs a mutation of its
+/// own under the writer gate — a Subsonic `star` or `scrobble` naming many —
+/// or a sealed pass of its own: a share's opening mints one per track.
+pub const MAX_REQUEST_IDENTIFIERS: usize = 400;
+/// Upper bound on the tracks a play queue holds (RFC-022, what was still
+/// open), shared by the native queue and Subsonic `savePlayQueue`.
+///
+/// **The largest playlist**, because the common way to fill a queue is to play
+/// a playlist whole, and a queue smaller than the playlist it was filled from
+/// loses its end on the next save — silently, on a client that saves the
+/// queue as it plays. Four hundred, the old ceiling, cut off ordinary
+/// libraries.
+///
+/// **Bounded under the writer gate** as a playlist is: a save deletes and
+/// reinserts the list in one statement each, and checks the tracks with one
+/// count rather than reading every song (`save_queue`). **And on the wire**:
+/// the native route carries [`queue_body_limit`], and a `savePlayQueue` of
+/// this many `id=<uuid>&` pairs, forty bytes each, is 400,000 bytes — inside
+/// the Subsonic form bound, which is sized for the longer `songIdToAdd` pair
+/// at this same count.
+pub const MAX_QUEUE_TRACKS: usize = MAX_PLAYLIST_TRACKS;
+/// A share holds what one opening can hand a pass to each of.
+pub const MAX_SHARE_TRACKS: usize = MAX_REQUEST_IDENTIFIERS;
 /// Upper bound on the tracks one playlist may hold.
 ///
 /// Deliberately not [`MAX_QUEUE_TRACKS`]: that one bounds a request, and a
@@ -825,6 +843,15 @@ pub const MAX_PLAYLIST_TRACKS: usize = 10_000;
 /// long names is nowhere near it — and the envelope covers the header lines.
 pub fn playlist_import_body_limit() -> usize {
     MAX_PLAYLIST_TRACKS.saturating_mul(512).saturating_add(4096)
+}
+
+/// The body ceiling the native queue route carries, derived from
+/// [`MAX_QUEUE_TRACKS`] like the import's from the playlist ceiling: a JSON
+/// string of a UUID with its quotes and comma is thirty-nine bytes, so
+/// sixty-four covers any spacing a client adds, and the envelope covers the
+/// other fields.
+pub fn queue_body_limit() -> usize {
+    MAX_QUEUE_TRACKS.saturating_mul(64).saturating_add(4096)
 }
 
 /// Offset/limit pair validated once, at the HTTP boundary, so the SQL layer can

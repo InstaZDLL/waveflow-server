@@ -1651,3 +1651,115 @@ async fn subsonic_reorders_a_playlist_by_sending_it_again() {
         vec![ids[2].to_string(), ids[0].to_string(), ids[1].to_string()]
     );
 }
+
+/// A play queue holds the largest playlist (RFC-022, what was still open), on
+/// both surfaces: a `savePlayQueue` of that many identifiers fits one form
+/// POST, the native queue route takes the same list in one JSON body beyond
+/// the 16 KiB every other body is held to, and one track more is refused.
+#[tokio::test]
+async fn a_play_queue_holds_the_largest_playlist_on_both_surfaces() {
+    let (_temp, config, state) = test_app().await;
+    let password = Uuid::new_v4().to_string();
+    let hash = security::hash_password(&password).unwrap();
+    let owner = state
+        .db
+        .create_account("long-queue", &hash, AccountRole::User, now_ms())
+        .await
+        .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4().simple());
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let (_library, ids) = seed_titles(
+        &state,
+        &config,
+        owner,
+        "long-queue",
+        4_600,
+        &["Again", "Last"],
+    )
+    .await;
+    let (track, last) = (ids[0], ids[1]);
+    let ceiling = waveflow_server::services::MAX_QUEUE_TRACKS;
+    assert!(
+        ceiling >= waveflow_server::services::MAX_PLAYLIST_TRACKS,
+        "a playlist played whole must fit the queue"
+    );
+    let router = waveflow_server::app(&config, state.clone());
+
+    // Subsonic: one form POST naming the track as many times as the queue
+    // holds, the last entry a different track so the order is checked.
+    let mut body = format!("apiKey={api_key}&v=1.16.1&c=golden&f=json&current={track}");
+    for _ in 1..ceiling {
+        body.push_str(&format!("&id={track}"));
+    }
+    body.push_str(&format!("&id={last}"));
+    assert!(body.len() <= waveflow_server::subsonic::MAX_FORM_BYTES);
+    let saved = router
+        .clone()
+        .oneshot(
+            Request::post("/rest/savePlayQueue.view?f=json")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let saved = json_body(saved).await;
+    assert_eq!(saved["subsonic-response"]["status"], "ok", "{saved}");
+    let queue = state.services.queue(owner).await.unwrap().unwrap();
+    assert_eq!(queue.songs.len(), ceiling);
+    assert_eq!(queue.songs.last().unwrap().id, last);
+
+    // Native: the same list in one JSON body, then one track more.
+    let token = login_token(&router, "long-queue", &password).await;
+    let mut track_ids = vec![track; ceiling - 1];
+    track_ids.push(last);
+    let body = serde_json::json!({ "track_ids": track_ids, "current": track, "position_ms": 0 });
+    assert!(body.to_string().len() > 16 * 1024);
+    let saved = send_json(&router, "PUT", "/api/v2/queue", &token, Some(body)).await;
+    assert_eq!(saved.status(), StatusCode::NO_CONTENT);
+    track_ids.push(track);
+    let refused = send_json(
+        &router,
+        "PUT",
+        "/api/v2/queue",
+        &token,
+        Some(serde_json::json!({ "track_ids": track_ids, "position_ms": 0 })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    // A track this account cannot read still refuses the whole queue.
+    let foreign = send_json(
+        &router,
+        "PUT",
+        "/api/v2/queue",
+        &token,
+        Some(serde_json::json!({ "track_ids": [track, Uuid::new_v4()], "position_ms": 0 })),
+    )
+    .await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        state
+            .services
+            .queue(owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .songs
+            .len(),
+        ceiling,
+        "a refused save changes nothing"
+    );
+}
