@@ -32,6 +32,11 @@ export function SharePage({ token }: { token: string }) {
     refetchOnReconnect: false,
   });
   const [current, setCurrent] = useState<number | null>(null);
+  // A cover that would not load gives way to the plain square, rather than
+  // a broken image beside the title.
+  const [brokenCovers, setBrokenCovers] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const canPlayType = useMemo<CanPlayType>(() => {
     const probe = document.createElement("audio");
     return (mediaType) => probe.canPlayType(mediaType);
@@ -130,13 +135,18 @@ export function SharePage({ token }: { token: string }) {
                   {/* Decorative: the title beside it says what it is. A
                       plain address under the visit's pass, so no session is
                       needed to load it (RFC-020). */}
-                  {track.coverUrl ? (
+                  {track.coverUrl && !brokenCovers.has(rowIds[position]) ? (
                     <img
                       className="share-track-cover"
                       src={track.coverUrl}
                       alt=""
                       loading="lazy"
                       referrerPolicy="no-referrer"
+                      onError={() =>
+                        setBrokenCovers((broken) =>
+                          new Set(broken).add(rowIds[position]),
+                        )
+                      }
                     />
                   ) : (
                     <span className="share-track-cover" aria-hidden="true" />

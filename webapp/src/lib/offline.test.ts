@@ -113,8 +113,11 @@ describe("tracks kept for offline listening", () => {
     const fetcher = (async () =>
       new Response(new Blob([new Uint8Array([9])]))) as typeof fetch;
     await keepOffline(song("a", "First"), "/ticket-a", fetcher);
-    // The same account renewing its session keeps them.
+    // The same account renewing its session keeps them, and keeps knowing
+    // them without reading them again.
+    await keptSongs();
     await claimOffline("user-a");
+    expect(isKeptOffline("a")).toBe(true);
     expect((await keptSongs()).map((entry) => entry.id)).toEqual(["a"]);
     // Another account signing in on this browser sees none of them.
     await claimOffline("user-b");

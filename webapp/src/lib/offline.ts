@@ -123,9 +123,10 @@ async function deleteAllCopies(): Promise<void> {
 export async function claimOffline(userId: string | null): Promise<void> {
   if (!offlineSupported()) return;
   const current = await offlineOwner();
-  if (userId === null || (current !== null && current !== userId)) {
-    await deleteAllCopies();
-  }
+  // A renewal of the same account's session changes nothing: what it kept
+  // stays known, mid-session, as it was.
+  if (userId !== null && userId === current) return;
+  if (userId === null || current !== null) await deleteAllCopies();
   if (userId !== null) {
     await (await caches.open(OFFLINE_OWNER_CACHE)).put(
       OWNER_KEY,

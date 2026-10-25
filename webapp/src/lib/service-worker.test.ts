@@ -130,6 +130,38 @@ describe("the service worker", () => {
     expect(store.paths().some((path) => path.startsWith("/api/"))).toBe(false);
   });
 
+  it("keeps only whole answers, and never fails one it cannot keep", async () => {
+    let online = true;
+    const { request, store } = boot(async (asked) => {
+      if (!online) throw new TypeError("offline");
+      const path = new URL(asked.url).pathname;
+      if (path === "/partial.png") {
+        return new Response("part", {
+          status: 206,
+          headers: { "content-type": "image/png" },
+        });
+      }
+      return new Response("<html>shell</html>", {
+        headers: { "content-type": "text/html" },
+      });
+    });
+    expect((await request("/partial.png"))?.status).toBe(206);
+    expect(store.paths()).toEqual([]);
+    // A store that refuses every write: the page is still answered.
+    const shell = await store.open("waveflow-shell-v1");
+    shell.put = async () => {
+      throw new DOMException("full", "QuotaExceededError");
+    };
+    const page = await request("/albums", { mode: "navigate" });
+    expect(await page?.text()).toBe("<html>shell</html>");
+    // Offline, with nothing kept: a synthesized refusal, not a rejection.
+    online = false;
+    const nothing = await request("/albums", { mode: "navigate" });
+    expect(nothing?.status).toBe(503);
+    const asset = await request("/assets/index-9z.js");
+    expect(asset?.status).toBe(503);
+  });
+
   it("answers a kept track by byte range", async () => {
     const { request, store } = boot(async () => new Response());
     await (await store.open("waveflow-offline-owner")).put(

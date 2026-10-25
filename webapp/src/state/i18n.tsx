@@ -352,6 +352,8 @@ const en = {
   "shares.defaultName": "Music share",
   "shares.empty": "No public links have been created.",
   "shares.createError": "The share could not be created.",
+  "shares.tooLong":
+    "A share holds up to {limit} tracks, and the queue holds {count}. Shorten the queue to share it.",
   "shares.deleteError": "The share could not be deleted.",
   "shares.maxVisits": "Visit limit (optional)",
   "shares.visits": { one: "{count} visit", other: "{count} visits" },
@@ -1317,6 +1319,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "shares.defaultName": "Partage musical",
   "shares.empty": "Aucun lien public n’a été créé.",
   "shares.createError": "Le partage n’a pas pu être créé.",
+  "shares.tooLong":
+    "Un partage contient au plus {limit} titres, et la file en contient {count}. Raccourcissez la file pour la partager.",
   "shares.deleteError": "Le partage n’a pas pu être supprimé.",
   "shares.maxVisits": "Limite de visites (facultative)",
   "shares.visits": { one: "{count} visite", other: "{count} visites" },

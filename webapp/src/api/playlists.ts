@@ -134,10 +134,15 @@ export const movePlaylistEntry = (
 
 /**
  * Removes one entry, by the position it is shown at: a playlist may hold a
- * track twice, and the position is what says which copy goes.
+ * track twice, and the position is what says which copy goes. `trackId` is
+ * the track the caller believes is there, guarded as a move is (409).
  */
-export const removePlaylistEntry = (id: string, position: number) =>
-  call<Playlist>(`/api/v2/playlists/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ remove_indexes: [position] }),
+export const removePlaylistEntry = (
+  id: string,
+  position: number,
+  trackId: string,
+) =>
+  call<Playlist>(`/api/v2/playlists/${id}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ position, track_id: trackId }),
   });

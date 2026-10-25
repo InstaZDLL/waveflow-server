@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -32,6 +32,8 @@ export function PlaylistsPage() {
   const player = usePlayer();
   const { t } = useI18n();
   const reload = useReload(playlistsQuery().queryKey);
+  const client = useQueryClient();
+  const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
   const { data: value, error } = useQuery(playlistsQuery());
@@ -90,23 +92,44 @@ export function PlaylistsPage() {
   async function move(playlist: Playlist, from: number, to: number) {
     const song = playlist.songs[from];
     if (!song || to < 0 || to >= playlist.songs.length) return;
-    setMutationError(null);
-    try {
-      await movePlaylistEntry(playlist.id, from, to, song.id);
-    } catch {
-      setMutationError(t("playlists.moveError"));
-    }
-    reload();
+    await editEntry(
+      () => movePlaylistEntry(playlist.id, from, to, song.id),
+      "playlists.moveError",
+    );
   }
 
+  /** Removes the entry shown at `position`, guarded like a move. */
   async function removeEntry(playlist: Playlist, position: number) {
+    const song = playlist.songs[position];
+    if (!song) return;
+    await editEntry(
+      () => removePlaylistEntry(playlist.id, position, song.id),
+      "playlists.removeEntryError",
+    );
+  }
+
+  /**
+   * One entry edit at a time, the controls held until the list is read
+   * again: a second click sent before the first edit's answer came back
+   * would name positions in a list that no longer exists.
+   */
+  async function editEntry(
+    edit: () => Promise<unknown>,
+    failure: "playlists.moveError" | "playlists.removeEntryError",
+  ) {
+    if (editing) return;
+    setEditing(true);
     setMutationError(null);
     try {
-      await removePlaylistEntry(playlist.id, position);
+      await edit();
     } catch {
-      setMutationError(t("playlists.removeEntryError"));
+      setMutationError(t(failure));
     }
-    reload();
+    try {
+      await client.invalidateQueries({ queryKey: playlistsQuery().queryKey });
+    } finally {
+      setEditing(false);
+    }
   }
 
   const entryActions =
@@ -115,7 +138,7 @@ export function PlaylistsPage() {
         <button
           type="button"
           className="row-action"
-          disabled={position === 0}
+          disabled={editing || position === 0}
           onClick={() => void move(playlist, position, position - 1)}
           aria-label={t("playlists.moveUp", { title: song.title })}
           title={t("playlists.moveUp", { title: song.title })}
@@ -125,7 +148,7 @@ export function PlaylistsPage() {
         <button
           type="button"
           className="row-action"
-          disabled={position === count - 1}
+          disabled={editing || position === count - 1}
           onClick={() => void move(playlist, position, position + 1)}
           aria-label={t("playlists.moveDown", { title: song.title })}
           title={t("playlists.moveDown", { title: song.title })}
@@ -135,6 +158,7 @@ export function PlaylistsPage() {
         <button
           type="button"
           className="row-action"
+          disabled={editing}
           onClick={() => void removeEntry(playlist, position)}
           aria-label={t("playlists.removeEntry", { title: song.title })}
           title={t("playlists.removeEntry", { title: song.title })}

@@ -104,22 +104,43 @@ self.addEventListener("fetch", (event) => {
  * the new one does not are let go, so the cache holds one build.
  */
 async function page(request) {
+  let response;
   try {
-    const response = await fetch(request);
-    const type = response.headers.get("content-type") || "";
-    if (response.ok && type.startsWith("text/html")) {
+    response = await fetch(request);
+  } catch {
+    const kept = await caches.match(SHELL_KEY, { cacheName: SHELL_CACHE });
+    return kept || unreachable();
+  }
+  const type = response.headers.get("content-type") || "";
+  if (response.status === 200 && type.startsWith("text/html")) {
+    // A copy that cannot be kept — the storage full — costs the next offline
+    // visit, never this answer.
+    await remember(async () => {
       const text = await response.clone().text();
       const shell = await caches.open(SHELL_CACHE);
       const previous = await shell.match(SHELL_KEY);
       await shell.put(SHELL_KEY, response.clone());
       if (!previous || (await previous.text()) !== text) await pruneAssets(text);
-    }
-    return response;
-  } catch (error) {
-    const kept = await caches.match(SHELL_KEY, { cacheName: SHELL_CACHE });
-    if (kept) return kept;
-    throw error;
+    });
   }
+  return response;
+}
+
+/** Keeps a copy, and never lets a failure to keep it reach the answer. */
+async function remember(keep) {
+  try {
+    await keep();
+  } catch {
+    // Quota, an eviction under way: the network answer stands.
+  }
+}
+
+/** What a request gets with no network and nothing kept for it. */
+function unreachable() {
+  return new Response("Offline, and nothing kept for this address.", {
+    status: 503,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 
 async function pruneAssets(shellText) {
@@ -134,28 +155,37 @@ async function pruneAssets(shellText) {
 async function asset(request) {
   const kept = await caches.match(request, { cacheName: ASSET_CACHE });
   if (kept) return kept;
-  const response = await fetch(request);
-  if (response.ok) {
-    const assets = await caches.open(ASSET_CACHE);
-    await assets.put(request, response.clone());
+  let response;
+  try {
+    response = await fetch(request);
+  } catch {
+    return unreachable();
+  }
+  if (response.status === 200) {
+    await remember(async () => {
+      const assets = await caches.open(ASSET_CACHE);
+      await assets.put(request, response.clone());
+    });
   }
   return response;
 }
 
 /** An icon, the manifest, a font outside the build: fresh when possible. */
 async function staticFile(request) {
+  let response;
   try {
-    const response = await fetch(request);
-    if (response.ok) {
+    response = await fetch(request);
+  } catch {
+    const kept = await caches.match(request, { cacheName: SHELL_CACHE });
+    return kept || unreachable();
+  }
+  if (response.status === 200) {
+    await remember(async () => {
       const shell = await caches.open(SHELL_CACHE);
       await shell.put(request, response.clone());
-    }
-    return response;
-  } catch (error) {
-    const kept = await caches.match(request, { cacheName: SHELL_CACHE });
-    if (kept) return kept;
-    throw error;
+    });
   }
+  return response;
 }
 
 /**

@@ -25,9 +25,17 @@ import { useI18n } from "../state/i18n";
 export function OfflinePage() {
   const { t, locale } = useI18n();
   const [songs, setSongs] = useState<KeptSong[] | null>(null);
-  const [current, setCurrent] = useState<number | null>(null);
+  // The playing track by id, and how many times it was chosen: a list that
+  // is read again — a track forgotten above it, a copy added — must neither
+  // switch what plays nor start it over, and choosing the same track again
+  // must start it over.
+  const [current, setCurrent] = useState<{ id: string; play: number } | null>(
+    null,
+  );
   const [source, setSource] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const choose = (id: string) =>
+    setCurrent((previous) => ({ id, play: (previous?.play ?? 0) + 1 }));
 
   useEffect(() => {
     let live = true;
@@ -43,32 +51,37 @@ export function OfflinePage() {
     };
   }, []);
 
-  const playing = current === null ? null : (songs?.[current] ?? null);
+  const playingId = current?.id ?? null;
+  const position = songs?.findIndex((song) => song.id === playingId) ?? -1;
   useEffect(() => {
-    if (!playing) {
-      setSource(null);
-      return;
-    }
+    // The last track's address never plays the next one, even for the
+    // moment the next one takes to resolve.
+    setSource(null);
+    setFailed(false);
+    if (playingId === null) return;
     let revoke: () => void = () => {};
     let live = true;
-    void offlineSource(playing.id).then((found) => {
-      if (!live) {
-        found?.revoke();
-        return;
-      }
-      if (!found) {
-        setFailed(true);
-        return;
-      }
-      revoke = found.revoke;
-      setFailed(false);
-      setSource(found.url);
-    });
+    offlineSource(playingId)
+      .then((found) => {
+        if (!live) {
+          found?.revoke();
+          return;
+        }
+        if (!found) {
+          setFailed(true);
+          return;
+        }
+        revoke = found.revoke;
+        setSource(found.url);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
     return () => {
       live = false;
       revoke();
     };
-  }, [playing]);
+  }, [playingId]);
 
   const size = new Intl.NumberFormat(locale, {
     style: "unit",
@@ -95,18 +108,18 @@ export function OfflinePage() {
       ) : (
         <>
           {/* `autoPlay` only ever acts on a source a click put there. Keyed
-              on the position, so the same track chosen again starts over. */}
+              on the track and on how many times it was chosen, so choosing it
+              again starts it over and a list read again does not. */}
           <audio
-            key={current ?? "idle"}
+            key={current ? `${current.id}#${current.play}` : "idle"}
             className="share-audio"
             aria-label={t("offline.player")}
             controls
             autoPlay
             src={source ?? undefined}
             onEnded={() => {
-              if (current !== null && current + 1 < songs.length) {
-                setCurrent(current + 1);
-              }
+              const next = songs[position + 1];
+              if (position >= 0 && next) choose(next.id);
             }}
           >
             <track kind="captions" />
@@ -117,12 +130,12 @@ export function OfflinePage() {
             </p>
           ) : null}
           <ol className="share-tracks offline-tracks">
-            {songs.map((song, position) => (
+            {songs.map((song) => (
               <li
                 key={song.id}
-                aria-current={position === current ? "true" : undefined}
+                aria-current={song.id === playingId ? "true" : undefined}
               >
-                <button type="button" onClick={() => setCurrent(position)}>
+                <button type="button" onClick={() => choose(song.id)}>
                   <span className="share-track-cover" aria-hidden="true" />
                   <span className="share-track-title">{song.title}</span>
                   <span className="muted">
@@ -136,7 +149,7 @@ export function OfflinePage() {
                   type="button"
                   className="row-action offline-forget"
                   onClick={() => {
-                    if (position === current) setCurrent(null);
+                    if (song.id === playingId) setCurrent(null);
                     void forgetOffline(song.id);
                   }}
                   aria-label={t("offline.forget", { title: song.title })}
