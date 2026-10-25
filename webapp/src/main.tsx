@@ -39,6 +39,7 @@ import {
   ownApiTokensQuery,
   ownSubsonicCredentialQuery,
   playlistsQuery,
+  podcastsQuery,
   radioStationsQuery,
   scrobbleRowsQuery,
   sharesQuery,
@@ -68,6 +69,7 @@ import { MissingPage } from "./pages/missing-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { PlayingPage } from "./pages/playing-page";
 import { PlaylistsPage } from "./pages/playlists-page";
+import { PodcastsPage } from "./pages/podcasts-page";
 import { isQualityVerdict, QualityPage } from "./pages/quality-page";
 import { QueuePage } from "./pages/queue-page";
 import { RadioPage } from "./pages/radio-page";
@@ -135,6 +137,7 @@ const navigation: Array<{
     | "/queue"
     | "/shares"
     | "/radio"
+    | "/podcasts"
     | "/settings"
     | "/settings/scrobbling"
     | "/upload"
@@ -236,6 +239,12 @@ const navigation: Array<{
   { to: "/shares", labelKey: "nav.shares", icon: "shares", group: "account" },
   { to: "/radio", labelKey: "nav.radio", icon: "radio", group: "listen" },
   {
+    to: "/podcasts",
+    labelKey: "nav.podcasts",
+    icon: "podcasts",
+    group: "listen",
+  },
+  {
     to: "/settings",
     labelKey: "nav.settings",
     icon: "admin",
@@ -309,6 +318,9 @@ async function prepareTab(
       break;
     case "/radio":
       await client.ensureQueryData(radioStationsQuery());
+      break;
+    case "/podcasts":
+      await client.ensureQueryData(podcastsQuery());
       break;
     case "/settings":
       await Promise.all([
@@ -889,6 +901,12 @@ const radioRoute = createRoute({
   component: RadioPage,
 });
 
+const podcastsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/podcasts",
+  component: PodcastsPage,
+});
+
 // The path is the server's, not a preference. `lastfm_callback` redirects
 // here when a journey completes, so spelling it any other way puts the last
 // step of that journey on the not-found page.
@@ -1012,6 +1030,7 @@ const routeTree = rootRoute.addChildren([
     queueRoute,
     sharesRoute,
     radioRoute,
+    podcastsRoute,
     settingsRoute,
     scrobblingRoute,
     adminRoute,

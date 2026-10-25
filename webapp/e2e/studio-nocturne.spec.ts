@@ -1102,6 +1102,19 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: playlists });
       return;
     }
+    // RFC-025, answered as a server with none of either: the screens these
+    // tests drive read them, and a 404 would draw a failure nobody asked for.
+    // `smart-playlists-and-podcasts.spec.ts` exercises both.
+    if (url.pathname === "/api/v2/smart-playlists") {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (url.pathname === "/api/v2/podcasts") {
+      await route.fulfill({
+        json: { enabled: false, can_manage: false, channels: [] },
+      });
+      return;
+    }
     if (url.pathname === "/api/v2/playlists/import") {
       importAsks.push({
         dryRun: url.searchParams.get("dry_run") === "true",
