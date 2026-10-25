@@ -433,10 +433,12 @@ path in the library. To follow them, per library:
 waveflow-server library set-links --actor admin --library-id <uuid> --follow
 ```
 
-A followed link must lead **inside the library**: one whose target is outside
-the root, broken, or a loop back to a folder above it is skipped and counted. A
-file reached through links is one track, under its own path, however many links
-name it. A link farm whose files live in the same tree works best with the
+Only a library whose links setting is on follows any link, and a followed link
+must resolve **inside that library's root, or inside a folder listed in
+`WAVEFLOW_LINK_ROOTS`** (below), and **never into another library's root**. A
+link whose target is anywhere else, is broken, or loops back to a folder above
+it is skipped and counted. A file reached through links is one track, under
+its own path, however many links name it. A link farm whose files live in the same tree works best with the
 files' folder excluded from the direct walk:
 
 ```text
