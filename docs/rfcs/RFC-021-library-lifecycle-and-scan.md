@@ -1,9 +1,11 @@
 # RFC-021 — Libraries and scanning: exclusions, links, missing tracks, the library lifecycle and watching
 
 - **Status**: Proposed
-- **Implemented by**: in progress (this RFC and its implementation, in one
-  pull request). The *Status* field above never flips in this project; this
-  line is the one that says what is running.
+- **Implemented by**: [#328](https://github.com/InstaZDLL/waveflow-server/pull/328)
+  (this RFC and its whole implementation: exclusions and `.waveflowignore`,
+  links, missing tracks and their purge, the library lifecycle, the watcher).
+  The *Status* field above never flips in this project; this line is the one
+  that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the scanner, track
