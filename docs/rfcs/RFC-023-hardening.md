@@ -53,8 +53,11 @@ more of the same kind. Each was confirmed in the code:
   client every outbound request is already built with. It refuses an answer
   whose `Content-Length` is over the limit before reading a byte, and cuts off
   one that announces nothing, or lies, as soon as it crosses the line. It knows
-  nothing about who asked, so any later fetcher — an RSS feed, say — adopts it
-  as it is.
+  nothing about who asked, so any later fetcher adopts it as it is. The
+  podcast feed fetcher of RFC-025 (`podcast::fetch_bounded`), merged before
+  this, had written the same two checks itself and now calls it, under its own
+  feed ceiling. Episode downloads stream to disk rather than into memory and
+  keep their own bounded writer.
 - **2 MiB for an API answer** (`outbound::MAX_ANSWER_BYTES`), the figure
   `waveflow-core` holds the metadata providers to. The largest answer this
   server really reads is a few hundred bytes. The portrait fetcher keeps its own

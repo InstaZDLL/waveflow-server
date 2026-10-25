@@ -28,7 +28,8 @@ All outbound clients are built by one function, `src/outbound.rs`:
   timeout.
 - No URL and no response body is written to the log.
 - **Every answer is read under a ceiling** (RFC-023 decision 1): 2 MiB for an
-  API answer, 10 MiB for an image. An answer that announces more is refused
+  API answer, 10 MiB for an image, the podcast ceilings for a feed or an
+  episode. An answer that announces more is refused
   unread; one that keeps coming is cut off at the line. Either is logged as a
   verdict, never with its URL or its body.
 
