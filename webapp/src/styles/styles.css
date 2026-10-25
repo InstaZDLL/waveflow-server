@@ -2096,7 +2096,9 @@ button.danger {
 }
 
 /* A seekable line is a button and has to look like the text it is, not like a
-   control: what makes it pressable is already said by its label. */
+   control: what makes it pressable is already said by its label. The strip
+   beside the cover seeks the same way, so it shares the rule. */
+.lyrics .link,
 .lyrics-view .link {
   display: block;
   width: 100%;
@@ -2109,6 +2111,7 @@ button.danger {
   cursor: pointer;
 }
 
+.lyrics .link:hover,
 .lyrics-view .link:hover {
   color: var(--text);
   text-decoration: underline;

@@ -5000,6 +5000,78 @@ test("offers no seeking on a sheet that carries no timings", async ({
 });
 
 /**
+ * The strip beside the cover reads the way the lyrics view does.
+ *
+ * It used to mark the sung line and leave it to scroll out of its own box, and
+ * no line could be pressed. Now it holds the sung line in view, and a synced
+ * line is a button that seeks to it. A sheet without timings still gets no
+ * buttons.
+ */
+test("follows the sung line in the strip beside the cover, and seeks from it", async ({
+  page,
+}) => {
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: "Rue Delacour",
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: true,
+      line: Array.from({ length: 40 }, (_, index) => ({
+        start: index * 5_000,
+        value: `strip line ${index}`,
+      })),
+    },
+  ]);
+
+  await page.goto("/playing");
+  const strip = page.locator(".playing .lyrics");
+  const column = strip.locator("ol");
+  await expect(column).toBeVisible();
+  // Every timed line is a button, named by its words and then the time.
+  await expect(strip.getByRole("button")).toHaveCount(40);
+  await expect(
+    strip.getByRole("button", {
+      name: "strip line 1, jump to 0:05",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect.poll(() => column.evaluate((list) => list.scrollTop)).toBe(0);
+
+  // The head moves well down the sheet: the sung line is marked, and the strip
+  // has scrolled itself to it rather than leaving it below its own fold.
+  for (let press = 0; press < 20; press += 1) {
+    await page.keyboard.press("ArrowRight");
+  }
+  await expect(
+    strip.getByRole("listitem").filter({ hasText: "strip line 20" }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect
+    .poll(() => column.evaluate((list) => list.scrollTop))
+    .toBeGreaterThan(0);
+  // The strip scrolls itself and nothing else: the page stays where it was.
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  await expectNoWcagViolations(page);
+
+  // Without timings, the strip offers no seeking, as the lyrics view does not.
+  lyricSheets.set("song-1", [
+    {
+      displayArtist: null,
+      displayTitle: "Nocturne",
+      lang: "eng",
+      synced: false,
+      line: [
+        { value: "the lamps come on along the quay" },
+        { value: "and the water keeps the light" },
+      ],
+    },
+  ]);
+  await page.reload();
+  await expect(strip.getByRole("listitem")).toHaveCount(2);
+  await expect(strip.getByRole("button")).toHaveCount(0);
+});
+
+/**
  * The immersive view, and the two things that make it a mode rather than a trap.
  *
  * It **carries transport controls**, because it covers the player bar: a view
