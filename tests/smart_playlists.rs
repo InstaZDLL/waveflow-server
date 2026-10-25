@@ -599,3 +599,190 @@ async fn a_public_smart_playlist_is_read_through_the_viewers_libraries_and_only_
     );
     assert_eq!(mine[1]["readonly"], true);
 }
+
+/// Decision 4: a listing evaluates nothing. Another account publishing many
+/// expensive smart playlists costs a reader's `getPlaylists` nothing beyond
+/// reading the rows; the counts a listing carries are what that reader was
+/// last shown, and none before they open one.
+#[tokio::test]
+async fn listing_smart_playlists_evaluates_none_of_them() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, owner_password, _) = account(&state, "smart-many-owner").await;
+    let (viewer, viewer_password, viewer_key) = account(&state, "smart-many-viewer").await;
+    let (shared, _) = library(&state, &config, owner, "smart-many", 7_400, &SEEDS).await;
+    state
+        .db
+        .add_library_member(owner, shared, viewer, LibraryRole::Listener, now_ms())
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let owner_token = login_token(&router, "smart-many-owner", &owner_password).await;
+    let viewer_token = login_token(&router, "smart-many-viewer", &viewer_password).await;
+    let mut ids = Vec::new();
+    for index in 0..30 {
+        // The most expensive shape there is: every correlated column, sorted.
+        let created = send_json(
+            &router,
+            "POST",
+            "/api/v2/smart-playlists",
+            &owner_token,
+            Some(json!({
+                "name": format!("Heavy {index}"),
+                "public": true,
+                "rules": {"match": "any", "conditions": [
+                    {"field": "play_count", "operator": "greater_than", "value": 0},
+                    {"field": "last_played", "operator": "not_in_the_last", "value": 1},
+                    {"field": "artist", "operator": "contains", "value": "a"},
+                ], "sort": "last_played", "order": "desc"},
+            })),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        ids.push(json_body(created).await["id"].as_str().unwrap().to_owned());
+    }
+
+    let before = state.services.smart_playlist_evaluations();
+    let native = json_body(
+        send_json(
+            &router,
+            "GET",
+            "/api/v2/smart-playlists?include_public=true",
+            &viewer_token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let listed = subsonic_json(&router, "getPlaylists", &viewer_key, "").await;
+    assert_eq!(
+        state.services.smart_playlist_evaluations(),
+        before,
+        "a listing evaluated rule sets"
+    );
+    assert_eq!(native.as_array().unwrap().len(), 30);
+    assert!(
+        native[0]["song_count"].is_null(),
+        "never opened, so never counted"
+    );
+    let playlists = listed["subsonic-response"]["playlists"]["playlist"]
+        .as_array()
+        .unwrap();
+    assert_eq!(playlists.len(), 30);
+    assert_eq!(playlists[0]["songCount"], 0);
+    assert!(playlists[0].get("validUntil").is_none());
+
+    // Opened once: one evaluation, and the listings after it say what it found.
+    let opened = subsonic_json(
+        &router,
+        "getPlaylist",
+        &viewer_key,
+        &format!("&id={}", ids[29]),
+    )
+    .await;
+    assert_eq!(opened["subsonic-response"]["playlist"]["songCount"], 5);
+    assert_eq!(state.services.smart_playlist_evaluations(), before + 1);
+    let listed = subsonic_json(&router, "getPlaylists", &viewer_key, "").await;
+    assert_eq!(state.services.smart_playlist_evaluations(), before + 1);
+    let newest = &listed["subsonic-response"]["playlists"]["playlist"][0];
+    assert_eq!(newest["id"], ids[29].as_str());
+    assert_eq!(newest["songCount"], 5);
+    assert!(newest.get("validUntil").is_some());
+
+    // A rule edit makes what was shown stale, and it is no longer reported.
+    send_json(
+        &router,
+        "PATCH",
+        &format!("/api/v2/smart-playlists/{}", ids[29]),
+        &owner_token,
+        Some(json!({"rules": {"conditions": [
+            {"field": "title", "operator": "is", "value": "Idioteque"}]}})),
+    )
+    .await;
+    let after_edit = json_body(
+        send_json(
+            &router,
+            "GET",
+            "/api/v2/smart-playlists?include_public=true",
+            &viewer_token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let edited = after_edit
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|playlist| playlist["id"] == ids[29].as_str())
+        .unwrap();
+    assert!(edited["song_count"].is_null(), "{edited}");
+}
+
+/// Decision 4: one evaluation runs under a budget of work, and one that passes
+/// it is stopped — answered 503, nothing partial — and leaves its connection
+/// as it found it.
+#[tokio::test]
+async fn an_evaluation_that_passes_its_budget_is_stopped() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, password, api_key) = account(&state, "smart-budget").await;
+    library(&state, &config, owner, "smart-budget", 7_500, &SEEDS).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "smart-budget", &password).await;
+    let rules = json!({"conditions": [{"field": "play_count", "operator": "less_than", "value": 5}],
+                       "sort": "play_count"});
+    let created = json_body(
+        send_json(
+            &router,
+            "POST",
+            "/api/v2/smart-playlists",
+            &token,
+            Some(json!({"name": "Budget", "rules": rules})),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["song_count"], 5);
+
+    state.services.limit_smart_playlist_evaluation(1);
+    let stopped = send_json(
+        &router,
+        "GET",
+        &format!("/api/v2/smart-playlists/{id}"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(stopped.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(json_body(stopped).await["code"], "evaluation_budget");
+    let previewed = send_json(
+        &router,
+        "POST",
+        "/api/v2/smart-playlists/preview",
+        &token,
+        Some(json!({ "rules": rules })),
+    )
+    .await;
+    assert_eq!(previewed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let facade = subsonic_json(&router, "getPlaylist", &api_key, &format!("&id={id}")).await;
+    assert_eq!(facade["subsonic-response"]["status"], "failed");
+
+    // Every connection of the pool answers ordinary reads afterwards: no
+    // handler was left behind on any of them.
+    state
+        .services
+        .limit_smart_playlist_evaluation(waveflow_server::services::SMART_EVALUATION_BUDGET_OPS);
+    for _ in 0..12 {
+        let read = send_json(&router, "GET", "/api/v2/smart-playlists", &token, None).await;
+        assert_eq!(read.status(), StatusCode::OK);
+        let full = send_json(
+            &router,
+            "GET",
+            &format!("/api/v2/smart-playlists/{id}"),
+            &token,
+            None,
+        )
+        .await;
+        assert_eq!(full.status(), StatusCode::OK);
+    }
+}

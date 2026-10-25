@@ -109,7 +109,16 @@ pub(super) async fn podcasts(
 fn channel_node(channel: &PodcastChannelItem) -> Node {
     Node::new("channel")
         .attr("id", channel.id.to_string())
-        .attr("url", channel.url.clone())
+        // The feed address to a manager; to anyone else, its scheme and host
+        // alone — the schema requires the attribute, and a private feed's
+        // token sits in its path as often as in its query (RFC-025 decision 8).
+        .attr(
+            "url",
+            channel
+                .url
+                .clone()
+                .unwrap_or_else(|| channel.origin.clone()),
+        )
         .attr("title", channel.title.clone())
         .maybe_attr("description", channel.description.clone())
         .maybe_attr("originalImageUrl", channel.image_url.clone())

@@ -42,6 +42,56 @@ pub const MAX_SMART_CONDITIONS: usize = 20;
 /// How many smart playlists one account may keep.
 const MAX_SMART_PLAYLISTS: i64 = 100;
 
+/// How many virtual-machine instructions one evaluation may spend, and how
+/// often it is asked whether to go on (decision 4).
+///
+/// Two hundred million is several seconds of work on a catalogue of a hundred
+/// thousand tracks with play-count rules — enough for any rule set over a
+/// real library, and a ceiling on what one request can make the server do.
+pub const SMART_EVALUATION_BUDGET_OPS: u64 = 200_000_000;
+const BUDGET_STEP_OPS: i32 = 1_000;
+
+/// The same bound in time, whichever is reached first: a slow disk spends
+/// time without spending instructions.
+const SMART_EVALUATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How many (playlist, reader) answers the listing memory holds before it is
+/// emptied. A bound on memory, not on correctness: an entry that is gone is a
+/// playlist listed without counts until it is opened again.
+const MAX_REMEMBERED_EXTENTS: usize = 10_000;
+
+/// What one reader was last shown of one smart playlist, which is all a
+/// listing reports (decision 4).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RememberedExtent {
+    /// The playlist's `updated_at` when it was evaluated: a rule edit moves
+    /// it, and an entry from before the edit is not reported.
+    updated_at: i64,
+    evaluated_at: i64,
+    song_count: i64,
+    duration_ms: i64,
+}
+
+/// The smart playlist half of the services' runtime state.
+#[derive(Clone)]
+pub(super) struct SmartRuntime {
+    extents: Arc<dashmap::DashMap<(Uuid, Uuid), RememberedExtent>>,
+    evaluations: Arc<std::sync::atomic::AtomicU64>,
+    budget_ops: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl SmartRuntime {
+    pub(super) fn new() -> Self {
+        Self {
+            extents: Arc::new(dashmap::DashMap::new()),
+            evaluations: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            budget_ops: Arc::new(std::sync::atomic::AtomicU64::new(
+                SMART_EVALUATION_BUDGET_OPS,
+            )),
+        }
+    }
+}
+
 /// The longest text a condition may compare against, in characters.
 const MAX_RULE_TEXT_CHARS: usize = 200;
 
@@ -949,12 +999,16 @@ pub struct SmartPlaylistItem {
     pub rules: SmartRules,
     pub created_at: i64,
     pub updated_at: i64,
-    /// When this answer was evaluated. A smart playlist has no stored track
-    /// list; this is the moment the one below was computed.
-    pub evaluated_at: i64,
-    /// What the reader can play of it, and how long that lasts.
-    pub song_count: i64,
-    pub duration_ms: i64,
+    /// When the counts below were evaluated for this reader. A smart playlist
+    /// has no stored track list. On a read of one playlist it is now; in a
+    /// listing it is when this reader last opened it, and `None` when they
+    /// have not since the server started — a listing evaluates nothing
+    /// (decision 4).
+    pub evaluated_at: Option<i64>,
+    /// What the reader can play of it, and how long that lasts, as of
+    /// `evaluated_at`; `None` with it.
+    pub song_count: Option<i64>,
+    pub duration_ms: Option<i64>,
     /// The tracks, on a read of one playlist; absent from a listing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub songs: Option<Vec<SongItem>>,
@@ -1002,14 +1056,18 @@ impl DomainServices {
             let Some(mut playlist) = smart_playlist_from_row(&row)? else {
                 continue;
             };
-            let ids = self
-                .evaluate_on(&mut connection, playlist.owner_id, &playlist.rules)
-                .await?;
-            let (count, duration) = self
-                .visible_extent_on(&mut connection, user_id, &ids)
-                .await?;
-            playlist.song_count = count;
-            playlist.duration_ms = duration;
+            // **No evaluation here** (decision 4): what this reader was last
+            // shown of it, if the rules have not changed since.
+            if let Some(known) = self
+                .smart
+                .extents
+                .get(&(playlist.id, user_id))
+                .filter(|known| known.updated_at == playlist.updated_at)
+            {
+                playlist.evaluated_at = Some(known.evaluated_at);
+                playlist.song_count = Some(known.song_count);
+                playlist.duration_ms = Some(known.duration_ms);
+            }
             playlists.push(playlist);
         }
         Ok(playlists)
@@ -1034,15 +1092,15 @@ impl DomainServices {
         .await?
         .ok_or(ServiceError::NotFound)?;
         let mut playlist = smart_playlist_from_row(&row)?.ok_or(ServiceError::NotFound)?;
-        let ids = self
-            .evaluate_on(&mut connection, playlist.owner_id, &playlist.rules)
-            .await?;
+        let ids = self.evaluate(playlist.owner_id, &playlist.rules).await?;
         let songs = self
             .songs_by_ids_lenient_on(&mut connection, user_id, &ids)
             .await?;
-        playlist.song_count = songs.len() as i64;
-        playlist.duration_ms = songs.iter().map(|song| song.duration_ms).sum();
+        playlist.evaluated_at = Some(now_ms());
+        playlist.song_count = Some(songs.len() as i64);
+        playlist.duration_ms = Some(songs.iter().map(|song| song.duration_ms).sum());
         playlist.songs = Some(songs);
+        self.remember_extent(&playlist, user_id);
         Ok(playlist)
     }
 
@@ -1052,8 +1110,8 @@ impl DomainServices {
         user_id: Uuid,
         rules: &SmartRules,
     ) -> Result<SmartPlaylistPreview, ServiceError> {
+        let ids = self.evaluate(user_id, rules).await?;
         let mut connection = self.db.pool().acquire().await?;
-        let ids = self.evaluate_on(&mut connection, user_id, rules).await?;
         let songs = self
             .songs_by_ids_lenient_on(&mut connection, user_id, &ids)
             .await?;
@@ -1173,54 +1231,110 @@ impl DomainServices {
 
     /// The track ids a rule set answers for `owner`, in its order, at most its
     /// limit.
-    async fn evaluate_on(
-        &self,
-        connection: &mut SqliteConnection,
-        owner: Uuid,
-        rules: &SmartRules,
-    ) -> Result<Vec<Uuid>, ServiceError> {
+    ///
+    /// **Under a budget** (decision 4). The statement runs on a connection of
+    /// its own with a SQLite progress handler installed: every
+    /// [`BUDGET_STEP_OPS`] virtual-machine instructions it is asked whether to
+    /// go on, and it stops the statement once the budget of instructions, or
+    /// [`SMART_EVALUATION_DEADLINE`], is spent. A stopped evaluation answers
+    /// `Unavailable` and returns nothing partial.
+    ///
+    /// **Spawned, so it always finishes what it started.** The handler is a
+    /// property of the connection, and the connection goes back to the pool:
+    /// were the request dropped between installing the handler and removing
+    /// it, the next query on that connection would inherit an exhausted
+    /// budget. A spawned task is not cancelled with the request, so the
+    /// removal always runs.
+    async fn evaluate(&self, owner: Uuid, rules: &SmartRules) -> Result<Vec<Uuid>, ServiceError> {
+        self.smart
+            .evaluations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let limit = rules.limit.unwrap_or(MAX_SMART_PLAYLIST_TRACKS);
-        let ids: Vec<String> = sqlx::query_scalar(EVALUATE)
-            .bind(owner.to_string())
-            .bind(match rules.match_kind {
-                SmartMatch::All => "all",
-                SmartMatch::Any => "any",
-            })
-            .bind(rules.bound_conditions(now_ms()))
-            .bind(rules.conditions.len() as i64)
-            .bind(rules.sort_code())
-            .bind(owner.to_string())
-            .bind(i64::from(limit))
-            .fetch_all(&mut *connection)
-            .await?;
-        ids.into_iter()
+        let mode = match rules.match_kind {
+            SmartMatch::All => "all",
+            SmartMatch::Any => "any",
+        };
+        let conditions = rules.bound_conditions(now_ms());
+        let count = rules.conditions.len() as i64;
+        let sort = rules.sort_code();
+        let budget = self
+            .smart
+            .budget_ops
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let pool = self.db.pool().clone();
+        let exhausted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&exhausted);
+        let ids = tokio::spawn(async move {
+            let mut connection = pool.acquire().await?;
+            let started = std::time::Instant::now();
+            let mut spent: u64 = 0;
+            connection
+                .lock_handle()
+                .await?
+                .set_progress_handler(BUDGET_STEP_OPS, move || {
+                    spent = spent.saturating_add(BUDGET_STEP_OPS as u64);
+                    let go_on = spent <= budget && started.elapsed() < SMART_EVALUATION_DEADLINE;
+                    if !go_on {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    go_on
+                });
+            let ids: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(EVALUATE)
+                .bind(owner.to_string())
+                .bind(mode)
+                .bind(conditions)
+                .bind(count)
+                .bind(sort)
+                .bind(owner.to_string())
+                .bind(i64::from(limit))
+                .fetch_all(&mut *connection)
+                .await;
+            connection.lock_handle().await?.remove_progress_handler();
+            ids
+        })
+        .await
+        .map_err(|_| ServiceError::Unavailable)?;
+        if exhausted.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!("a smart playlist evaluation passed its budget and was stopped");
+            return Err(ServiceError::Unavailable);
+        }
+        ids?.into_iter()
             .map(|id| parse_uuid(id).map_err(ServiceError::from))
             .collect()
     }
 
-    /// How many of `ids` this account can play, and for how long. What a
-    /// listing reports, without loading the tracks themselves.
-    async fn visible_extent_on(
-        &self,
-        connection: &mut SqliteConnection,
-        user_id: Uuid,
-        ids: &[Uuid],
-    ) -> Result<(i64, i64), ServiceError> {
-        if ids.is_empty() {
-            return Ok((0, 0));
+    /// How many rule sets this process has evaluated. Observability, and what
+    /// the suite counts to prove a listing evaluates none.
+    #[doc(hidden)]
+    pub fn smart_playlist_evaluations(&self) -> u64 {
+        self.smart
+            .evaluations
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Lowers the evaluation budget, in virtual-machine instructions. For the
+    /// suite, which cannot build a library large enough to reach the real one.
+    #[doc(hidden)]
+    pub fn limit_smart_playlist_evaluation(&self, ops: u64) {
+        self.smart
+            .budget_ops
+            .store(ops, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Records what one viewer was last shown of one playlist, for listings.
+    fn remember_extent(&self, playlist: &SmartPlaylistItem, viewer: Uuid) {
+        if self.smart.extents.len() >= MAX_REMEMBERED_EXTENTS {
+            self.smart.extents.clear();
         }
-        let ids = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
-        let row = sqlx::query(
-            "SELECT COUNT(*) AS songs, COALESCE(SUM(t.duration_ms), 0) AS duration \
-             FROM track t JOIN library_member m ON m.library_id=t.library_id \
-             WHERE m.user_id=? AND t.is_available=1 \
-               AND t.id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(user_id.to_string())
-        .bind(ids)
-        .fetch_one(&mut *connection)
-        .await?;
-        Ok((row.try_get("songs")?, row.try_get("duration")?))
+        self.smart.extents.insert(
+            (playlist.id, viewer),
+            RememberedExtent {
+                updated_at: playlist.updated_at,
+                evaluated_at: playlist.evaluated_at.unwrap_or_else(now_ms),
+                song_count: playlist.song_count.unwrap_or(0),
+                duration_ms: playlist.duration_ms.unwrap_or(0),
+            },
+        );
     }
 }
 
@@ -1248,9 +1362,9 @@ fn smart_playlist_from_row(
         rules,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
-        evaluated_at: now_ms(),
-        song_count: 0,
-        duration_ms: 0,
+        evaluated_at: None,
+        song_count: None,
+        duration_ms: None,
         songs: None,
     }))
 }

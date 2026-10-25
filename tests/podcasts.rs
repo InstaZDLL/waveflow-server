@@ -51,7 +51,13 @@ impl Host {
     }
 }
 
+/// The feed, its enclosures carrying `tail` — a private feed's enclosures
+/// carry its subscriber's token too.
 fn feed(base: &str) -> String {
+    private_feed(base, "")
+}
+
+fn private_feed(base: &str, tail: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
@@ -62,16 +68,16 @@ fn feed(base: &str) -> String {
     <itunes:image href="{base}/cover.jpg"/>
     <item><title>Through a redirect</title><guid>ep-1</guid>
       <pubDate>Fri, 05 Jan 2024 10:00:00 +0000</pubDate><itunes:duration>12:00</itunes:duration>
-      <enclosure url="{base}/redirect-audio" type="audio/mpeg"/></item>
+      <enclosure url="{base}/redirect-audio{tail}" type="audio/mpeg"/></item>
     <item><title>A page, not audio</title><guid>ep-2</guid>
       <pubDate>Thu, 04 Jan 2024 10:00:00 +0000</pubDate>
-      <enclosure url="{base}/page.html" type="audio/mpeg"/></item>
+      <enclosure url="{base}/page.html{tail}" type="audio/mpeg"/></item>
     <item><title>Behind a private address</title><guid>ep-3</guid>
       <pubDate>Wed, 03 Jan 2024 10:00:00 +0000</pubDate>
-      <enclosure url="{base}/to-private" type="audio/mpeg"/></item>
+      <enclosure url="{base}/to-private{tail}" type="audio/mpeg"/></item>
     <item><title>Too large</title><guid>ep-4</guid>
       <pubDate>Tue, 02 Jan 2024 10:00:00 +0000</pubDate>
-      <enclosure url="{base}/huge.mp3" type="audio/mpeg"/></item>
+      <enclosure url="{base}/huge.mp3{tail}" type="audio/mpeg"/></item>
   </channel>
 </rss>"#
     )
@@ -82,6 +88,18 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
     *host.hits.entry(path.clone()).or_insert(0) += 1;
     let redirect =
         |to: &str| (StatusCode::FOUND, [(header::LOCATION, to.to_owned())], "").into_response();
+    // A private feed, as Supercast and Patreon serve them: the subscriber's
+    // token in the path, and on every enclosure.
+    if let Some(token) = path
+        .strip_prefix("/private/")
+        .and_then(|rest| rest.strip_suffix("/podcast.xml"))
+    {
+        return (
+            [(header::CONTENT_TYPE, "application/rss+xml")],
+            private_feed(&host.base, &format!("?auth={token}")),
+        )
+            .into_response();
+    }
     match path.as_str() {
         "/feed.xml" if host.failing.load(Ordering::SeqCst) => {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -252,16 +270,12 @@ async fn a_channel_is_subscribed_downloaded_played_bookmarked_and_deleted() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(host.count("/feed.xml"), 1);
 
-    // The overview says who may manage, and hides the feed's token from a
-    // reader.
+    // The overview says who may manage, and shows a reader no feed address.
     let overview =
         json_body(send_json(&router, "GET", "/api/v2/podcasts", &listener_token, None).await).await;
     assert_eq!(overview["enabled"], true);
     assert_eq!(overview["can_manage"], false);
-    assert_eq!(
-        overview["channels"][0]["url"],
-        format!("{}/feed.xml", host.base).as_str()
-    );
+    assert!(overview["channels"][0]["url"].is_null());
 
     let first = uuid_of(episode(&channel, "Through a redirect"));
     let refused = send_json(
@@ -728,6 +742,123 @@ async fn the_subsonic_podcast_methods_answer_the_schema_shapes() {
     assert!(empty["subsonic-response"]["podcasts"]
         .get("channel")
         .is_none_or(|channels| channels.as_array().is_some_and(Vec::is_empty)));
+}
+
+/// Decision 8: a private feed's token — in its path, in its query and on every
+/// enclosure — reaches the account that may manage podcasts and nobody else,
+/// on any surface. A reader is shown the feed's scheme and host in the
+/// Subsonic `url` the schema requires, and no address at all natively.
+#[tokio::test]
+async fn a_private_feeds_token_reaches_only_the_accounts_that_manage_it() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (admin, admin_password, admin_key) =
+        account(&state, "pod-private-admin", AccountRole::Admin).await;
+    let (_, reader_password, reader_key) =
+        account(&state, "pod-private-reader", AccountRole::User).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let admin_token = login_token(&router, "pod-private-admin", &admin_password).await;
+    let reader_token = login_token(&router, "pod-private-reader", &reader_password).await;
+
+    let path_token = format!("p{}", Uuid::new_v4().simple());
+    let query_token = format!("q{}", Uuid::new_v4().simple());
+    let feed_url = format!(
+        "{}/private/{path_token}/podcast.xml?key={query_token}",
+        host.base
+    );
+    let (status, channel) = subscribe(&router, &admin_token, &feed_url).await;
+    assert_eq!(status, StatusCode::CREATED, "{channel}");
+    let channel_id = uuid_of(&channel);
+    let first = uuid_of(episode(&channel, "Through a redirect"));
+    // Downloaded through an enclosure that carries the token as well.
+    state
+        .services
+        .download_podcast_episode(admin, first)
+        .await
+        .unwrap();
+    assert_eq!(settled(&state, admin, first).await["status"], "completed");
+    let bookmarked = send_json(
+        &router,
+        "PUT",
+        &format!("/api/v2/bookmarks/{first}"),
+        &reader_token,
+        Some(json!({ "position_ms": 1_000 })),
+    )
+    .await;
+    assert_eq!(bookmarked.status(), StatusCode::NO_CONTENT);
+
+    for answer in every_podcast_read(&router, &reader_token, &reader_key, channel_id, first).await {
+        assert!(
+            !answer.contains(&path_token),
+            "the path token leaked: {answer}"
+        );
+        assert!(
+            !answer.contains(&query_token),
+            "the query token leaked: {answer}"
+        );
+        assert!(
+            !answer.contains("/private/"),
+            "the feed path leaked: {answer}"
+        );
+    }
+    let listed = subsonic_json(
+        &router,
+        "getPodcasts",
+        &reader_key,
+        "&includeEpisodes=false",
+    )
+    .await;
+    assert_eq!(
+        listed["subsonic-response"]["podcasts"]["channel"][0]["url"],
+        format!("{}/", host.base).as_str(),
+        "a reader is shown the scheme and host, and nothing after"
+    );
+    let overview =
+        json_body(send_json(&router, "GET", "/api/v2/podcasts", &reader_token, None).await).await;
+    assert!(overview["channels"][0]["url"].is_null());
+
+    // The manager is shown the address in full, natively and through Subsonic.
+    let managed = every_podcast_read(&router, &admin_token, &admin_key, channel_id, first).await;
+    assert!(managed[0].contains(&path_token) && managed[0].contains(&query_token));
+    assert!(managed[4].contains(&path_token) && managed[4].contains(&query_token));
+    // An enclosure address is shown to nobody: an episode is played from the
+    // server, so no surface needs it.
+    for answer in managed {
+        assert!(!answer.contains(&format!("auth={path_token}")), "{answer}");
+    }
+}
+
+/// Every podcast read an account can make, natively and through Subsonic, as
+/// the text it was answered with.
+async fn every_podcast_read(
+    router: &Router,
+    token: &str,
+    key: &str,
+    channel: Uuid,
+    episode: Uuid,
+) -> Vec<String> {
+    let mut answers = Vec::new();
+    for path in [
+        "/api/v2/podcasts".to_owned(),
+        format!("/api/v2/podcasts/{channel}"),
+        "/api/v2/podcast-episodes/newest".to_owned(),
+        format!("/api/v2/podcast-episodes/{episode}"),
+    ] {
+        answers.push(
+            json_body(send_json(router, "GET", &path, token, None).await)
+                .await
+                .to_string(),
+        );
+    }
+    for (method, extra) in [
+        ("getPodcasts", String::new()),
+        ("getNewestPodcasts", String::new()),
+        ("getPodcastEpisode", format!("&id={episode}")),
+        ("getBookmarks", String::new()),
+    ] {
+        answers.push(subsonic_json(router, method, key, &extra).await.to_string());
+    }
+    answers
 }
 
 async fn body_bytes(response: Response) -> Vec<u8> {

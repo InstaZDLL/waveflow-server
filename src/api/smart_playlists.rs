@@ -70,6 +70,8 @@ pub struct SmartPlaylistListQuery {
 pub enum SmartPlaylistRejection {
     Api(ApiError),
     Rules(RuleError),
+    /// The evaluation passed its budget and was stopped (RFC-025 decision 4).
+    Budget,
 }
 
 impl From<ApiError> for SmartPlaylistRejection {
@@ -91,6 +93,14 @@ impl IntoResponse for SmartPlaylistRejection {
                 }),
             )
                 .into_response(),
+            Self::Budget => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    code: "evaluation_budget",
+                    message: "These rules take more work to evaluate than this server allows",
+                }),
+            )
+                .into_response(),
         }
     }
 }
@@ -100,10 +110,14 @@ fn parsed_rules(value: &serde_json::Value) -> Result<SmartRules, SmartPlaylistRe
 }
 
 fn api(error: crate::services::ServiceError) -> SmartPlaylistRejection {
-    SmartPlaylistRejection::Api(service_error(error))
+    match error {
+        // The only way an evaluation is unavailable: it passed its budget.
+        crate::services::ServiceError::Unavailable => SmartPlaylistRejection::Budget,
+        error => SmartPlaylistRejection::Api(service_error(error)),
+    }
 }
 
-#[utoipa::path(get, path = "/api/v2/smart-playlists", tag = "smart-playlists", params(("include_public" = Option<bool>, Query, description = "Also list other accounts' public smart playlists")), responses((status = 200, description = "Without their tracks: counts and durations only, over what this account can play", body = [crate::services::SmartPlaylistItem]), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/smart-playlists", tag = "smart-playlists", params(("include_public" = Option<bool>, Query, description = "Also list other accounts' public smart playlists")), responses((status = 200, description = "Without their tracks, and without evaluating any: each carries what this account was last shown of it, or no count when it has not opened it since the server started", body = [crate::services::SmartPlaylistItem]), (status = 401, body = ErrorResponse)))]
 pub async fn list_smart_playlists(
     State(state): State<AppState>,
     Query(query): Query<SmartPlaylistListQuery>,
@@ -142,7 +156,7 @@ pub async fn create_smart_playlist(
 
 /// Evaluates rules without storing them, for this account: what the editor
 /// shows while the rules are written.
-#[utoipa::path(post, path = "/api/v2/smart-playlists/preview", tag = "smart-playlists", request_body = SmartPreviewRequest, responses((status = 200, body = crate::services::SmartPlaylistPreview), (status = 401, body = ErrorResponse), (status = 422, body = RuleErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/smart-playlists/preview", tag = "smart-playlists", request_body = SmartPreviewRequest, responses((status = 200, body = crate::services::SmartPlaylistPreview), (status = 401, body = ErrorResponse), (status = 422, body = RuleErrorResponse), (status = 503, description = "The evaluation passed its budget", body = ErrorResponse)))]
 pub async fn preview_smart_playlist(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -159,19 +173,19 @@ pub async fn preview_smart_playlist(
         .map_err(api)
 }
 
-#[utoipa::path(get, path = "/api/v2/smart-playlists/{playlist_id}", tag = "smart-playlists", params(("playlist_id" = Uuid, Path)), responses((status = 200, description = "Evaluated now, its tracks read through this account's libraries", body = crate::services::SmartPlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/smart-playlists/{playlist_id}", tag = "smart-playlists", params(("playlist_id" = Uuid, Path)), responses((status = 200, description = "Evaluated now, its tracks read through this account's libraries", body = crate::services::SmartPlaylistItem), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 503, description = "The evaluation passed its budget", body = ErrorResponse)))]
 pub async fn get_smart_playlist(
     State(state): State<AppState>,
     Path(playlist_id): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<crate::services::SmartPlaylistItem>, ApiError> {
+) -> Result<Json<crate::services::SmartPlaylistItem>, SmartPlaylistRejection> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services
         .smart_playlist(user.id, playlist_id)
         .await
         .map(Json)
-        .map_err(service_error)
+        .map_err(api)
 }
 
 #[utoipa::path(patch, path = "/api/v2/smart-playlists/{playlist_id}", tag = "smart-playlists", params(("playlist_id" = Uuid, Path)), request_body = SmartPlaylistPatch, responses((status = 200, body = crate::services::SmartPlaylistItem), (status = 401, body = ErrorResponse), (status = 404, description = "Missing, or another account's", body = ErrorResponse), (status = 422, body = RuleErrorResponse)))]

@@ -1457,6 +1457,9 @@ pub struct DomainServices {
     /// Podcasts (RFC-025): the settings, and the one download permit and one
     /// refresh lock the background work shares.
     podcasts: podcasts::PodcastRuntime,
+    /// Smart playlists (RFC-025): what each reader was last shown, the
+    /// evaluation counter and the evaluation budget.
+    smart: smart_playlists::SmartRuntime,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1578,6 +1581,7 @@ pub use scrobbling::{
 pub use smart_playlists::{
     RuleError, SmartCondition, SmartField, SmartMatch, SmartOperator, SmartOrder,
     SmartPlaylistItem, SmartPlaylistPreview, SmartRules, SmartSort, MAX_SMART_PLAYLIST_TRACKS,
+    SMART_EVALUATION_BUDGET_OPS,
 };
 
 impl DomainServices {
@@ -1635,6 +1639,7 @@ impl DomainServices {
                 config.request_timeout,
             ),
             podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
+            smart: smart_playlists::SmartRuntime::new(),
         }
     }
 

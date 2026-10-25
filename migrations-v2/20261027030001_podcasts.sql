@@ -7,8 +7,8 @@
 --
 -- `feed_url` is stored as the administrator typed it, after validation:
 -- absolute, http or https, no user information. It is never written to a log,
--- and it is shown in full only to an account that may manage podcasts — a
--- private feed carries its token in the query string.
+-- and it is shown only to an account that may manage podcasts — a private
+-- feed carries its token in its path as often as in its query string.
 --
 -- `error_code` is a word from a fixed vocabulary (`src/podcast.rs`), never text
 -- out of a response: a feed that answers with a page of HTML must not have that

@@ -6,8 +6,9 @@
 //! `getPlaylist` asks here when no ordinary playlist has the id.
 //!
 //! Each carries the OpenSubsonic `readonly` attribute, true, and `validUntil`,
-//! the moment it was evaluated: the server evaluates it on every read, so a
-//! client that caches it knows the copy it holds is already due. Every write
+//! the moment it was evaluated for this caller: a client that caches it knows
+//! the copy it holds is already due. `getPlaylists` evaluates none of them
+//! (RFC-025 decision 4); its counts are the caller's last `getPlaylist`. Every write
 //! the façade has — `updatePlaylist`, `deletePlaylist`, `createPlaylist` with a
 //! `playlistId` — reaches ordinary playlists only, so naming a smart one there
 //! answers error 70, as a missing playlist does.
@@ -23,12 +24,15 @@ fn smart_playlist_node(playlist: &SmartPlaylistItem) -> Node {
         .maybe_attr("comment", playlist.comment.clone())
         .attr("owner", playlist.owner_username.clone())
         .attr("public", playlist.public)
-        .attr("songCount", playlist.song_count)
-        .attr("duration", playlist.duration_ms / 1000)
+        // In `getPlaylists`, what this caller was last shown of it — a listing
+        // evaluates nothing — and zero when they have not opened it since the
+        // server started; `validUntil` is then absent. In `getPlaylist`, now.
+        .attr("songCount", playlist.song_count.unwrap_or(0))
+        .attr("duration", playlist.duration_ms.unwrap_or(0) / 1000)
         .attr("created", iso_time(playlist.created_at))
         .attr("changed", iso_time(playlist.updated_at))
         .attr("readonly", true)
-        .attr("validUntil", iso_time(playlist.evaluated_at))
+        .maybe_attr("validUntil", playlist.evaluated_at.map(iso_time))
 }
 
 /// Every smart playlist this account may read: its own, then other accounts'

@@ -18,7 +18,7 @@
 //! - **Bodies are bounded while they are read**, and the whole request by a
 //!   deadline.
 //! - **Nothing about a request is logged** but a verdict from a fixed list: a
-//!   feed address may carry a private token in its query string.
+//!   feed address may carry a private token in its path or its query string.
 //!
 //! Parsing goes through `roxmltree` with a DTD refused outright, so an entity
 //! cannot be declared, let alone expanded, and with a node ceiling; the text

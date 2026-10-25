@@ -34,10 +34,17 @@ const MAX_PODCAST_CHANNELS: i64 = 500;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PodcastChannelItem {
     pub id: Uuid,
-    /// The feed address. In full for an account that may manage podcasts;
-    /// without its query string or fragment for everyone else, because a
-    /// private feed carries its token there.
-    pub url: String,
+    /// The feed address, to an account that may manage podcasts, and `None`
+    /// to everyone else (RFC-025 decision 8). A private feed carries its
+    /// subscriber's token in its path as often as in its query —
+    /// `/rss/<token>.xml`, `/feed/<user>/podcast.xml` — so no part of the
+    /// address past its host is shown to an account that did not add it.
+    pub url: Option<String>,
+    /// The feed's scheme and host, `https://feeds.example.org/`, and nothing
+    /// after: what the Subsonic `url` attribute, which the schema requires,
+    /// carries for a reader. Not serialized natively.
+    #[serde(skip)]
+    pub origin: String,
     pub title: String,
     pub description: Option<String>,
     pub site_url: Option<String>,
@@ -1009,14 +1016,17 @@ async fn upsert_episodes(
     Ok(())
 }
 
-/// The address without what may be a credential: no query, no fragment.
-fn public_feed_url(feed_url: &str) -> String {
+/// The scheme, host and port of a feed address, and nothing that may be a
+/// credential: no user information, no path, no query, no fragment. A private feed's token is in its path as often as in its query.
+fn feed_origin(feed_url: &str) -> String {
     match url::Url::parse(feed_url) {
-        Ok(mut url) => {
-            url.set_query(None);
-            url.set_fragment(None);
-            url.to_string()
-        }
+        Ok(url) => match url.host_str() {
+            Some(host) => match url.port() {
+                Some(port) => format!("{}://{host}:{port}/", url.scheme()),
+                None => format!("{}://{host}/", url.scheme()),
+            },
+            None => String::new(),
+        },
         Err(_) => String::new(),
     }
 }
@@ -1028,11 +1038,8 @@ fn channel_from_row(
     let feed_url: String = row.try_get("feed_url")?;
     Ok(PodcastChannelItem {
         id: parse_uuid(row.try_get("id")?)?,
-        url: if can_manage {
-            feed_url
-        } else {
-            public_feed_url(&feed_url)
-        },
+        origin: feed_origin(&feed_url),
+        url: can_manage.then_some(feed_url),
         title: row.try_get("title")?,
         description: row.try_get("description")?,
         site_url: row.try_get("site_url")?,
@@ -1086,11 +1093,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_feed_address_is_shown_without_its_query_to_a_reader() {
+    fn a_reader_is_shown_the_feeds_host_and_nothing_after_it() {
         assert_eq!(
-            public_feed_url("https://feeds.example.org/show.xml?token=secret#top"),
-            "https://feeds.example.org/show.xml"
+            feed_origin("https://feeds.example.org/rss/secret-path.xml?token=secret#top"),
+            "https://feeds.example.org/"
         );
-        assert_eq!(public_feed_url("not a url"), "");
+        assert_eq!(
+            feed_origin("http://user:pass@127.0.0.1:8080/feed/token/podcast.xml"),
+            "http://127.0.0.1:8080/"
+        );
+        assert_eq!(feed_origin("not a url"), "");
     }
 }
