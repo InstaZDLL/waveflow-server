@@ -321,6 +321,45 @@ next visit asks again.
 **What it logs.** The provider and a verdict, such as `answered HTTP 503` —
 never the request URL, which carries your key.
 
+## Switching podcasts on
+
+**Off by default, and an upgrade leaves it off.**
+[RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md) carries the reasoning;
+[privacy](privacy.md) says exactly what is fetched and when.
+
+```bash
+WAVEFLOW_PODCASTS=on
+```
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WAVEFLOW_PODCASTS` | off | The switch. Off, no feed is fetched, no episode downloaded, and `podcastRole` is false for everyone |
+| `WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS` | 21600 | How often every channel is fetched again. `0` refreshes only when an administrator asks; anything below 300 is read as 300 |
+| `WAVEFLOW_PODCAST_ALLOW_HTTP` | on | `off` refuses plain-http feeds and enclosures. Many enclosures are still served over http |
+| `WAVEFLOW_PODCAST_MAX_FEED_BYTES` | 16777216 | The largest feed read |
+| `WAVEFLOW_PODCAST_MAX_EPISODE_BYTES` | 1073741824 | The largest episode stored; may not exceed the quota |
+| `WAVEFLOW_PODCAST_QUOTA_BYTES` | 21474836480 | What every stored episode may occupy together |
+| `WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS` | 20 | One feed fetch, redirects included |
+| `WAVEFLOW_PODCAST_DOWNLOAD_TIMEOUT_SECS` | 1800 | One episode download |
+
+**Who manages them.** Administrators: they subscribe, refresh, download and
+delete, on the podcasts page or from any Subsonic client, where `podcastRole`
+is true for them. Every account reads the channels and plays what is stored.
+
+**What is downloaded, and where.** Nothing on its own: an episode is fetched
+when an administrator asks for it, one at a time, into `podcasts/` in the data
+directory, named `<episode id>.<format>`. Only audio is kept — the format is
+read from the file's first bytes. **Back the directory up with the rest of the
+data directory** if you want the episodes back after a restore; otherwise they
+can be downloaded again. Deleting an episode deletes its file, and a refresh
+does not bring it back.
+
+**A feed that cannot be reached** is marked on its channel with a word —
+`unreached`, `http_404`, `address_refused` (it, or a redirect, pointed at a
+private address), `invalid_feed` (not RSS or Atom, or it declared a DTD) — and
+its episodes stay as they were. **What it logs**: counts and those words,
+never a feed address — a private feed carries its token in its query string.
+
 ## Scanning
 
 A scan reads only what changed. A file whose size and modification time are
