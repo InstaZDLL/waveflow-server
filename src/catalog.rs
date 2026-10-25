@@ -1830,6 +1830,13 @@ impl Database {
         fetch_tracks(self, user_id, library_id, query, offset, limit).await
     }
 
+    /// The file behind `track_id`, for an account that may play it.
+    ///
+    /// **The account must not be disabled** (RFC-023 decision 4). A bearer
+    /// token of a disabled account is refused before it gets here, but a
+    /// stream ticket is sealed, not looked up, and lives an hour, and a share
+    /// streams as its owner: this is the one read all three redeem through, so
+    /// it is where a disabled account stops playing.
     pub async fn stream_track_for_user(
         &self,
         user_id: Uuid,
@@ -1840,7 +1847,8 @@ impl Database {
                t.codec, t.bitrate, t.duration_ms, t.is_available FROM track t \
              JOIN library l ON l.id = t.library_id \
              JOIN library_member m ON m.library_id = t.library_id \
-             WHERE t.id = ? AND m.user_id = ?",
+             JOIN account a ON a.id = m.user_id \
+             WHERE t.id = ? AND m.user_id = ? AND a.disabled = 0",
         )
         .bind(track_id.to_string())
         .bind(user_id.to_string())
