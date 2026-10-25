@@ -872,7 +872,7 @@ const en = {
   "offline.kicker": "In this browser",
   "offline.title": "Kept for offline",
   "offline.detail":
-    "These tracks were kept in this browser and play without a connection. Keep more from a track's menu.",
+    "These tracks were kept in this browser for the account that last signed in, and play without a connection. Signing out deletes them from this browser. Keep more from a track's menu.",
   "offline.unsupported":
     "This browser cannot keep tracks for offline listening.",
   "offline.back": "Back to the library",
@@ -1841,7 +1841,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "offline.kicker": "Dans ce navigateur",
   "offline.title": "Gardé hors ligne",
   "offline.detail":
-    "Ces titres sont gardés dans ce navigateur et se lisent sans connexion. Gardez-en d’autres depuis le menu d’un titre.",
+    "Ces titres sont gardés dans ce navigateur pour le compte qui s’y est connecté en dernier, et se lisent sans connexion. Se déconnecter les supprime de ce navigateur. Gardez-en d’autres depuis le menu d’un titre.",
   "offline.unsupported":
     "Ce navigateur ne peut pas garder de titres pour l’écoute hors ligne.",
   "offline.back": "Retour à la bibliothèque",

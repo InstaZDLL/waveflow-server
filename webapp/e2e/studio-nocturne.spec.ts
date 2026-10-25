@@ -7620,7 +7620,7 @@ test("keeps a track for offline, by its id, and plays it from the offline page",
   await menu.getByRole("menuitem", { name: "Keep for offline" }).click();
   const stored = () =>
     page.evaluate(async () => {
-      const cache = await caches.open("waveflow-offline-v1");
+      const cache = await caches.open("waveflow-offline-v1:user-1");
       return (await cache.keys())
         .map((request) => new URL(request.url).pathname)
         .sort();
@@ -7655,4 +7655,98 @@ test("keeps a track for offline, by its id, and plays it from the offline page",
     .click();
   await expect(page.getByText("Nothing is kept yet.", { exact: false })).toBeVisible();
   await expect.poll(stored).toEqual([]);
+});
+
+/** Keeps the fixture's track for offline through its menu, as a listener does. */
+async function keepFirstSongOffline(page: Page) {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [correctable.song] }),
+  );
+  await page.route("**/api/v2/tracks/song-9/stream-ticket", (route) =>
+    route.fulfill({
+      json: { url: "/api/v2/stream/ticket-9", expires_at: Date.now() + 60_000 },
+    }),
+  );
+  await page.route("**/api/v2/stream/ticket-9", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "content-type": "audio/flac" },
+      body: Buffer.from([0x66, 0x4c, 0x61, 0x43]),
+    }),
+  );
+  await page.goto("/songs");
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
+  await page.keyboard.press("Shift+F10");
+  await page
+    .getByRole("menu", { name: "Actions for Army Of Me" })
+    .getByRole("menuitem", { name: "Keep for offline" })
+    .click();
+  await expect.poll(() => keptPaths(page)).toContain("/offline/tracks/song-9");
+}
+
+/** Every address this browser holds in an offline cache, whoever kept it. */
+function keptPaths(page: Page) {
+  return page.evaluate(async () => {
+    const paths: string[] = [];
+    for (const name of await caches.keys()) {
+      if (!name.startsWith("waveflow-offline-v1:")) continue;
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        paths.push(new URL(request.url).pathname);
+      }
+    }
+    return paths.sort();
+  });
+}
+
+/**
+ * The kept tracks are one account's (RFC-022): a sign-out deletes them, so
+ * the offline page opened afterwards — with no session at all — lists and
+ * plays nothing of the account that left.
+ */
+test("a sign-out deletes the tracks kept for offline", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+  await keepFirstSongOffline(page);
+  // Dispatched rather than clicked: the sidebar's footer sits under the
+  // fixed player bar at some viewports.
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(() => keptPaths(page)).toEqual([]);
+
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { code: "invalid_refresh_token" } }),
+  );
+  await page.goto("/offline");
+  await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
+  await expect(page.getByLabel("Offline player")).toHaveCount(0);
+});
+
+/**
+ * Another account signing in on the same browser is shown none of the last
+ * one's copies, and they are gone before it could ask for them.
+ */
+test("another account signing in sees none of the tracks kept offline", async ({
+  page,
+}) => {
+  await keepFirstSongOffline(page);
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: {
+        ...session,
+        user: { id: "user-2", username: "guest", role: "user" },
+      },
+    }),
+  );
+  await page.goto("/songs");
+  await expect.poll(() => keptPaths(page)).toEqual([]);
+  await page.goto("/offline");
+  await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
 });

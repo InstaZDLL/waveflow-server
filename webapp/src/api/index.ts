@@ -83,6 +83,7 @@ export {
   hasSession,
   login,
   logout,
+  onSessionOwner,
   SETUP_TOKEN_REJECTED,
   setupRequired,
 } from "./client";

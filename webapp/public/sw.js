@@ -7,7 +7,11 @@
  *   built of — so the client opens without a network;
  * - **the tracks a listener chose to keep for offline**, stored by the page
  *   under `/offline/tracks/{track id}`, an address of this worker's own that
- *   names the track and carries no credential.
+ *   names the track and carries no credential, in the cache of the account
+ *   that kept them. The worker answers that address only from the cache of
+ *   the account the owner marker names — the one whose session this browser
+ *   holds or last held — so it never hands one account's copy to another;
+ *   with no marker, after a sign-out, it answers none.
  *
  * **It never answers, and never stores, anything of the server's.** Every
  * request under `/api/`, `/rest/` and `/share/`, every probe and the API
@@ -24,9 +28,11 @@
 
 const SHELL_CACHE = "waveflow-shell-v1";
 const ASSET_CACHE = "waveflow-assets-v1";
-const OFFLINE_CACHE = "waveflow-offline-v1";
+const OFFLINE_PREFIX = "waveflow-offline-v1:";
+const OWNER_CACHE = "waveflow-offline-owner";
+const OWNER_KEY = "/offline/owner";
 const SHELL_KEY = "/";
-const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE, OFFLINE_CACHE];
+const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE, OWNER_CACHE];
 
 /** Paths that belong to the server: never answered from a cache. */
 const SERVER_PREFIXES = ["/api/", "/rest/", "/share/"];
@@ -67,7 +73,11 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith("waveflow-") && !KNOWN_CACHES.includes(name)) {
+        if (
+          name.startsWith("waveflow-") &&
+          !KNOWN_CACHES.includes(name) &&
+          !name.startsWith(OFFLINE_PREFIX)
+        ) {
           await caches.delete(name);
         }
       }
@@ -153,9 +163,13 @@ async function staticFile(request) {
  * cached response holds the whole file.
  */
 async function offlineTrack(request) {
-  const kept = await caches.match(new URL(request.url).pathname, {
-    cacheName: OFFLINE_CACHE,
-  });
+  const marker = await caches.match(OWNER_KEY, { cacheName: OWNER_CACHE });
+  const owner = marker ? (await marker.text()).trim() : "";
+  const kept = owner
+    ? await caches.match(new URL(request.url).pathname, {
+        cacheName: OFFLINE_PREFIX + owner,
+      })
+    : undefined;
   if (!kept) return new Response("Not kept for offline", { status: 404 });
   const range = request.headers.get("range");
   const type = kept.headers.get("content-type") || "application/octet-stream";

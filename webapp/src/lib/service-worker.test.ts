@@ -132,7 +132,11 @@ describe("the service worker", () => {
 
   it("answers a kept track by byte range", async () => {
     const { request, store } = boot(async () => new Response());
-    const cache = await store.open("waveflow-offline-v1");
+    await (await store.open("waveflow-offline-owner")).put(
+      "/offline/owner",
+      new Response("user-a"),
+    );
+    const cache = await store.open("waveflow-offline-v1:user-a");
     await cache.put(
       "/offline/tracks/t1",
       new Response(new Blob([new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]), {
@@ -162,5 +166,23 @@ describe("the service worker", () => {
     expect(beyond?.status).toBe(416);
     const missing = await request("/offline/tracks/nope");
     expect(missing?.status).toBe(404);
+  });
+
+  it("answers a kept track only from the account the marker names", async () => {
+    const { request, store } = boot(async () => new Response());
+    const owner = await store.open("waveflow-offline-owner");
+    await (await store.open("waveflow-offline-v1:user-a")).put(
+      "/offline/tracks/t1",
+      new Response(new Blob([new Uint8Array([1])])),
+    );
+    // No marker: a sign-out, or nobody yet.
+    expect((await request("/offline/tracks/t1"))?.status).toBe(404);
+    await owner.put("/offline/owner", new Response("user-b"));
+    expect(
+      (await request("/offline/tracks/t1"))?.status,
+      "another account's copy",
+    ).toBe(404);
+    await owner.put("/offline/owner", new Response("user-a"));
+    expect((await request("/offline/tracks/t1"))?.status).toBe(200);
   });
 });

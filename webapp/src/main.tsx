@@ -28,6 +28,7 @@ import {
   ensureSession,
   forgetOnSessionChange,
   logout,
+  onSessionOwner,
 } from "./api";
 import {
   administrationQuery,
@@ -50,7 +51,11 @@ import { CoverLight } from "./components/cover-light";
 import { Icon, type IconName } from "./components/icons";
 import { Waiting } from "./components/page-shell";
 import { TrackEditorPage } from "./components/track-editor";
-import { registerServiceWorker } from "./lib/offline";
+import {
+  claimOffline,
+  forgetKnownOffline,
+  registerServiceWorker,
+} from "./lib/offline";
 import { dismissSplash } from "./lib/splash";
 import { AdminPage } from "./pages/admin-page";
 import { AlbumPage } from "./pages/album-page";
@@ -1072,6 +1077,10 @@ forgetOnSessionChange(() => queryClient.clear());
 // The shell and the kept tracks, for listening offline (RFC-022). Never an
 // API response: see `public/sw.js`.
 registerServiceWorker(import.meta.env.PROD);
+// The kept tracks are one account's (RFC-022): a sign-out deletes them, and
+// a different account signing in deletes the last one's before it sees them.
+onSessionOwner((userId) => claimOffline(userId));
+forgetOnSessionChange(forgetKnownOffline);
 
 createRoot(container).render(
   <StrictMode>
