@@ -213,29 +213,40 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
 /// The files that make the client installable are served as themselves, or
 /// answered a JSON 404 — never the shell (RFC-022 decision 4).
 ///
-/// Holds whether or not a client build is embedded in the binary under test,
-/// which is what lets it run in both CI jobs: with a build, each file must
-/// arrive with its own type and the manifest must parse; with the placeholder,
-/// each must be a definitive 404. The one answer it can never accept is
+/// Which of the two is required depends on what is embedded, and the test
+/// asks the binary rather than the source tree: `build.rs` embeds the real
+/// client when `webapp/dist` holds one and a placeholder page otherwise, and
+/// the shell at `/` says which. With the real client, every install asset must
+/// be served with its own type — a build that dropped one would not be
+/// installable, and accepting a 404 there would let it pass. With the
+/// placeholder, each must be a definitive JSON 404. Neither may ever be
 /// `text/html`, which is what the router fallback gives any path it does not
 /// know, and which a browser reading a manifest fails on without saying why.
 #[tokio::test]
 async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
     let (_temp, config, state) = test_app().await;
     let router = waveflow_server::app(&config, state);
+    let get = |path: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let shell = body_text(get("/").await).await;
+    // The placeholder's own sentence, in `build.rs`.
+    let built = !shell.contains("The web client is not built");
+
     for (path, expected) in [
         ("/manifest.webmanifest", "application/manifest+json"),
         ("/apple-touch-icon.png", "image/png"),
         ("/icons/icon-192.png", "image/png"),
         ("/icons/icon-512.png", "image/png"),
         ("/icons/maskable-512.png", "image/png"),
-        ("/icons/not-shipped.png", "image/png"),
     ] {
-        let response = router
-            .clone()
-            .oneshot(Request::get(path).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let response = get(path).await;
         let status = response.status();
         let kind = response
             .headers()
@@ -243,34 +254,35 @@ async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
             .map(|value| value.to_str().unwrap().to_owned())
             .unwrap_or_default();
         assert!(!kind.starts_with("text/html"), "{path} answered the shell");
-        match status {
-            StatusCode::OK => {
-                assert_eq!(kind, expected, "{path}");
-                if path == "/manifest.webmanifest" {
-                    let manifest: serde_json::Value =
-                        serde_json::from_str(&body_text(response).await).unwrap();
-                    assert_eq!(manifest["start_url"], "/");
-                    assert_eq!(manifest["display"], "standalone");
-                    assert!(manifest["icons"].as_array().is_some_and(|icons| icons
-                        .iter()
-                        .any(|icon| icon["purpose"] == "maskable")));
-                }
+        if built {
+            assert_eq!(status, StatusCode::OK, "{path} is missing from the build");
+            assert_eq!(kind, expected, "{path}");
+            if path == "/manifest.webmanifest" {
+                let manifest: serde_json::Value =
+                    serde_json::from_str(&body_text(response).await).unwrap();
+                assert_eq!(manifest["start_url"], "/");
+                assert_eq!(manifest["display"], "standalone");
+                assert!(manifest["icons"]
+                    .as_array()
+                    .is_some_and(|icons| icons.iter().any(|icon| icon["purpose"] == "maskable")));
             }
-            StatusCode::NOT_FOUND => assert!(kind.starts_with("application/json"), "{path}"),
-            other => panic!("{path} answered {other}"),
+        } else {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(kind.starts_with("application/json"), "{path}");
         }
     }
-    // A name the build never ships is a 404 whatever is embedded.
-    let missing = router
-        .clone()
-        .oneshot(
-            Request::get("/icons/not-shipped.png")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+
+    // A name no build ships is a JSON 404 whatever is embedded: the case that
+    // still tells the asset-only rule from the fallback when a real client is
+    // embedded and every shipped icon exists.
+    let missing = get("/icons/not-shipped.png").await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(missing
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default()
+        .starts_with("application/json"));
 }
 
 #[tokio::test]
