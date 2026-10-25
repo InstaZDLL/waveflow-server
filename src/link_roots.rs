@@ -54,6 +54,44 @@ impl LinkRoots {
     }
 }
 
+/// What a stored path of one library may lead through when it is read: whether
+/// that library follows links at all, and every other library's root, which a
+/// link may never resolve into.
+///
+/// Carried with the track by the read that resolves it (the stream, the
+/// quality analysis, the spectrogram), so the rule is checked against the
+/// library as it is when the file is opened, not as it was when it was
+/// scanned: a link retargeted since, or a links setting turned off since,
+/// opens nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkPolicy {
+    pub follow_links: bool,
+    /// The other libraries' roots as stored, canonicalised when used.
+    pub other_libraries: Vec<PathBuf>,
+}
+
+impl LinkPolicy {
+    /// The columns a read selects as `follow_links` and `other_roots`, the
+    /// latter a JSON array of root paths.
+    pub fn from_columns(follow_links: i64, other_roots: Option<&str>) -> Self {
+        Self {
+            follow_links: follow_links != 0,
+            other_libraries: other_roots
+                .and_then(|roots| serde_json::from_str::<Vec<PathBuf>>(roots).ok())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The other libraries' roots that resolve now, canonical. One that does
+    /// not resolve holds nothing a link could reach.
+    pub fn other_libraries_resolved(&self) -> Vec<PathBuf> {
+        self.other_libraries
+            .iter()
+            .filter_map(|root| std::fs::canonicalize(root).ok())
+            .collect()
+    }
+}
+
 /// Whether a canonical `target` lies inside one of the canonical `roots` and
 /// inside none of the canonical `libraries` — every other library's root.
 pub fn admits(roots: &[PathBuf], libraries: &[PathBuf], target: &Path) -> bool {

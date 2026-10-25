@@ -227,6 +227,7 @@ impl MediaService {
             &track.library_root,
             &track.relative_path,
             &self.inner.link_roots,
+            &track.link_policy,
         )
         .await
             .map_err(|error| {
@@ -1530,12 +1531,17 @@ async fn check_tool(path: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
 /// **A link on the way** is refused, with one exception: a library following
 /// links stores a file in an allowed folder outside its root under the path
 /// the walk reached it through (RFC-021, links outside the root). Such a path
-/// is accepted when it resolves, now, into one of `link_roots` — re-read on
-/// every request, so a link retargeted since the scan leads nowhere.
+/// is accepted only while that library still follows links, and only when it
+/// resolves, now, into one of `link_roots` and into no other library's root —
+/// re-read on every request, so a link retargeted since the scan, or a links
+/// setting turned off since, leads nowhere. Another library's file is never
+/// reached through a link, whoever asks: the caller's access was checked on
+/// this track's library only.
 pub(crate) async fn secure_track_path(
     root: &Path,
     relative: &str,
     link_roots: &crate::link_roots::LinkRoots,
+    policy: &crate::link_roots::LinkPolicy,
 ) -> io::Result<PathBuf> {
     let canonical_root = tokio::fs::canonicalize(root).await?;
     let relative = Path::new(relative);
@@ -1562,7 +1568,7 @@ pub(crate) async fn secure_track_path(
             .file_type()
             .is_symlink()
         {
-            if link_roots.is_empty() {
+            if !policy.follow_links || link_roots.is_empty() {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "symlink media path rejected",
@@ -1574,7 +1580,8 @@ pub(crate) async fn secure_track_path(
     let canonical_file = tokio::fs::canonicalize(&cursor).await?;
     let reachable = if through_link {
         let allowed = link_roots.resolved();
-        crate::link_roots::admits(&allowed, &[], &canonical_file)
+        let others = policy.other_libraries_resolved();
+        crate::link_roots::admits(&allowed, &others, &canonical_file)
     } else {
         canonical_file.starts_with(&canonical_root)
     };
@@ -1933,8 +1940,11 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("safe.wav"), b"audio").unwrap();
         let none = crate::link_roots::LinkRoots::default();
-        assert!(secure_track_path(&root, "safe.wav", &none).await.is_ok());
-        assert!(secure_track_path(&root, "../safe.wav", &none)
+        let policy = crate::link_roots::LinkPolicy::default();
+        assert!(secure_track_path(&root, "safe.wav", &none, &policy)
+            .await
+            .is_ok());
+        assert!(secure_track_path(&root, "../safe.wav", &none, &policy)
             .await
             .is_err());
 
@@ -1944,24 +1954,30 @@ mod tests {
         #[cfg(windows)]
         let linked = std::os::windows::fs::symlink_file(root.join("safe.wav"), &link).is_ok();
         if linked {
-            assert!(secure_track_path(&root, "linked.wav", &none).await.is_err());
+            assert!(secure_track_path(&root, "linked.wav", &none, &policy)
+                .await
+                .is_err());
         }
     }
 
-    /// A stored path through a link is accepted only when it resolves, now,
-    /// into an allowed folder outside the root (RFC-021, links outside the
-    /// root): not into the root itself, not anywhere else, and not once the
-    /// folder is no longer allowed.
+    /// A stored path through a link is accepted only when its library follows
+    /// links and it resolves, now, into an allowed folder outside the root
+    /// and into no other library (RFC-021, links outside the root): not into
+    /// the root itself, not anywhere else, not into another library's root
+    /// inside the allowed folder, not once the folder is no longer allowed,
+    /// and not once the library stopped following links.
     #[tokio::test]
     async fn a_link_is_followed_into_an_allowed_folder_only() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("library");
         let farm = temp.path().join("farm");
+        let neighbour = farm.join("neighbour");
         let elsewhere = temp.path().join("elsewhere");
-        for folder in [&root, &farm, &elsewhere] {
+        for folder in [&root, &farm, &neighbour, &elsewhere] {
             std::fs::create_dir_all(folder).unwrap();
         }
         std::fs::write(farm.join("kept.wav"), b"audio").unwrap();
+        std::fs::write(neighbour.join("theirs.wav"), b"audio").unwrap();
         std::fs::write(elsewhere.join("secret.wav"), b"audio").unwrap();
         std::fs::write(root.join("own.wav"), b"audio").unwrap();
         #[cfg(unix)]
@@ -1973,6 +1989,7 @@ mod tests {
             std::os::windows::fs::symlink_file(target, link).is_ok()
         };
         if !(make(&farm.join("kept.wav"), &root.join("farmed.wav"))
+            && make(&neighbour.join("theirs.wav"), &root.join("crossing.wav"))
             && make(&elsewhere.join("secret.wav"), &root.join("stolen.wav"))
             && make(&root.join("own.wav"), &root.join("mine.wav")))
         {
@@ -1980,20 +1997,42 @@ mod tests {
             return;
         }
         let allowed = crate::link_roots::LinkRoots::new(vec![farm.clone()]);
-        assert!(secure_track_path(&root, "farmed.wav", &allowed)
+        let following = crate::link_roots::LinkPolicy {
+            follow_links: true,
+            other_libraries: vec![neighbour.clone()],
+        };
+        assert!(secure_track_path(&root, "farmed.wav", &allowed, &following)
             .await
             .is_ok());
-        assert!(secure_track_path(&root, "stolen.wav", &allowed)
+        assert!(
+            secure_track_path(&root, "crossing.wav", &allowed, &following)
+                .await
+                .is_err(),
+            "another library's file is never reached through a link"
+        );
+        assert!(secure_track_path(&root, "stolen.wav", &allowed, &following)
             .await
             .is_err());
         assert!(
-            secure_track_path(&root, "mine.wav", &allowed)
+            secure_track_path(&root, "mine.wav", &allowed, &following)
                 .await
                 .is_err(),
             "a link inside the root is stored by its target, never by itself"
         );
         let none = crate::link_roots::LinkRoots::default();
-        assert!(secure_track_path(&root, "farmed.wav", &none).await.is_err());
+        assert!(secure_track_path(&root, "farmed.wav", &none, &following)
+            .await
+            .is_err());
+        let not_following = crate::link_roots::LinkPolicy {
+            follow_links: false,
+            ..following
+        };
+        assert!(
+            secure_track_path(&root, "farmed.wav", &allowed, &not_following)
+                .await
+                .is_err(),
+            "a library that does not follow links reads no link, allowlist or not"
+        );
     }
 
     #[tokio::test]

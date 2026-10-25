@@ -374,6 +374,7 @@ struct Pending {
     full_hash: String,
     root_path: String,
     relative_path: String,
+    link_policy: crate::link_roots::LinkPolicy,
     duration_ms: i64,
     created_at: i64,
 }
@@ -498,7 +499,7 @@ impl DomainServices {
     async fn pending_quality(&self, after: &(i64, String)) -> Result<Vec<Pending>, ServiceError> {
         let rows = sqlx::query(concat!(
             "SELECT t.id, t.library_id, t.full_hash, l.root_path, t.relative_path, \
-               t.duration_ms, t.created_at \
+               t.duration_ms, t.created_at, l.follow_links, (SELECT json_group_array(o.root_path) FROM library o WHERE o.id <> l.id) AS other_roots \
              FROM track t JOIN library l ON l.id = t.library_id",
             quality_join!(),
             " WHERE t.is_available = 1 AND ",
@@ -521,6 +522,10 @@ impl DomainServices {
                     full_hash: row.try_get("full_hash")?,
                     root_path: row.try_get("root_path")?,
                     relative_path: row.try_get("relative_path")?,
+                    link_policy: crate::link_roots::LinkPolicy::from_columns(
+                        row.try_get("follow_links")?,
+                        row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
+                    ),
                     duration_ms: row.try_get("duration_ms")?,
                     created_at: row.try_get("created_at")?,
                 })
@@ -550,6 +555,7 @@ impl DomainServices {
             std::path::Path::new(&pending.root_path),
             &pending.relative_path,
             &self.link_roots,
+            &pending.link_policy,
         )
         .await
         .ok()?;
@@ -796,8 +802,14 @@ impl DomainServices {
         track_id: Uuid,
         if_none_match: Option<&str>,
     ) -> Result<Spectrogram, ServiceError> {
-        let (root_path, relative_path, full_hash): (String, String, String) = sqlx::query_as(
-            "SELECT l.root_path, t.relative_path, t.full_hash FROM track t \
+        let (root_path, relative_path, full_hash, follow_links, other_roots): (
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT l.root_path, t.relative_path, t.full_hash, l.follow_links, (SELECT json_group_array(o.root_path) FROM library o WHERE o.id <> l.id) AS other_roots FROM track t \
              JOIN library l ON l.id = t.library_id \
              JOIN library_member m ON m.library_id = t.library_id \
              WHERE m.user_id = ? AND t.id = ? AND t.is_available = 1",
@@ -839,6 +851,7 @@ impl DomainServices {
             std::path::Path::new(&root_path),
             &relative_path,
             &self.link_roots,
+            &crate::link_roots::LinkPolicy::from_columns(follow_links, other_roots.as_deref()),
         )
         .await
         .map_err(|_| ServiceError::Unavailable)?;

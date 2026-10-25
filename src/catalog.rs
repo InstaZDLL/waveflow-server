@@ -94,6 +94,9 @@ pub struct StreamTrack {
     pub bitrate: Option<i64>,
     pub duration_ms: i64,
     pub available: bool,
+    /// Whether, and how far, a link in `relative_path` may be followed when
+    /// the file is opened (RFC-021, links outside the root).
+    pub link_policy: crate::link_roots::LinkPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -1928,7 +1931,8 @@ impl Database {
     ) -> Result<Option<StreamTrack>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT t.id, t.library_id, l.root_path, t.relative_path, t.full_hash, \
-               t.codec, t.bitrate, t.duration_ms, t.is_available FROM track t \
+               t.codec, t.bitrate, t.duration_ms, t.is_available, \
+               l.follow_links, (SELECT json_group_array(o.root_path) FROM library o WHERE o.id <> l.id) AS other_roots FROM track t \
              JOIN library l ON l.id = t.library_id \
              JOIN library_member m ON m.library_id = t.library_id \
              WHERE t.id = ? AND m.user_id = ?",
@@ -2533,6 +2537,10 @@ fn stream_track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StreamTrack, sq
         bitrate: row.try_get("bitrate")?,
         duration_ms: row.try_get("duration_ms")?,
         available: row.try_get::<i64, _>("is_available")? != 0,
+        link_policy: crate::link_roots::LinkPolicy::from_columns(
+            row.try_get("follow_links")?,
+            row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
+        ),
     })
 }
 

@@ -2986,27 +2986,61 @@ async fn links_reach_into_an_allowed_folder_and_nowhere_else() {
         .fetch_one(state.db.pool())
         .await
         .unwrap();
-    let track = state
-        .db
-        .stream_track_for_user(owner, track_id.parse().unwrap())
+    let stream = || async {
+        let track = state
+            .db
+            .stream_track_for_user(owner, track_id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        state
+            .media
+            .serve(
+                owner,
+                track,
+                waveflow_server::media::StreamQuery {
+                    format: waveflow_server::media::OutputFormat::Raw,
+                    bitrate: None,
+                    offset_ms: 0,
+                },
+                None,
+            )
+            .await
+    };
+    assert_eq!(stream().await.unwrap().status(), axum::http::StatusCode::OK);
+
+    // The farm's file becomes a link into the neighbouring library. The path
+    // this library stored now resolves into another library's root, which no
+    // link may reach — whoever asks, since access was checked on this library
+    // alone.
+    let farmed = farm.join("Farmed.wav");
+    let kept = std::fs::read(&farmed).unwrap();
+    std::fs::remove_file(&farmed).unwrap();
+    assert!(make_link(&neighbour.join("Theirs.wav"), &farmed, false));
+    assert!(
+        matches!(
+            stream().await,
+            Err(waveflow_server::media::MediaError::NotFound)
+        ),
+        "a link retargeted into another library streamed its file"
+    );
+    std::fs::remove_file(&farmed).unwrap();
+    std::fs::write(&farmed, kept).unwrap();
+    assert!(stream().await.is_ok());
+
+    // A library that stopped following links reads no link, allowlist or not.
+    sqlx::query("UPDATE library SET follow_links = 0 WHERE id = ?")
+        .bind(library.id.to_string())
+        .execute(state.db.pool())
         .await
-        .unwrap()
         .unwrap();
-    let served = state
-        .media
-        .serve(
-            owner,
-            track,
-            waveflow_server::media::StreamQuery {
-                format: waveflow_server::media::OutputFormat::Raw,
-                bitrate: None,
-                offset_ms: 0,
-            },
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(served.status(), axum::http::StatusCode::OK);
+    assert!(
+        matches!(
+            stream().await,
+            Err(waveflow_server::media::MediaError::NotFound)
+        ),
+        "a library that does not follow links streamed through one"
+    );
 }
 
 async fn path_ids(state: &waveflow_server::AppState) -> Vec<(String, String, i64)> {
