@@ -2263,5 +2263,10 @@ async fn a_disabled_account_s_tokens_and_grants_all_stop_working() {
     assert_eq!(albums(api_token).await, StatusCode::OK);
     assert_eq!(albums(access).await, StatusCode::OK);
     assert_eq!(refresh(refresh_token).await, StatusCode::OK);
-    assert_eq!(exchange(spare).await.status(), StatusCode::OK);
+    // And the session it redeems into is this account's, not merely a session.
+    let spare = exchange(spare).await;
+    assert_eq!(spare.status(), StatusCode::OK);
+    let spare = json_body(spare).await;
+    assert_eq!(spare["user"]["id"], owner.to_string());
+    assert_eq!(spare["user"]["username"], "disabled-owner");
 }
