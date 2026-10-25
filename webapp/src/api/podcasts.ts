@@ -8,8 +8,12 @@ import { call } from "./client";
  */
 export type PodcastChannel = {
   id: string;
-  /** In full for an account that may manage podcasts; without its query string otherwise. */
-  url: string;
+  /**
+   * The feed address, to an account that may manage podcasts; `null` to
+   * everyone else, because a private feed carries its token in its path as
+   * often as in its query.
+   */
+  url: string | null;
   title: string;
   description: string | null;
   site_url: string | null;

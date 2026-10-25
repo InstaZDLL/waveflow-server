@@ -160,22 +160,50 @@ catalogue. `is` on an artist or a genre compares canonical names —
 `byGenre` filter already use — so "hip hop" finds "Hip-Hop". `contains` uses
 `instr`, not `LIKE`, so `%` and `_` in a value are only characters.
 
-## Decision 4 — evaluated when read, within bounds
+## Decision 4 — evaluated when opened, under a budget, and never by a listing
 
-A smart playlist has no stored track list; every read evaluates it. It is
+A smart playlist has no stored track list; reading one evaluates it. It is
 current by construction — a play, a star or a scan shows on the next read with
-nothing rebuilt — at the cost of the evaluation itself.
+nothing rebuilt — at the cost of the evaluation itself, and that cost is what
+this decision bounds.
 
-- **At most 1,000 tracks**, the default when no limit is named.
-- **A listing evaluates but does not load.** `GET /api/v2/smart-playlists` and
-  `getPlaylists` report each playlist's count and duration over what the
-  reader can play — one aggregate over the evaluated ids — and no tracks. The
-  tracks are read when one playlist is opened.
+- **A listing evaluates nothing.** An earlier draft evaluated every visible
+  smart playlist to report its count, and a security review named what that
+  is: cross-tenant amplification. Any account could publish a hundred
+  expensive public rule sets, and every other account's `getPlaylists` —
+  which Subsonic clients call constantly — would run a hundred full-library
+  queries. So `GET /api/v2/smart-playlists` and `getPlaylists` read the rows
+  and nothing else. The counts they carry are **what this reader was last
+  shown** of that playlist, remembered in memory when they opened it, and only
+  while its rules are unchanged since (`updated_at` is part of the memory). A
+  playlist this reader has not opened since the server started carries no
+  count: `song_count`, `duration_ms` and `evaluated_at` are `null` natively,
+  and Subsonic answers `songCount="0"` and `duration="0"` with no
+  `validUntil` — the attribute that, when present, says when the count was
+  computed. The memory holds at most 10,000 answers and is emptied when full;
+  an answer it lost is a playlist listed without counts until it is opened.
+- **Opening one evaluates it under a budget.** `getPlaylist`, the native read
+  and the preview run the statement on a connection of their own with a
+  SQLite progress handler: every thousand virtual-machine instructions it is
+  asked whether to go on, and it stops the statement after 200 million
+  instructions or ten seconds, whichever comes first. That is the bound on the
+  rows considered, which a `LIMIT` cannot be — the rows are considered before
+  they are sorted. A stopped evaluation answers **503** with
+  `code: "evaluation_budget"` natively and error 0 in Subsonic, and nothing
+  partial. The evaluation runs in a spawned task, so it always finishes what
+  it started and removes its handler: were it cancelled with its request, the
+  connection would go back to the pool still carrying an exhausted budget.
+- **At most 1,000 tracks** in an answer, the default when no limit is named;
+  at most 100 smart playlists per account, public or not.
 - **The cost is the projection's.** The statement wraps `song_select!`, whose
   play-count and last-played columns are correlated subqueries; a rule on them
   is evaluated per available track of the owner's libraries. That is the same
-  cost as the existing "sort songs by play count" listing, bounded by the
-  same catalogue, and it is why the counts above are not wider.
+  cost as the existing "sort songs by play count" listing, and the budget is
+  what stops a rule set from making it larger.
+- A test lists thirty expensive public smart playlists of another account and
+  asserts, through the services' evaluation counter, that the listing
+  evaluated none; another lowers the budget and asserts the stop, and that
+  every pooled connection answers afterwards.
 
 ## Decision 5 — evaluated as the owner, read as the viewer
 
@@ -216,9 +244,10 @@ ratings and play counts the viewer is shown are the viewer's own.
   allowlist and not yet in the editor.
 - **Subsonic.** `getPlaylists` lists them after the ordinary playlists,
   `getPlaylist` answers one with its entries. Each carries the OpenSubsonic
-  `readonly="true"` and `validUntil`, the moment it was evaluated: it is
-  evaluated on every read, so a client that caches it knows its copy is
-  already due. `updatePlaylist`, `deletePlaylist` and `createPlaylist` with a
+  `readonly="true"`, and `validUntil`, the moment its count was evaluated for
+  this caller, so a client that caches it knows its copy is already due. In
+  `getPlaylists` the count and duration are the caller's last `getPlaylist` of
+  it, or zero with no `validUntil` before that (decision 4). `updatePlaylist`, `deletePlaylist` and `createPlaylist` with a
   `playlistId` reach ordinary playlists only, so naming a smart one answers
   error 70. **Ordinary playlists are unchanged on the wire**: they carry no
   `readonly` attribute, as before.
@@ -265,9 +294,24 @@ traffic proportional to the channels rather than to the accounts.
   in Subsonic and 404 natively, as every `Forbidden` does. `GET
   /api/v2/podcasts` says in advance whether the account may manage
   (`can_manage`) and whether the feature is on (`enabled`).
-- **A feed address is shown in full only to a manager.** Private feeds carry
-  their token in the query string; every other account is shown the address
-  without its query and fragment.
+- **A feed address is shown only to a manager.** Private feeds — Patreon,
+  Supercast, Substack and most paid feeds — carry the subscriber's token in
+  the path as often as in the query (`/rss/<token>.xml`,
+  `/feed/<user-token>/podcast.xml`), so an earlier draft that stripped the
+  query alone, flagged by a security review, would have handed the token of
+  whoever subscribed to every other account. Natively, `url` is `null` for an
+  account that may not manage podcasts. Subsonic's schema requires `url` on a
+  channel, so a reader is answered the feed's **scheme and host** —
+  `https://feeds.example.org/` — and nothing after; the feed's own link is in
+  `site_url`. The managers are the administrators (channels are per instance),
+  and they are shown the address in full.
+- **An enclosure address is shown to nobody.** It may carry the same token,
+  and no surface needs it: an episode is played from the server (decision 11).
+- **No feed or enclosure address reaches a log line**, on any path; a failure
+  is logged as a word from decision 9's list. A test subscribes to a private
+  feed whose path, query and enclosures carry tokens, and asserts that no read
+  a second account can make — native or Subsonic, channels, episodes, newest,
+  bookmarks — contains either token, while the manager's does.
 - At most 500 channels on an instance: a refresh fetches every one.
 
 ## Decision 9 — every fetch, under the outbound rules
@@ -363,8 +407,10 @@ default), `getPodcastEpisode` (OpenSubsonic), `refreshPodcasts`,
 `createPodcastChannel`, `deletePodcastChannel`, `deletePodcastEpisode` and
 `downloadPodcastEpisode`, in the schema's shapes:
 
-- **`channel`**: `id`, `url`, `title`, `description`, `originalImageUrl`,
-  `status` (`completed` or `error`) and `errorMessage` (the code).
+- **`channel`**: `id`, `url` (the feed address to a manager, its scheme and
+  host to anyone else — decision 8), `title`, `description`,
+  `originalImageUrl`, `status` (`completed` or `error`) and `errorMessage` (the
+  code).
 - **`episode`**: a `Child` with `type="podcast"`, `channelId`, `parent` the
   channel, `album` and `artist` the channel's title, `publishDate`, `status`
   (`new`, `downloading`, `completed`, `error`), and `streamId` once it is

@@ -72,9 +72,11 @@ export function SmartPlaylistsSection() {
   async function play(playlist: SmartPlaylist) {
     setMessage(null);
     try {
-      // Evaluated now, by the server: the listing carries counts only.
+      // Evaluated now, by the server: a listing evaluates nothing. Asking
+      // again afterwards shows the count this evaluation found.
       const full = await getSmartPlaylist(playlist.id);
       if (full.songs?.length) player.play(full.songs, 0);
+      reload();
     } catch {
       setMessage(t("smart.loadError"));
     }
@@ -119,7 +121,11 @@ export function SmartPlaylistsSection() {
             <span className="smart-badge">{t("smart.badge")}</span>
           </h3>
           <span className="muted">
-            {t("common.tracks", { count: playlist.song_count })}
+            {/* A listing evaluates nothing: the count is from the last time
+                this account opened it, and absent before. */}
+            {playlist.song_count === null
+              ? t("smart.notCounted")
+              : t("common.tracks", { count: playlist.song_count })}
             {playlist.duration_ms
               ? ` · ${formatDuration(playlist.duration_ms)}`
               : ""}
@@ -132,7 +138,7 @@ export function SmartPlaylistsSection() {
           <button
             type="button"
             onClick={() => void play(playlist)}
-            disabled={!playlist.song_count}
+            disabled={playlist.song_count === 0}
           >
             {t("playlists.play")}
           </button>

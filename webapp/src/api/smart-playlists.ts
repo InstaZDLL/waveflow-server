@@ -81,11 +81,16 @@ export type SmartPlaylist = {
   rules: SmartRules;
   created_at: number;
   updated_at: number;
-  /** When the answer was computed: a smart playlist stores no track list. */
-  evaluated_at: number;
-  /** What this account can play of it. */
-  song_count: number;
-  duration_ms: number;
+  /**
+   * When the counts were computed for this account: a smart playlist stores
+   * no track list. On a read of one it is now; in a listing it is when this
+   * account last opened it, and `null` when it has not since the server
+   * started — a listing evaluates nothing.
+   */
+  evaluated_at: number | null;
+  /** What this account can play of it, as of `evaluated_at`. */
+  song_count: number | null;
+  duration_ms: number | null;
   /** On a read of one playlist; absent from a listing. */
   songs?: Song[];
 };

@@ -167,9 +167,11 @@ itself.
 **Kept.** The channel's title, description, links and cover address; each
 episode's title, description, dates, duration and enclosure address; the
 downloaded files, under `podcasts/` in the data directory, named by the
-episode's id. The feed address is shown in full to administrators only — a
-private feed carries its token in its query string. No feed or enclosure
-address, and no part of a response, is written to the log.
+episode's id. The feed address is shown to administrators only — a private
+feed carries its subscriber's token in its path or its query — and every other
+account is shown at most its scheme and host. Enclosure addresses are shown to
+nobody. No feed or enclosure address, and no part of a response, is written to
+the log.
 
 ## What the browser contacts
 

@@ -358,7 +358,9 @@ does not bring it back.
 `unreached`, `http_404`, `address_refused` (it, or a redirect, pointed at a
 private address), `invalid_feed` (not RSS or Atom, or it declared a DTD) — and
 its episodes stay as they were. **What it logs**: counts and those words,
-never a feed address — a private feed carries its token in its query string.
+never a feed address — a private feed carries its token in its path or its
+query string. For the same reason only administrators are shown a feed's
+address; other accounts see at most its scheme and host.
 
 ## Scanning
 

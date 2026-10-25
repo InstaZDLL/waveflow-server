@@ -258,8 +258,13 @@ them yet. Nothing that existed changes shape, with the one exception named.
 **Smart playlists** ([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)
 decision 6). `getPlaylists` lists them after the ordinary playlists, and
 `getPlaylist` answers one with its entries, evaluated at that moment. Each
-carries the OpenSubsonic `readonly="true"` and `validUntil`; `songCount` and
-`duration` are over what the caller can play. `updatePlaylist`,
+carries the OpenSubsonic `readonly="true"`. **`getPlaylists` evaluates none of
+them** (decision 4): their `songCount` and `duration` are what the caller's
+last `getPlaylist` of that playlist found, over what the caller can play, with
+`validUntil` saying when; a smart playlist the caller has not opened since the
+server started, or whose rules changed since, answers `songCount="0"`,
+`duration="0"` and no `validUntil`. `getPlaylist` always evaluates, under a
+budget, and answers error 0 when it is passed. `updatePlaylist`,
 `deletePlaylist` and `createPlaylist` with a `playlistId` naming one answer
 error 70, as for a missing playlist. **Ordinary playlists carry no `readonly`
 attribute, as before**, so no existing answer changes. To check in the next
@@ -285,6 +290,11 @@ lists episode bookmarks after the track ones, their `entry` the episode
   answers `false` for everyone.
 - **One list per instance**, as in the reference server; an account without
   `podcastRole` reads and plays, and its writes answer error 50.
+- **`channel.url` is the feed address to an account holding `podcastRole`,
+  and only its scheme and host to anyone else** — `https://feeds.example.org/`.
+  The schema requires the attribute, and a private feed carries its
+  subscriber's token in its path as often as in its query. Episodes carry no
+  enclosure address at all: they are played from the server.
 - **No cover art**: a channel carries `originalImageUrl`, the feed's own
   address, and no `coverArt` — the server does not fetch it.
 - **A feed that cannot be read** answers `createPodcastChannel` with error 0

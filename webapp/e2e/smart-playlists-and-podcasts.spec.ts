@@ -220,7 +220,15 @@ async function mockApi(page: Page) {
         await route.fulfill({ json: found });
         return;
       }
-      await route.fulfill({ json: { ...found, songs: evaluate(found.rules) } });
+      // Opening one evaluates it, and the listings after it report what this
+      // evaluation found — the server's own memory of the last answer.
+      const songs = evaluate(found.rules);
+      Object.assign(found, {
+        song_count: songs.length,
+        duration_ms: songs.length * 200_000,
+        evaluated_at: 2,
+      });
+      await route.fulfill({ json: { ...found, songs } });
       return;
     }
     if (path === "/api/v2/podcasts") {
@@ -403,6 +411,43 @@ test("writes a smart playlist's rules, previews them and keeps them", async ({
   expect(smartWrites[2]).toEqual({ method: "DELETE", body: "smart-1" });
 });
 
+test("lists another account's smart playlist uncounted until it is opened", async ({
+  page,
+}) => {
+  smart = [
+    {
+      id: "smart-public",
+      owner_id: "user-2",
+      owner_username: "guest",
+      name: "Their y songs",
+      comment: null,
+      public: true,
+      rules: {
+        match: "all",
+        conditions: [{ field: "title", operator: "contains", value: "y" }],
+        sort: null,
+        order: "asc",
+        limit: null,
+      },
+      created_at: 1,
+      updated_at: 1,
+      // A listing evaluates nothing: never opened, so never counted.
+      evaluated_at: null,
+      song_count: null,
+      duration_ms: null,
+    },
+  ];
+  await page.goto("/playlists");
+  const card = page.locator(".smart-playlist").filter({ hasText: "Their y songs" });
+  await expect(card).toContainText("Counted when opened");
+  await expect(card).toContainText("By guest");
+  await expect(card.getByRole("button", { name: "Edit rules" })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Delete" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Play" }).click();
+  await expect(card).toContainText("2 tracks");
+  await expect(page.locator(".player")).toContainText("Army of Me");
+});
+
 test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   page,
 }) => {
@@ -440,7 +485,8 @@ test("offers a listener no podcast control it may not use", async ({ page }) => 
   channels = [
     {
       id: "channel-1",
-      url: "https://feeds.example.org/night.xml",
+      // A reader is shown no feed address: a private feed carries its token.
+      url: null,
       title: "Night Shift",
       description: null,
       site_url: null,
