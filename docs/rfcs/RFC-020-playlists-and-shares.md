@@ -1,0 +1,233 @@
+# RFC-020 — Playlists and shares: repeats, public playlists, and the share page
+
+- **Status**: Proposed
+- **Implemented by**: this RFC and its implementation land together in one
+  pull request. The *Status* field above never flips in this project; this
+  line is the one that says what is running.
+- **Date**: 2026-10-25
+- **Authors**: the WaveFlow project
+- **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (tenancy in the
+  queries, the frozen Subsonic contract, stream tickets)
+
+## Problem
+
+A comparative audit against Navidrome, Ampache and the Subsonic clients
+(2026-10-24) reported six defects in playlists and public shares. Each was
+reproduced by a failing test before anything was changed, and one of them
+was worse than reported:
+
+1. **A playlist cannot hold a track twice.** `playlist_track` is keyed on
+   `(playlist_id, track_id)`. Adding a track already present violates the key,
+   which surfaces as `ServiceError::Database` and answers **503** to an
+   ordinary edit. The audit said that one request naming a track twice
+   answers 404; measured, it answers 503 too, because `songs_by_ids_lenient_on`
+   returns one song per id *asked*, duplicates included, so the length check
+   passes and the insert is what fails. An M3U import reports the second copy
+   as `duplicate` and drops it, so a playlist with a repeat exports and
+   re-imports shorter.
+2. **The `public` flag does nothing.** Every read filters on
+   `owner_user_id=?`, so no other account ever sees a playlist marked public,
+   although Subsonic's `updatePlaylist` accepts and stores the flag.
+3. **The share link opens a JSON document.** `/share/{token}` answers JSON to
+   everyone, and no web route renders it, so the person the link was sent to
+   sees identifiers where a player should be.
+4. **A visit is counted per stream request, under the writer gate.** Every
+   stream request on a share — each range request a seek makes included —
+   called `public_share`, which incremented `visit_count` under the
+   process-wide writer gate. One listen with three seeks counted four visits,
+   and every one of those anonymous requests queued behind any scan.
+5. **An anonymous visitor chooses the transcode.** The share stream route
+   took the whole `StreamQuery`: any format, any bitrate, a live encode from
+   any offset, each one an FFmpeg process run on the owner's account.
+6. **A share cannot be limited to a number of visits.** Ampache has
+   `max_counter`; this server had nothing.
+
+## Decision 1 — a list holds what it is given, keyed on the position
+
+`playlist_track` and `share_track` are rebuilt, keyed on `(list, position)`,
+the shape `play_queue_track` was given in `20260809150000` for the same
+reason. Shares are included although the audit named only playlists: the web
+client shares the play queue, which may repeat a track, and creating that
+share failed with the same 503.
+
+- **The rebuild copies the rows as they are.** Positions were already unique
+  per list, so the new key cannot refuse one, and the order is the stored
+  order. `tests/migrations.rs` seeds each released schema with a playlist and
+  a share whose rows are stored against their insertion order, boots, reads
+  them back through the services, then appends a repeat.
+- **Every surface follows**, because they all write through the one service:
+  native creation and `add`, Subsonic `createPlaylist` (`songId` repeated) and
+  `updatePlaylist` (`songIdToAdd` repeated), and the M3U import, which now
+  places every copy. The `duplicate` reason is no longer produced; it stays in
+  the import report's schema so that a client generated against it still reads
+  every value it was told to expect.
+- **A position is the position the caller was shown.** With repeats, a
+  position is the only way to say which copy goes, and the list a reader is
+  shown is the stored list without the tracks it cannot read (a file gone from
+  disk, a library it left). `remove_indexes` and `songIndexToRemove` used to be
+  applied to the stored list, so an index past a hidden entry removed its
+  neighbour. They are now mapped onto the shown list; the hidden entries are
+  kept, for when the track comes back.
+
+## Decision 2 — a public playlist is readable by every account, through its own libraries
+
+- **Who sees it.** Every account on this server, as Navidrome and the
+  Subsonic specification have it ("all playlists a user is allowed to play").
+  A playlist whose owner is disabled is not listed: a disabled account
+  publishes nothing.
+- **What they see of it.** Its name, comment, owner, dates, and the tracks
+  *they* can read. The tracks are resolved through the viewer's
+  `library_member` rows by the same projection every other read uses, so a
+  track in a library the viewer is not a member of is not shown, not counted
+  in `songCount` or `duration`, and not named anywhere in the answer. An
+  account with no library in common with the owner sees the playlist and none
+  of its tracks. What remains observable is that the owner changed *something*:
+  `changed` moves on any edit. That is the playlist's own metadata, which the
+  owner chose to publish.
+- **Read-only to everyone else.** Every write reaches the owner's playlists
+  only, in SQL; a non-owner's update, deletion, or `createPlaylist` with a
+  `playlistId` answers exactly as a missing playlist does — 404 natively,
+  error 70 in Subsonic.
+- **Native.** `GET /api/v2/playlists` stays the caller's own: the desktop
+  client lists playlists to mirror and edit them, and handing it someone
+  else's would offer an edit that answers 404. `?include_public=true` adds the
+  others after the caller's own. `GET /api/v2/playlists/{id}` and the `.m3u8`
+  export answer a public playlist to anyone, read through the reader's
+  libraries. Every playlist now carries `owner_id` and `owner_username`. The
+  synchronization snapshot holds the caller's own playlists only.
+- **Subsonic.** `getPlaylists` answers the caller's playlists, then everyone
+  else's public ones, newest first; `getPlaylist` answers a public one. `owner`
+  is the owner's username — which is what Feishin reads to decide whether a
+  playlist is editable — and `public` is the stored flag. This is a change to
+  frozen wire behaviour, made because the flag the façade accepted had no
+  effect anywhere, and recorded in `docs/subsonic-compatibility.md`. The
+  `username` parameter of `getPlaylists` stays ignored.
+
+## Decision 3 — the share link opens a player, by content negotiation
+
+`/share/{token}` is the address Subsonic's `createShare` has been handing out,
+so it is the address a recipient opens; a different route would leave every
+link already sent showing JSON. The same address therefore answers two
+representations:
+
+- **A request whose `Accept` names `text/html`** — what a browser sends when
+  someone clicks a link — is handed the embedded web client, which renders a
+  public player at `/share/$token`, outside the signed-in shell. `*/*`,
+  `application/json` and no `Accept` at all keep the JSON, byte for byte the
+  shape they had, so no existing consumer changes. A share that cannot be
+  opened answers the same page with **404**.
+- **Not a server-rendered page.** It would be a second player, a second set
+  of strings to translate and a second stylesheet, outside the client that
+  already has all three.
+- **Handing out the page counts nothing.** The client then asks the same
+  address for the JSON, and *that* is the visit. A link preview fetching the
+  page to draw a card has listened to nothing, and must not spend a capped
+  share's visits.
+- **`share/` stays reserved** in the client fallback (`src/webui.rs`).
+  Nothing under it falls through to the client by accident; the one address
+  that answers the client is chosen by its own route.
+- Both answers carry `Vary: Accept`, `Cache-Control: no-store` and
+  `Referrer-Policy: no-referrer`: the address is the credential, and the page
+  must not hand it to whatever the browser fetches next.
+- The routes move out of the Subsonic façade into `src/public_share.rs`. They
+  were never Subsonic methods; their paths are unchanged.
+
+## Decision 4 — a visit is one opening, and streaming writes nothing
+
+- **The opening counts.** `GET /share/{token}` for JSON counts the visit in
+  one conditional `UPDATE … RETURNING` under the writer gate. An expired,
+  deleted or capped share matches no row, so the count and the check cannot
+  disagree, and two visitors racing for a share's last visit are serialised by
+  the gate: the second finds the cap reached.
+- **The opening hands out one pass per track.** Each `streamUrl` carries
+  `?visit=`, a stream ticket of a third kind, `ShareVisit`, sealing
+  `(share, track, expiry)` under the instance key. Its first identifier is the
+  share, not an account: a ticket naming the owner would open the owner's
+  catalogue on the routes that redeem the other kinds, and every route asserts
+  the kind it serves.
+- **The stream route redeems the pass and writes nothing.** It verifies the
+  pass, then re-reads the share — still present, not expired, holding that
+  track — in one read outside the writer gate, then checks the owner may still
+  read the track. Deleting or expiring the share therefore stops the music at
+  once, whatever the pass says. The cap is not asked again: the visit that
+  reached it was counted, and keeps its music.
+- **A pass lasts twelve hours.** A stream ticket lasts an hour because it
+  covers one track while seeking; a pass covers a sitting, and a share holds up
+  to four hundred tracks. It is not what keeps a share closed — the share is
+  read on every request — so all it bounds is how long one counted visit plays.
+- **A stream URL built by hand, without a pass, answers 404.** This changes
+  the stream addresses a JSON consumer receives, and the consumers that follow
+  `streamUrl` from the document — every one this project knows of, its own
+  web client included — keep working unchanged. A consumer that assembled the
+  address itself was relying on what made the count meaningless.
+- A unit test holds the writer gate the way a scan does, asserts that opening
+  the share waits for it — which proves the test can see the gate — and that
+  the stream lookup does not.
+
+## Decision 5 — an anonymous visitor plays the original or one fixed MP3
+
+The share stream route takes two parameters and refuses any other with 400:
+
+- **`visit`**, the pass;
+- **`format`**: absent or `raw` for the original file, `mp3` for MP3 at
+  192 kbit/s — the server's default MP3 profile, so the cache entry it fills is
+  the one every other default MP3 request of the file already uses, and a
+  second visitor costs no encode.
+
+There is no bitrate, no Opus and no offset: a live encode from an arbitrary
+offset is a new FFmpeg process per seek, and the visitor is anonymous. Seeking
+works by byte range on the original, and on the MP3 once its cache entry is
+complete. The encode still runs on the owner's per-account transcode slots, as
+before, and is refused with 429 when they are full. The share page plays the
+original when the browser says it can (`canPlayType` on the track's content
+type), and the MP3 otherwise.
+
+## Decision 6 — an optional visit cap
+
+- `share.max_visits`, nullable, at least 1, `NULL` for no cap. Existing shares
+  have none.
+- **Enforced where the visit is counted**, in the same statement (decision 4),
+  so a capped share answers 404 to its next opening, exactly as an expired one
+  does.
+- **Set natively** on `POST /api/v2/shares` and `PATCH /api/v2/shares/{id}`
+  (`max_visits`), lifted by `clear: ["max_visits"]`, answered on every share
+  read, and carried in the synchronization journal's share payload. Zero or a
+  negative number answers 422. Lowering the cap to the count already reached
+  closes the share at once.
+- **Not in Subsonic.** `createShare` and `updateShare` carry no such parameter
+  in the specification, and adding one to a frozen contract for a single
+  server is not worth the drift; `getShares` is unchanged.
+- **Set in the web client** when a share is created, and shown beside its
+  visit count.
+
+## What does not change
+
+- The Subsonic share methods, and the shape of the share JSON document.
+- How a share is created, its token, and the hash-only storage of it.
+- The sync contract of RFC-003: playlist and share payloads gain fields, and
+  lose none.
+
+## Logging
+
+Nothing new is logged per visit or per stream. The traces keep recording
+`/share/{redacted}` for every path under `/share/`, so neither the token nor
+the pass — which sits in the query string, never recorded — reaches a sink.
+
+## The order of the work
+
+One pull request, with this RFC: the migration, the services, the native and
+Subsonic surfaces, the share page in the web client, the visit cap in the
+shares page, and a test for each decision, each shown to fail without its fix.
+
+## What is still open
+
+- **Reordering a playlist** by moving an entry, natively and in the web
+  client. Removal by position and appending are what the surfaces have; a
+  move is a new verb.
+- **Removing one entry from the web client.** The server takes positions; the
+  playlists page has no control for it yet.
+- **`getPlaylists?username=`**, the administrator's view of another account's
+  playlists, stays ignored.
+- **Shares of a disabled owner** still open. Disabling an account should
+  arguably close its shares as it now hides its public playlists; that is a
+  decision about accounts rather than about shares.
