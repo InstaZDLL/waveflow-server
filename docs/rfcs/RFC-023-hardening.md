@@ -1,9 +1,10 @@
 # RFC-023 — Hardening: bounded reads, FFmpeg's protocols, the API reference, and disabled accounts
 
 - **Status**: Proposed
-- **Implemented by**: the pull request that carries this RFC (RFC and
-  implementation in one). The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+- **Implemented by**: [#332](https://github.com/InstaZDLL/waveflow-server/pull/332)
+  (this RFC and its implementation, in one pull request). The *Status* field
+  above never flips in this project; this line is the one that says what is
+  running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the credential
