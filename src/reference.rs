@@ -32,7 +32,7 @@
 //! **Under a policy of its own** ([`crate::security_headers::reference_policy`]):
 //! scripts from this origin only, and no connection anywhere else.
 
-use std::io::Read as _;
+use std::{io::Read as _, sync::OnceLock};
 
 use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -40,6 +40,7 @@ use axum::{
     routing::get,
     Router,
 };
+use bytes::Bytes;
 
 /// The `@scalar/api-reference` release embedded.
 pub const SCALAR_VERSION: &str = "1.73.1";
@@ -60,7 +61,9 @@ pub const SCALAR_SCRIPT_PATH: &str = "/reference/scalar-1.73.1.js";
 /// Merged outside the compression layer: the bundle is already compressed,
 /// and the page is a few hundred kilobytes of JSON the browser reads once.
 pub fn router<S: Clone + Send + Sync + 'static>(openapi: &utoipa::openapi::OpenApi) -> Router<S> {
-    let page = page_template(openapi);
+    // Held as `Bytes`, so each response shares it rather than copying the
+    // couple of hundred kilobytes the document weighs.
+    let page = Bytes::from(page_template(openapi));
     Router::new()
         .route(
             crate::SCALAR_PATH,
@@ -112,7 +115,7 @@ fn page_template(openapi: &utoipa::openapi::OpenApi) -> String {
     )
 }
 
-fn serve_page(page: String) -> Response {
+fn serve_page(page: Bytes) -> Response {
     let mut response = ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], page).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -120,14 +123,45 @@ fn serve_page(page: String) -> Response {
     response
 }
 
+/// The bundle decompressed, made at most once per process.
+///
+/// **Neither variant costs a request more than a reference count.** The gzip
+/// one is the embedded bytes themselves (`Bytes::from_static`), and this one is
+/// made the first time a client that takes no gzip asks, then kept: the route
+/// is open to anyone `/reference` is open to, and decompressing four megabytes
+/// on every such request was a way to make the server spend CPU and memory for
+/// the asking. Kept rather than dropped: the 4.4 MB stay resident once a single
+/// client without gzip has asked, which is the price of answering it at all.
+///
+/// A bundle that will not decompress is remembered as such too, so a defect in
+/// the embedded file costs one attempt, not one per request. A test holds the
+/// file to its published digest, so that branch is a build gone wrong.
+static DECOMPRESSED: OnceLock<Option<Bytes>> = OnceLock::new();
+
+/// How many times the bundle was decompressed for serving. A test reads it.
+#[cfg(test)]
+static DECOMPRESSIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn decompress_for_serving() -> Option<Bytes> {
+    #[cfg(test)]
+    DECOMPRESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    match decompressed() {
+        Ok(bytes) => Some(Bytes::from(bytes)),
+        Err(error) => {
+            tracing::error!(%error, "the embedded API reference bundle does not decompress");
+            None
+        }
+    }
+}
+
 async fn serve_script(request_headers: HeaderMap) -> Response {
     let gzip = accepts_gzip(&request_headers);
     let body = if gzip {
-        SCALAR_GZIP.to_vec()
+        Bytes::from_static(SCALAR_GZIP)
     } else {
-        match decompressed() {
-            Ok(bytes) => bytes,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        match DECOMPRESSED.get_or_init(decompress_for_serving) {
+            Some(bytes) => bytes.clone(),
+            None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     };
     let mut response = body.into_response();
@@ -192,6 +226,29 @@ mod tests {
         let bundle = decompressed().expect("the bundle decompresses");
         assert_eq!(hex::encode(Sha256::digest(&bundle)), SCALAR_SHA256);
         assert!(SCALAR_SCRIPT_PATH.contains(SCALAR_VERSION));
+    }
+
+    /// A client that takes no gzip costs one decompression per process, not
+    /// one per request: the route is open to whoever `/reference` is open to.
+    /// Served twice, and three times more, the count stays at one, and both
+    /// answers are the published bundle.
+    #[tokio::test]
+    async fn the_bundle_is_decompressed_once_whatever_the_requests() {
+        use http_body_util::BodyExt as _;
+        let mut bodies = Vec::new();
+        for _ in 0..5 {
+            let response = serve_script(HeaderMap::new()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+            bodies.push(response.into_body().collect().await.unwrap().to_bytes());
+        }
+        assert_eq!(
+            DECOMPRESSIONS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the bundle must be decompressed once and kept"
+        );
+        assert_eq!(hex::encode(Sha256::digest(&bodies[0])), SCALAR_SHA256);
+        assert!(bodies.iter().all(|body| body == &bodies[0]));
     }
 
     #[test]
