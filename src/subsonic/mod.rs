@@ -162,13 +162,21 @@ struct ProtocolError {
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/rest/{method}", get(handle).post(handle))
+    // The share routes carry the security headers and `/rest` does not: the
+    // façade's wire behaviour is frozen, and a share's token is its path, so a
+    // referrer is exactly what must not leave with it (RFC-019 decision 2).
+    let shares = Router::new()
         .route(
             "/share/{token}/tracks/{track_id}/stream",
             get(public_share_stream),
         )
         .route("/share/{token}", get(public_share))
+        .layer(axum::middleware::map_response(
+            crate::security_headers::share,
+        ));
+    Router::new()
+        .route("/rest/{method}", get(handle).post(handle))
+        .merge(shares)
         .with_state(state)
 }
 

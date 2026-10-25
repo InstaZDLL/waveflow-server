@@ -242,6 +242,11 @@ const en = {
   "login.welcome": "Welcome back",
   "login.setupDetail":
     "This is a new server. Choose the first administrator account.",
+  "login.setupToken": "Setup token",
+  "login.setupTokenHint":
+    "The server wrote it to the file setup-token in its data directory, and its log names the path. If you set WAVEFLOW_SETUP_TOKEN, enter that value.",
+  "login.setupTokenError":
+    "This setup token is not the right one. Copy it again from the setup-token file.",
   "login.username": "Username",
   "login.password": "Password",
   "login.setupError":
@@ -1078,6 +1083,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "login.welcome": "Bon retour",
   "login.setupDetail":
     "Ce serveur est neuf. Choisissez son premier compte administrateur.",
+  "login.setupToken": "Jeton d’installation",
+  "login.setupTokenHint":
+    "Le serveur l’a écrit dans le fichier setup-token de son répertoire de données, dont son journal donne le chemin. Si vous avez défini WAVEFLOW_SETUP_TOKEN, saisissez cette valeur.",
+  "login.setupTokenError":
+    "Ce jeton d’installation n’est pas le bon. Copiez-le de nouveau depuis le fichier setup-token.",
   "login.username": "Nom d’utilisateur",
   "login.password": "Mot de passe",
   "login.setupError":

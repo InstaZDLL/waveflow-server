@@ -1,7 +1,14 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { bootstrapAdmin, login, safeInternalPath, setupRequired } from "../api";
+import {
+  ApiError,
+  bootstrapAdmin,
+  login,
+  SETUP_TOKEN_REJECTED,
+  safeInternalPath,
+  setupRequired,
+} from "../api";
 import { useI18n } from "../state/i18n";
 
 export function LoginPage() {
@@ -9,6 +16,7 @@ export function LoginPage() {
   const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState(false);
@@ -24,10 +32,16 @@ export function LoginPage() {
     try {
       if (setup) {
         try {
-          await bootstrapAdmin(username, password);
+          await bootstrapAdmin(username, password, setupToken);
           setSetup(false);
-        } catch {
-          setError(t("login.setupError"));
+          setSetupToken("");
+        } catch (failure) {
+          setError(
+            failure instanceof ApiError &&
+              failure.message === SETUP_TOKEN_REJECTED
+              ? t("login.setupTokenError")
+              : t("login.setupError"),
+          );
           return;
         }
       }
@@ -61,6 +75,22 @@ export function LoginPage() {
           <span className="eyebrow">{t("login.server")}</span>
           <h1>{setup ? t("login.createAdmin") : t("login.welcome")}</h1>
           {setup ? <p className="muted">{t("login.setupDetail")}</p> : null}
+          {setup ? (
+            <label>
+              {t("login.setupToken")}
+              <input
+                value={setupToken}
+                onChange={(event) => setSetupToken(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby="setup-token-hint"
+                required
+              />
+              <span id="setup-token-hint" className="muted">
+                {t("login.setupTokenHint")}
+              </span>
+            </label>
+          ) : null}
           <label>
             {t("login.username")}
             <input

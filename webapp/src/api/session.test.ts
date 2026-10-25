@@ -563,3 +563,39 @@ describe("a canvas the server says is not there", () => {
     expect(ticketRequests()).toHaveLength(2);
   });
 });
+
+describe("first-run setup", () => {
+  it("sends the setup token, trimmed of what a copy picked up", async () => {
+    const api = await freshApi();
+    fetchStub.mockResolvedValue(jsonResponse({ user_id: "u1" }, 201));
+    const token = `wfsetup_${crypto.randomUUID()}`;
+
+    await api.bootstrapAdmin("admin", crypto.randomUUID(), `${token}\n`);
+
+    const [, init] = fetchStub.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      username: "admin",
+      setup_token: token,
+    });
+  });
+
+  it("tells a refused token apart from a refused account", async () => {
+    const api = await freshApi();
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "setup_token_rejected", message: "" }, 403),
+    );
+    await expect(
+      api.bootstrapAdmin("admin", crypto.randomUUID(), crypto.randomUUID()),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: api.SETUP_TOKEN_REJECTED,
+    });
+
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "validation_error", message: "" }, 422),
+    );
+    await expect(
+      api.bootstrapAdmin("admin", crypto.randomUUID(), crypto.randomUUID()),
+    ).rejects.toMatchObject({ status: 422, message: "setup failed" });
+  });
+});

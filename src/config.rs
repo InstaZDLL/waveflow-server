@@ -448,6 +448,18 @@ pub struct Config {
     /// connection from may be listed: one that forwards a client's header
     /// unchanged lets the client choose its address.
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// `WAVEFLOW_SETUP_TOKEN`: the one-time token `POST /api/v2/setup` asks
+    /// for while no account exists (RFC-019 decision 1). Unset by default,
+    /// and then the server draws one at boot and writes it to
+    /// `<data dir>/setup-token`. An operator who sets it chooses the value
+    /// instead, and no file is written; it must be at least
+    /// [`SETUP_TOKEN_MIN_CHARS`] characters. Ignored once an account exists.
+    pub setup_token: Option<String>,
+    /// `WAVEFLOW_MIGRATION_BACKUPS`: how many copies of the database, taken
+    /// with its key just before a boot applies pending migrations, are kept
+    /// in the data directory (RFC-019 decision 3). `3` by default; `0` takes
+    /// none. A fresh, empty database is never copied.
+    pub migration_backups: usize,
     /// How the catalogue decides which row a scanned file belongs to.
     ///
     /// `WAVEFLOW_PID_ALBUM`, `WAVEFLOW_PID_TRACK`, `WAVEFLOW_PID_ARTIST`.
@@ -497,6 +509,12 @@ impl std::fmt::Debug for Config {
             .field("metadata", &self.metadata)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
+            // Whether it is set, never what it is.
+            .field(
+                "setup_token",
+                &self.setup_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("migration_backups", &self.migration_backups)
             .field("pid", &self.pid)
             .finish()
     }
@@ -706,6 +724,14 @@ impl Config {
             }
         };
 
+        let setup_token = parse_setup_token(read_trimmed_env("WAVEFLOW_SETUP_TOKEN"))?;
+        // Zero is a setting, not a mistake: an operator with backups of their
+        // own turns the copies off with it.
+        let migration_backups = std::env::var("WAVEFLOW_MIGRATION_BACKUPS")
+            .unwrap_or_else(|_| "3".to_owned())
+            .parse::<usize>()
+            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_MIGRATION_BACKUPS: {error}"))?;
+
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -784,6 +810,8 @@ impl Config {
             metadata,
             allowed_origins,
             trusted_proxies,
+            setup_token,
+            migration_backups,
             pid,
         })
     }
@@ -892,6 +920,10 @@ impl Config {
             metadata: MetadataSettings::off(),
             allowed_origins: Vec::new(),
             trusted_proxies: Vec::new(),
+            // Drawn at boot and written to the data directory, as production
+            // does by default: the setup tests read it back from there.
+            setup_token: None,
+            migration_backups: 3,
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.
             pid: default_pid_specs(),
@@ -938,6 +970,22 @@ fn validate_canvas(canvas: &CanvasLimits) -> anyhow::Result<()> {
         anyhow::bail!("invalid WAVEFLOW_CANVAS_MAX_BYTES: too large for this platform");
     }
     Ok(())
+}
+
+/// The shortest operator-chosen setup token accepted.
+///
+/// The drawn one carries 256 bits. This is the floor for a value somebody
+/// typed, and nothing throttles setup: a guess at the token costs one request.
+pub const SETUP_TOKEN_MIN_CHARS: usize = 16;
+
+/// `WAVEFLOW_SETUP_TOKEN`, refused when too short to stand unthrottled.
+fn parse_setup_token(value: Option<String>) -> anyhow::Result<Option<String>> {
+    match value {
+        Some(token) if token.chars().count() < SETUP_TOKEN_MIN_CHARS => anyhow::bail!(
+            "WAVEFLOW_SETUP_TOKEN must be at least {SETUP_TOKEN_MIN_CHARS} characters"
+        ),
+        other => Ok(other),
+    }
 }
 
 /// One environment variable, trimmed, with an empty value read as absent.

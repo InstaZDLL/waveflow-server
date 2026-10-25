@@ -4,6 +4,9 @@
 //! Node runtime beside it. This module is the router fallback: anything that no
 //! API route claimed is either a built asset or a client-side route, and a
 //! client-side route resolves by returning the shell.
+//!
+//! Every response here carries the web client's security headers, a
+//! Content-Security-Policy among them ([`crate::security_headers`]).
 
 use axum::{
     body::Body,
@@ -12,6 +15,7 @@ use axum::{
     Json,
 };
 use rust_embed::Embed;
+use std::sync::OnceLock;
 
 use crate::api::ErrorResponse;
 
@@ -51,7 +55,28 @@ const RESERVED_EXACT: [&str; 5] = [
 ];
 
 pub async fn handler(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
+    let mut response = respond(uri.path().trim_start_matches('/'));
+    crate::security_headers::apply_web_client(response.headers_mut(), policy());
+    response
+}
+
+/// The Content-Security-Policy every response here carries, built once from
+/// the shell this binary embeds, so its inline blocks are admitted by the
+/// digests of exactly the bytes that are served.
+fn policy() -> &'static HeaderValue {
+    static POLICY: OnceLock<HeaderValue> = OnceLock::new();
+    POLICY.get_or_init(|| {
+        let shell = Assets::get(INDEX)
+            .map(|file| String::from_utf8_lossy(&file.data).into_owned())
+            .unwrap_or_default();
+        HeaderValue::from_str(&crate::security_headers::web_client_policy(&shell))
+            // A digest is base64 and every directive is ASCII, so this cannot
+            // fail; if it ever did, the strictest policy is the safe answer.
+            .unwrap_or(HeaderValue::from_static("default-src 'none'"))
+    })
+}
+
+fn respond(path: &str) -> Response {
     let reserved = RESERVED_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
