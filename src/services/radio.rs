@@ -91,13 +91,13 @@ impl DomainServices {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
         let mut tx = self.db.begin_write(&_writer).await?;
-        // **The writer gate is what makes the count safe**, not the
-        // transaction: a deferred SQLite transaction takes no write lock until
-        // its first write, so two creations reading 499 inside their own
-        // transactions would both insert. They cannot run at once because
-        // every mutation in this server holds that one gate. The transaction
-        // keeps the count and the insert a single unit for the reader of this
-        // code and for whatever bypasses the gate later.
+        // **Two locks make the count safe**, and they cover different writers.
+        // The writer gate serialises this process's mutations, so two creations
+        // here cannot both read 499 and both insert. `begin_write` opens with
+        // `BEGIN IMMEDIATE`, so SQLite's write lock is held before the
+        // `SELECT COUNT(*)` runs: a writer that bypasses the gate — another
+        // process on the same file, say — cannot insert between the count and
+        // the insert either.
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM radio_station WHERE user_id=?")
             .bind(user_id.to_string())
             .fetch_one(&mut *tx)
