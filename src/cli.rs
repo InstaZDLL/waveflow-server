@@ -351,10 +351,21 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
     let db = &state.db;
     match command {
         Command::Serve => anyhow::bail!("serve is handled by the runtime"),
-        Command::Account { command } => match command {
-            AccountCommand::CreateAdmin(args) => create_account(db, args, AccountRole::Admin).await,
-            AccountCommand::CreateUser(args) => create_account(db, args, AccountRole::User).await,
-        },
+        Command::Account { command } => {
+            match command {
+                AccountCommand::CreateAdmin(args) => {
+                    create_account(db, args, AccountRole::Admin).await?
+                }
+                AccountCommand::CreateUser(args) => {
+                    create_account(db, args, AccountRole::User).await?
+                }
+            }
+            // An account exists now, so first-run setup is over: the token this
+            // process's boot drew, or found, opens nothing and is deleted
+            // (RFC-019 decision 1).
+            state.setup.close();
+            Ok(())
+        }
         Command::Library { command } => match command {
             LibraryCommand::Add(args) => add_library(state, args).await,
             LibraryCommand::SetMember(args) => set_member(db, args).await,

@@ -80,7 +80,11 @@ username, the password and the origin check, which stays.
   stale file. A database that loses its last account while the server runs is
   not reopened until the next start, which is the direction to be wrong in.
 - **The command line needs no token.** `account create-admin` already requires
-  a shell on the host, which is more than the token proves.
+  a shell on the host, which is more than the token proves. Once it has
+  created an account, from either `account` command, it closes setup and
+  deletes the token file too. A server running beside it keeps its gate open
+  in memory until its next setup request, which the database then refuses
+  with `409` and which closes it.
 
 **Rejected alternatives.**
 
