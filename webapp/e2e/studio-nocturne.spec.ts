@@ -7634,7 +7634,10 @@ test("says a mix that is gone is gone, rather than drawing an empty one", async 
   page,
 }) => {
   await page.goto("/mixes/never-played");
-  await expect(page.getByRole("alert")).toContainText(
+  // The page's own alert. The player bar may raise one of its own about the
+  // restored queue, which the mocks cannot stream; that one is not this
+  // test's subject.
+  await expect(page.locator("main").getByRole("alert")).toContainText(
     "We could not load this view",
   );
 });
