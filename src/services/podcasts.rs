@@ -1017,7 +1017,8 @@ async fn upsert_episodes(
 }
 
 /// The scheme, host and port of a feed address, and nothing that may be a
-/// credential: no user information, no path, no query, no fragment. A private feed's token is in its path as often as in its query.
+/// credential: no user information, no path, no query, no fragment. A
+/// private feed's token is in its path as often as in its query.
 fn feed_origin(feed_url: &str) -> String {
     match url::Url::parse(feed_url) {
         Ok(url) => match url.host_str() {
