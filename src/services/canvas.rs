@@ -904,30 +904,31 @@ impl DomainServices {
         let silent = staging.with_extension("silent");
         let output = tokio::time::timeout(
             PROBE_TIMEOUT,
-            tokio::process::Command::new(&self.ffmpeg_path)
-                .arg("-hide_banner")
-                .arg("-loglevel")
-                .arg("error")
-                .arg("-y")
-                .arg("-fflags")
-                .arg("+bitexact")
-                .arg("-i")
-                .arg(staging)
-                .arg("-map")
-                .arg("0:v")
-                .arg("-c")
-                .arg("copy")
-                .arg("-an")
-                .arg("-map_metadata")
-                .arg("-1")
-                .arg("-fflags")
-                .arg("+bitexact")
-                .arg("-f")
-                .arg(format)
-                .arg(&silent)
-                .stdin(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .output(),
+            crate::media::file_input(
+                tokio::process::Command::new(&self.ffmpeg_path)
+                    .arg("-hide_banner")
+                    .arg("-loglevel")
+                    .arg("error")
+                    .arg("-y")
+                    .arg("-fflags")
+                    .arg("+bitexact"),
+                staging,
+            )
+            .arg("-map")
+            .arg("0:v")
+            .arg("-c")
+            .arg("copy")
+            .arg("-an")
+            .arg("-map_metadata")
+            .arg("-1")
+            .arg("-fflags")
+            .arg("+bitexact")
+            .arg("-f")
+            .arg(format)
+            .arg(&silent)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
         )
         .await
         .map_err(|_| {
@@ -964,17 +965,19 @@ impl DomainServices {
     async fn probe_canvas(&self, path: &std::path::Path) -> Result<Probed, ServiceError> {
         let output = tokio::time::timeout(
             PROBE_TIMEOUT,
-            tokio::process::Command::new(&self.ffprobe_path)
-                .arg("-v")
-                .arg("error")
-                .arg("-print_format")
-                .arg("json")
-                .arg("-show_format")
-                .arg("-show_streams")
-                .arg(path)
-                .stdin(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .output(),
+            crate::media::file_input(
+                tokio::process::Command::new(&self.ffprobe_path)
+                    .arg("-v")
+                    .arg("error")
+                    .arg("-print_format")
+                    .arg("json")
+                    .arg("-show_format")
+                    .arg("-show_streams"),
+                path,
+            )
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
         )
         .await
         .map_err(|_| {
