@@ -185,13 +185,20 @@ async fn serve_script(request_headers: HeaderMap) -> Response {
     response
 }
 
-/// Whether the request accepts gzip.
+/// Whether the request accepts gzip, read as RFC 9110 §12.5.3 and §12.4.2
+/// write `Accept-Encoding`.
 ///
-/// An entry naming gzip decides, whatever its place in the list; `*` decides
-/// only when none does, because RFC 9110 §12.5.3 has it stand for the codings
-/// the field does not name. So `gzip;q=0, *` refuses gzip, and `*` alone
-/// accepts it. A weight of zero refuses; any other weight, or none, accepts.
-/// `x-gzip` is gzip by the same RFC.
+/// - **An entry naming gzip decides**, whatever its place in the list; `*`
+///   decides only when none does, because it stands for the codings the field
+///   does not name. So `gzip;q=0, *` refuses gzip, and `*` alone accepts it.
+///   `x-gzip` is gzip.
+/// - **Names are case-insensitive**, the coding's and the weight's alike:
+///   `GZIP;Q=0` refuses. Whitespace around `;` and `=` is tolerated.
+/// - **A weight of zero refuses**; one above zero, or none, accepts. A weight
+///   outside the grammar — above 1, negative, more than three decimals, not a
+///   number — makes the entry say nothing, so it neither accepts nor refuses.
+///   The first entry of a kind that does say something is the one kept.
+/// - **No header, or an empty one, is identity only**: no gzip.
 fn accepts_gzip(headers: &HeaderMap) -> bool {
     let mut named = None;
     let mut wildcard = None;
@@ -203,19 +210,40 @@ fn accepts_gzip(headers: &HeaderMap) -> bool {
     {
         let mut parts = coding.split(';').map(str::trim);
         let name = parts.next().unwrap_or_default();
-        let refused = parts.any(|parameter| {
-            parameter
-                .strip_prefix("q=")
-                .and_then(|q| q.trim().parse::<f32>().ok())
-                .is_some_and(|q| q <= 0.0)
-        });
+        let mut weight = Some(1000);
+        for parameter in parts {
+            let Some((key, value)) = parameter.split_once('=') else {
+                continue;
+            };
+            if key.trim().eq_ignore_ascii_case("q") {
+                weight = qvalue(value.trim());
+            }
+        }
+        let Some(weight) = weight else {
+            continue;
+        };
         if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
-            named.get_or_insert(!refused);
+            named.get_or_insert(weight > 0);
         } else if name == "*" {
-            wildcard.get_or_insert(!refused);
+            wildcard.get_or_insert(weight > 0);
         }
     }
     named.or(wildcard).unwrap_or(false)
+}
+
+/// A `qvalue` in thousandths, or `None` outside RFC 9110's grammar:
+/// `( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`.
+fn qvalue(text: &str) -> Option<u16> {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let thousandths: u16 = format!("{fraction:0<3}").parse().ok()?;
+    match whole {
+        "0" => Some(thousandths),
+        "1" if thousandths == 0 => Some(1000),
+        _ => None,
+    }
 }
 
 /// The bundle as published.
@@ -287,6 +315,32 @@ mod tests {
         assert!(with("*;q=0, gzip"));
         assert!(!with("br, *;q=0"));
         assert!(with("x-gzip"));
+        // Names are case-insensitive, the weight's as much as the coding's,
+        // and whitespace around `;` and `=` changes nothing.
+        assert!(!with("gzip;Q=0"));
+        assert!(!with("GZIP ; q = 0"));
+        assert!(!with("gzip;q=0.000, *"));
+        assert!(with("Gzip;Q=0.001"));
+        assert!(with("gzip;q=1.000"));
+        // A weight outside the grammar makes its entry say nothing: the next
+        // entry, or the wildcard, decides, and nothing panics.
+        for malformed in ["2", "1.5", "-1", "0.0001", "abc", "", "NaN", "inf", "1e0"] {
+            assert!(
+                !with(&format!("gzip;q={malformed}")),
+                "q={malformed} is no acceptance"
+            );
+            assert!(
+                with(&format!("gzip;q={malformed}, *")),
+                "q={malformed} leaves the wildcard deciding"
+            );
+            assert!(
+                !with(&format!("gzip;q={malformed}, gzip;q=0")),
+                "q={malformed} leaves the next gzip entry deciding"
+            );
+        }
+        // An empty field is identity only.
+        assert!(!with(""));
+        assert!(!with(" , ;q=1"));
     }
 
     /// No string in the document can end the block it is carried in.
