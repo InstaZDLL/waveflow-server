@@ -1,9 +1,9 @@
 # RFC-020 — Playlists and shares: repeats, public playlists, and the share page
 
 - **Status**: Proposed
-- **Implemented by**: this RFC and its implementation land together in one
-  pull request. The *Status* field above never flips in this project; this
-  line is the one that says what is running.
+- **Implemented by**: [#327](https://github.com/InstaZDLL/waveflow-server/pull/327)
+  (this RFC and its implementation, together). The *Status* field above never
+  flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (tenancy in the
