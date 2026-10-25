@@ -6833,3 +6833,71 @@ test("leaves the element alone when the audio context will not run", async ({
   });
   expect(seen).toEqual({ contexts: 1, claims: 0 });
 });
+
+/**
+ * Signing out closes every AudioContext the player opened.
+ *
+ * Signing out unmounts the player, and an open context holds the audio device
+ * until it is closed; a browser caps how many one page may have, so each
+ * sign-in would otherwise leave one more behind. Both kinds are covered: the
+ * graph a play built, and a candidate still waiting to run — the one a
+ * browser that does not count the gesture leaves pending for ever.
+ */
+for (const kind of ["running", "pending"] as const) {
+  test(`closes the ${kind} audio context when the listener signs out`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+    await page.addInitScript((pending) => {
+      localStorage.setItem(
+        "waveflow.replayGain",
+        JSON.stringify({ mode: "album", preampDb: 0 }),
+      );
+      const contexts: AudioContext[] = [];
+      (window as unknown as { __contexts: AudioContext[] }).__contexts =
+        contexts;
+      const Original = window.AudioContext;
+      window.AudioContext = pending
+        ? class extends Original {
+            constructor(options?: AudioContextOptions) {
+              super(options);
+              contexts.push(this);
+            }
+            // Stays suspended until closed, and never resumes.
+            override get state(): AudioContextState {
+              return super.state === "closed" ? "closed" : "suspended";
+            }
+            override resume(): Promise<void> {
+              return new Promise(() => undefined);
+            }
+          }
+        : class extends Original {
+            constructor(options?: AudioContextOptions) {
+              super(options);
+              contexts.push(this);
+            }
+          };
+    }, kind === "pending");
+    const states = () =>
+      page.evaluate(() =>
+        (window as unknown as { __contexts: AudioContext[] }).__contexts.map(
+          (context) => context.state,
+        ),
+      );
+
+    await page.goto("/albums/album-2");
+    await page.getByRole("button", { name: "Play album" }).click();
+    await expect(page.locator(".player-track strong")).toHaveText(
+      "Hidden Place",
+    );
+    await expect
+      .poll(states)
+      .toEqual([kind === "running" ? "running" : "suspended"]);
+
+    // Dispatched rather than clicked, as in the cache test: the sidebar's
+    // footer sits under the fixed player bar at this viewport.
+    await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
+    await expect(page).toHaveURL(/\/login$/);
+    await expect.poll(states).toEqual(["closed"]);
+  });
+}

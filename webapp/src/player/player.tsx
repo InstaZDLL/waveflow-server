@@ -311,6 +311,39 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Kept so a later gesture resumes this one rather than making another.
   const candidate = useRef<AudioContext | null>(null);
   const [gainNode, setGainNode] = useState<GainNode | null>(null);
+  // Whether the provider is mounted, for a graph whose wiring finishes after
+  // a resume: signing out unmounts the player, possibly while one is pending.
+  const graphMounted = useRef(false);
+
+  // Signing out unmounts the player, and an open AudioContext holds the audio
+  // device until it is closed — browsers cap how many a page may have. Both
+  // the candidate and the graph are closed on the way out. The marker is set
+  // again on every mount, because StrictMode and Fast Refresh replay effects
+  // on an instance that stays mounted.
+  useEffect(() => {
+    graphMounted.current = true;
+    return () => {
+      graphMounted.current = false;
+      const pending = candidate.current;
+      candidate.current = null;
+      if (pending) void pending.close().catch(() => undefined);
+      const active = graph.current;
+      if (!active) return;
+      graph.current = null;
+      setGainNode(null);
+      void active.context.close().catch(() => undefined);
+      // The element stays claimed by the context just closed, and would play
+      // as silence on an instance that remounts with its refs kept. It is
+      // dropped, and the mount effect makes a fresh one.
+      const element = audio.current;
+      if (element) {
+        element.pause();
+        element.removeAttribute("src");
+        element.load();
+        audio.current = null;
+      }
+    };
+  }, []);
 
   /**
    * Asks a stopped graph to run again. A play that starts by itself — the
@@ -374,6 +407,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return gain;
     }).then((gain) => {
       if (candidate.current === context) candidate.current = null;
+      if (!graphMounted.current) {
+        // Unmounted while it waited: nobody will ever close it otherwise.
+        void context.close().catch(() => undefined);
+        return;
+      }
       // No graph: the element keeps playing as it did, unlevelled.
       if (!gain) return;
       graph.current = { context, gain };
