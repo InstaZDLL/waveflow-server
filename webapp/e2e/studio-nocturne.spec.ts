@@ -7239,10 +7239,10 @@ test("releases the next track's preload when the listener signs out", async ({
   await page.goto("/albums/album-2");
   await page.getByRole("button", { name: "Play album" }).click();
   await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
-  // The next track, Cocoon, is being preloaded beside the one playing.
-  await expect
-    .poll(async () => (await sources()).length)
-    .toBeGreaterThan(0);
+  // The next track, Cocoon, is being preloaded beside the one playing. Named
+  // rather than counted: the playing element is asked to load too, and its
+  // own source alone would let the sign-out run before the preload exists.
+  await expect.poll(sources).toContain("/api/v2/stream/ticket-song-2");
 
   // Dispatched rather than clicked, as in the cache test: the sidebar's
   // footer sits under the fixed player bar at this viewport.
