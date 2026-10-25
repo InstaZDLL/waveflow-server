@@ -702,6 +702,104 @@ async fn sync_journal_is_idempotent_cursor_based_and_tenant_isolated() {
     assert_eq!(acked.status(), StatusCode::NO_CONTENT);
 }
 
+/// A write that finds the database lock still held waits for it, rather than
+/// answering 503.
+///
+/// The writer gate serialises this process's writers, but giving the gate back
+/// is not the end of a transaction. A transaction dropped on an error path —
+/// the conflict a replayed operation id with another intent answers — only
+/// *queues* its `ROLLBACK` to its connection's worker thread, and the gate is
+/// free before that thread runs it. The next writer, on another connection,
+/// can find the lock still held. A deferred transaction that has already read
+/// cannot wait at that point — SQLite does not call the busy handler when a
+/// read transaction is upgraded — so the claim's `INSERT` failed at once and
+/// the journal test above answered 503 instead of 409, now and then, on a
+/// loaded runner.
+///
+/// Here another connection holds the lock on purpose, for longer than any
+/// scheduling could hide, and the claim reads first because it names a device.
+#[tokio::test]
+async fn a_write_waits_for_a_lock_another_connection_still_holds() {
+    let (_temp, config, state) = test_app().await;
+    let owner = state
+        .db
+        .create_account("lock-owner", "unused", AccountRole::Admin, now_ms())
+        .await
+        .unwrap();
+    let music = config.data_dir.join("lock-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Lock library",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 1, false).await.unwrap();
+    state
+        .db
+        .apply_catalog_track(
+            library,
+            scan,
+            &browse_input(
+                0,
+                "Locked Song",
+                "Locked Album",
+                "Locked Artist",
+                None,
+                None,
+            ),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+    let track = state.db.list_tracks_for_user(owner, library).await.unwrap()[0].id;
+    let device = state
+        .db
+        .create_device(owner, "lock desktop", now_ms())
+        .await
+        .unwrap();
+
+    let mut holder = state.db.pool().acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        sqlx::query("ROLLBACK").execute(&mut *holder).await.unwrap();
+    });
+    let starred = state
+        .services
+        .set_star_with_context(
+            owner,
+            "track",
+            track,
+            true,
+            MutationContext {
+                operation_id: Uuid::new_v4(),
+                origin_device_id: Some(device),
+            },
+        )
+        .await;
+    release.await.unwrap();
+    assert!(
+        starred.is_ok(),
+        "the write must wait out the lock, not fail on it: {starred:?}"
+    );
+}
+
 #[tokio::test]
 async fn sync_claim_precedes_state_validation_and_invalid_claims_roll_back() {
     let (_temp, config, state) = test_app().await;

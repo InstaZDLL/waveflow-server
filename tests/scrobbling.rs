@@ -2592,11 +2592,26 @@ async fn a_queue_a_refused_token_finished_records_when_it_finished() {
     );
 }
 
+/// Stops an instance the way a restart does: every connection closed before
+/// the next boot opens the file.
+///
+/// Dropping the state is not that. sqlx closes a dropped pool's connections on
+/// their own threads after the drop has returned, and the last of them
+/// checkpoints the WAL under an exclusive lock. The next `initialize` raced
+/// that close, and on a loaded Windows runner it outwaited `busy_timeout` and
+/// failed with `database is locked`. `cli.rs` closes before it restarts for
+/// the same reason.
+async fn stop(state: AppState) {
+    state.db.pool().close().await;
+    drop(state);
+}
+
 /// A config over `temp`'s data directory declaring exactly these instances.
 ///
 /// Called twice over one `TempDir` in the tests below, which is how a restart
-/// is played: the second `initialize` opens the same database under a different
-/// configuration, which is the only moment reconciliation runs.
+/// is played — closed with [`stop`] in between: the second `initialize` opens
+/// the same database under a different configuration, which is the only moment
+/// reconciliation runs.
 fn declaring(
     temp: &tempfile::TempDir,
     declared: &[(ScrobbleProvider, &str, &str)],
@@ -2785,7 +2800,7 @@ async fn an_instance_that_disappears_breaks_its_link_and_finishes_its_queue() {
         .await
         .unwrap();
     assert_eq!(rows(&state).await[0].1, "pending");
-    drop(state);
+    stop(state).await;
 
     // The operator takes `alice` out of the configuration and restarts.
     let after = declaring(
@@ -2830,7 +2845,7 @@ async fn an_instance_that_moved_breaks_its_link_though_its_name_did_not_change()
         )
         .await
         .unwrap();
-    drop(state);
+    stop(state).await;
 
     // Same name, different machine.
     let after = declaring(
@@ -2870,7 +2885,7 @@ async fn a_trailing_slash_added_to_a_configuration_breaks_nothing() {
         )
         .await
         .unwrap();
-    drop(state);
+    stop(state).await;
 
     let after = declaring(
         &temp,
@@ -2928,7 +2943,7 @@ async fn a_link_from_before_this_slice_takes_the_only_instance_declared() {
     let state = waveflow_server::initialize(&config).await.unwrap();
     let listener = fixture(&config, &state, "legacy-listener").await;
     one_legacy_link(&state, listener.owner, "maloja").await;
-    drop(state);
+    stop(state).await;
 
     let state = waveflow_server::initialize(&config).await.unwrap();
     let links = state.services.scrobble_links(listener.owner).await.unwrap();
@@ -2956,7 +2971,7 @@ async fn a_legacy_link_with_two_candidates_refuses_the_boot() {
     let state = waveflow_server::initialize(&single).await.unwrap();
     let listener = fixture(&single, &state, "ambiguous-listener").await;
     one_legacy_link(&state, listener.owner, "maloja").await;
-    drop(state);
+    stop(state).await;
 
     let both = declaring(
         &temp,
@@ -2973,7 +2988,7 @@ async fn a_legacy_link_with_two_candidates_refuses_the_boot() {
     // And the way out works: one instance fills the columns, and the second may
     // then be declared.
     let state = waveflow_server::initialize(&single).await.unwrap();
-    drop(state);
+    stop(state).await;
     let state = waveflow_server::initialize(&both).await.unwrap();
     let links = state.services.scrobble_links(listener.owner).await.unwrap();
     assert_eq!(links[0].destination, "alice");
@@ -3045,7 +3060,7 @@ async fn a_legacy_link_with_nothing_declared_for_it_is_broken_rather_than_left_e
     let state = waveflow_server::initialize(&config).await.unwrap();
     let listener = fixture(&config, &state, "switched-off-listener").await;
     one_legacy_link(&state, listener.owner, "lastfm").await;
-    drop(state);
+    stop(state).await;
 
     let state = waveflow_server::initialize(&config).await.unwrap();
     let links = state.services.scrobble_links(listener.owner).await.unwrap();
@@ -3776,7 +3791,7 @@ async fn a_return_to_a_destination_that_moved_creates_nothing() {
     // Dropped rather than shadowed: two `AppState`s over one database file
     // would each hold their own writer gate, and this test is about what a
     // *restart* does.
-    drop(state);
+    stop(state).await;
     let state = waveflow_server::initialize(&moved).await.unwrap();
     let exchange = ExchangesFor::key("a-session-key");
     state.services.register_lastfm_exchange(
@@ -3834,7 +3849,7 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
             .unwrap_err(),
         ServiceError::Unavailable
     ));
-    drop(state);
+    stop(state).await;
 
     // An application, but a public address that is not `https`.
     let mut plaintext = lastfm_app(&temp);
@@ -3854,7 +3869,7 @@ async fn last_fm_says_why_it_is_unavailable_instead_of_failing_later() {
             .unwrap_err(),
         ServiceError::Unavailable
     ));
-    drop(state);
+    stop(state).await;
 
     // Both, and it is available.
     let state = waveflow_server::initialize(&lastfm_app(&temp))

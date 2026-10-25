@@ -579,7 +579,7 @@ impl DomainServices {
         }
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         for measured in batch {
             let (outcome, cutoff_hz, wall_db, effective_bits, spectrum, failure) =
                 match measured.measurement {
@@ -768,7 +768,7 @@ impl DomainServices {
     ) -> Result<(), ServiceError> {
         {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             curated_library(&mut tx, user_id, library_id).await?;
             sqlx::query(
                 "DELETE FROM track_quality WHERE track_id IN \

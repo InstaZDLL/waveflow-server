@@ -278,7 +278,7 @@ mod tests {
 
         let context = crate::sync::MutationContext::server_generated();
         let writer = db.writer_guard().await;
-        let mut tx = db.pool().begin().await.unwrap();
+        let mut tx = db.begin_write(&writer).await.unwrap();
         sync.claim_operation(
             &writer,
             &mut tx,

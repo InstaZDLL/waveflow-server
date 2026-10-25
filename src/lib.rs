@@ -659,6 +659,20 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
 
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
+    let booted = boot(db.clone(), config).await;
+    if booted.is_err() {
+        // A refused boot closes what it opened before it says so. Dropping the
+        // pool would not be enough: sqlx closes each connection on its own
+        // thread after the drop has returned, and the last one to close
+        // checkpoints the WAL under an exclusive lock. Whoever opens the file
+        // next — the operator retrying, or a test that has just watched the
+        // refusal — races that close and can find the database locked.
+        db.pool().close().await;
+    }
+    booted
+}
+
+async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppState> {
     // Before anything is applied, and only when something will be (RFC-019
     // decision 3): the copy is the database as this boot found it.
     let copy = migration_backup::before_migrating(&db, config).await?;

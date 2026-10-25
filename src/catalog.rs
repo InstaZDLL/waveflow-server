@@ -563,7 +563,7 @@ impl Database {
             return Ok(0);
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let mut moved = 0;
         for (from, to) in moves
             .iter()
@@ -819,7 +819,7 @@ impl Database {
     /// that is about it alone.
     pub async fn consolidate_sort_names(&self, library_id: Uuid) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         Self::consolidate_sort_names_in(&mut tx, library_id).await?;
         tx.commit().await?;
         Ok(())
@@ -879,7 +879,7 @@ impl Database {
         library_id: Uuid,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         Self::consolidate_catalog_derivations_in(&mut tx, library_id).await?;
         tx.commit().await?;
         Ok(())
@@ -1022,7 +1022,7 @@ impl Database {
         unavailable: i64,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let now = now_ms();
         sqlx::query(
             "UPDATE scan_job SET status = 'completed', unavailable = ?, current_path = NULL, \
@@ -1188,7 +1188,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         for (track_id, pid) in hints {
             sqlx::query("UPDATE track SET pid = ? WHERE id = ? AND pid IS NULL")
                 .bind(pid.to_string())
@@ -1245,7 +1245,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         for (relative_path, signature) in signatures {
             sqlx::query(
                 "UPDATE track SET sidecar_signature = ? WHERE library_id = ? AND relative_path = ?",
@@ -1272,7 +1272,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         for folder in folders {
             // A prefix compared as text rather than with LIKE: a folder name
             // holding `%` or `_` must not widen the match.
@@ -1299,7 +1299,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let now = now_ms();
         for track_id in track_ids {
             sqlx::query(
@@ -1348,7 +1348,7 @@ impl Database {
             return Ok(Vec::new());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         // Read once per batch, inside the transaction that writes it (RFC-015):
         // a decision taken while a scan runs is either before this batch,
         // which applies it, or after it, in which case the decision's own pass
@@ -1714,7 +1714,7 @@ impl Database {
     ) -> Result<i64, sqlx::Error> {
         let _writer = self.writer_guard().await;
         let now = now_ms();
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         // `RETURNING` rather than a count: the feed needs to name what
         // disappeared, and a number cannot.
         // Two ways a track can be one this scan did not find, and they are not
@@ -1791,7 +1791,7 @@ impl Database {
             return Ok(());
         }
         let _writer = self.writer_guard().await;
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_write(&_writer).await?;
         let now = now_ms();
         for (path, message) in errors {
             sqlx::query("INSERT INTO scan_error (scan_id, relative_path, message, created_at) VALUES (?, ?, ?, ?)")

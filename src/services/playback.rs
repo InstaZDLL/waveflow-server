@@ -40,7 +40,7 @@ impl DomainServices {
             &serde_json::json!({ "submission": submission, "time": time }),
         );
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
             .claim_operation(&_writer, &mut tx, user_id, context, intent)
@@ -232,7 +232,7 @@ impl DomainServices {
             }),
         );
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
             .claim_operation(&_writer, &mut tx, user_id, context, intent)

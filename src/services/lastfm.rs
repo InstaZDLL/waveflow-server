@@ -202,7 +202,7 @@ impl DomainServices {
             now.saturating_add(i64::try_from(JOURNEY_TTL.as_millis()).unwrap_or(i64::MAX));
 
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         // One journey per account, held by the schema as well: opening a second
         // replaces the first rather than leaving a row nothing can finish.
         sqlx::query("DELETE FROM lastfm_authorization WHERE user_id=?")
@@ -277,7 +277,7 @@ impl DomainServices {
         let now = now_ms();
         let (user_id, destination, fingerprint) = {
             let _writer = self.db.writer_guard().await;
-            let mut tx = self.db.pool().begin().await?;
+            let mut tx = self.db.begin_write(&_writer).await?;
             let row = sqlx::query(
                 "SELECT user_id, destination, destination_fingerprint, cookie_hash, expires_at \
                  FROM lastfm_authorization WHERE state=?",

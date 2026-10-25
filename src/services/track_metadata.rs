@@ -205,7 +205,7 @@ impl DomainServices {
         // Read inside the transaction as well, so the pair sees one snapshot.
         let _writer = self.db.writer_guard().await;
         let now = now_ms();
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let row = sqlx::query(
             "SELECT t.library_id, t.title, t.full_hash, t.last_seen_scan_id, m.role, \
                     ovr.title AS o_title, ovr.sort_title AS o_sort_title, \

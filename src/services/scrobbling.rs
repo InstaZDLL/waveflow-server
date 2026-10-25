@@ -566,7 +566,7 @@ impl DomainServices {
         let id = Uuid::new_v4();
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         self.unlink_scrobble_on(&mut tx, user_id, provider, destination, now)
             .await?;
         sqlx::query(
@@ -600,7 +600,7 @@ impl DomainServices {
     ) -> Result<bool, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let unlinked = self
             .unlink_scrobble_on(&mut tx, user_id, provider, destination, now)
             .await?;
@@ -893,7 +893,7 @@ impl DomainServices {
     ) -> Result<Uuid, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         // Read inside the transaction, before the claim, so the identity this
         // answers for is the identity the row is claimed under. Outside it, a
         // reconciliation could move between the two.
@@ -1013,7 +1013,7 @@ impl DomainServices {
     pub async fn reconcile_scrobble_links(&self) -> Result<(), ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
 
         let legacy = sqlx::query(
             "SELECT id, provider FROM scrobble_link \
@@ -1680,7 +1680,7 @@ impl DomainServices {
     ) -> Result<bool, ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state=?, attempts=attempts+1, last_failure=?, \
              updated_at=?, terminal_at=? WHERE id=? AND state='sending'",
@@ -1847,7 +1847,7 @@ impl DomainServices {
         } else {
             "retryable"
         };
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let moved = sqlx::query(
             "UPDATE scrobble_outbox SET state='pending', attempts=?, next_attempt_at=?, \
              last_failure=?, updated_at=? WHERE id=? AND state='sending'",
@@ -1910,7 +1910,7 @@ impl DomainServices {
     async fn mark_link_broken(&self, link_id: Uuid, cause: &str) -> Result<(), ServiceError> {
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         sqlx::query(
             "UPDATE scrobble_link SET status='broken', last_failure=?, updated_at=? WHERE id=?",
         )

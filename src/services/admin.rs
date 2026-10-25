@@ -486,7 +486,7 @@ impl DomainServices {
         let api_key_hash = security::token_hash(&api_key);
         let requested_folders = self.resolve_library_ids(folder_ids).await?;
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         let user_id = Uuid::new_v4();
         let now = now_ms();
         let insert = sqlx::query(
@@ -595,7 +595,7 @@ impl DomainServices {
         };
         let revoke_sessions = web_password_hash.is_some();
         let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.pool().begin().await?;
+        let mut tx = self.db.begin_write(&_writer).await?;
         sqlx::query("UPDATE account SET role=COALESCE(?, role), disabled=COALESCE(?, disabled), password_hash=COALESCE(?, password_hash), updated_at=? WHERE id=?")
             .bind(update.admin.map(|value| if value { "admin" } else { "user" })).bind(update.disabled.map(i64::from)).bind(web_password_hash.as_deref()).bind(now_ms()).bind(account.id.to_string()).execute(&mut *tx).await?;
         if revoke_sessions {
