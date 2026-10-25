@@ -2150,3 +2150,123 @@ async fn an_operator_chosen_setup_token_replaces_the_drawn_one() {
         .unwrap();
     assert_eq!(created.status(), StatusCode::CREATED);
 }
+
+/// RFC-023 decision 4: nothing an account handed out keeps working once it is
+/// disabled — an API token, a session and its refresh token, nor an
+/// authorization code granted before and redeemed after.
+///
+/// Each was already refused by the query that reads it (`a.disabled = 0` in
+/// the token lookups, the account check in `issue_session_for_account`), with
+/// no test saying so. Re-enabling the account at the end proves the refusals
+/// were the account's and not the credentials going stale.
+#[tokio::test]
+async fn a_disabled_account_s_tokens_and_grants_all_stop_working() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_token) = admin_with_api_token(&state, "disabled-owner").await;
+    let router = waveflow_server::app(&config, state.clone());
+    let albums = |bearer: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get("/api/v2/albums")
+                        .header("authorization", format!("Bearer {bearer}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let redirect_uri = "http://127.0.0.1:49152/callback";
+    let grant = serde_json::json!({
+        "client_id": "com.waveflow.desktop",
+        "redirect_uri": redirect_uri,
+        "code_challenge": waveflow_server::oauth::challenge_for(&verifier),
+        "code_challenge_method": "S256",
+        "device_name": "Disabled Desktop"
+    });
+    let authorize = || async {
+        let granted = send_json(
+            &router,
+            "POST",
+            "/api/v2/oauth/authorize",
+            &api_token,
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(granted.status(), StatusCode::OK);
+        code_from(json_body(granted).await["redirect_to"].as_str().unwrap())
+    };
+    let exchange = |code: String| {
+        let router = router.clone();
+        let verifier = verifier.clone();
+        async move {
+            router
+                .oneshot(json_request(
+                    "/api/v2/oauth/token",
+                    serde_json::json!({
+                        "code": code,
+                        "code_verifier": verifier,
+                        "client_id": "com.waveflow.desktop",
+                        "redirect_uri": redirect_uri
+                    }),
+                ))
+                .await
+                .unwrap()
+        }
+    };
+    let refresh = |refresh_token: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(json_request(
+                    "/api/v2/auth/refresh",
+                    serde_json::json!({ "refresh_token": refresh_token }),
+                ))
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+
+    // Before: the token works, a grant redeems into a session that works, and
+    // a second grant is left unredeemed for after.
+    assert_eq!(albums(api_token.clone()).await, StatusCode::OK);
+    let session = exchange(authorize().await).await;
+    assert_eq!(session.status(), StatusCode::OK);
+    let session = json_body(session).await;
+    let access = session["access_token"].as_str().unwrap().to_owned();
+    let refresh_token = session["refresh_token"].as_str().unwrap().to_owned();
+    assert_eq!(albums(access.clone()).await, StatusCode::OK);
+    let pending = authorize().await;
+    let spare = authorize().await;
+
+    set_disabled(&state, owner, true).await;
+    assert_eq!(albums(api_token.clone()).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(albums(access.clone()).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        refresh(refresh_token.clone()).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        exchange(pending).await.status(),
+        StatusCode::UNAUTHORIZED,
+        "a code granted before the account was disabled must not be cashed in after"
+    );
+
+    // Re-enabled, the same credentials answer again: what refused them was the
+    // account, not their age.
+    set_disabled(&state, owner, false).await;
+    assert_eq!(albums(api_token).await, StatusCode::OK);
+    assert_eq!(albums(access).await, StatusCode::OK);
+    assert_eq!(refresh(refresh_token).await, StatusCode::OK);
+    // And the session it redeems into is this account's, not merely a session.
+    let spare = exchange(spare).await;
+    assert_eq!(spare.status(), StatusCode::OK);
+    let spare = json_body(spare).await;
+    assert_eq!(spare["user"]["id"], owner.to_string());
+    assert_eq!(spare["user"]["username"], "disabled-owner");
+}

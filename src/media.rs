@@ -55,6 +55,37 @@ const ARTWORK_CANONICAL_CACHE: &str = "private, max-age=31536000, immutable";
 /// cover that entity carries *now*, and a rescan can move it.
 const ARTWORK_ALIAS_CACHE: &str = "private, no-cache";
 
+/// The protocols FFmpeg and ffprobe may open on behalf of an input
+/// (RFC-023 decision 2): local files, and nothing else.
+///
+/// Every input this server hands either tool is a path it chose — a library
+/// file, a staged upload, a cached encode — so `file` is all any of them
+/// needs. FFmpeg's own default is wider, and it is a default nothing here
+/// pinned: a top-level `http://` or `concat:` input is opened as asked, and a
+/// file opened through `file` may still name `crypto` and `data` resources from
+/// inside it. Named here, the list is the same on every build the server runs
+/// against, and a playlist-shaped file cannot reach the network whatever the
+/// installed FFmpeg would have allowed.
+///
+/// The whitelist is an input option, so it governs the input it precedes and
+/// every resource opened from inside it. Outputs are named by this server
+/// (`pipe:1`, a staging file) and are not affected.
+pub(crate) const INPUT_PROTOCOLS: &str = "file";
+
+/// Names `path` as the input of an FFmpeg or ffprobe command, under
+/// [`INPUT_PROTOCOLS`].
+///
+/// The one way an input is given to either tool, so no call site can forget
+/// the whitelist: `-protocol_whitelist file -i <path>`. ffprobe takes `-i` as
+/// FFmpeg does.
+pub(crate) fn file_input<'a>(command: &'a mut Command, path: &Path) -> &'a mut Command {
+    command
+        .arg("-protocol_whitelist")
+        .arg(INPUT_PROTOCOLS)
+        .arg("-i")
+        .arg(path)
+}
+
 #[derive(Clone)]
 pub struct MediaService {
     inner: Arc<MediaInner>,
@@ -384,10 +415,7 @@ impl MediaService {
                 .arg("-ss")
                 .arg(format!("{:.3}", offset_ms as f64 / 1000.0));
         }
-        command
-            .arg("-i")
-            .arg(source)
-            .args(["-vn", "-map_metadata", "-1"]);
+        file_input(&mut command, source).args(["-vn", "-map_metadata", "-1"]);
         if let Some(gain) = gain {
             command.arg("-af").arg(gain.filter());
         }
@@ -1923,7 +1951,7 @@ async fn prune_cache(inner: &MediaInner) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         path::PathBuf,
         sync::Arc,
@@ -2236,8 +2264,129 @@ mod tests {
         );
     }
 
+    /// A listener on loopback that counts the connections it is offered and
+    /// closes each at once: what "nothing was fetched" is measured with.
+    pub(crate) async fn counting_listener() -> (
+        std::net::SocketAddr,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&count);
+        let task = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        (address, count, task)
+    }
+
+    fn a_media_service(dir: &std::path::Path) -> MediaService {
+        MediaService {
+            inner: Arc::new(MediaInner {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+                cache_dir: dir.to_path_buf(),
+                cache_max_bytes: 0,
+                global: Arc::new(Semaphore::new(1)),
+                global_limit: 1,
+                per_user_limit: 1,
+                users: DashMap::new(),
+                cache_locks: DashMap::new(),
+                cache_access: DashMap::new(),
+                pending_fills: dashmap::DashSet::new(),
+                active_transcodes: std::sync::atomic::AtomicUsize::new(0),
+                transcoding_available: true,
+                ffmpeg_digest: String::new(),
+                link_roots: crate::link_roots::LinkRoots::default(),
+                subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
+            }),
+        }
+    }
+
+    /// Runs the transcode FFmpeg would be given for `source`, to nowhere, and
+    /// answers whether it succeeded.
+    async fn transcode(media: &MediaService, source: &std::path::Path) -> bool {
+        let mut command = media
+            .transcode_command(source, OutputFormat::Mp3, 128, None, 0)
+            .unwrap();
+        command
+            .arg("pipe:1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        tokio::time::timeout(Duration::from_secs(60), command.status())
+            .await
+            .expect("ffmpeg must not hang on an input it refuses")
+            .expect("ffmpeg must be on PATH")
+            .success()
+    }
+
+    /// FFmpeg opens files and nothing else, whatever the input names
+    /// (RFC-023 decision 2).
+    ///
+    /// Three inputs, one property:
+    ///
+    /// - **A path that is a URL.** Without the whitelist FFmpeg connects to
+    ///   it; this is the case that tells the whitelist from its absence.
+    /// - **A playlist that names one.** An HLS playlist pointing at the same
+    ///   listener. FFmpeg 8 already refuses `http` from inside a file opened
+    ///   through `file` (its default nested list is `file,crypto,data`), so
+    ///   this one holds on that build either way: it is here so the property
+    ///   stays tested on a build whose default is wider.
+    /// - **A `concat:` URL** of two real files, which the default decodes.
+    ///
+    /// And one control: the same command plays a real file, so the whitelist
+    /// is proved not to be in the way of the one protocol the server uses —
+    /// on Windows too, where a path starts with a drive letter and a colon.
+    #[tokio::test]
+    async fn ffmpeg_opens_files_and_nothing_else() {
+        let temp = tempfile::tempdir().unwrap();
+        let media = a_media_service(temp.path());
+        let real = temp.path().join("real.wav");
+        silent_wav(&real, 1);
+        assert!(
+            transcode(&media, &real).await,
+            "a real file must still play"
+        );
+
+        let (address, connections, listener) = counting_listener().await;
+        let url = format!("http://{address}/track.mp3");
+        assert!(!transcode(&media, std::path::Path::new(&url)).await);
+
+        let playlist = temp.path().join("trap.m3u8");
+        std::fs::write(
+            &playlist,
+            format!(
+                "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://{address}/segment.mp3\n#EXT-X-ENDLIST\n"
+            ),
+        )
+        .unwrap();
+        assert!(!transcode(&media, &playlist).await);
+
+        let concat = format!("concat:{}|{}", real.display(), real.display());
+        assert!(
+            !transcode(&media, std::path::Path::new(&concat)).await,
+            "a concat: input must be refused"
+        );
+
+        // Connections are counted as they are accepted; give the last one
+        // the moment it needs to land before reading the count.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        listener.abort();
+        assert_eq!(
+            connections.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "ffmpeg must not have contacted anything"
+        );
+    }
+
     /// Silence at 8 kHz, as long as asked.
-    fn silent_wav(path: &std::path::Path, seconds: u32) {
+    pub(crate) fn silent_wav(path: &std::path::Path, seconds: u32) {
         let generated = std::process::Command::new("ffmpeg")
             .args([
                 "-hide_banner",

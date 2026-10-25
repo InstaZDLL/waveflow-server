@@ -523,13 +523,13 @@ impl DomainServices {
         dry_run: bool,
         context: MutationContext,
     ) -> Result<PlaylistImport, ServiceError> {
-        let file = playlist_file::parse(bytes);
-        // The playlist ceiling, applied to the file rather than discovered
-        // after the work: every entry costs a resolution, and a caller that
-        // sent five thousand of them is owed the refusal before the reads.
-        if file.entries.len() > MAX_PLAYLIST_TRACKS {
-            return Err(ServiceError::Invalid);
-        }
+        // The playlist ceiling, applied while the file is read rather than
+        // discovered after the work: every entry costs a resolution, and a
+        // caller that sent five thousand too many is owed the refusal before
+        // the reads — and before the parser has built them (RFC-023
+        // decision 5).
+        let file = playlist_file::parse(bytes, MAX_PLAYLIST_TRACKS)
+            .map_err(|playlist_file::TooManyEntries| ServiceError::Invalid)?;
         let name = name
             .map(str::trim)
             .filter(|value| !value.is_empty())

@@ -27,13 +27,20 @@ All outbound clients are built by one function, `src/outbound.rs`:
 - TLS is rustls; a connection attempt may take a third of the request's
   timeout.
 - No URL and no response body is written to the log.
+- **Every answer is read under a ceiling** (RFC-023 decision 1): 2 MiB for an
+  API answer, 10 MiB for an image, the podcast ceilings for a feed or an
+  episode. An answer that announces more is refused
+  unread; one that keeps coming is cut off at the line. Either is logged as a
+  verdict, never with its URL or its body.
 
 The server never turns a request it receives into a request of its own, with
 one exception an operator switches on: an administrator subscribing to a
 podcast, or asking for an episode, below. Radio
 station URLs are stored and handed to clients, never fetched; remote entries in
 an imported playlist are dropped; FFmpeg and ffprobe are only ever given local
-files inside a library or the data directory.
+files inside a library or the data directory, and are told so: every input is
+passed with `-protocol_whitelist file`, so neither can open a network or
+`concat:` resource whatever a file names inside it (RFC-023 decision 2).
 
 ## Metadata enrichment: Last.fm, Deezer, TheAudioDB
 
@@ -130,7 +137,8 @@ artist is not sent.
 application, with a callback to `WAVEFLOW_PUBLIC_URL`; the server then calls
 `auth.getSession` once to obtain the session key. The command-line journey
 (`scrobble authorize`, `scrobble exchange`) calls `auth.getToken` and then
-`auth.getSession`.
+`auth.getSession`. Each of these calls is bounded by
+`WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS` like a listen.
 
 ## Podcasts: the feeds an administrator subscribes to
 
@@ -181,12 +189,15 @@ the log.
 The embedded web client loads nothing from a third party: its fonts are
 bundled, every API call is relative to the server, and artwork is served by the
 server rather than linked from a provider. Its Content-Security-Policy holds it
-to that (RFC-019 decision 2). Three exceptions, each deliberate:
+to that (RFC-019 decision 2). Two exceptions, each deliberate:
 
 - **Internet radio.** The browser plays a station straight from the station's
   own server, at the URL a user entered. That host sees the listener's address.
   Subsonic clients receive the same URLs and connect themselves.
 - **Linking Last.fm**, above: a navigation the user starts.
-- **`/reference`**, the API reference page. It loads the Scalar viewer from
-  `cdn.jsdelivr.net` into the visitor's browser. It is outside the web
-  client's policy, and nobody visits it unless they open it.
+
+**`/reference`**, the API reference page, was a third until RFC-023: it loaded
+the Scalar viewer, unversioned, from `cdn.jsdelivr.net`. The viewer is now part
+of the binary (`@scalar/api-reference` 1.73.1) and served by the server itself,
+under a policy that admits scripts and connections from this origin only; its
+fonts, telemetry, AI agent and publishing toolbar are switched off.

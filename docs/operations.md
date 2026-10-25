@@ -437,9 +437,10 @@ Only a library whose links setting is on follows any link, and a followed link
 must resolve **inside that library's root, or inside a folder listed in
 `WAVEFLOW_LINK_ROOTS`** (below), and **never into another library's root**. A
 link whose target is anywhere else, is broken, or loops back to a folder above
-it is skipped and counted. A file reached through links is one track, under
-its own path, however many links name it. A link farm whose files live in the same tree works best with the
-files' folder excluded from the direct walk:
+it is skipped and counted. A file inside the root that links lead to is one
+track, stored under the file's own path, however many links name it. A link
+farm whose files live in the same tree works best with the files' folder
+excluded from the direct walk:
 
 ```text
 /music/.waveflowignore     /store/
@@ -447,21 +448,28 @@ files' folder excluded from the direct walk:
 /music/Artist/Album/…      links into ../../store/
 ```
 
-A link farm whose files live outside the root — a beets `link: yes` import into
-a separate folder, say — is followed only into the folders you name in
-**`WAVEFLOW_LINK_ROOTS`**: absolute paths, separated as `PATH` is (`:` on
-Linux, `;` on Windows), for example
-`WAVEFLOW_LINK_ROOTS=/srv/beets/library`. It applies to every library whose
-links setting is on, so name only folders whose files every such library's
-members may hear. A link that resolves into **another library's root** is
-skipped even inside a named folder, and a stored path that has come to resolve
-there since its scan is refused when it is played: no link shows one library's
-files to another's members. The folders are resolved again at every scan and
-every stream, so a mount that appears later is honoured and one that went
-reaches nothing. A file reached that way is stored under the path the scan
-reached it by, and once only, however many links name it. Without the
-variable, make the root a common ancestor, or add the files' folder as a
-library of its own.
+A link farm whose files live outside the root, such as a beets `link: yes`
+import into a separate folder, is followed only into the folders you name in
+**`WAVEFLOW_LINK_ROOTS`**. Give absolute paths, separated as `PATH` is (`:`
+on Linux, `;` on Windows), for example
+`WAVEFLOW_LINK_ROOTS=/srv/beets/library`. The setting applies to every library
+whose links setting is on, so name only folders whose files the members of
+every such library may hear.
+
+A link that resolves into **another library's root** is skipped, even inside a
+named folder. A stored path that has come to resolve there since its scan is
+refused when it is played. No link shows one library's files to another
+library's members.
+
+The named folders are resolved again at every scan and every stream. A mount
+that appears after the server starts is honoured from the next scan. A mount
+that disappears no longer resolves: at a scan, links into it are skipped and
+counted; when a track stored through one is played, it is refused.
+
+A file reached through such a link is stored under the path the scan reached
+it by, and only once, however many links name it. Without the variable, make
+the library root a common ancestor of the links and their files, or add the
+files' folder as a library of its own.
 
 ### Missing files
 

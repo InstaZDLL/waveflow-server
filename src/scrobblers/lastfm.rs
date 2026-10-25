@@ -29,6 +29,14 @@ pub struct LastFm {
     client: reqwest::Client,
     endpoint: url::Url,
     application: LastFmApplication,
+    /// The whole of one authorisation call, its answer included.
+    ///
+    /// A listen is bounded by the drain's own deadline. The two calls of the
+    /// authorisation journey are made for a person waiting on a page or a
+    /// terminal, and nothing above them bounded them at all (RFC-023
+    /// decision 1). It is the `WAVEFLOW_SCROBBLE_REQUEST_TIMEOUT_SECS` the
+    /// drain uses.
+    deadline: Duration,
 }
 
 impl LastFm {
@@ -36,6 +44,7 @@ impl LastFm {
         client: reqwest::Client,
         base: &url::Url,
         application: LastFmApplication,
+        deadline: Duration,
     ) -> Result<Self, OutboundError> {
         // **The trailing slash is kept, and it is not decoration.** Last.fm
         // documents its endpoint as `/2.0/`, answers `/2.0` with a redirect,
@@ -53,7 +62,62 @@ impl LastFm {
             client,
             endpoint: submit,
             application,
+            deadline,
         })
+    }
+
+    /// One signed authorisation call, and the narrow answer it is read into.
+    ///
+    /// Bounded twice, which is the whole of RFC-023 decision 1 for this path:
+    /// in time by [`Self::deadline`], and in size by
+    /// [`crate::outbound::read_bounded_body`]. Either refusal is
+    /// `Unavailable`, a failure of the way to Last.fm rather than of what the
+    /// person brought.
+    ///
+    /// **The status, and never the body, on a refusal.** This answer is the
+    /// one exception decision 10's "log what came back" rule must carve out:
+    /// it carries the session key itself on success, and on failure it quotes
+    /// the request token or the application key back in its error text.
+    async fn call<T: serde::de::DeserializeOwned>(
+        &self,
+        params: &[(&str, String)],
+        what: &'static str,
+    ) -> Result<T, crate::services::ServiceError> {
+        use crate::services::ServiceError;
+        let answer = async {
+            let response = self
+                .client
+                .post(self.endpoint.clone())
+                .form(params)
+                .send()
+                .await
+                .map_err(|_| {
+                    tracing::warn!(call = what, "last.fm was not reached");
+                    ServiceError::Unavailable
+                })?;
+            let status = response.status();
+            if !status.is_success() {
+                tracing::warn!(call = what, %status, "last.fm refused the call");
+                return Err(ServiceError::Invalid);
+            }
+            let body =
+                crate::outbound::read_bounded_body(response, crate::outbound::MAX_ANSWER_BYTES)
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(call = what, %error, "last.fm's answer was not read");
+                        ServiceError::Unavailable
+                    })?;
+            serde_json::from_slice::<T>(&body).map_err(|_| {
+                tracing::warn!(call = what, "last.fm's answer is not the expected JSON");
+                ServiceError::Unavailable
+            })
+        };
+        tokio::time::timeout(self.deadline, answer)
+            .await
+            .unwrap_or_else(|_| {
+                tracing::warn!(call = what, "last.fm did not answer in time");
+                Err(ServiceError::Unavailable)
+            })
     }
 }
 
@@ -181,10 +245,25 @@ impl ScrobbleTarget for LastFm {
             // of the `Retry-After` the header gave — defeating the whole point
             // of reading that header — and a `5xx` whose body happened to
             // parse as accepted would be read as a listen that arrived.
+            //
+            // **Read under a ceiling** (RFC-023 decision 1): an answer over it,
+            // or one that breaks off, refines nothing, and the status line
+            // decides as it does for a body that will not parse.
             if !status.is_success() {
                 return status_verdict(status, retry_after);
             }
-            let answer = response.json::<ScrobbleAnswer>().await.ok();
+            let answer = match crate::outbound::read_bounded_body(
+                response,
+                crate::outbound::MAX_ANSWER_BYTES,
+            )
+            .await
+            {
+                Ok(body) => serde_json::from_slice::<ScrobbleAnswer>(&body).ok(),
+                Err(error) => {
+                    tracing::warn!(%error, "last.fm's answer was not read; its status line decides");
+                    None
+                }
+            };
             match answer.as_ref().and_then(ScrobbleAnswer::verdict) {
                 Some(verdict) => verdict,
                 None => status_verdict(status, retry_after),
@@ -316,28 +395,11 @@ impl crate::services::LastFmSessionExchange for LastFm {
             ];
             params.push(("api_sig", signature(&params, &self.application.secret)));
             params.push(("format", "json".to_owned()));
-            let response = self
-                .client
-                .post(self.endpoint.clone())
-                .form(&params)
-                .send()
-                .await
-                .map_err(|_| ServiceError::Unavailable)?;
-            if !response.status().is_success() {
-                // The status, and never the body. **This response is the one
-                // exception decision 10's "log what came back" rule must carve
-                // out**: it carries the session key itself on success, and on
-                // failure it carries the request token back in its error text.
-                tracing::warn!(status = %response.status(), "last.fm refused the session exchange");
-                return Err(ServiceError::Invalid);
-            }
             // Read here, and only here. Every other answer from a destination is
             // judged by its status line — but a session key is the point of this
-            // call, and there is nowhere else to get it.
-            let body: SessionResponse = response
-                .json()
-                .await
-                .map_err(|_| ServiceError::Unavailable)?;
+            // call, and there is nowhere else to get it. A refusing status is
+            // `Invalid`, as it always was: the token was spent or never approved.
+            let body: SessionResponse = self.call(&params, "auth.getSession").await?;
             let key = body.session.map(|session| session.key).unwrap_or_default();
             if key.is_empty() {
                 // Last.fm answers `200` with an error object for a spent or
@@ -375,22 +437,11 @@ impl crate::services::LastFmSessionExchange for LastFm {
             ];
             params.push(("api_sig", signature(&params, &self.application.secret)));
             params.push(("format", "json".to_owned()));
-            let response = self
-                .client
-                .post(self.endpoint.clone())
-                .form(&params)
-                .send()
-                .await
-                .map_err(|_| ServiceError::Unavailable)?;
-            if !response.status().is_success() {
-                // The status and nothing else, like the exchange beside it: a
-                // failure here quotes the application key back in its error
-                // text.
-                tracing::warn!(status = %response.status(), "last.fm refused to mint a request token");
-                return Err(ServiceError::Unavailable);
-            }
-            let body: TokenResponse = response
-                .json()
+            // Every failure is `Unavailable` here, a refusing status included:
+            // nothing the person brought has been asked yet, so whatever went
+            // wrong is on the way to Last.fm or on this server's side of it.
+            let body: TokenResponse = self
+                .call(&params, "auth.getToken")
                 .await
                 .map_err(|_| ServiceError::Unavailable)?;
             let token = body.token.unwrap_or_default();
@@ -624,7 +675,8 @@ mod tests {
             api_key: "a-key".to_owned(),
             secret: "a-secret".to_owned(),
         };
-        let target = LastFm::new(client, &base, application).expect("an adapter");
+        let target =
+            LastFm::new(client, &base, application, Duration::from_secs(5)).expect("an adapter");
         assert_eq!(
             target.endpoint.as_str(),
             "https://ws.audioscrobbler.com/2.0/"
@@ -652,5 +704,87 @@ mod tests {
                 after: Some(Duration::ZERO)
             }
         ));
+    }
+
+    /// An adapter aimed at a listener of the test's own.
+    async fn reaching(body: axum::body::Body) -> (LastFm, tokio::task::JoinHandle<()>) {
+        let (url, server) = crate::outbound::tests::answering(body).await;
+        let base = super::super::validate_destination(&url, true).expect("a destination");
+        let client = super::super::outbound_client(Duration::from_secs(5)).expect("a client");
+        let application = crate::config::LastFmApplication {
+            api_key: uuid::Uuid::new_v4().to_string(),
+            secret: uuid::Uuid::new_v4().to_string(),
+        };
+        let target =
+            LastFm::new(client, &base, application, Duration::from_secs(10)).expect("an adapter");
+        (target, server)
+    }
+
+    /// A session answer that is well formed and says what it should, but is
+    /// padded past the ceiling, is not read: the exchange fails as an outage
+    /// rather than holding the whole body (RFC-023 decision 1).
+    ///
+    /// Finite on purpose, and parseable: without the ceiling this same answer
+    /// is read and yields its key, so the test tells the ceiling from its
+    /// absence by the outcome and not only by the clock.
+    #[tokio::test]
+    async fn a_session_answer_over_the_ceiling_is_not_read() {
+        use crate::services::{LastFmSessionExchange, ServiceError};
+        let key = uuid::Uuid::new_v4().simple().to_string();
+        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let (target, server) = reaching(axum::body::Body::from(format!(
+            "{{\"session\":{{\"key\":\"{key}\"}}{padding}}}"
+        )))
+        .await;
+        let token = uuid::Uuid::new_v4().to_string();
+        let exchanged = target.exchange(&token).await;
+        server.abort();
+        assert!(
+            matches!(exchanged, Err(ServiceError::Unavailable)),
+            "an oversized answer must not be read"
+        );
+
+        // And the same answer within the ceiling is read, so the refusal above
+        // is the ceiling's and not the listener's.
+        let (target, server) = reaching(axum::body::Body::from(format!(
+            "{{\"session\":{{\"key\":\"{key}\"}}}}"
+        )))
+        .await;
+        let exchanged = target.exchange(&token).await;
+        server.abort();
+        assert_eq!(exchanged.ok().as_deref(), Some(key.as_str()));
+    }
+
+    /// The same for the token the CLI journey asks for first.
+    #[tokio::test]
+    async fn a_token_answer_over_the_ceiling_is_not_read() {
+        use crate::services::{LastFmSessionExchange, ServiceError};
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let (target, server) = reaching(axum::body::Body::from(format!(
+            "{{\"token\":\"{token}\"{padding}}}"
+        )))
+        .await;
+        let minted = target.request_token().await;
+        server.abort();
+        assert!(matches!(minted, Err(ServiceError::Unavailable)));
+    }
+
+    /// A listen whose acknowledgement is over the ceiling is judged by its
+    /// status line, as one that will not parse is.
+    ///
+    /// The body says `"error": 9`, a dead session key, so a reader without the
+    /// ceiling breaks the link over it; that difference is what this tells
+    /// apart.
+    #[tokio::test]
+    async fn a_scrobble_answer_over_the_ceiling_leaves_the_status_line_deciding() {
+        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let (target, server) =
+            reaching(axum::body::Body::from(format!("{{\"error\":9{padding}}}"))).await;
+        let envelope = an_envelope();
+        let session_key = uuid::Uuid::new_v4().to_string();
+        let verdict = target.submit(&envelope, &session_key).await;
+        server.abort();
+        assert!(matches!(verdict, ScrobbleVerdict::Accepted));
     }
 }

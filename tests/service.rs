@@ -925,3 +925,80 @@ async fn a_browser_opening_a_share_link_is_handed_the_player() {
     assert_eq!(below.status(), StatusCode::NOT_FOUND);
     assert!(!content_type(&below).starts_with("text/html"));
 }
+
+/// RFC-023 decision 3: `/reference` names no host but this one. The page loads
+/// the Scalar bundle the binary carries, at a versioned address, under a policy
+/// that admits scripts and connections from this origin only.
+#[tokio::test]
+async fn the_api_reference_is_served_from_the_binary() {
+    use http_body_util::BodyExt;
+
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let get = |uri: &'static str, encoding: Option<&'static str>| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::get(uri);
+            if let Some(encoding) = encoding {
+                request = request.header("accept-encoding", encoding);
+            }
+            router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    let page = get("/reference", None).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let policy = page.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    for directive in [
+        "default-src 'none'",
+        "script-src 'self';",
+        "connect-src 'self';",
+        "frame-ancestors 'self'",
+    ] {
+        assert!(policy.contains(directive), "{directive} in {policy}");
+    }
+    assert!(!policy.contains("unsafe-eval"), "{policy}");
+    assert_eq!(page.headers()["x-content-type-options"], "nosniff");
+    let html = body_text(page).await;
+    assert!(
+        html.contains(&format!(
+            "<script src=\"{}\"></script>",
+            waveflow_server::reference::SCALAR_SCRIPT_PATH
+        )),
+        "{html}"
+    );
+    assert!(!html.contains("jsdelivr"), "no CDN");
+    assert_eq!(html.matches("<script src=").count(), 1, "one script, ours");
+    assert!(
+        html.contains("/api/v2/auth/login"),
+        "the document is in the page"
+    );
+
+    // Stored compressed and sent as stored to whoever takes gzip…
+    let script = get(
+        waveflow_server::reference::SCALAR_SCRIPT_PATH,
+        Some("gzip, br"),
+    )
+    .await;
+    assert_eq!(script.status(), StatusCode::OK);
+    assert_eq!(script.headers()["content-encoding"], "gzip");
+    assert!(script.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/javascript"));
+    assert!(script.headers()["cache-control"]
+        .to_str()
+        .unwrap()
+        .contains("immutable"));
+    // …and decompressed for a client that takes none.
+    let plain = get(waveflow_server::reference::SCALAR_SCRIPT_PATH, None).await;
+    assert!(plain.headers().get("content-encoding").is_none());
+    let bytes = plain.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes, waveflow_server::reference::decompressed().unwrap());
+}

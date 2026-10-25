@@ -4,13 +4,17 @@
 
 use super::*;
 
-/// Whether a share row may still be opened: not expired, and below its visit
-/// cap. One spelling for the read that hands out the page and the write that
+/// Whether a share row may still be opened: not expired, below its visit cap,
+/// and owned by an account that is not disabled (RFC-023 decision 4) — a
+/// disabled account shares nothing, exactly as a missing share does. One
+/// spelling for the read that hands out the page and the write that
 /// counts a visit, so the two cannot disagree about what "open" means.
 macro_rules! share_is_open {
     () => {
         "(s.expires_at IS NULL OR s.expires_at>?) \
-         AND (s.max_visits IS NULL OR s.visit_count<s.max_visits)"
+         AND (s.max_visits IS NULL OR s.visit_count<s.max_visits) \
+         AND EXISTS (SELECT 1 FROM account a \
+                     WHERE a.id=s.owner_user_id AND a.disabled=0)"
     };
 }
 
@@ -275,10 +279,10 @@ impl DomainServices {
     /// **Read-only, and outside the writer gate** (RFC-020 decision 4): a seek
     /// is a range request, and an anonymous listener must not queue behind a
     /// scan to move the playhead. The pass the visit carries names the share;
-    /// this re-reads the share on every request, so deleting it or letting it
-    /// expire stops the music at once whatever the pass says. The cap is not
-    /// asked again — the visit that reached it was counted, and keeps its
-    /// music.
+    /// this re-reads the share on every request, so deleting it, letting it
+    /// expire or disabling its owner stops the music at once whatever the pass
+    /// says. The cap is not asked again — the visit that reached it was
+    /// counted, and keeps its music.
     pub async fn shared_track_owner(
         &self,
         token: &str,
@@ -289,6 +293,8 @@ impl DomainServices {
         let owner = sqlx::query_scalar::<_, String>(
             "SELECT s.owner_user_id FROM share s \
              WHERE s.token_hash=? AND s.id=? AND (s.expires_at IS NULL OR s.expires_at>?) \
+               AND EXISTS (SELECT 1 FROM account a \
+                           WHERE a.id=s.owner_user_id AND a.disabled=0) \
                AND EXISTS (SELECT 1 FROM share_track st \
                            WHERE st.share_id=s.id AND st.track_id=?)",
         )

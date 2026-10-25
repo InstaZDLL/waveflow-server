@@ -3579,18 +3579,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "utoipa-scalar"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eb5bc76936ceb2bb790a62bec7fb99e22b8ecffca739e3d5a5afec0081ea7f3"
-dependencies = [
- "axum",
- "serde",
- "serde_json",
- "utoipa",
-]
-
-[[package]]
 name = "uuid"
 version = "1.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3763,6 +3751,7 @@ dependencies = [
  "dashmap",
  "dotenvy",
  "encoding_rs",
+ "flate2",
  "futures-util",
  "hex",
  "http-body-util",
@@ -3796,7 +3785,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "utoipa",
- "utoipa-scalar",
  "uuid",
  "walkdir",
  "waveflow-core",
