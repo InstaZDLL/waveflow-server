@@ -13,20 +13,48 @@ use chrono::{Datelike, NaiveDate};
 
 use super::*;
 
-/// The caller's listens in the period: the tracks they played, when, for how
-/// long the track runs, and its first credited artist. Binds the user id, then
-/// the start of the period in milliseconds.
-macro_rules! listens_cte {
+/// The caller's listens in the period, **one row per track**: how often and
+/// when last, then the track's length, album and first credited artist.
+///
+/// Counted first and joined second. The count reads the covering index
+/// `(user_id, submission, track_id, played_at)` and never touches a row of
+/// `play_event`; the join and the artist lookup then run once per track
+/// rather than once per listen. Joined the other way round, a year of
+/// listening cost every statement a correlated subquery per listen, and the
+/// page made seven of them.
+///
+/// Binds the user id, the start of the period in milliseconds, then the user
+/// id again — for the membership the track must still be reached through.
+macro_rules! listened_cte {
     () => {
-        "WITH listens AS (\
-           SELECT pe.track_id, pe.played_at, t.duration_ms, t.album_id, t.title, \
+        "WITH counted AS (\
+           SELECT pe.track_id, COUNT(*) AS plays, MAX(pe.played_at) AS last_played \
+             FROM play_event pe \
+            WHERE pe.user_id=? AND pe.submission=1 AND pe.played_at >= ? \
+            GROUP BY pe.track_id), \
+         listened AS (\
+           SELECT c.track_id, c.plays, c.last_played, t.duration_ms, t.album_id, t.title, \
                   (SELECT tp.artist_id FROM track_participant tp \
                     WHERE tp.track_id=t.id AND tp.role='artist' \
                     ORDER BY tp.position LIMIT 1) AS artist_id \
-             FROM track t JOIN library_member m ON m.library_id=t.library_id \
-             JOIN play_event pe ON pe.track_id=t.id \
-            WHERE m.user_id=? AND pe.user_id=m.user_id AND pe.submission=1 \
-              AND t.is_available=1 AND pe.played_at >= ?) "
+             FROM counted c JOIN track t ON t.id=c.track_id \
+             JOIN library_member m ON m.library_id=t.library_id AND m.user_id=? \
+            WHERE t.is_available=1) "
+    };
+}
+
+/// Every listen in the period on a track the caller still reaches, reduced to
+/// when it was and how long the track runs — what the timeline and the first
+/// and last listen need, and nothing more. Binds the user id twice, then the
+/// start of the period.
+macro_rules! each_listen_cte {
+    () => {
+        "WITH each_listen AS (\
+           SELECT pe.track_id, pe.played_at, t.duration_ms \
+             FROM play_event pe JOIN track t ON t.id=pe.track_id \
+             JOIN library_member m ON m.library_id=t.library_id AND m.user_id=? \
+            WHERE pe.user_id=? AND pe.submission=1 AND t.is_available=1 \
+              AND pe.played_at >= ?) "
     };
 }
 
@@ -215,14 +243,16 @@ impl DomainServices {
         let mut connection = self.db.pool().acquire().await?;
 
         let totals = sqlx::query(concat!(
-            listens_cte!(),
-            "SELECT COUNT(*) AS plays, COALESCE(SUM(l.duration_ms), 0) AS listening_ms, \
-                    COUNT(DISTINCT l.track_id) AS tracks, COUNT(DISTINCT l.album_id) AS albums, \
+            listened_cte!(),
+            "SELECT COALESCE(SUM(l.plays), 0) AS plays, \
+                    COALESCE(SUM(l.plays * l.duration_ms), 0) AS listening_ms, \
+                    COUNT(*) AS tracks, COUNT(DISTINCT l.album_id) AS albums, \
                     COUNT(DISTINCT a.canonical_name) AS artists \
-               FROM listens l LEFT JOIN artist a ON a.id=l.artist_id"
+               FROM listened l LEFT JOIN artist a ON a.id=l.artist_id"
         ))
         .bind(&user)
         .bind(since)
+        .bind(&user)
         .fetch_one(&mut *connection)
         .await?;
         let totals = StatsTotals {
@@ -236,14 +266,14 @@ impl DomainServices {
         // Ties go to the most recent listen, then to the name, so two
         // requests over the same history answer the same list.
         let ranked_tracks = sqlx::query(concat!(
-            listens_cte!(),
-            "SELECT l.track_id, COUNT(*) AS plays, MAX(l.played_at) AS last_played \
-               FROM listens l GROUP BY l.track_id \
-              ORDER BY plays DESC, last_played DESC, MIN(l.title) COLLATE NOCASE, l.track_id \
+            listened_cte!(),
+            "SELECT l.track_id, l.plays FROM listened l \
+              ORDER BY l.plays DESC, l.last_played DESC, l.title COLLATE NOCASE, l.track_id \
               LIMIT ?"
         ))
         .bind(&user)
         .bind(since)
+        .bind(&user)
         .bind(query.limit)
         .fetch_all(&mut *connection)
         .await?
@@ -263,15 +293,16 @@ impl DomainServices {
             .collect();
 
         let ranked_albums = sqlx::query(concat!(
-            listens_cte!(),
-            "SELECT l.album_id, COUNT(*) AS plays, MAX(l.played_at) AS last_played \
-               FROM listens l JOIN album al ON al.id=l.album_id \
+            listened_cte!(),
+            "SELECT l.album_id, SUM(l.plays) AS plays, MAX(l.last_played) AS last_played \
+               FROM listened l JOIN album al ON al.id=l.album_id \
               GROUP BY l.album_id \
               ORDER BY plays DESC, last_played DESC, MIN(al.title) COLLATE NOCASE, l.album_id \
               LIMIT ?"
         ))
         .bind(&user)
         .bind(since)
+        .bind(&user)
         .bind(query.limit)
         .fetch_all(&mut *connection)
         .await?
@@ -283,21 +314,22 @@ impl DomainServices {
             .await?;
 
         let top_artists = sqlx::query(concat!(
-            listens_cte!(),
+            listened_cte!(),
             "SELECT g.id, g.name, g.plays, \
                     COALESCE((SELECT c.artwork_hash FROM artist_image_choice c \
                                WHERE c.artist_id=g.id AND c.kind='portrait'), \
                              (SELECT ar.artwork_hash FROM artist ar WHERE ar.id=g.id)) \
                       AS artwork_hash \
-               FROM (SELECT MIN(a.id) AS id, MIN(a.name) AS name, COUNT(*) AS plays, \
-                            MAX(l.played_at) AS last_played \
-                       FROM listens l JOIN artist a ON a.id=l.artist_id \
+               FROM (SELECT MIN(a.id) AS id, MIN(a.name) AS name, SUM(l.plays) AS plays, \
+                            MAX(l.last_played) AS last_played \
+                       FROM listened l JOIN artist a ON a.id=l.artist_id \
                       GROUP BY a.canonical_name) g \
               ORDER BY g.plays DESC, g.last_played DESC, g.name COLLATE NOCASE, g.id \
               LIMIT ?"
         ))
         .bind(&user)
         .bind(since)
+        .bind(&user)
         .bind(query.limit)
         .fetch_all(&mut *connection)
         .await?
@@ -315,9 +347,10 @@ impl DomainServices {
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
         let top_genres = sqlx::query(concat!(
-            listens_cte!(),
-            "SELECT MIN(g.name) AS name, COUNT(*) AS plays, MAX(l.played_at) AS last_played \
-               FROM listens l JOIN track_genre tg ON tg.track_id=l.track_id \
+            listened_cte!(),
+            "SELECT MIN(g.name) AS name, SUM(l.plays) AS plays, \
+                    MAX(l.last_played) AS last_played \
+               FROM listened l JOIN track_genre tg ON tg.track_id=l.track_id \
                JOIN genre g ON g.id=tg.genre_id \
               GROUP BY g.canonical_name \
               ORDER BY plays DESC, last_played DESC, name COLLATE NOCASE \
@@ -325,6 +358,7 @@ impl DomainServices {
         ))
         .bind(&user)
         .bind(since)
+        .bind(&user)
         .bind(query.limit)
         .fetch_all(&mut *connection)
         .await?
@@ -337,32 +371,32 @@ impl DomainServices {
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
+        // Counted per listener's day in SQL, an integer division; named and,
+        // for the long periods, folded into months here. A date format per
+        // listen was the costliest expression on the page.
         let bucket = query.period.bucket();
-        let format = match bucket {
-            StatsBucketSize::Day => "%Y-%m-%d",
-            StatsBucketSize::Month => "%Y-%m",
-        };
-        let counted = sqlx::query(concat!(
-            listens_cte!(),
-            "SELECT strftime(?, (l.played_at + ?) / 1000, 'unixepoch') AS label, \
-                    COUNT(*) AS plays, COALESCE(SUM(l.duration_ms), 0) AS listening_ms \
-               FROM listens l GROUP BY label ORDER BY label"
+        let days = sqlx::query(concat!(
+            each_listen_cte!(),
+            "SELECT (e.played_at + ?) / 86400000 AS day, COUNT(*) AS plays, \
+                    COALESCE(SUM(e.duration_ms), 0) AS listening_ms \
+               FROM each_listen e GROUP BY day ORDER BY day"
         ))
         .bind(&user)
+        .bind(&user)
         .bind(since)
-        .bind(format)
         .bind(offset_ms)
         .fetch_all(&mut *connection)
         .await?
         .into_iter()
         .map(|row| {
-            Ok(StatsBucket {
-                label: row.try_get("label")?,
-                plays: row.try_get("plays")?,
-                listening_ms: row.try_get("listening_ms")?,
-            })
+            Ok((
+                row.try_get::<i64, _>("day")?,
+                row.try_get::<i64, _>("plays")?,
+                row.try_get::<i64, _>("listening_ms")?,
+            ))
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let counted = buckets_of(bucket, &days);
         let timeline = match from {
             Some(_) => fill_timeline(query.period, now, offset_ms, counted),
             None => counted,
@@ -371,17 +405,18 @@ impl DomainServices {
         let mut moments = Vec::with_capacity(2);
         for ordering in [
             concat!(
-                listens_cte!(),
-                "SELECT l.track_id, l.played_at FROM listens l \
-                 ORDER BY l.played_at, l.track_id LIMIT 1"
+                each_listen_cte!(),
+                "SELECT e.track_id, e.played_at FROM each_listen e \
+                 ORDER BY e.played_at, e.track_id LIMIT 1"
             ),
             concat!(
-                listens_cte!(),
-                "SELECT l.track_id, l.played_at FROM listens l \
-                 ORDER BY l.played_at DESC, l.track_id DESC LIMIT 1"
+                each_listen_cte!(),
+                "SELECT e.track_id, e.played_at FROM each_listen e \
+                 ORDER BY e.played_at DESC, e.track_id DESC LIMIT 1"
             ),
         ] {
             let moment = match sqlx::query(ordering)
+                .bind(&user)
                 .bind(&user)
                 .bind(since)
                 .fetch_optional(&mut *connection)
@@ -489,6 +524,34 @@ fn first_of_month(date: NaiveDate) -> NaiveDate {
     date.with_day(1).expect("every month has a first")
 }
 
+/// Days counted in SQL — the listener's day number, plays, listening time, in
+/// order — named and, for the long periods, folded into their months.
+fn buckets_of(size: StatsBucketSize, days: &[(i64, i64, i64)]) -> Vec<StatsBucket> {
+    let mut buckets: Vec<StatsBucket> = Vec::new();
+    for &(day, plays, listening_ms) in days {
+        let date = chrono::DateTime::from_timestamp(day.saturating_mul(86_400), 0)
+            .unwrap_or_default()
+            .date_naive();
+        let label = match size {
+            StatsBucketSize::Day => date.format("%Y-%m-%d"),
+            StatsBucketSize::Month => date.format("%Y-%m"),
+        }
+        .to_string();
+        match buckets.last_mut() {
+            Some(last) if last.label == label => {
+                last.plays += plays;
+                last.listening_ms += listening_ms;
+            }
+            _ => buckets.push(StatsBucket {
+                label,
+                plays,
+                listening_ms,
+            }),
+        }
+    }
+    buckets
+}
+
 /// Every bucket of a bounded period, the counted ones in their place.
 fn fill_timeline(
     period: StatsPeriod,
@@ -565,6 +628,26 @@ mod tests {
             "2025-11-01"
         );
         assert_eq!(period_start(StatsPeriod::All, NOW, 0), None);
+    }
+
+    #[test]
+    fn days_are_named_and_folded_into_months() {
+        // 2026-10-30, 2026-10-31 and 2026-11-01, as day numbers.
+        let first = NaiveDate::from_ymd_opt(2026, 10, 30)
+            .unwrap()
+            .signed_duration_since(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+            .num_days();
+        let days = [(first, 1, 10), (first + 1, 2, 20), (first + 2, 4, 40)];
+        let daily = buckets_of(StatsBucketSize::Day, &days);
+        assert_eq!(
+            daily.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(),
+            ["2026-10-30", "2026-10-31", "2026-11-01"]
+        );
+        let monthly = buckets_of(StatsBucketSize::Month, &days);
+        assert_eq!(monthly.len(), 2);
+        assert_eq!(monthly[0].label, "2026-10");
+        assert_eq!((monthly[0].plays, monthly[0].listening_ms), (3, 30));
+        assert_eq!((monthly[1].plays, monthly[1].listening_ms), (4, 40));
     }
 
     #[test]

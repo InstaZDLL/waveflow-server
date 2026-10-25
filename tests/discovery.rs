@@ -1040,15 +1040,19 @@ async fn a_mix_is_varied_and_the_same_all_day() {
         assert_ne!(pair[0].artist, pair[1].artist);
     }
 
+    // Most played is a ranking: twice before once, whatever came last.
+    listen(&state, me, ids[31], 3 * MINUTE).await;
+    listen(&state, me, ids[31], 2 * MINUTE).await;
     listen(&state, me, ids[30], MINUTE).await;
     let played = state.services.mix(me, "most-played", &query).await.unwrap();
-    assert_eq!(order(&played), [ids[30]]);
+    assert_eq!(order(&played), [ids[31], ids[30]]);
     let never = state
         .services
         .mix(me, "never-played", &query)
         .await
         .unwrap();
     assert!(!order(&never).contains(&ids[30]));
+    assert!(!order(&never).contains(&ids[31]));
 }
 
 /// A favourite is forgotten when starred long ago and not listened to

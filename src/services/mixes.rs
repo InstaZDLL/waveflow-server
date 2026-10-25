@@ -16,26 +16,39 @@
 use super::*;
 use statistics::local_day;
 
-/// The candidate projection: the track, its first credited artist folded the
-/// way the catalogue folds names (else its display string, else itself, so a
-/// track nobody is credited on is its own artist), and its cover. `$extra`
-/// adds columns. Binds the user id, then the JSON library list twice.
+/// The candidates: track ids alone, so that ordering them and cutting them to
+/// [`MIX_POOL`] sorts ids and computes nothing per row. What a candidate
+/// needs besides its id is read afterwards, for the pool alone, by
+/// [`MIX_DETAILS`]. `join` adds a relation joined ahead of the membership,
+/// whose binds then come first: the user id, in the one use there is.
+/// Binds the user id, then the JSON library list twice.
 macro_rules! mix_pool {
-    ($extra:literal) => {
+    () => {
+        mix_pool!(join "")
+    };
+    (join $join:literal) => {
         concat!(
-            "SELECT t.id, t.artwork_hash, \
-                    COALESCE((SELECT a.canonical_name FROM track_participant tp \
-                               JOIN artist a ON a.id=tp.artist_id \
-                              WHERE tp.track_id=t.id AND tp.role='artist' \
-                              ORDER BY tp.position LIMIT 1), \
-                             t.artist_display, t.id) AS artist_key",
-            $extra,
-            " FROM track t JOIN library_member m ON m.library_id=t.library_id \
+            "SELECT t.id FROM track t",
+            $join,
+            " JOIN library_member m ON m.library_id=t.library_id \
               WHERE m.user_id=? AND t.is_available=1 \
                 AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))"
         )
     };
 }
+
+/// What a candidate carries besides its id: its first credited artist folded
+/// the way the catalogue folds names (else its display string, else itself, so
+/// a track nobody is credited on is its own artist), and its cover. Binds the
+/// user id, then the JSON list of the pool's ids.
+const MIX_DETAILS: &str = "SELECT t.id, t.artwork_hash, \
+        COALESCE((SELECT a.canonical_name FROM track_participant tp \
+                   JOIN artist a ON a.id=tp.artist_id \
+                  WHERE tp.track_id=t.id AND tp.role='artist' \
+                  ORDER BY tp.position LIMIT 1), \
+                 t.artist_display, t.id) AS artist_key \
+   FROM track t JOIN library_member m ON m.library_id=t.library_id \
+  WHERE m.user_id=? AND t.id IN (SELECT value FROM json_each(?))";
 
 /// The most candidates a mix is chosen from.
 pub const MIX_POOL: i64 = 2_000;
@@ -273,18 +286,17 @@ impl DomainServices {
         let user = user_id.to_string();
         let rows = match kind {
             MixKind::MostPlayed => {
+                // Driven by the listens, counted per track on the covering
+                // index: only what was played is ever looked at.
                 sqlx::query(concat!(
-                    "SELECT * FROM (",
-                    mix_pool!(
-                        ", (SELECT COUNT(*) FROM play_event pe \
-                            WHERE pe.user_id=m.user_id AND pe.submission=1 \
-                              AND pe.track_id=t.id) AS plays, \
-                           (SELECT MAX(pe.played_at) FROM play_event pe \
-                            WHERE pe.user_id=m.user_id AND pe.submission=1 \
-                              AND pe.track_id=t.id) AS last_played"
-                    ),
-                    ") WHERE plays > 0 ORDER BY plays DESC, last_played DESC, id LIMIT ?"
+                    mix_pool!(join " JOIN (SELECT pe.track_id, COUNT(*) AS plays, \
+                                           MAX(pe.played_at) AS last_played \
+                                      FROM play_event pe \
+                                     WHERE pe.user_id=? AND pe.submission=1 \
+                                     GROUP BY pe.track_id) p ON p.track_id=t.id"),
+                    " ORDER BY p.plays DESC, p.last_played DESC, t.id LIMIT ?"
                 ))
+                .bind(&user)
                 .bind(&user)
                 .bind(folders.as_deref())
                 .bind(folders.as_deref())
@@ -294,7 +306,7 @@ impl DomainServices {
             }
             MixKind::RecentlyAdded => {
                 sqlx::query(concat!(
-                    mix_pool!(""),
+                    mix_pool!(),
                     " AND t.created_at >= ? ORDER BY t.created_at DESC, t.id LIMIT ?"
                 ))
                 .bind(&user)
@@ -307,7 +319,7 @@ impl DomainServices {
             }
             MixKind::NeverPlayed => {
                 sqlx::query(concat!(
-                    mix_pool!(""),
+                    mix_pool!(),
                     " AND NOT EXISTS (SELECT 1 FROM play_event pe \
                         WHERE pe.user_id=m.user_id AND pe.submission=1 AND pe.track_id=t.id) \
                       ORDER BY (t.id < ?), t.id LIMIT ?"
@@ -322,7 +334,7 @@ impl DomainServices {
             }
             MixKind::ForgottenFavourites => {
                 sqlx::query(concat!(
-                    mix_pool!(""),
+                    mix_pool!(),
                     " AND EXISTS (SELECT 1 FROM user_star us \
                         WHERE us.user_id=m.user_id AND us.entity_type='track' \
                           AND us.entity_id=t.id AND us.starred_at < ?) \
@@ -343,7 +355,7 @@ impl DomainServices {
             }
             MixKind::Genre(canonical) => {
                 sqlx::query(concat!(
-                    mix_pool!(""),
+                    mix_pool!(),
                     song_genre_clause!(),
                     " ORDER BY (t.id < ?), t.id LIMIT ?"
                 ))
@@ -358,7 +370,7 @@ impl DomainServices {
             }
             MixKind::Decade(first) => {
                 sqlx::query(concat!(
-                    mix_pool!(""),
+                    mix_pool!(),
                     " AND t.year BETWEEN ? AND ? ORDER BY (t.id < ?), t.id LIMIT ?"
                 ))
                 .bind(&user)
@@ -372,16 +384,35 @@ impl DomainServices {
                 .await?
             }
         };
-        let mut pool = rows
+        let ids = rows
             .into_iter()
-            .map(|row| {
-                Ok(Candidate {
-                    id: parse_uuid(row.try_get("id")?)?,
-                    artist: row.try_get("artist_key")?,
-                    artwork_hash: row.try_get("artwork_hash")?,
+            .map(|row| parse_uuid(row.try_get("id")?))
+            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let mut details: HashMap<Uuid, (String, Option<String>)> = HashMap::new();
+        if !ids.is_empty() {
+            let json = serde_json::to_string(&ids).map_err(|_| ServiceError::Invalid)?;
+            for row in sqlx::query(MIX_DETAILS)
+                .bind(&user)
+                .bind(json)
+                .fetch_all(&mut *connection)
+                .await?
+            {
+                details.insert(
+                    parse_uuid(row.try_get("id")?)?,
+                    (row.try_get("artist_key")?, row.try_get("artwork_hash")?),
+                );
+            }
+        }
+        let mut pool: Vec<Candidate> = ids
+            .into_iter()
+            .filter_map(|id| {
+                details.remove(&id).map(|(artist, artwork_hash)| Candidate {
+                    id,
+                    artist,
+                    artwork_hash,
                 })
             })
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+            .collect();
         if !kind.ranked() {
             pool.sort_by_cached_key(|candidate| draw_rank(&seed, candidate.id));
         }
@@ -398,22 +429,27 @@ impl DomainServices {
     ) -> Result<Vec<(String, String)>, ServiceError> {
         let folders = folder_filter(&query.library_ids);
         let rows = sqlx::query(
-            "WITH visible AS (SELECT t.id, m.user_id FROM track t \
+            // The listens counted per track first, on the covering index,
+            // then joined: one row per track rather than one per listen.
+            "WITH visible AS (SELECT t.id FROM track t \
                 JOIN library_member m ON m.library_id=t.library_id \
                WHERE m.user_id=? AND t.is_available=1 \
-                 AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))) \
+                 AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))), \
+                  played AS (SELECT pe.track_id, COUNT(*) AS n FROM play_event pe \
+               WHERE pe.user_id=? AND pe.submission=1 AND pe.played_at >= ? \
+               GROUP BY pe.track_id) \
              SELECT g.canonical_name, MIN(g.name) AS name, \
-                    COUNT(pe.id) AS plays, COUNT(DISTINCT v.id) AS tracks \
+                    COALESCE(SUM(p.n), 0) AS plays, COUNT(DISTINCT v.id) AS tracks \
                FROM visible v \
                JOIN track_genre tg ON tg.track_id=v.id JOIN genre g ON g.id=tg.genre_id \
-               LEFT JOIN play_event pe ON pe.track_id=v.id AND pe.user_id=v.user_id \
-                     AND pe.submission=1 AND pe.played_at >= ? \
+               LEFT JOIN played p ON p.track_id=v.id \
               GROUP BY g.canonical_name \
               ORDER BY plays DESC, tracks DESC, name COLLATE NOCASE LIMIT ?",
         )
         .bind(user_id.to_string())
         .bind(folders.as_deref())
         .bind(folders.as_deref())
+        .bind(user_id.to_string())
         .bind(now_ms() - TASTE_DAYS * DAY_MS)
         .bind(GENRE_MIXES)
         .fetch_all(&mut *connection)
@@ -434,22 +470,24 @@ impl DomainServices {
     ) -> Result<Vec<i64>, ServiceError> {
         let folders = folder_filter(&query.library_ids);
         let rows = sqlx::query_scalar::<_, i64>(
-            "WITH visible AS (SELECT t.id, t.year, m.user_id FROM track t \
+            "WITH visible AS (SELECT t.id, t.year FROM track t \
                 JOIN library_member m ON m.library_id=t.library_id \
                WHERE m.user_id=? AND t.is_available=1 AND t.year BETWEEN 1000 AND 2999 \
-                 AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))) \
+                 AND (? IS NULL OR t.library_id IN (SELECT value FROM json_each(?)))), \
+                  played AS (SELECT pe.track_id, COUNT(*) AS n FROM play_event pe \
+               WHERE pe.user_id=? AND pe.submission=1 AND pe.played_at >= ? \
+               GROUP BY pe.track_id) \
              SELECT decade FROM (\
                SELECT (v.year / 10) * 10 AS decade, \
-                      COUNT(pe.id) AS plays, COUNT(DISTINCT v.id) AS tracks \
-                 FROM visible v \
-                 LEFT JOIN play_event pe ON pe.track_id=v.id AND pe.user_id=v.user_id \
-                       AND pe.submission=1 AND pe.played_at >= ? \
+                      COALESCE(SUM(p.n), 0) AS plays, COUNT(*) AS tracks \
+                 FROM visible v LEFT JOIN played p ON p.track_id=v.id \
                 GROUP BY decade) \
              ORDER BY plays DESC, tracks DESC, decade DESC LIMIT ?",
         )
         .bind(user_id.to_string())
         .bind(folders.as_deref())
         .bind(folders.as_deref())
+        .bind(user_id.to_string())
         .bind(now_ms() - TASTE_DAYS * DAY_MS)
         .bind(DECADE_MIXES)
         .fetch_all(&mut *connection)
