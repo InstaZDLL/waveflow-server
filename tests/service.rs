@@ -210,6 +210,81 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     );
 }
 
+/// The files that make the client installable are served as themselves, or
+/// answered a JSON 404 — never the shell (RFC-022 decision 4).
+///
+/// Which of the two is required depends on what is embedded, and the test
+/// asks the binary rather than the source tree: `build.rs` embeds the real
+/// client when `webapp/dist` holds one and a placeholder page otherwise, and
+/// the shell at `/` says which. With the real client, every install asset must
+/// be served with its own type — a build that dropped one would not be
+/// installable, and accepting a 404 there would let it pass. With the
+/// placeholder, each must be a definitive JSON 404. Neither may ever be
+/// `text/html`, which is what the router fallback gives any path it does not
+/// know, and which a browser reading a manifest fails on without saying why.
+#[tokio::test]
+async fn the_install_manifest_and_icons_are_never_answered_with_the_shell() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let get = |path: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let shell = body_text(get("/").await).await;
+    // The placeholder's own sentence, in `build.rs`.
+    let built = !shell.contains("The web client is not built");
+
+    for (path, expected) in [
+        ("/manifest.webmanifest", "application/manifest+json"),
+        ("/apple-touch-icon.png", "image/png"),
+        ("/icons/icon-192.png", "image/png"),
+        ("/icons/icon-512.png", "image/png"),
+        ("/icons/maskable-512.png", "image/png"),
+    ] {
+        let response = get(path).await;
+        let status = response.status();
+        let kind = response
+            .headers()
+            .get("content-type")
+            .map(|value| value.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        assert!(!kind.starts_with("text/html"), "{path} answered the shell");
+        if built {
+            assert_eq!(status, StatusCode::OK, "{path} is missing from the build");
+            assert_eq!(kind, expected, "{path}");
+            if path == "/manifest.webmanifest" {
+                let manifest: serde_json::Value =
+                    serde_json::from_str(&body_text(response).await).unwrap();
+                assert_eq!(manifest["start_url"], "/");
+                assert_eq!(manifest["display"], "standalone");
+                assert!(manifest["icons"]
+                    .as_array()
+                    .is_some_and(|icons| icons.iter().any(|icon| icon["purpose"] == "maskable")));
+            }
+        } else {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(kind.starts_with("application/json"), "{path}");
+        }
+    }
+
+    // A name no build ships is a JSON 404 whatever is embedded: the case that
+    // still tells the asset-only rule from the fallback when a real client is
+    // embedded and every shipped icon exists.
+    let missing = get("/icons/not-shipped.png").await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(missing
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default()
+        .starts_with("application/json"));
+}
+
 #[tokio::test]
 async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     let (_temp, config, state) = test_app().await;
@@ -323,6 +398,113 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     let health = get("/health").await;
     assert_eq!(health.status(), StatusCode::OK);
     assert_eq!(json_body(health).await["status"], "ok");
+}
+
+/// RFC-019 decision 2: the web client and the public shares tell a browser
+/// how far to trust them, and the Subsonic façade, whose wire is frozen, is
+/// left exactly as it was.
+#[tokio::test]
+async fn the_web_client_and_shares_carry_security_headers_and_rest_does_not() {
+    use base64::Engine;
+    use sha2::Digest;
+
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let get = |uri: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let header = |response: &axum::response::Response, name: &str| {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().unwrap().to_owned())
+    };
+
+    // The shell, a client route, and a refusal from the fallback alike.
+    for uri in ["/", "/albums/some-client-route", "/favicon.ico"] {
+        let response = get(uri).await;
+        assert_eq!(
+            header(&response, "x-content-type-options").as_deref(),
+            Some("nosniff"),
+            "{uri}"
+        );
+        // Nothing to another host; not `no-referrer`, which adds nothing to
+        // that and can null the `Origin` the sign-in checks (RFC-019).
+        assert_eq!(
+            header(&response, "referrer-policy").as_deref(),
+            Some("same-origin"),
+            "{uri}"
+        );
+        assert_eq!(
+            header(&response, "x-frame-options").as_deref(),
+            Some("SAMEORIGIN"),
+            "{uri}"
+        );
+        let policy = header(&response, "content-security-policy").expect(uri);
+        assert!(policy.contains("frame-ancestors 'self'"), "{uri}: {policy}");
+        assert!(policy.contains("object-src 'none'"), "{uri}: {policy}");
+        assert!(!policy.contains("unsafe-inline"), "{uri}: {policy}");
+    }
+
+    // Each inline block of the shell actually served is admitted by its own
+    // digest — computed here, apart from the server's parser — and the policy
+    // admits no more of them than the shell holds. With the placeholder shell
+    // CI embeds there are none; with a real client build there are two.
+    let shell = get("/").await;
+    let policy = header(&shell, "content-security-policy").unwrap();
+    let html = body_text(shell).await;
+    let mut inline = 0;
+    for tag in ["script", "style"] {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        for (start, _) in html.match_indices(&open) {
+            let content = &html[start + open.len()..];
+            let content = &content[..content.find(&close).expect("a closed block")];
+            let digest = base64::engine::general_purpose::STANDARD
+                .encode(sha2::Sha256::digest(content.as_bytes()));
+            assert!(
+                policy.contains(&format!("'sha256-{digest}'")),
+                "the inline {tag} is not admitted: {policy}"
+            );
+            inline += 1;
+        }
+    }
+    assert_eq!(policy.matches("'sha256-").count(), inline, "{policy}");
+
+    // A share's token is its path, so nothing may carry it away as a referrer.
+    // A route that matched and found no share answers with the headers too.
+    let share = get("/share/nope").await;
+    assert_eq!(share.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        header(&share, "referrer-policy").as_deref(),
+        Some("no-referrer")
+    );
+    assert_eq!(
+        header(&share, "x-content-type-options").as_deref(),
+        Some("nosniff")
+    );
+    assert_eq!(header(&share, "x-frame-options").as_deref(), Some("DENY"));
+    assert_eq!(
+        header(&share, "content-security-policy").as_deref(),
+        Some("frame-ancestors 'none'")
+    );
+
+    // The façade: none of them.
+    let rest = get("/rest/ping").await;
+    for name in [
+        "content-security-policy",
+        "x-content-type-options",
+        "referrer-policy",
+        "x-frame-options",
+    ] {
+        assert_eq!(header(&rest, name), None, "/rest carries {name}");
+    }
 }
 
 #[tokio::test]

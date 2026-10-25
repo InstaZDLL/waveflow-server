@@ -1009,6 +1009,7 @@ main {
 }
 
 .artist-about,
+.artist-discography,
 .artist-similar {
   display: grid;
   gap: var(--space-3);
@@ -1016,6 +1017,7 @@ main {
 }
 
 .artist-about h3,
+.artist-discography h3,
 .artist-similar h3 {
   margin: 0;
   font-size: var(--text-xl);

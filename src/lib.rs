@@ -10,6 +10,7 @@ pub mod database;
 pub mod enrichment;
 pub mod lyrics;
 pub mod media;
+pub mod migration_backup;
 pub mod natural_order;
 pub mod oauth;
 pub mod outbound;
@@ -20,7 +21,9 @@ pub mod quality;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
+pub mod security_headers;
 pub mod services;
+pub mod setup_token;
 pub mod sign_in;
 pub mod stream_ticket;
 pub mod subsonic;
@@ -87,6 +90,9 @@ pub struct AppState {
     /// `WAVEFLOW_TRUSTED_PROXIES`: whose `X-Forwarded-For` names the client a
     /// sign-in is counted under (RFC-017 decision 2).
     pub trusted_proxies: Arc<[ipnet::IpNet]>,
+    /// The one-time token first-run setup asks for while no account exists
+    /// (RFC-019 decision 1).
+    pub setup: Arc<setup_token::SetupGate>,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
@@ -288,6 +294,7 @@ fn chunk_body_limit(limits: &config::UploadLimits) -> usize {
         services::PurgeRequest,
         services::PurgeOutcome,
         services::AlbumItem,
+        services::ReleaseGroup,
         services::ArtistItem,
         services::GenreItem,
         services::LibraryMember,
@@ -651,7 +658,15 @@ fn annotate_mutation_headers(openapi: &mut utoipa::openapi::OpenApi) {
 
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     let db = database::Database::open(config).await?;
-    db.migrate().await?;
+    // Before anything is applied, and only when something will be (RFC-019
+    // decision 3): the copy is the database as this boot found it.
+    let copy = migration_backup::before_migrating(&db, config).await?;
+    if let Err(error) = db.migrate().await {
+        return Err(match copy {
+            Some(copy) => error.context(migration_backup::restore_hint(&copy)),
+            None => error,
+        });
+    }
     let secret_box = Arc::new(security::SecretBox::load_or_create(
         &config.instance_key_path,
     )?);
@@ -669,6 +684,12 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
     // scheduling a rescan on a database this instance is about to refuse would
     // be writing to a catalogue that is not ours.
     db.reconcile_catalog_identity(&config.pid).await?;
+    // After the key check too: a boot that is about to be refused has no
+    // business writing a token into a data directory that is not its own.
+    let setup = Arc::new(setup_token::SetupGate::prepare(
+        config,
+        db.setup_required().await?,
+    )?);
     let auth = authentication::AuthService::new(db.clone(), config);
     let scanner = scanner::ScanManager::new(
         db.clone(),
@@ -801,6 +822,7 @@ pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {
         // the place that decides what a ceiling falls back to.
         canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
         trusted_proxies: config.trusted_proxies.clone().into(),
+        setup,
     })
 }
 

@@ -52,6 +52,19 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
             );
         }
     }
+    // Here for the same reason as the warning above: a CLI command's standard
+    // output is not the place for it. Where to find the token, never the token
+    // (RFC-019 decision 1).
+    match state.setup.source() {
+        Some(waveflow_server::setup_token::TokenSource::File(path)) => tracing::warn!(
+            path = %path.display(),
+            "no account exists yet: the first administrator is created with the setup token stored in this file"
+        ),
+        Some(waveflow_server::setup_token::TokenSource::Operator) => tracing::warn!(
+            "no account exists yet: the first administrator is created with the value of WAVEFLOW_SETUP_TOKEN"
+        ),
+        None => {}
+    }
     state.scanner.spawn_background(config.scan_interval);
     // A change scanned once it settles, on top of the interval (RFC-021).
     if config.watch {

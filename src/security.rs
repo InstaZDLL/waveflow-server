@@ -191,8 +191,9 @@ pub fn token_matches(token: &str, expected_hash: &[u8]) -> bool {
 /// `false` means the path was already taken. [`SecretBox::load_or_create`]
 /// treats that as a race it lost and re-reads the winner's key;
 /// [`SecretBox::create_instance_key`] treats it as a refusal, because it is
-/// staging a file that must not exist.
-fn write_new_secret_file(path: &Path, bytes: &[u8]) -> Result<bool, SecurityError> {
+/// staging a file that must not exist. [`crate::setup_token`] writes the
+/// setup token through it too, for the owner-only mode on Unix.
+pub(crate) fn write_new_secret_file(path: &Path, bytes: &[u8]) -> Result<bool, SecurityError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

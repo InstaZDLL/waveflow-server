@@ -51,18 +51,22 @@ quietly ignored.
 ### First-run setup
 
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
-embedded browser UI can then create the first administrator. The setup write is
-unauthenticated but requires an exact same-origin `Origin` header:
+embedded browser UI can then create the first administrator. The setup write
+requires an exact same-origin `Origin` header **and the one-time setup token**
+([RFC-019](rfcs/RFC-019-exposure-hardening.md)): the content of `setup-token`
+in the data directory, or the value of `WAVEFLOW_SETUP_TOKEN` when the operator
+chose one.
 
 ```bash
 curl -X POST https://music.example.com/api/v2/setup \
   -H "Origin: https://music.example.com" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"replace-with-at-least-12-characters"}'
+  -d "{\"username\":\"admin\",\"password\":\"replace-with-at-least-12-characters\",\"setup_token\":\"$(cat data/setup-token)\"}"
 ```
 
-It returns `201` with `{"user_id":"USER_UUID"}` and is rejected after setup
-has completed. Operators may instead use the `account create-admin` CLI command
+It returns `201` with `{"user_id":"USER_UUID"}`. A missing or wrong token is
+`403` with the code `setup_token_rejected`, and once an account exists the
+request is `409`. Operators may instead use the `account create-admin` CLI command
 shown in the main README.
 
 ## Authentication choices
@@ -335,6 +339,21 @@ listing never has to load the tracks to size it, plus `is_compilation`,
 `musicbrainz_id` too. An `AlbumItem` also carries `artists` and `genres`, derived
 from its available tracks.
 
+It carries `release_types` as the files spelled them, and since
+[RFC-022](rfcs/RFC-022-playback-and-web-client.md) a `release_group` derived
+from them: one of `album`, `ep`, `single`, `live` or `compilation`. Group a
+discography by that field rather than by the raw types, whose vocabulary and
+separators vary by tagger. The rule, applied in order: a compilation flag or
+type, then a `live` type, then `ep`, then `single`; anything else, or no type
+at all, is an `album`.
+
+`GET /api/v2/artists/{artist_id}` also carries `appears_on`: the albums of which
+at least one available track credits the artist in its `artist` role, and on
+which the artist is not an album artist — a guest appearance, a split single.
+Credits in other roles (composer, producer, performer) do not count. It is
+present on that route only; `GET /api/v2/artists/{artist_id}/albums` stays the
+album-artist list.
+
 Those two are release and artist identifiers, not the recording identifier a
 `SongItem` carries under the same name, and neither is read from a single file.
 Tracks of one album routinely disagree — a library assembled over years holds
@@ -451,8 +470,13 @@ curl "https://music.example.com/api/v2/tracks/TRACK_UUID/stream?format=opus&bitr
   --output track.ogg
 ```
 
-Valid formats are `raw`, `mp3` and `opus`. Byte ranges apply to originals and
-completed cached transcodes. A live transcode uses temporal `offset_ms` and a
+Valid formats are `raw`, `mp3`, `opus` and `aac`. `aac` is AAC-LC in an ADTS
+stream (`audio/aac`), added by
+[RFC-022](rfcs/RFC-022-playback-and-web-client.md); a client that must work
+against an older server reads `formats` from `GET /api/v2/transcode/status`
+before offering it. Any other value is refused with `400`: unlike the Subsonic
+façade, this API does not fall back to a format nobody asked for. Byte ranges
+apply to originals and completed cached transcodes. A live transcode uses temporal `offset_ms` and a
 chunked response; it does not implement arbitrary output-byte ranges.
 
 Seeking a live transcode through `offset_ms` abandons the stream that was
@@ -611,10 +635,16 @@ See [RFC-007](rfcs/RFC-007-library-event-stream.md) for the reasoning.
 Transcoding is bounded twice: once for the whole server and once per account.
 `GET /api/v2/transcode/status` reports both ceilings alongside `active`, so a
 client can size its own concurrency before asking rather than discovering the
-limit by being refused:
+limit by being refused. It also lists the `formats` a transcode can produce:
 
 ```json
-{ "available": true, "active": 1, "global_limit": 4, "per_user_limit": 2 }
+{
+  "available": true,
+  "active": 1,
+  "global_limit": 4,
+  "per_user_limit": 2,
+  "formats": ["mp3", "opus", "aac"]
+}
 ```
 
 Over either ceiling the stream route answers `429` with `Retry-After`.

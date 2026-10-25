@@ -30,6 +30,13 @@ const en = {
   "nav.moreClose": "Close",
   "preferences.theme": "Theme",
   "preferences.language": "Language",
+  "replayGain.label": "ReplayGain",
+  "replayGain.off": "Off",
+  "replayGain.track": "Track gain",
+  "replayGain.album": "Album gain",
+  "replayGain.preamp": "Preamp",
+  "replayGain.detail":
+    "Plays every track at the loudness its tags measured, so one record is not louder than the next. Album gain keeps the differences inside an album. A track without tags plays as it is. It routes playback through Web Audio, which some phones pause with the screen.",
   "common.loading": "Loading",
   "common.loadError": "We could not load this view",
   "common.noAlbums": "No albums yet.",
@@ -68,6 +75,7 @@ const en = {
   "settings.detail":
     "Appearance, language, and the clients allowed to read your library.",
   "settings.appearance": "Appearance",
+  "settings.playback": "Playback",
   "settings.scrobblingDetail":
     "Send what you listen to to ListenBrainz, Last.fm or Maloja.",
   "settings.scrobblingOpen": "Open scrobbling settings",
@@ -242,6 +250,11 @@ const en = {
   "login.welcome": "Welcome back",
   "login.setupDetail":
     "This is a new server. Choose the first administrator account.",
+  "login.setupToken": "Setup token",
+  "login.setupTokenHint":
+    "The server wrote it to the file setup-token in its data directory, and its log names the path. If you set WAVEFLOW_SETUP_TOKEN, enter that value.",
+  "login.setupTokenError":
+    "This setup token is not the right one. Copy it again from the setup-token file.",
   "login.username": "Username",
   "login.password": "Password",
   "login.setupError":
@@ -263,6 +276,12 @@ const en = {
     other: "{count} albums in your library",
   },
   "artists.mostPlayed": "Most played here",
+  "artists.section.album": "Albums",
+  "artists.section.ep": "EPs",
+  "artists.section.single": "Singles",
+  "artists.section.live": "Live",
+  "artists.section.compilation": "Compilations",
+  "artists.section.appearsOn": "Appears on",
   "artists.about": "About",
   "artists.readMore": "Read more",
   "artists.similar": "Similar artists in your library",
@@ -906,6 +925,13 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.moreClose": "Fermer",
   "preferences.theme": "Thème",
   "preferences.language": "Langue",
+  "replayGain.label": "ReplayGain",
+  "replayGain.off": "Désactivé",
+  "replayGain.track": "Gain par piste",
+  "replayGain.album": "Gain par album",
+  "replayGain.preamp": "Préampli",
+  "replayGain.detail":
+    "Joue chaque piste au volume mesuré dans ses tags, pour qu’un disque ne sonne pas plus fort que le suivant. Le gain par album garde les écarts à l’intérieur d’un album. Une piste sans tags est jouée telle quelle. La lecture passe alors par Web Audio, que certains téléphones mettent en pause avec l’écran.",
   "common.loading": "Chargement",
   "common.loadError": "Impossible de charger cette vue",
   "common.noAlbums": "Aucun album pour le moment.",
@@ -944,6 +970,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "settings.detail":
     "Apparence, langue, et les clients autorisés à lire votre bibliothèque.",
   "settings.appearance": "Apparence",
+  "settings.playback": "Lecture",
   "settings.scrobblingDetail":
     "Envoyer ce que vous écoutez vers ListenBrainz, Last.fm ou Maloja.",
   "settings.scrobblingOpen": "Ouvrir les réglages de scrobbling",
@@ -1123,6 +1150,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "login.welcome": "Bon retour",
   "login.setupDetail":
     "Ce serveur est neuf. Choisissez son premier compte administrateur.",
+  "login.setupToken": "Jeton d’installation",
+  "login.setupTokenHint":
+    "Le serveur l’a écrit dans le fichier setup-token de son répertoire de données, dont son journal donne le chemin. Si vous avez défini WAVEFLOW_SETUP_TOKEN, saisissez cette valeur.",
+  "login.setupTokenError":
+    "Ce jeton d’installation n’est pas le bon. Copiez-le de nouveau depuis le fichier setup-token.",
   "login.username": "Nom d’utilisateur",
   "login.password": "Mot de passe",
   "login.setupError":
@@ -1144,6 +1176,12 @@ const fr: Record<TranslationKey, TranslationValue> = {
     other: "{count} albums dans votre bibliothèque",
   },
   "artists.mostPlayed": "Les plus écoutés ici",
+  "artists.section.album": "Albums",
+  "artists.section.ep": "EP",
+  "artists.section.single": "Singles",
+  "artists.section.live": "Live",
+  "artists.section.compilation": "Compilations",
+  "artists.section.appearsOn": "Apparaît sur",
   "artists.about": "À propos",
   "artists.readMore": "Lire la suite",
   "artists.similar": "Artistes proches dans votre bibliothèque",
