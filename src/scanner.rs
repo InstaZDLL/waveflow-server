@@ -1212,7 +1212,12 @@ pub(crate) const MAX_SCOPE_FOLDERS: usize = 64;
 pub(crate) fn normalised_scope(scope: &[String]) -> Option<Vec<String>> {
     let mut folders = Vec::with_capacity(scope.len());
     for folder in scope {
-        let folder = folder.trim_matches('/');
+        // A trailing separator is a spelling; a leading one is an absolute
+        // path, which no folder of a library is.
+        if folder.starts_with('/') {
+            return None;
+        }
+        let folder = folder.trim_end_matches('/');
         if folder.is_empty()
             || folder
                 .split('/')

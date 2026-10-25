@@ -617,13 +617,6 @@ h3 {
   gap: 2px;
 }
 
-/* A grid item grows to its content's minimum width unless told otherwise, and
-   a playlist's table with its entry controls is wider than a phone: the card
-   pushed past the screen instead of letting the table scroll inside it. */
-.stack > .collection {
-  min-width: 0;
-}
-
 .share-track-title {
   overflow: hidden;
   font-weight: 600;
@@ -1357,6 +1350,13 @@ button.danger {
   border: 1px solid var(--line);
   border-radius: 0.9rem;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+/* A grid item grows to its content's minimum width unless told otherwise, and
+   a playlist's table with its entry controls is wider than a phone: the card
+   pushed past the screen instead of letting the table scroll inside it. */
+.stack > .collection {
+  min-width: 0;
 }
 
 .collection-header,
