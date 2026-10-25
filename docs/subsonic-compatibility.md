@@ -264,6 +264,28 @@ thousand tracks the domain allows can be written in one `updatePlaylist` or
 `createPlaylist`. Only requests that used to be refused with
 `Invalid form body` are affected.
 
+## Deviation for RFC-023: a search reads its first 256 characters and 16 terms
+
+[RFC-023](rfcs/RFC-023-hardening.md) bounds the full-text query that
+`search3`, `search2` and the native search build from what a client typed.
+Each word was one more phrase FTS5 intersects, three times over, and nothing
+bounded them but the form body — some seven hundred kilobytes. A query is now
+read to its first 256 characters, and of those its first 16 words; the last
+word kept still matches as a prefix.
+
+The query is **narrowed, never refused**, so no client receives an error it
+never had. Only a query longer than either bound answers differently — it may
+match more than it did — and no validated client sends one: a search typed by a
+person is a few words. Two queries never reach the bound at all, and answer as
+they did:
+
+- **The literal `""`** — two double quotes, `query=%22%22` — is the match-all
+  Symfonium pages its catalogue with. It is recognised before any full-text
+  query is built and answers the paged catalogue.
+- **An empty or blank query** (`query=`, `query=%20`) names no term, and
+  answers an empty `searchResult3`, not the catalogue. Nothing else under `/rest` changes; a disabled account's shares
+closing (the same RFC) affects `/share/`, which is not part of the façade.
+
 ## Additions for RFC-025: smart playlists and podcasts
 
 Both land after the 2026-09-16 replay, and no client has been replayed against

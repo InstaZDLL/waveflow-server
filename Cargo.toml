@@ -36,6 +36,10 @@ clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 dotenvy = "0.15"
 encoding_rs = "0.8.42"
+# The API reference bundle is stored gzip-compressed (`src/reference.rs`) and
+# decompressed only for a client that takes no gzip. Already in the tree
+# through the response compression layer.
+flate2 = "1"
 futures-util = "0.3"
 hex = "0.4"
 ipnet = "2"
@@ -92,7 +96,6 @@ tower-http = { version = "0.7", features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "6", features = ["axum_extras", "uuid"] }
-utoipa-scalar = { version = "0.4", features = ["axum"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"

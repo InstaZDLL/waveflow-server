@@ -810,6 +810,29 @@ async fn subsonic_search_matches_through_the_fts_index() {
     )
     .await;
     assert_eq!(titles(&all).len(), 3);
+
+    // Only that literal pair of quotes browses everything. An empty or blank
+    // query names no term, and answers an empty result rather than the
+    // catalogue — as docs/subsonic-compatibility.md says.
+    for blank in ["", "%20%20"] {
+        let none = subsonic_json(
+            &router,
+            "search3",
+            api_key,
+            &format!("&query={blank}&songCount=500&albumCount=500&artistCount=500"),
+        )
+        .await;
+        assert_eq!(none["subsonic-response"]["status"], "ok", "query={blank:?}");
+        assert!(titles(&none).is_empty(), "query={blank:?}");
+        for kind in ["artist", "album"] {
+            assert!(
+                none["subsonic-response"]["searchResult3"][kind]
+                    .as_array()
+                    .is_none_or(Vec::is_empty),
+                "query={blank:?}: {kind}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

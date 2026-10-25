@@ -21,6 +21,7 @@ pub mod podcast;
 pub mod portrait;
 pub mod public_share;
 pub mod quality;
+pub mod reference;
 pub mod scanner;
 pub mod scrobblers;
 pub mod security;
@@ -50,7 +51,6 @@ use tower_http::{
     trace::TraceLayer,
 };
 use utoipa::OpenApi;
-use utoipa_scalar::{Scalar, Servable};
 
 pub use config::Config;
 
@@ -809,7 +809,12 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
                 };
                 scrobblers::outbound_client(config.scrobbling.request_timeout)
                     .and_then(|client| {
-                        scrobblers::lastfm::LastFm::new(client, &destination.url, application)
+                        scrobblers::lastfm::LastFm::new(
+                            client,
+                            &destination.url,
+                            application,
+                            config.scrobbling.request_timeout,
+                        )
                     })
                     .map(|target| {
                         let target = Arc::new(target);
@@ -953,7 +958,6 @@ pub fn app(config: &Config, state: AppState) -> Router {
 
     let ordinary = Router::new()
         .merge(api::router(state.clone()))
-        .merge(Router::from(Scalar::with_url(SCALAR_PATH, openapi)))
         .route(
             OPENAPI_JSON_PATH,
             axum::routing::get(move || openapi_response(openapi_for_route.clone())),
@@ -1000,6 +1004,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
         // disconnected consumers are bounded by MediaService itself.
         .merge(media::router(state.clone()))
         .merge(public_share::router(state.clone(), config.request_timeout))
+        // The API reference and the script it loads, from the binary (RFC-023
+        // decision 3). Outside the compression layer: the script is stored
+        // compressed already.
+        .merge(reference::router(&openapi))
         .merge(subsonic::router(state))
         .layer(DefaultBodyLimit::max(16 * 1024));
 

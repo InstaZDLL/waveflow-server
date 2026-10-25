@@ -141,8 +141,8 @@ struct Stream {
 async fn probe(ffprobe: &Path, path: &Path) -> Option<Stream> {
     let output = tokio::time::timeout(
         PROBE_TIMEOUT,
-        Command::new(ffprobe)
-            .args([
+        crate::media::file_input(
+            Command::new(ffprobe).args([
                 "-v",
                 "error",
                 "-select_streams",
@@ -151,12 +151,13 @@ async fn probe(ffprobe: &Path, path: &Path) -> Option<Stream> {
                 "stream=sample_rate,channels,sample_fmt",
                 "-of",
                 "default=noprint_wrappers=1",
-            ])
-            .arg(path)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
+            ]),
+            path,
+        )
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .output(),
     )
     .await
     .ok()?
@@ -200,31 +201,31 @@ pub async fn measure(
         return Measurement::Unreadable(Failure::Decode);
     };
     let remaining = deadline.saturating_sub(started.elapsed());
-    let child = Command::new(ffmpeg)
-        .args([
+    let child = crate::media::file_input(
+        Command::new(ffmpeg).args([
             "-nostdin",
             "-hide_banner",
             "-loglevel",
             "error",
             "-threads",
             "1",
-            "-i",
-        ])
-        .arg(path)
-        .args([
-            "-map",
-            "0:a:0",
-            "-f",
-            "s32le",
-            "-acodec",
-            "pcm_s32le",
-            "pipe:1",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn();
+        ]),
+        path,
+    )
+    .args([
+        "-map",
+        "0:a:0",
+        "-f",
+        "s32le",
+        "-acodec",
+        "pcm_s32le",
+        "pipe:1",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null())
+    .kill_on_drop(true)
+    .spawn();
     let Ok(mut child) = child else {
         return Measurement::Unreadable(Failure::Decode);
     };
@@ -363,18 +364,20 @@ pub async fn spectrogram(
     deadline: Duration,
 ) -> Option<Picture> {
     let mut command = Command::new(ffmpeg);
-    command
-        .args([
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-threads",
-            "1",
-            "-i",
-        ])
-        .arg(path)
-        .args(["-filter_complex", SPECTROGRAM_FILTER, "-frames:v", "1"]);
+    command.args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-threads",
+        "1",
+    ]);
+    crate::media::file_input(&mut command, path).args([
+        "-filter_complex",
+        SPECTROGRAM_FILTER,
+        "-frames:v",
+        "1",
+    ]);
     let content_type = if webp {
         command.args(["-c:v", "libwebp", "-quality", "70", "-f", "webp", "pipe:1"]);
         "image/webp"
@@ -457,5 +460,43 @@ mod tests {
         assert_ne!(decoder_digest(one), decoder_digest(two));
         assert_ne!(decoder_digest(one), decoder_digest(three));
         assert_eq!(decoder_digest(one).len(), 64);
+    }
+
+    /// The probe, the measurement and the spectrogram open files and nothing
+    /// else (RFC-023 decision 2): an input that is a URL is refused by
+    /// ffprobe and by FFmpeg before either connects to anything, and a real
+    /// file still measures.
+    #[tokio::test]
+    async fn the_analysis_opens_files_and_nothing_else() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real.wav");
+        crate::media::tests::silent_wav(&real, 1);
+        let ffmpeg = Path::new("ffmpeg");
+        let ffprobe = Path::new("ffprobe");
+        let deadline = Duration::from_secs(60);
+        assert!(
+            matches!(
+                measure(ffprobe, ffmpeg, &real, deadline).await,
+                Measurement::Silent { .. }
+            ),
+            "a real file must still be measured"
+        );
+
+        let (address, connections, listener) = crate::media::tests::counting_listener().await;
+        let url = format!("http://{address}/track.flac");
+        assert!(matches!(
+            measure(ffprobe, ffmpeg, Path::new(&url), deadline).await,
+            Measurement::Unreadable(Failure::Decode)
+        ));
+        assert!(spectrogram(ffmpeg, Path::new(&url), false, deadline)
+            .await
+            .is_none());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        listener.abort();
+        assert_eq!(
+            connections.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "neither tool may contact anything"
+        );
     }
 }

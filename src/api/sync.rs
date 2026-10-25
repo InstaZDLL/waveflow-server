@@ -161,10 +161,20 @@ pub async fn sync_socket(
     if after < 0 {
         return Err(ApiError::Validation);
     }
+    // The socket carries notices one way. What a client may send is a ping,
+    // a pong or a close, each at most 125 bytes by RFC 6455, and anything else
+    // is read and dropped. The library default buffers 64 MiB per message
+    // before dropping it, so one connection could hold that much memory for
+    // nothing; past this, the connection is closed (RFC-023 decision 5).
     Ok(upgrade
+        .max_message_size(MAX_SOCKET_MESSAGE_BYTES)
+        .max_frame_size(MAX_SOCKET_MESSAGE_BYTES)
         .on_upgrade(move |socket| serve_sync_socket(socket, state, user.id, after))
         .into_response())
 }
+
+/// The largest message or frame the sync socket accepts from a client.
+const MAX_SOCKET_MESSAGE_BYTES: usize = 4 * 1024;
 
 pub(super) async fn serve_sync_socket(
     socket: WebSocket,
