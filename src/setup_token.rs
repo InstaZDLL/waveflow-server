@@ -84,10 +84,18 @@ impl SetupGate {
         }
         let (token, source) = match &config.setup_token {
             Some(token) => {
+                // `Config::from_env` refuses a short one already; a `Config`
+                // built in process has not been through it, and the floor is
+                // what makes an unthrottled token safe at all.
+                if token.trim().chars().count() < SETUP_TOKEN_MIN_CHARS {
+                    anyhow::bail!(
+                        "the setup token must be at least {SETUP_TOKEN_MIN_CHARS} characters"
+                    );
+                }
                 // One source of truth: a file drawn by an earlier boot would
                 // otherwise name a token this boot no longer accepts.
                 remove_if_present(&path)?;
-                (token.clone(), TokenSource::Operator)
+                (token.trim().to_owned(), TokenSource::Operator)
             }
             None => (read_or_draw(&path)?, TokenSource::File(path)),
         };
@@ -182,8 +190,31 @@ fn read_or_draw(path: &Path) -> anyhow::Result<String> {
     }
     // Another process — a CLI command beside the server — wrote it first. Its
     // token is the one on disk, so it is the one to accept.
-    let content = std::fs::read_to_string(path)?;
-    Ok(content.trim().to_owned())
+    written_by_another(path)
+}
+
+/// The token another process wrote at `path`, refused while it is too short
+/// to be one.
+///
+/// The writer creates the file before it writes the token, so a reader that
+/// arrives in between sees it empty or half written. Taken as it stands, an
+/// empty file would make the empty string the token — the one value a request
+/// that sends none is compared as.
+fn written_by_another(path: &Path) -> anyhow::Result<String> {
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        anyhow::anyhow!(
+            "could not read the setup token file {}: {error}",
+            path.display()
+        )
+    })?;
+    let token = content.trim();
+    if token.chars().count() < SETUP_TOKEN_MIN_CHARS {
+        anyhow::bail!(
+            "the setup token file {} is not completely written; start the server again",
+            path.display()
+        );
+    }
+    Ok(token.to_owned())
 }
 
 fn remove_if_present(path: &Path) -> std::io::Result<()> {
@@ -257,6 +288,41 @@ mod tests {
         assert_eq!(gate.source(), Some(TokenSource::Operator));
         assert_eq!(gate.admit(Some(&drawn)), Admission::Rejected);
         assert_eq!(gate.admit(Some(&chosen)), Admission::Admitted);
+    }
+
+    #[test]
+    fn a_file_another_process_has_not_finished_writing_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(FILE_NAME);
+        let token = security::generate_token(PREFIX);
+        // Created and not yet written, then cut short: neither is a token, and
+        // the first would otherwise admit a request that sends none.
+        for partial in [
+            String::new(),
+            "\n".to_owned(),
+            token[..PREFIX.len() + 4].to_owned(),
+        ] {
+            std::fs::write(&path, &partial).unwrap();
+            let refused = written_by_another(&path).expect_err(&format!("{partial:?}"));
+            assert!(refused.to_string().contains(&path.display().to_string()));
+        }
+        std::fs::write(&path, format!("{token}\n")).unwrap();
+        assert_eq!(written_by_another(&path).unwrap(), token);
+    }
+
+    #[test]
+    fn an_operator_token_built_in_process_still_meets_the_floor() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = config(&temp);
+        config.setup_token =
+            Some(uuid::Uuid::new_v4().to_string()[..SETUP_TOKEN_MIN_CHARS - 1].to_owned());
+        assert!(SetupGate::prepare(&config, true).is_err());
+        // Spaces do not count toward it.
+        config.setup_token = Some(format!(
+            "  {}  ",
+            &uuid::Uuid::new_v4().to_string()[..SETUP_TOKEN_MIN_CHARS - 1]
+        ));
+        assert!(SetupGate::prepare(&config, true).is_err());
     }
 
     #[test]

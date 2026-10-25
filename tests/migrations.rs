@@ -746,6 +746,72 @@ async fn a_failed_upgrade_names_the_copy_it_can_be_restored_from() {
     assert_eq!(std::fs::read(copies[0].join("instance.key")).unwrap(), key);
 }
 
+/// A copy that cannot be made stops the boot before anything is applied, and
+/// leaves no half-made directory for pruning to count as a whole one.
+#[tokio::test]
+async fn a_copy_that_cannot_be_made_leaves_nothing_behind() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let mut config = Config::for_data_dir(temp.path().join("data"));
+    let (_, behind) = an_installation_behind(&config, None).await;
+    // The database copies; the key cannot, because a directory stands where
+    // the key should be.
+    config.instance_key_path = config.data_dir.join("key-is-a-directory");
+    std::fs::create_dir_all(&config.instance_key_path).unwrap();
+
+    let error = match waveflow_server::initialize(&config).await {
+        Ok(_) => panic!("a boot without its copy went ahead"),
+        Err(error) => format!("{error:#}"),
+    };
+    assert!(error.contains("could not copy the instance key"), "{error}");
+    assert!(
+        pre_migration_copies(&config).is_empty(),
+        "an incomplete copy was left behind: {:?}",
+        pre_migration_copies(&config)
+    );
+    assert_eq!(
+        applied_in(&config.database_path).await,
+        behind,
+        "a migration ran without its copy"
+    );
+}
+
+/// The copy a boot has just made is kept even when its name sorts below the
+/// others — a clock that went back, or copies dated in the future.
+#[tokio::test]
+async fn the_copy_just_made_survives_a_clock_that_went_back() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let config = Config::for_data_dir(temp.path().join("data"));
+    let (_, behind) = an_installation_behind(&config, None).await;
+    let prefix = waveflow_server::migration_backup::PREFIX;
+    // Three copies dated long after anything this boot can read off its clock.
+    let future = ["99999999999991", "99999999999992", "99999999999993"];
+    for stamp in future {
+        std::fs::create_dir_all(config.data_dir.join(format!("{prefix}{stamp}"))).unwrap();
+    }
+
+    let state = waveflow_server::initialize(&config)
+        .await
+        .expect("an installation behind boots");
+    state.db.pool().close().await;
+    drop(state);
+
+    let copies = pre_migration_copies(&config);
+    assert_eq!(copies.len(), config.migration_backups, "{copies:?}");
+    let made = copies
+        .iter()
+        .find(|copy| copy.join("waveflow.db").exists())
+        .unwrap_or_else(|| panic!("the copy this boot made was deleted: {copies:?}"));
+    assert_eq!(applied_in(&made.join("waveflow.db")).await, behind);
+    // The room it needed came from the oldest of the others.
+    assert!(!config
+        .data_dir
+        .join(format!("{prefix}{}", future[0]))
+        .exists());
+    for kept in &future[1..] {
+        assert!(config.data_dir.join(format!("{prefix}{kept}")).exists());
+    }
+}
+
 /// Zero copies is a setting: an operator with backups of their own upgrades
 /// without one.
 #[tokio::test]

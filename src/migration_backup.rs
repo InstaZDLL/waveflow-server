@@ -18,7 +18,8 @@
 //! - **The last `WAVEFLOW_MIGRATION_BACKUPS`**, three by default, are kept;
 //!   older copies made here are deleted, and nothing else in the data
 //!   directory is touched. Zero takes none.
-//! - **A copy that cannot be made stops the boot** before anything is applied.
+//! - **A copy that cannot be made stops the boot** before anything is
+//!   applied, and what it had written is deleted.
 //!   An upgrade that promised a way back and went ahead without one would be
 //!   worse than one that said so; the operator who does not want the copy can
 //!   set the count to zero.
@@ -58,22 +59,29 @@ pub async fn before_migrating(db: &Database, config: &Config) -> anyhow::Result<
             directory.display()
         )
     };
-    db.backup_to(&directory.join("waveflow.db"))
+    // Created here, and exclusively: a directory this attempt did not create
+    // is not one it may delete when it fails.
+    tokio::fs::create_dir(&directory)
         .await
         .with_context(|| refused("database"))?;
-    match tokio::fs::copy(&config.instance_key_path, directory.join("instance.key")).await {
-        Ok(_) => {}
-        // A database no server has opened yet has no key beside it, and there
-        // is nothing to pair the copy with.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| refused("instance key")),
+    if let Err(error) = copy_pair(db, config, &directory, &refused).await {
+        // A half-made copy is worse than none: pruning counts it by its name,
+        // and would push out a whole copy to keep it.
+        if let Err(cleanup) = tokio::fs::remove_dir_all(&directory).await {
+            tracing::warn!(
+                path = %directory.display(),
+                error = %cleanup,
+                "could not delete an incomplete pre-migration copy; delete it by hand"
+            );
+        }
+        return Err(error);
     }
     tracing::info!(
         path = %directory.display(),
         pending,
         "copied the database and its key before applying migrations"
     );
-    if let Err(error) = prune(&config.data_dir, config.migration_backups).await {
+    if let Err(error) = prune(&config.data_dir, config.migration_backups, &directory).await {
         // The copy this boot needs exists; an older one left behind costs disk,
         // not safety, and is no reason to refuse the upgrade.
         tracing::warn!(error = %error, "could not delete older pre-migration copies");
@@ -91,8 +99,33 @@ pub fn restore_hint(copy: &Path) -> String {
     )
 }
 
-/// Deletes the oldest copies made here, keeping `keep`.
-async fn prune(data_dir: &Path, keep: usize) -> anyhow::Result<()> {
+/// The database and its key, into `directory`.
+async fn copy_pair(
+    db: &Database,
+    config: &Config,
+    directory: &Path,
+    refused: &impl Fn(&str) -> String,
+) -> anyhow::Result<()> {
+    db.backup_to(&directory.join("waveflow.db"))
+        .await
+        .with_context(|| refused("database"))?;
+    match tokio::fs::copy(&config.instance_key_path, directory.join("instance.key")).await {
+        Ok(_) => Ok(()),
+        // A database no server has opened yet has no key beside it, and there
+        // is nothing to pair the copy with.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| refused("instance key")),
+    }
+}
+
+/// Deletes the oldest copies made here, keeping `keep` with `current` among
+/// them.
+///
+/// `current` is kept whatever its name says. The names are clock readings,
+/// and a clock that went back — a VM with no RTC, an NTP correction — would
+/// otherwise sort the copy this boot just made below older ones and delete
+/// the one copy the failure message is about to point at.
+async fn prune(data_dir: &Path, keep: usize, current: &Path) -> anyhow::Result<()> {
     let mut copies = Vec::new();
     let mut entries = tokio::fs::read_dir(data_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
@@ -105,12 +138,12 @@ async fn prune(data_dir: &Path, keep: usize) -> anyhow::Result<()> {
         else {
             continue;
         };
-        if entry.file_type().await?.is_dir() {
+        if entry.path() != current && entry.file_type().await?.is_dir() {
             copies.push((taken_at, entry.path()));
         }
     }
     copies.sort_unstable_by_key(|(taken_at, _)| std::cmp::Reverse(*taken_at));
-    for (_, path) in copies.into_iter().skip(keep) {
+    for (_, path) in copies.into_iter().skip(keep.saturating_sub(1)) {
         tokio::fs::remove_dir_all(&path)
             .await
             .with_context(|| format!("could not delete {}", path.display()))?;
