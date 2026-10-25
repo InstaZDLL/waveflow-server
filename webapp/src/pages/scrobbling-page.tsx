@@ -160,7 +160,7 @@ export function ScrobblingPage() {
   return (
     <section>
       <PageHeader
-        kicker={t("nav.group.account")}
+        kicker={t("nav.settings")}
         title={t("scrobbling.title")}
         detail={t("scrobbling.detail")}
       />
