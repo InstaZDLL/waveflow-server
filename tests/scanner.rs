@@ -2396,3 +2396,35 @@ async fn a_watched_change_is_scanned_once_it_settles() {
     assert_eq!(watched, Some(1), "no scan followed the change");
     assert_eq!(available_paths(&state).await, ["First.wav", "Second.wav"]);
 }
+
+/// RFC-021 decision 5: a scan queued before a move walks the library as it is
+/// when it runs, not as it was when it was queued — the watcher and the
+/// interval queue scans that a move can overtake.
+#[tokio::test]
+async fn a_queued_scan_reads_the_library_as_it_is_when_it_runs() {
+    let (temp, state, owner, library, root) = library_with_albums("queued").await;
+    let held = state.scanner.try_lock_library(library.id).unwrap();
+    // Queued with the old root, and waiting for the lock.
+    let queued = state
+        .scanner
+        .trigger(library.clone(), Some(owner), "manual")
+        .await
+        .unwrap();
+    let moved = temp.path().join("queued-elsewhere");
+    std::fs::rename(&root, &moved).unwrap();
+    sqlx::query("UPDATE library SET root_path = ? WHERE id = ?")
+        .bind(
+            std::fs::canonicalize(&moved)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .bind(library.id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    drop(held);
+    let record = settled(&state, owner, queued).await;
+    assert_eq!(record.status, "completed", "{:?}", record.message);
+    assert_eq!((record.added, record.unavailable), (0, 0));
+}
