@@ -220,6 +220,14 @@ library is: they decide which part of the server's file system the server
 reads. A `PATCH` naming either needs an administrative credential, not only an
 administrator's account; a rename needs a credential that may write.
 
+**Administrative standing comes from the credential as well as the account**,
+on every operation here, the missing-tracks view and purge included. An
+administrator whose token's scopes stop short of `admin` holds only the
+memberships of the account behind it: such a token cannot rename, purge or
+list the missing tracks of a library that account is not a member of, and the
+deletion refuses it outright. That is the rule `AuthUser::scopes` states for
+every narrowed credential.
+
 **Changing the path** validates the new one as creating a library does (an
 existing directory, not itself a link, stored canonical, not another library's
 root), then queues a scan with the new trigger `library_moved`. Tracks are
