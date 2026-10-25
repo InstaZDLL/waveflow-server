@@ -128,6 +128,23 @@ export function mayCorrectTracks(library: Library | undefined): boolean {
 }
 
 /**
+ * Whether the account may see and purge a library's missing files (RFC-021
+ * decision 4): its owners and managers, as for corrections, and an
+ * administrator whatever their role in it — the server grants that page to
+ * the instance's administrators, on the full credential a web session is.
+ * Not folded into {@link mayCorrectTracks}: corrections are not theirs.
+ */
+export function mayManageMissing(
+  library: Library | undefined,
+  accountRole: string | undefined,
+): boolean {
+  return (
+    library !== undefined &&
+    (mayCorrectTracks(library) || accountRole === "admin")
+  );
+}
+
+/**
  * Whether the account may add files to a library: a role that may upload, in a
  * library its operator has opened to files. Both, because they answer two
  * questions — who may, and whether anyone can. The server decides regardless.

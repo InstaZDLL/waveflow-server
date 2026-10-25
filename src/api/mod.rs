@@ -109,6 +109,22 @@ pub fn router(state: AppState) -> Router {
             get(list_libraries).post(create_library),
         )
         .route(
+            "/api/v2/libraries/{library_id}",
+            axum::routing::patch(update_library).delete(delete_library),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/settings",
+            get(library_settings),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/unavailable-tracks",
+            get(unavailable_tracks),
+        )
+        .route(
+            "/api/v2/libraries/{library_id}/unavailable-tracks/purge",
+            post(purge_unavailable_tracks),
+        )
+        .route(
             "/api/v2/libraries/{library_id}/members",
             get(list_library_members),
         )

@@ -2,10 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, Fragment, useEffect, useState } from "react";
 
 import {
+  ApiError,
   addLibrary,
   createApiToken,
   createUser,
   currentUser,
+  deleteLibrary,
+  type Library,
   removeLibraryMember,
   revokeApiToken,
   type ScanJob,
@@ -14,12 +17,14 @@ import {
   setUserDisabled,
   startScan,
   type User,
+  updateLibrary,
   watchScan,
 } from "../api";
 import {
   administrationQuery,
   apiTokensQuery,
   libraryMembersQuery,
+  librarySettingsQuery,
   nowPlayingQuery,
 } from "../api/queries";
 import {
@@ -138,6 +143,16 @@ function ScanProgress({ scanId }: { scanId: string }) {
           errors: job.errors,
         })}
       </p>
+      {/* What the walk left out (RFC-021): only when there is something to
+          say, since most libraries have neither. */}
+      {job.excluded > 0 || job.skipped_links > 0 ? (
+        <p className="muted scan-tally">
+          {t("scan.leftOut", {
+            excluded: job.excluded,
+            links: job.skipped_links,
+          })}
+        </p>
+      ) : null}
       {/* The path is the only thing here that moves fast enough to read as
           liveness, and it is what tells a long scan from a stuck one. */}
       {!done && job.current_path ? (
@@ -436,6 +451,185 @@ function LibraryMembersPanel({
   );
 }
 
+/**
+ * One library's name, folder and links setting, and its deletion (RFC-021
+ * decision 5). A disclosure of its own per library, for the reason the
+ * membership panel has one: the settings, which carry the folder on the
+ * server, are asked for only once it is open.
+ *
+ * Deleting asks for the library's name to be typed, and the server checks it
+ * again: a deletion takes every track, album and artist out of the catalogue
+ * for every member, with their playlist entries, favourites and plays.
+ */
+function LibrarySettingsPanel({
+  library,
+  onScan,
+  onDeleted,
+}: {
+  library: Library;
+  onScan: (scanId: string) => void;
+  onDeleted: (message: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const reloadSettings = useReload(
+    librarySettingsQuery(library.id, true).queryKey,
+  );
+  const reloadAdministration = useReload(administrationQuery().queryKey);
+  const { data: settings, error } = useQuery(
+    librarySettingsQuery(library.id, open),
+  );
+  // `null` until edited: the form shows what the server holds until then.
+  const [name, setName] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(null);
+  const [follow, setFollow] = useState<boolean | null>(null);
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
+    null,
+  );
+
+  function refusal(error: unknown, fallback: TranslationKey): string {
+    return error instanceof ApiError && error.status === 409
+      ? t("admin.saveBusy")
+      : t(fallback);
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!settings) return;
+    const update: { name?: string; path?: string; follow_links?: boolean } = {};
+    if (name !== null && name.trim() !== settings.name) update.name = name;
+    if (path !== null && path !== settings.path) update.path = path;
+    if (follow !== null && follow !== settings.follow_links) {
+      update.follow_links = follow;
+    }
+    if (Object.keys(update).length === 0) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await updateLibrary(library.id, update);
+      setNotice({
+        error: false,
+        text: result.scan_id
+          ? t("admin.savedScan", { id: result.scan_id })
+          : t("admin.saved"),
+      });
+      if (result.scan_id) onScan(result.scan_id);
+      setName(null);
+      setPath(null);
+      setFollow(null);
+      reloadSettings();
+      reloadAdministration();
+    } catch (error) {
+      setNotice({ error: true, text: refusal(error, "admin.saveError") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const deleted = await deleteLibrary(library.id, confirm);
+      onDeleted(
+        t("admin.deleted", { name: library.name, tracks: deleted.tracks }),
+      );
+      reloadAdministration();
+    } catch (error) {
+      setNotice({ error: true, text: refusal(error, "admin.deleteError") });
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="admin-panel token-panel">
+      <h3>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {t("admin.manage")}
+        </button>
+      </h3>
+      {open ? (
+        error ? (
+          <p className="error" role="alert">
+            {t("common.loadError")}
+          </p>
+        ) : !settings ? (
+          <Waiting />
+        ) : (
+          <>
+            <form
+              className="stacked-form"
+              onSubmit={(event) => void save(event)}
+            >
+              <label className="control">
+                <span>{t("admin.rename")}</span>
+                <input
+                  value={name ?? settings.name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="control">
+                <span>{t("admin.path")}</span>
+                <input
+                  value={path ?? settings.path}
+                  onChange={(event) => setPath(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  className="toggle-box"
+                  checked={follow ?? settings.follow_links}
+                  onChange={(event) => setFollow(event.target.checked)}
+                />
+                <span>{t("admin.followLinks")}</span>
+              </label>
+              <button type="submit" disabled={busy}>
+                {t("admin.save")}
+              </button>
+            </form>
+            {notice ? (
+              <p
+                className={notice.error ? "error" : "notice"}
+                role={notice.error ? "alert" : "status"}
+              >
+                {notice.text}
+              </p>
+            ) : null}
+            <div className="stacked-form danger-zone">
+              <strong>{t("admin.delete")}</strong>
+              <p className="muted danger-note">{t("admin.deleteNote")}</p>
+              <input
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+                placeholder={library.name}
+                aria-label={t("admin.deleteConfirm")}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="danger"
+                disabled={busy || confirm !== library.name}
+                onClick={() => void remove()}
+              >
+                {t("admin.deleteButton")}
+              </button>
+            </div>
+          </>
+        )
+      ) : null}
+    </article>
+  );
+}
+
 export function AdminPage() {
   const signedInUser = currentUser();
   const { t } = useI18n();
@@ -572,6 +766,16 @@ export function AdminPage() {
                 </li>
                 <li className="member-row">
                   <LibraryMembersPanel libraryId={library.id} users={users} />
+                </li>
+                <li className="member-row">
+                  <LibrarySettingsPanel
+                    library={library}
+                    onScan={setWatchedScan}
+                    onDeleted={(message) => {
+                      setAdminError(null);
+                      setNotice(message);
+                    }}
+                  />
                 </li>
               </Fragment>
             ))}

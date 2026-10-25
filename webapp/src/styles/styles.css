@@ -3683,3 +3683,67 @@ button.danger {
 .quality-spectrogram-action {
   margin-top: var(--space-3);
 }
+
+/* "Missing files" (RFC-021): a row is a checkbox and what it names, then when
+   it went and what a purge would take. */
+.missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.missing-list li {
+  grid-template-columns: minmax(12rem, 1fr) auto;
+}
+
+.missing-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.missing-text,
+.missing-facts {
+  display: grid;
+  min-width: 0;
+}
+
+.missing-facts {
+  justify-items: end;
+  text-align: end;
+}
+
+.missing-path {
+  overflow-wrap: anywhere;
+}
+
+/* The deletion of a library sits apart from the form that edits it, so the
+   button that saves a name is never the one beside the one that deletes. */
+.danger-zone {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.danger-note {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* A setting that is on or off, said in a sentence beside its box. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.toggle-box {
+  flex: none;
+  width: 1.1rem;
+  min-height: 1.1rem;
+  padding: 0;
+}

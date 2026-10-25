@@ -346,6 +346,130 @@ the scan goes on. The tracks under it are left as they are, not marked missing,
 so a folder that is briefly unreadable does not make its albums vanish and come
 back. Only the library root itself failing to open fails the scan.
 
+[RFC-021](rfcs/RFC-021-library-lifecycle-and-scan.md) carries the reasoning
+for everything below.
+
+### What a scan leaves out
+
+Some folders are never scanned, whatever else says: anything whose name begins
+with a dot (hidden folders and files, `.Trash-*`, the `._` files a Mac leaves
+on a share), `@eaDir`, `#recycle` and `#snapshot` (Synology), `$RECYCLE.BIN`
+and `System Volume Information` (Windows), and `lost+found`. The one exception
+is `.waveflow-managed` at the library root, where received files land.
+
+To leave out more, put a **`.waveflowignore`** file in any folder. Its syntax is
+`.gitignore`'s and applies to that folder and below:
+
+```text
+# no live recordings, no demos anywhere, no AAC except this one
+/Live/
+**/demos/
+*.m4a
+!Keep me.m4a
+```
+
+As in git, a folder that is left out is not entered, so a `!` cannot bring back
+something inside it.
+
+An **empty** `.waveflowignore` leaves out the whole folder it sits in, as an
+empty `.ndignore` does in Navidrome — except at the library root, where it
+leaves out nothing. A file the scan cannot use (unreadable, over 64 KiB, or
+holding a pattern it rejects) makes its folder count as unreadable: reported in
+the scan's errors and left as it is. At the library root, it fails the scan.
+
+**What you leave out is treated as gone.** A track whose file becomes excluded
+turns unavailable at the end of the scan, exactly as if the file had been
+deleted, and comes back under the same identity when the rule is removed. The
+scan's `excluded` counter says how many entries were left out.
+
+### Symbolic links
+
+By default a scan does not follow symbolic links. It no longer skips them in
+silence: each one is counted in the scan's `skipped_links` and logged by its
+path in the library. To follow them, per library:
+
+```bash
+waveflow-server library set-links --actor admin --library-id <uuid> --follow
+```
+
+A followed link must lead **inside the library**: one whose target is outside
+the root, broken, or a loop back to a folder above it is skipped and counted. A
+file reached through links is one track, under its own path, however many links
+name it. A link farm whose files live in the same tree works best with the
+files' folder excluded from the direct walk:
+
+```text
+/music/.waveflowignore     /store/
+/music/store/…             the files
+/music/Artist/Album/…      links into ../../store/
+```
+
+A link farm whose files live outside the root is not followed; make the root a
+common ancestor, or add the files' folder as a library of its own.
+
+### Missing files
+
+A track whose file is gone stays in the catalogue, unavailable, with its
+favourites, playlist entries and plays, so a share that comes back brings it
+back whole. Owners and managers see them on the **Missing files** page, which
+says for each what a purge would take; the CLI lists them too:
+
+```bash
+waveflow-server library unavailable --actor admin --library-id <uuid>
+waveflow-server library purge --actor admin --library-id <uuid> --all
+waveflow-server library purge --actor admin --library-id <uuid> --track-id <uuid>
+```
+
+**A purge is not reversible.** It removes the tracks and everything that hangs
+off them for every member — playlist entries, favourites, ratings, plays, queue
+entries, corrections, lyrics — and the albums and artists left with nothing. A
+file that comes back afterwards is a new track. Only tracks still missing when
+the purge runs are removed, and a purge waits for no scan: it answers that the
+library is busy instead.
+
+To purge on a schedule, set **`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`**: once an
+hour, tracks missing for longer than that are purged. It is off by default,
+because a share that stays unmounted for a week is not a deletion.
+
+### Renaming, moving and deleting a library
+
+From the administration page, or:
+
+```bash
+waveflow-server library rename   --actor admin --library-id <uuid> --name "Lossless"
+waveflow-server library set-path --actor admin --library-id <uuid> --path /mnt/music
+waveflow-server library delete   --actor admin --library-id <uuid> --confirm "Lossless"
+```
+
+**Moving** points the library at a new folder and scans it. Tracks are matched
+by their path inside the library, so a tree moved intact keeps every identity,
+favourite and playlist entry. The owner of a library may rename it; moving it,
+its links setting and deleting it are an administrator's.
+
+**Deleting** removes the library from the catalogue for every member — its
+tracks, albums and artists with everything that hangs off them, its scans,
+folders and memberships — and nothing from the disk. `--confirm` must be the
+library's current name. None of these runs while the library is being scanned.
+
+### Watching for changes
+
+The server watches every library folder and scans a library once its changes
+have been quiet for `WAVEFLOW_WATCH_DELAY_SECS` (10 by default); a copy that
+never pauses is still scanned every thirty delays. The periodic scan stays as
+the safety net — **as long as `WAVEFLOW_SCAN_INTERVAL_SECS` is not `0`**, which
+turns it off and leaves only the scan at boot. Set `WAVEFLOW_WATCH=false` to
+turn watching off.
+
+**Do not count on it for network mounts.** NFS and SMB report the changes this
+machine makes and usually not those another machine makes, so a library on a
+share is found up to date at the next periodic scan — and with the interval at
+`0`, not before the server restarts. Keep the interval on for any library on a
+share. A folder that cannot be watched is logged once and left to the periodic
+scan, with the same condition. On Linux, a large library can exhaust the
+inotify watch limit; raise it with `sysctl fs.inotify.max_user_watches=524288`
+(and in `/etc/sysctl.d/` to keep it), or the library falls back to the periodic
+scan.
+
 ## Probes
 
 | Path | Answers |

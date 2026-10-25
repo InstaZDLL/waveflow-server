@@ -328,6 +328,21 @@ pub struct Config {
     pub api_token_ttl: Option<Duration>,
     pub scan_interval: Option<Duration>,
     pub scan_parallelism: usize,
+    /// Whether the server watches every library root and scans a library once
+    /// its changes settle (RFC-021 decision 6). `WAVEFLOW_WATCH`, on by
+    /// default. The periodic scan stays either way, as the safety net for
+    /// what a watcher misses — network mounts, above all.
+    pub watch: bool,
+    /// How long a library's changes must have been quiet before the watcher
+    /// scans it. `WAVEFLOW_WATCH_DELAY_SECS`, ten seconds by default. A stream
+    /// of changes that never settles is still scanned once thirty of these
+    /// have passed since its first event.
+    pub watch_delay: Duration,
+    /// How long a track may stay unavailable before a background pass purges
+    /// it (RFC-021 decision 4). `WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`; unset or
+    /// `0`, the default, never purges on its own: a purge is not reversible,
+    /// and a share that stays unmounted for a week is not a deletion.
+    pub unavailable_retention: Option<Duration>,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
@@ -491,6 +506,9 @@ impl std::fmt::Debug for Config {
             .field("api_token_ttl", &self.api_token_ttl)
             .field("scan_interval", &self.scan_interval)
             .field("scan_parallelism", &self.scan_parallelism)
+            .field("watch", &self.watch)
+            .field("watch_delay", &self.watch_delay)
+            .field("unavailable_retention", &self.unavailable_retention)
             .field("ffmpeg_path", &self.ffmpeg_path)
             .field("ffprobe_path", &self.ffprobe_path)
             .field("transcode_cache_dir", &self.transcode_cache_dir)
@@ -564,6 +582,18 @@ impl Config {
                 .unwrap_or(4)
                 .clamp(1, 16),
         )?;
+        let watch = parse_bool_env("WAVEFLOW_WATCH", true)?;
+        let watch_delay =
+            Duration::from_secs(parse_positive_env("WAVEFLOW_WATCH_DELAY_SECS", 10u64)?);
+        // Zero is a setting, the default one: never purge on its own.
+        let unavailable_retention_days = std::env::var("WAVEFLOW_UNAVAILABLE_RETENTION_DAYS")
+            .unwrap_or_else(|_| "0".to_owned())
+            .parse::<u64>()
+            .map_err(|error| {
+                anyhow::anyhow!("invalid WAVEFLOW_UNAVAILABLE_RETENTION_DAYS: {error}")
+            })?;
+        let unavailable_retention = (unavailable_retention_days > 0)
+            .then(|| Duration::from_secs(unavailable_retention_days.saturating_mul(24 * 60 * 60)));
         let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("ffmpeg"));
@@ -792,6 +822,9 @@ impl Config {
             scan_interval: (scan_interval_secs > 0)
                 .then(|| Duration::from_secs(scan_interval_secs)),
             scan_parallelism,
+            watch,
+            watch_delay,
+            unavailable_retention,
             ffmpeg_path,
             ffprobe_path,
             transcode_cache_dir,
@@ -846,6 +879,12 @@ impl Config {
             api_token_ttl: Some(Duration::from_secs(365 * 24 * 60 * 60)),
             scan_interval: None,
             scan_parallelism: 2,
+            // Off, like the periodic scan: a test that writes a file and then
+            // scans must not find a second scan racing its own. The watcher's
+            // tests start one themselves.
+            watch: false,
+            watch_delay: Duration::from_millis(200),
+            unavailable_retention: None,
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             transcode_cache_dir,

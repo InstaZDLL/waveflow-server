@@ -794,6 +794,51 @@ const en = {
   "admin.memberAdd": "Give access to",
   "admin.memberChoose": "Choose an account…",
   "admin.memberError": "That membership could not be changed.",
+  "admin.manage": "Name, folder and deletion",
+  "admin.rename": "Name",
+  "admin.path": "Folder on the server",
+  "admin.followLinks":
+    "Follow symbolic links whose target stays inside the library",
+  "admin.save": "Save",
+  "admin.saved": "Saved.",
+  "admin.savedScan": "Saved. Scan {id} queued.",
+  "admin.saveError":
+    "That change could not be saved. A folder must exist on the server and must not be a symbolic link.",
+  "admin.saveBusy":
+    "The library is being scanned, or another library already uses that folder. Try again once the scan is over.",
+  "admin.delete": "Delete this library",
+  "admin.deleteNote":
+    "Removes the library from the catalogue for every member: its tracks, albums and artists, with their playlist entries, favourites and plays. No file is touched on disk. Type the library’s name to confirm.",
+  "admin.deleteConfirm": "The library’s name, to confirm",
+  "admin.deleteButton": "Delete for good",
+  "admin.deleted": "{name} was deleted: {tracks} tracks left the catalogue.",
+  "admin.deleteError": "The library could not be deleted.",
+  "scan.leftOut": "{excluded} left out · {links} links not followed",
+  "nav.missing": "Missing files",
+  "missing.total": {
+    one: "{count} file the scans can no longer find",
+    other: "{count} files the scans can no longer find",
+  },
+  "missing.nothing": "Every file is where the catalogue expects it.",
+  "missing.notYours":
+    "Only the owners and managers of this library, and administrators, see its missing files.",
+  "missing.note":
+    "These tracks stay in the catalogue, with their favourites, playlist entries and plays, until they are purged; a file that comes back first keeps its track. A purge is not reversible: the track, and everything that hangs off it for every member, goes for good.",
+  "missing.since": "missing since {date}",
+  "missing.cost":
+    "{playlists} in playlists · {favorites} favourites · {plays} plays",
+  "missing.select": "Select {title}",
+  "missing.purgeSelected": "Purge the selected ({count})",
+  "missing.purgeAll": "Purge them all",
+  "missing.confirm": "Confirm: purge {count}",
+  "missing.purged": {
+    one: "{count} track purged.",
+    other: "{count} tracks purged.",
+  },
+  "missing.scanning":
+    "The library is being scanned. Try again once the scan is over.",
+  "missing.failed": "The purge did not work. Try again.",
+  "missing.more": "Show more",
   "scrobbling.title": "External scrobbling",
   "scrobbling.detail":
     "Forward what you listen to here to ListenBrainz, Maloja or Last.fm.",
@@ -1670,6 +1715,52 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "admin.memberAdd": "Donner accès à",
   "admin.memberChoose": "Choisir un compte…",
   "admin.memberError": "Cette appartenance n’a pas pu être modifiée.",
+  "admin.manage": "Nom, dossier et suppression",
+  "admin.rename": "Nom",
+  "admin.path": "Dossier sur le serveur",
+  "admin.followLinks":
+    "Suivre les liens symboliques dont la cible reste dans la bibliothèque",
+  "admin.save": "Enregistrer",
+  "admin.saved": "Enregistré.",
+  "admin.savedScan": "Enregistré. Scan {id} ajouté à la file.",
+  "admin.saveError":
+    "Ce changement n’a pas pu être enregistré. Le dossier doit exister sur le serveur et ne pas être un lien symbolique.",
+  "admin.saveBusy":
+    "La bibliothèque est en cours d’analyse, ou une autre bibliothèque utilise déjà ce dossier. Réessayez une fois l’analyse terminée.",
+  "admin.delete": "Supprimer cette bibliothèque",
+  "admin.deleteNote":
+    "Retire la bibliothèque du catalogue pour tous ses membres : ses titres, albums et artistes, avec leurs entrées de playlist, favoris et écoutes. Aucun fichier n’est touché sur le disque. Tapez le nom de la bibliothèque pour confirmer.",
+  "admin.deleteConfirm": "Le nom de la bibliothèque, pour confirmer",
+  "admin.deleteButton": "Supprimer définitivement",
+  "admin.deleted":
+    "{name} a été supprimée : {tracks} titres ont quitté le catalogue.",
+  "admin.deleteError": "La bibliothèque n’a pas pu être supprimée.",
+  "scan.leftOut": "{excluded} écartés · {links} liens non suivis",
+  "nav.missing": "Fichiers manquants",
+  "missing.total": {
+    one: "{count} fichier que les scans ne trouvent plus",
+    other: "{count} fichiers que les scans ne trouvent plus",
+  },
+  "missing.nothing": "Chaque fichier est là où le catalogue l’attend.",
+  "missing.notYours":
+    "Seuls les propriétaires et gestionnaires de cette bibliothèque, et les administrateurs, voient ses fichiers manquants.",
+  "missing.note":
+    "Ces titres restent au catalogue, avec leurs favoris, entrées de playlist et écoutes, jusqu’à leur purge ; un fichier qui revient avant garde son titre. Une purge est irréversible : le titre, et tout ce qui s’y rattache pour chaque membre, disparaît pour de bon.",
+  "missing.since": "manquant depuis le {date}",
+  "missing.cost":
+    "{playlists} en playlist · {favorites} favoris · {plays} écoutes",
+  "missing.select": "Sélectionner {title}",
+  "missing.purgeSelected": "Purger la sélection ({count})",
+  "missing.purgeAll": "Tout purger",
+  "missing.confirm": "Confirmer : purger {count}",
+  "missing.purged": {
+    one: "{count} titre purgé.",
+    other: "{count} titres purgés.",
+  },
+  "missing.scanning":
+    "La bibliothèque est en cours d’analyse. Réessayez une fois l’analyse terminée.",
+  "missing.failed": "La purge n’a pas abouti. Réessayez.",
+  "missing.more": "Afficher plus",
   "scrobbling.title": "Scrobbling externe",
   "scrobbling.detail":
     "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm.",

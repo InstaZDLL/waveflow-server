@@ -10,6 +10,7 @@ import {
   getAlbum,
   getArtist,
   getAttentionSummary,
+  getLibrarySettings,
   getLyrics,
   getQualitySummary,
   getTrack,
@@ -42,6 +43,7 @@ import {
   listScrobbleLinks,
   listShares,
   listSongs,
+  listUnavailableTracks,
   listUncertainScrobbles,
   listUsers,
   listVisiblePlaylists,
@@ -52,6 +54,7 @@ import {
   type SongSort,
   search,
   type TrackCategory,
+  UNAVAILABLE_PAGE,
 } from "./index";
 
 /**
@@ -472,6 +475,34 @@ export const libraryMembersQuery = (libraryId: string, open: boolean) =>
     queryKey: ["library-members", libraryId],
     queryFn: () => listLibraryMembers(libraryId),
     enabled: open,
+  });
+
+/**
+ * A library as an administrator manages it (RFC-021), asked for only once its
+ * panel is open: the admin screen draws one per library.
+ */
+export const librarySettingsQuery = (libraryId: string, open: boolean) =>
+  queryOptions({
+    queryKey: ["library-settings", libraryId],
+    queryFn: () => getLibrarySettings(libraryId),
+    enabled: open,
+  });
+
+/**
+ * The files a library's scans can no longer find (RFC-021), a page at a time,
+ * oldest first. Keyed under `missing` and the library, so one invalidation
+ * after a purge refreshes the page.
+ */
+export const unavailableTracksQuery = (libraryId: string) =>
+  infiniteQueryOptions({
+    queryKey: ["missing", libraryId],
+    queryFn: ({ pageParam, signal }) =>
+      listUnavailableTracks(libraryId, pageParam, UNAVAILABLE_PAGE, signal),
+    initialPageParam: 0,
+    getNextPageParam: (last, _pages, lastParam) =>
+      last.tracks.length < UNAVAILABLE_PAGE
+        ? undefined
+        : lastParam + UNAVAILABLE_PAGE,
   });
 
 export const administrationQuery = () =>

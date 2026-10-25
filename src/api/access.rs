@@ -91,6 +91,21 @@ pub(crate) async fn authenticated(
     }
 }
 
+/// The caller of a library operation as the services weigh it (RFC-021): its
+/// account, and whether the credential it came in on carries administrative
+/// authority — the same two halves [`authenticated`] checks for
+/// [`Access::Admin`]. A route that admits a narrower credential must not let
+/// the account's role stand in for what the credential lacks.
+pub(crate) fn library_actor(
+    user: &crate::authentication::AuthUser,
+) -> crate::services::LibraryActor {
+    crate::services::LibraryActor {
+        id: user.id,
+        admin_credential: user.role == crate::database::AccountRole::Admin
+            && Access::Admin.granted_by(&user.scopes),
+    }
+}
+
 /// The bearer token, whatever case the client spelled the scheme in.
 ///
 /// RFC 7235 §2.1 makes the scheme name case-insensitive, so `bearer` is as

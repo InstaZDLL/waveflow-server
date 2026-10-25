@@ -52,6 +52,10 @@ pub struct ScanProgress {
     pub skipped: i64,
     pub unavailable: i64,
     pub errors: i64,
+    /// Entries the walk left out (RFC-021 decision 2).
+    pub excluded: i64,
+    /// Symbolic links the walk did not follow (RFC-021 decision 3).
+    pub skipped_links: i64,
     pub current_path: Option<String>,
     pub message: Option<String>,
 }
@@ -72,6 +76,8 @@ impl ScanProgress {
             skipped: self.skipped,
             unavailable: self.unavailable,
             errors: self.errors,
+            excluded: self.excluded,
+            skipped_links: self.skipped_links,
             current_path: self.current_path.clone(),
             message: self.message.clone(),
         }
@@ -93,6 +99,9 @@ pub struct ScanManager {
     /// quality page says "waiting for the scan" only to someone who can see
     /// the library being scanned.
     scanning: Arc<DashMap<Uuid, usize>>,
+    /// Moves whenever a library is added, moved or deleted through this
+    /// process, so the watcher (RFC-021 decision 6) re-reads what to watch.
+    libraries: Arc<watch::Sender<u64>>,
 }
 
 /// One scan counted as running, for as long as this lives.
@@ -147,7 +156,37 @@ impl ScanManager {
             library_locks: Arc::new(DashMap::new()),
             in_flight: Arc::new(watch::Sender::new(0)),
             scanning: Arc::new(DashMap::new()),
+            libraries: Arc::new(watch::Sender::new(0)),
         }
+    }
+
+    /// The lock every scan of one library holds for its whole run.
+    fn library_lock(&self, library_id: Uuid) -> Arc<Mutex<()>> {
+        self.library_locks
+            .entry(library_id)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    /// That lock, if no scan of the library holds it now.
+    ///
+    /// For what must not interleave with a scan and must not wait for one
+    /// either (RFC-021 decisions 4 and 5): a purge, a move, a deletion. A scan
+    /// queued behind it waits until it is dropped, and then reads the library
+    /// as it was left.
+    pub fn try_lock_library(&self, library_id: Uuid) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        self.library_lock(library_id).try_lock_owned().ok()
+    }
+
+    /// Says that the set of libraries, or a root, changed.
+    pub fn libraries_changed(&self) {
+        self.libraries
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    /// A way to wait for [`Self::libraries_changed`].
+    pub fn library_changes(&self) -> watch::Receiver<u64> {
+        self.libraries.subscribe()
     }
 
     /// Counts a scan of `library_id` as running until the guard is dropped.
@@ -215,6 +254,8 @@ impl ScanManager {
                     skipped: 0,
                     unavailable: 0,
                     errors: 1,
+                    excluded: 0,
+                    skipped_links: 0,
                     current_path: None,
                     message: Some(message),
                 });
@@ -229,21 +270,68 @@ impl ScanManager {
     pub fn spawn_background(&self, interval: Option<std::time::Duration>) {
         let manager = self.clone();
         tokio::spawn(async move {
-            manager.trigger_all("boot").await;
+            manager.boot().await;
             let Some(interval) = interval else { return };
             let mut ticker = tokio::time::interval(interval);
             ticker.tick().await;
             loop {
                 ticker.tick().await;
-                manager.trigger_all("scheduled").await;
+                manager.trigger_all("scheduled", &HashSet::new()).await;
             }
         });
     }
 
-    async fn trigger_all(&self, trigger: &'static str) {
+    /// What the server does with its libraries when it starts: the jobs a
+    /// previous run left queued are run, and every other library gets the
+    /// boot scan. Public so a test can run it rather than restart a server.
+    pub async fn boot(&self) {
+        let resumed = self.resume_queued().await;
+        self.trigger_all("boot", &resumed).await;
+    }
+
+    /// Runs the jobs a previous run queued and never started, and answers the
+    /// libraries they belong to.
+    ///
+    /// A job is queued in the transaction of the change that owes it (RFC-021
+    /// decision 5: a library moved, or its links setting changed), and started
+    /// after the commit. A process that stops in between leaves a `queued` row
+    /// no task holds — one that would also have Subsonic's `scanStatus` answer
+    /// "scanning" for good. Running it is what the row promised. A library
+    /// whose job resumes needs no boot scan of its own; one whose job cannot
+    /// be resumed still gets it.
+    pub async fn resume_queued(&self) -> HashSet<Uuid> {
+        let mut resumed = HashSet::new();
+        let queued = match self.db.queued_scan_jobs().await {
+            Ok(queued) => queued,
+            Err(error) => {
+                tracing::warn!(error = %error, "could not list the scans a previous run left queued");
+                return resumed;
+            }
+        };
+        for (scan_id, library_id) in queued {
+            match self.db.library_scan_settings(library_id).await {
+                Ok(Some(settings)) => {
+                    tracing::info!(%scan_id, %library_id, "resuming a scan a previous run left queued");
+                    self.spawn(scan_id, settings.library);
+                    resumed.insert(library_id);
+                }
+                // The job went with its library.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%scan_id, error = %error, "could not resume a queued scan")
+                }
+            }
+        }
+        resumed
+    }
+
+    async fn trigger_all(&self, trigger: &'static str, skip: &HashSet<Uuid>) {
         match self.db.all_libraries().await {
             Ok(libraries) => {
                 for library in libraries {
+                    if skip.contains(&library.id) {
+                        continue;
+                    }
                     if let Err(error) = self.trigger(library, None, trigger).await {
                         tracing::warn!(error = %error, "could not queue background scan");
                     }
@@ -254,23 +342,34 @@ impl ScanManager {
     }
 
     async fn run(&self, scan_id: Uuid, library: LibraryRecord) -> anyhow::Result<()> {
-        let lock = self
-            .library_locks
-            .entry(library.id)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
+        let lock = self.library_lock(library.id);
         let _library_guard = lock.lock().await;
+        // Read again under the lock rather than trusted from the queue: the
+        // library may have been moved, had its links setting changed, or been
+        // deleted since this job was queued (RFC-021 decision 5).
+        let Some(settings) = self.db.library_scan_settings(library.id).await? else {
+            tracing::info!(library_id = %library.id, %scan_id, "the library was deleted before its scan ran");
+            return Ok(());
+        };
+        let library = settings.library;
         tokio::fs::create_dir_all(&self.artwork_dir).await?;
         let root = tokio::fs::canonicalize(&library.root_path).await?;
+        let follow_links = settings.follow_links;
         let Discovery {
             paths,
             unreadable,
             incomplete,
+            excluded,
+            skipped_links,
         } = tokio::task::spawn_blocking({
             let root = root.clone();
-            move || discover_audio(&root)
+            move || discover_audio(&root, follow_links)
         })
         .await??;
+        let unreadable_folders: Vec<String> = unreadable
+            .iter()
+            .map(|folder| folder.folder.clone())
+            .collect();
         let discovered: HashSet<String> = paths
             .iter()
             .filter_map(|path| relative_path(&root, path).ok())
@@ -283,7 +382,13 @@ impl ScanManager {
             tracing::info!(library_id = %library.id, "scanning every file, skipping nothing");
         }
         self.db
-            .start_scan_job(scan_id, paths.len() as i64, full)
+            .start_walked_scan_job(
+                scan_id,
+                paths.len() as i64,
+                full,
+                excluded as i64,
+                skipped_links as i64,
+            )
             .await?;
 
         // What the catalogue already knows, read once: the pre-check compares
@@ -326,17 +431,20 @@ impl ScanManager {
             skipped: 0,
             unavailable: 0,
             errors: 0,
+            excluded: excluded as i64,
+            skipped_links: skipped_links as i64,
             current_path: None,
             message: None,
         };
 
         // A folder the walk could not read is reported, and its tracks are left
-        // as they are below (RFC-018 decision 3).
+        // as they are below (RFC-018 decision 3). So is one whose ignore file
+        // the walk could not use (RFC-021 decision 1), with its own reason.
         if !unreadable.is_empty() {
             progress.errors += unreadable.len() as i64;
             let errors: Vec<(String, String)> = unreadable
                 .iter()
-                .map(|folder| (folder.clone(), "folder could not be read".to_owned()))
+                .map(|folder| (folder.folder.clone(), folder.reason.to_owned()))
                 .collect();
             self.db.add_scan_errors(scan_id, &errors).await?;
             // Written now, not left to the batches: a library whose only
@@ -346,7 +454,7 @@ impl ScanManager {
 
         let walked = Walked {
             discovered: &discovered,
-            unreadable: &unreadable,
+            unreadable: &unreadable_folders,
             incomplete,
         };
         while let Some(batch) = scanned.next().await {
@@ -498,7 +606,7 @@ impl ScanManager {
         }
 
         self.db
-            .mark_tracks_under_seen(library.id, &unreadable, scan_id)
+            .mark_tracks_under_seen(library.id, &unreadable_folders, scan_id)
             .await?;
         // A walk error that named no path leaves no folder to spare, so
         // nothing this walk missed can be called missing.
@@ -665,52 +773,387 @@ fn sidecar_options() -> fs::OpenOptions {
     options
 }
 
+/// The ignore file a folder may hold (RFC-021 decision 1).
+pub const IGNORE_FILE: &str = ".waveflowignore";
+
+/// Beyond this an ignore file is refused rather than read: a list of
+/// exclusions has no business being larger, and the walk reads one per folder.
+const MAX_IGNORE_BYTES: u64 = 64 * 1024;
+
+/// Names the walk never enters, whatever an ignore file says (RFC-021
+/// decision 1), beside every name beginning with a dot. Compared without
+/// regard to case: `$RECYCLE.BIN` is spelled several ways by the systems that
+/// write it.
+const BUILT_IN_EXCLUSIONS: [&str; 6] = [
+    "@eaDir",
+    "#recycle",
+    "#snapshot",
+    "$RECYCLE.BIN",
+    "System Volume Information",
+    "lost+found",
+];
+
+/// How many skipped links one scan names in the log, one line each, before it
+/// only counts the rest.
+const LOGGED_LINKS: usize = 20;
+
+/// Whether an entry below the root is left out by name. The root and the
+/// folders above it are never asked: a library may well live under a dot
+/// folder, and a temporary directory always does.
+fn built_in_exclusion(name: &std::ffi::OsStr, depth: usize, is_dir: bool) -> bool {
+    let name = name.to_string_lossy();
+    if name.starts_with('.') {
+        // Received files land here (RFC-008), and the scan is what keeps them
+        // in the catalogue after the upload that applied them.
+        return !(depth == 1 && is_dir && name == crate::services::uploads::MANAGED_DIR);
+    }
+    BUILT_IN_EXCLUSIONS
+        .iter()
+        .any(|excluded| excluded.eq_ignore_ascii_case(&name))
+}
+
+/// What one folder's ignore file says.
+enum Rules {
+    /// No file, or a root file with nothing in it.
+    None,
+    Matcher(ignore::gitignore::Gitignore),
+    /// An empty file below the root: the folder and everything under it.
+    ExcludeAll,
+    /// A file the walk cannot use, and why. Its folder counts as unreadable.
+    Unusable(&'static str),
+}
+
+/// Reads `dir`'s ignore file, if it has one. Never through a link, and never
+/// in a way that can block, as the lyrics sidecars are read.
+fn load_rules(dir: &Path, at_root: bool) -> Rules {
+    let file = dir.join(IGNORE_FILE);
+    let metadata = match fs::symlink_metadata(&file) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Rules::None,
+        Err(_) => return Rules::Unusable("its .waveflowignore could not be read"),
+    };
+    if !metadata.is_file() {
+        return Rules::Unusable("its .waveflowignore is not a regular file");
+    }
+    if metadata.len() > MAX_IGNORE_BYTES {
+        return Rules::Unusable("its .waveflowignore is larger than 64 KiB");
+    }
+    let Some(text) = sidecar_options().open(&file).ok().and_then(|opened| {
+        let mut bytes = Vec::new();
+        opened
+            .take(MAX_IGNORE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        (bytes.len() as u64 <= MAX_IGNORE_BYTES)
+            .then(|| String::from_utf8_lossy(&bytes).into_owned())
+    }) else {
+        return Rules::Unusable("its .waveflowignore could not be read");
+    };
+    let text = text.trim_start_matches('\u{feff}');
+    if text.trim().is_empty() {
+        // At the root an empty file excludes nothing: one stray file must not
+        // mark a whole library missing.
+        return if at_root {
+            Rules::None
+        } else {
+            Rules::ExcludeAll
+        };
+    }
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+    for line in text.lines() {
+        if builder.add_line(None, line).is_err() {
+            return Rules::Unusable("its .waveflowignore holds a pattern that cannot be read");
+        }
+    }
+    match builder.build() {
+        Ok(matcher) => Rules::Matcher(matcher),
+        Err(_) => Rules::Unusable("its .waveflowignore holds a pattern that cannot be read"),
+    }
+}
+
+/// Why the walk left a symbolic link behind (RFC-021 decision 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkippedLink {
+    /// The library does not follow links.
+    NotFollowed,
+    /// Its target lies outside the library root.
+    Outside,
+    /// Its target does not exist, or cannot be read.
+    Broken,
+    /// It leads back to one of its own ancestors.
+    Loop,
+}
+
+impl SkippedLink {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::NotFollowed => "the library does not follow links",
+            Self::Outside => "its target is outside the library",
+            Self::Broken => "its target cannot be read",
+            Self::Loop => "it leads back to a folder above it",
+        }
+    }
+}
+
+/// A folder the walk could not read, relative to the root, and why.
+struct Unreadable {
+    folder: String,
+    reason: &'static str,
+}
+
 /// What the walk found: the audio files, in path order, and the folders it
 /// could not read, relative to the root.
 struct Discovery {
     paths: Vec<PathBuf>,
-    unreadable: Vec<String>,
+    unreadable: Vec<Unreadable>,
     /// An error named no path inside the root, so the walk cannot say which
     /// tracks it missed: none may be marked missing.
     incomplete: bool,
+    /// Entries left out by an exclusion, a folder counting once whatever it
+    /// holds (RFC-021 decision 2). They count as not discovered.
+    excluded: usize,
+    /// Symbolic links the walk did not follow (RFC-021 decision 3).
+    skipped_links: usize,
 }
 
-/// Walks the library (RFC-018 decision 3). An entry the walk cannot read is
-/// logged by its path relative to the root, never the absolute one, and the
-/// walk goes on; only the root itself failing fails the scan, since then
-/// nothing can be told apart.
-fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
+/// What the walk accumulates while `walkdir` decides, entry by entry, what to
+/// enter. Shared between the filter and the loop, hence the cell.
+#[derive(Default)]
+struct WalkState {
+    /// Each folder's ignore rules, by the path the walk sees it under.
+    rules: std::collections::HashMap<PathBuf, ignore::gitignore::Gitignore>,
+    unreadable: Vec<Unreadable>,
+    excluded: usize,
+    skipped_links: usize,
+    /// A folder could not be read and could not be named as the catalogue
+    /// names its tracks: no track may be marked missing.
+    incomplete: bool,
+}
+
+impl WalkState {
+    /// Records a folder the walk could not read, or could not use the rules
+    /// of, under the name its tracks carry in the catalogue (RFC-018
+    /// decision 3, RFC-021 decision 3).
+    ///
+    /// With links followed, a track is stored under its canonical path, and a
+    /// folder reached through a link has another name: spared under the
+    /// link's, its tracks would be marked missing anyway. So the folder is
+    /// named by its target; one that cannot be resolved inside the root names
+    /// nothing, and the walk is then incomplete.
+    fn unreadable(&mut self, root: &Path, path: &Path, follow_links: bool, reason: &'static str) {
+        let folder = if follow_links {
+            fs::canonicalize(path)
+                .ok()
+                .filter(|canonical| canonical.starts_with(root))
+                .map(|canonical| relative_to(root, &canonical))
+        } else {
+            Some(relative_to(root, path))
+        };
+        match folder {
+            Some(folder) => {
+                tracing::warn!(
+                    path = %folder,
+                    reason,
+                    "a folder in the library could not be used; its tracks are left as they are"
+                );
+                self.unreadable.push(Unreadable { folder, reason });
+            }
+            None => {
+                tracing::warn!(
+                    path = %relative_to(root, path),
+                    reason,
+                    "a folder reached through a link could not be used, nor resolved; nothing is marked missing this scan"
+                );
+                self.incomplete = true;
+                self.unreadable.push(Unreadable {
+                    folder: "<unknown>".to_owned(),
+                    reason,
+                });
+            }
+        }
+    }
+
+    /// Whether an ignore file of a folder above `path` leaves it out. The
+    /// deepest file that has an opinion decides, as in git.
+    fn ignored(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
+        let mut folder = path.parent();
+        while let Some(current) = folder {
+            if let Some(rules) = self.rules.get(current) {
+                let matched = rules.matched(path, is_dir);
+                if matched.is_ignore() {
+                    return true;
+                }
+                if matched.is_whitelist() {
+                    return false;
+                }
+            }
+            if current == root {
+                break;
+            }
+            folder = current.parent();
+        }
+        false
+    }
+
+    fn skip_link(&mut self, path: &str, why: SkippedLink) {
+        self.skipped_links += 1;
+        if self.skipped_links <= LOGGED_LINKS {
+            tracing::info!(path = %path, reason = why.reason(), "a symbolic link in the library was skipped");
+        }
+    }
+}
+
+/// A path relative to the root, as the catalogue and the log spell it.
+fn relative_to(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| "<outside the library>".to_owned())
+}
+
+/// The walk's decision on one entry below the root: enter it, or leave it.
+fn admit(
+    entry: &walkdir::DirEntry,
+    root: &Path,
+    follow_links: bool,
+    walk: &std::cell::RefCell<WalkState>,
+) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+    let mut walk = walk.borrow_mut();
+    let path = entry.path();
+    // Followed, `file_type` is the target's; not followed, it is the link's.
+    let is_dir = entry.file_type().is_dir();
+    let is_link = if follow_links {
+        entry.path_is_symlink()
+    } else {
+        entry.file_type().is_symlink()
+    };
+    // The rules themselves: read with their folder, never counted as left out.
+    if entry.file_name() == IGNORE_FILE {
+        return false;
+    }
+    // By the name the walk sees, a link's own included (decision 1).
+    if built_in_exclusion(entry.file_name(), entry.depth(), is_dir)
+        || walk.ignored(root, path, is_dir)
+    {
+        walk.excluded += 1;
+        tracing::debug!(path = %relative_to(root, path), "left out of the scan");
+        return false;
+    }
+    if is_link {
+        let skipped = if !follow_links {
+            Some(SkippedLink::NotFollowed)
+        } else {
+            match fs::canonicalize(path) {
+                Ok(target) if target.starts_with(root) => None,
+                Ok(_) => Some(SkippedLink::Outside),
+                Err(_) => Some(SkippedLink::Broken),
+            }
+        };
+        if let Some(why) = skipped {
+            walk.skip_link(&relative_to(root, path), why);
+            return false;
+        }
+    }
+    if is_dir {
+        match load_rules(path, false) {
+            Rules::None => {}
+            Rules::Matcher(rules) => {
+                walk.rules.insert(path.to_path_buf(), rules);
+            }
+            Rules::ExcludeAll => {
+                walk.excluded += 1;
+                tracing::debug!(path = %relative_to(root, path), "left out of the scan by an empty ignore file");
+                return false;
+            }
+            Rules::Unusable(reason) => {
+                walk.unreadable(root, path, follow_links, reason);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Walks the library (RFC-018 decision 3, RFC-021 decisions 1 to 3).
+///
+/// An entry the walk cannot read is logged by its path relative to the root,
+/// never the absolute one, and the walk goes on; only the root itself failing
+/// fails the scan, since then nothing can be told apart — and that includes an
+/// ignore file at the root the walk cannot use.
+///
+/// With `follow_links`, a file reached through a link is returned under its
+/// canonical path, so it is one track however many links name it.
+fn discover_audio(root: &Path, follow_links: bool) -> anyhow::Result<Discovery> {
+    let walk = std::cell::RefCell::new(WalkState::default());
+    match load_rules(root, true) {
+        Rules::Matcher(rules) => {
+            walk.borrow_mut().rules.insert(root.to_path_buf(), rules);
+        }
+        Rules::Unusable(reason) => {
+            anyhow::bail!("the .waveflowignore at the library root cannot be used: {reason}")
+        }
+        Rules::None | Rules::ExcludeAll => {}
+    }
     let mut paths = Vec::new();
-    let mut unreadable = Vec::new();
     let mut incomplete = false;
-    for entry in WalkDir::new(root).follow_links(false) {
+    let entries = WalkDir::new(root)
+        .follow_links(follow_links)
+        .into_iter()
+        .filter_entry(|entry| admit(entry, root, follow_links, &walk));
+    for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) if error.depth() == 0 => return Err(error.into()),
             Err(error) => {
-                let Some(folder) = error
-                    .path()
-                    .and_then(|path| path.strip_prefix(root).ok())
-                    .map(|path| path.to_string_lossy().replace('\\', "/"))
-                else {
-                    tracing::warn!("the library walk failed somewhere it could not name");
-                    incomplete = true;
-                    unreadable.push("<unknown>".to_owned());
-                    continue;
+                let mut walk = walk.borrow_mut();
+                // A link the walk was told to follow and could not: a loop, or
+                // a target it cannot read. A link, not a folder, so nothing
+                // under a folder is spared for it.
+                let link = if error.loop_ancestor().is_some() {
+                    Some(SkippedLink::Loop)
+                } else if follow_links
+                    && error.path().is_some_and(|path| {
+                        fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+                    })
+                {
+                    Some(SkippedLink::Broken)
+                } else {
+                    None
                 };
-                tracing::warn!(
-                    path = %folder,
-                    "a folder in the library could not be read; its tracks are left as they are"
-                );
-                unreadable.push(folder);
+                let named = error.path().filter(|path| path.starts_with(root));
+                match (link, named) {
+                    (Some(why), Some(path)) => walk.skip_link(&relative_to(root, path), why),
+                    (_, None) => {
+                        tracing::warn!("the library walk failed somewhere it could not name");
+                        incomplete = true;
+                        walk.unreadable.push(Unreadable {
+                            folder: "<unknown>".to_owned(),
+                            reason: "folder could not be read",
+                        });
+                    }
+                    (None, Some(path)) => {
+                        walk.unreadable(root, path, follow_links, "folder could not be read");
+                    }
+                }
                 continue;
             }
         };
-        if entry.file_type().is_symlink() || !entry.file_type().is_file() {
+        // A link is only ever yielded here when it is followed, and then its
+        // type is its target's.
+        if !entry.file_type().is_file() {
             continue;
         }
-        let supported = entry
-            .path()
+        let path = if follow_links {
+            match fs::canonicalize(entry.path()) {
+                Ok(canonical) if canonical.starts_with(root) => canonical,
+                _ => continue,
+            }
+        } else {
+            entry.into_path()
+        };
+        let supported = path
             .extension()
             .and_then(|value| value.to_str())
             .is_some_and(|ext| {
@@ -719,14 +1162,26 @@ fn discover_audio(root: &Path) -> anyhow::Result<Discovery> {
                     .any(|candidate| candidate.eq_ignore_ascii_case(ext))
             });
         if supported {
-            paths.push(entry.into_path());
+            paths.push(path);
         }
     }
     paths.sort();
+    // Followed links can name one file twice, or name a file the walk also
+    // found directly; sorted, the copies are adjacent.
+    paths.dedup();
+    let walk = walk.into_inner();
+    if walk.skipped_links > LOGGED_LINKS {
+        tracing::info!(
+            count = walk.skipped_links - LOGGED_LINKS,
+            "further symbolic links in the library were skipped"
+        );
+    }
     Ok(Discovery {
         paths,
-        unreadable,
-        incomplete,
+        unreadable: walk.unreadable,
+        incomplete: incomplete || walk.incomplete,
+        excluded: walk.excluded,
+        skipped_links: walk.skipped_links,
     })
 }
 
@@ -1263,7 +1718,80 @@ fn lyrics_hash(entries: &[LyricsInput]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extended_tags, read_sidecar, Walked, MAX_LYRICS_BYTES};
+    use super::{
+        built_in_exclusion, extended_tags, load_rules, read_sidecar, Rules, Walked, IGNORE_FILE,
+        MAX_IGNORE_BYTES, MAX_LYRICS_BYTES,
+    };
+
+    /// RFC-021 decision 1: what is left out by name, below the root only, and
+    /// the one dot folder that is not.
+    #[test]
+    fn built_in_exclusions_spare_the_folder_uploads_land_in() {
+        use std::ffi::OsStr;
+        for name in [
+            ".hidden",
+            "._Track.flac",
+            ".Trash-1000",
+            "@eaDir",
+            "#recycle",
+            "$Recycle.Bin",
+            "System Volume Information",
+            "LOST+FOUND",
+        ] {
+            assert!(built_in_exclusion(OsStr::new(name), 1, true), "{name}");
+        }
+        assert!(!built_in_exclusion(OsStr::new("Album"), 1, true));
+        assert!(!built_in_exclusion(OsStr::new("eaDir"), 1, true));
+        // Received files: kept directly under the root, and only there.
+        assert!(!built_in_exclusion(
+            OsStr::new(".waveflow-managed"),
+            1,
+            true
+        ));
+        assert!(built_in_exclusion(OsStr::new(".waveflow-managed"), 2, true));
+        assert!(built_in_exclusion(
+            OsStr::new(".waveflow-managed"),
+            1,
+            false
+        ));
+    }
+
+    /// RFC-021 decision 1: an empty file excludes its folder except at the
+    /// root, and a file the walk cannot use says why.
+    #[test]
+    fn ignore_files_are_read_as_the_rfc_says() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        assert!(matches!(load_rules(dir, false), Rules::None));
+
+        std::fs::write(dir.join(IGNORE_FILE), " \n\t\n").unwrap();
+        assert!(matches!(load_rules(dir, false), Rules::ExcludeAll));
+        assert!(
+            matches!(load_rules(dir, true), Rules::None),
+            "an empty file at the root must exclude nothing"
+        );
+
+        std::fs::write(dir.join(IGNORE_FILE), "# scans\n*.wav\n!Keep.wav\n").unwrap();
+        let Rules::Matcher(rules) = load_rules(dir, false) else {
+            panic!("a valid file is a matcher");
+        };
+        assert!(rules.matched(dir.join("Drop.wav"), false).is_ignore());
+        assert!(rules.matched(dir.join("Keep.wav"), false).is_whitelist());
+
+        std::fs::write(dir.join(IGNORE_FILE), "[z-a]\n").unwrap();
+        assert!(matches!(load_rules(dir, false), Rules::Unusable(_)));
+
+        std::fs::write(
+            dir.join(IGNORE_FILE),
+            vec![b'#'; MAX_IGNORE_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert!(matches!(load_rules(dir, false), Rules::Unusable(_)));
+
+        std::fs::remove_file(dir.join(IGNORE_FILE)).unwrap();
+        std::fs::create_dir(dir.join(IGNORE_FILE)).unwrap();
+        assert!(matches!(load_rules(dir, false), Rules::Unusable(_)));
+    }
 
     /// A track under a folder the walk could not read is not missing, so no
     /// file elsewhere may claim it; nor may any track when the walk could not

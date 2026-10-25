@@ -111,17 +111,25 @@ export {
 export type {
   Library,
   LibraryMember,
+  LibrarySettings,
   ScanJob,
+  UnavailableTrack,
 } from "./libraries";
 export {
   addLibrary,
+  deleteLibrary,
   drainEventStream,
+  getLibrarySettings,
   getScan,
   listLibraries,
   listLibraryMembers,
+  listUnavailableTracks,
+  purgeUnavailableTracks,
   removeLibraryMember,
   setLibraryMember,
   startScan,
+  UNAVAILABLE_PAGE,
+  updateLibrary,
   watchScan,
 } from "./libraries";
 export type { AuthorizeRequest } from "./oauth";

@@ -75,7 +75,29 @@ const library = (id: string, name: string) => ({
   last_scan_completed_at: null,
   accepts_uploads: false as boolean,
   accepts_canvas: false as boolean,
+  follow_links: false as boolean,
 });
+
+/**
+ * The tracks the scans can no longer find (RFC-021), as
+ * `GET /libraries/{id}/unavailable-tracks` answers them. Mutable, because the
+ * purge test removes them and the point is that the list follows.
+ */
+const missingTrack = (index: number, title: string) => ({
+  id: `missing-${index}`,
+  relative_path: `Gone/${index} ${title}.flac`,
+  title,
+  artist: "Ada Reed",
+  album: "Gone",
+  duration_ms: 200_000,
+  unavailable_since: 1_700_000_000_000 + index,
+  playlist_entries: index,
+  favorites: 1,
+  plays: 3 * index,
+});
+let missingTracks: Array<ReturnType<typeof missingTrack>> = [];
+/** What each purge asked for, in order. */
+let purgeAsks: unknown[] = [];
 
 /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
 let libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
@@ -593,6 +615,8 @@ async function mockAuthenticatedApi(page: Page) {
           skipped: 0,
           unavailable: 0,
           errors: 0,
+          excluded: 0,
+          skipped_links: 0,
           current_path: `/music/track-${processed}.flac`,
           message: null,
         });
@@ -622,6 +646,45 @@ async function mockAuthenticatedApi(page: Page) {
             folder_ids: ["library-1"],
           },
         ],
+      });
+      return;
+    }
+    // RFC-021: a library as an administrator manages it, and its missing
+    // tracks with their purge.
+    if (url.pathname.endsWith("/settings") && url.pathname.includes("/libraries/")) {
+      const id = url.pathname.split("/")[4];
+      const found = libraries.find((entry) => entry.id === id);
+      await route.fulfill({
+        json: {
+          id,
+          name: found?.name ?? id,
+          path: `/srv/music/${id}`,
+          follow_links: found?.follow_links ?? false,
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith("/unavailable-tracks/purge")) {
+      const asked = route.request().postDataJSON() as
+        | { all: true }
+        | { track_ids: string[] };
+      purgeAsks.push(asked);
+      const before = missingTracks.length;
+      missingTracks =
+        "all" in asked
+          ? []
+          : missingTracks.filter((entry) => !asked.track_ids.includes(entry.id));
+      await route.fulfill({ json: { purged: before - missingTracks.length } });
+      return;
+    }
+    if (url.pathname.endsWith("/unavailable-tracks")) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      await route.fulfill({
+        json: {
+          total: missingTracks.length,
+          tracks: missingTracks.slice(offset, offset + limit),
+        },
       });
       return;
     }
@@ -1121,6 +1184,8 @@ async function mockAuthenticatedApi(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   libraries = [library("library-1", "Ma musique")];
+  missingTracks = [];
+  purgeAsks = [];
   membersFail = false;
   tokensFail = false;
   ownClients = freshClients();
@@ -2746,7 +2811,9 @@ test("lists who may see a library, once its panel is opened", async ({
   const asked: string[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.endsWith("/members")) asked.push(path);
+    if (path.endsWith("/members") || path.endsWith("/settings")) {
+      asked.push(path);
+    }
   });
 
   // Two libraries, because one cannot tell the two layouts apart: with a single
@@ -2766,12 +2833,19 @@ test("lists who may see a library, once its panel is opened", async ({
 
   // Each library's membership sits directly under that library, not after the
   // whole list: two render passes put the third library's members four rows
-  // below it, which reads as belonging to whatever is above them.
+  // below it, which reads as belonging to whatever is above them. Its name,
+  // folder and deletion (RFC-021) follow, still before the next library.
   const rows = page.locator(".admin-panel .resource-list > li");
   await expect(rows.nth(0)).toContainText("Ma musique");
   await expect(rows.nth(1)).toContainText("Who may see this library");
-  await expect(rows.nth(2)).toContainText("Les enfants");
-  await expect(rows.nth(3)).toContainText("Who may see this library");
+  await expect(rows.nth(2)).toContainText("Name, folder and deletion");
+  await expect(rows.nth(3)).toContainText("Les enfants");
+  await expect(rows.nth(4)).toContainText("Who may see this library");
+  await expect(rows.nth(5)).toContainText("Name, folder and deletion");
+  await expect(rows).toHaveCount(6);
+  // Neither panel asks for anything until it is opened: the folder on the
+  // server is fetched for the one library somebody is looking at.
+  expect(asked).toEqual([]);
 
   await disclosure.click();
   await expect(page.getByText("guest")).toBeVisible();
@@ -3560,11 +3634,11 @@ test("opens the rest of the client from the mobile bar", async ({
 
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  // The fourteen the bar cannot hold — including the three this account is
+  // The fifteen the bar cannot hold — including the three this account is
   // entitled to as an administrator and owner of a library that takes files.
   // `Radio` joined them with #217, `Folders` with RFC-012's filed folders and
-  // `Needs attention` with RFC-015 and `Quality` with RFC-016; this count is
-  // what said so: a new entry in
+  // `Needs attention` with RFC-015, `Quality` with RFC-016 and `Missing files`
+  // with RFC-021; this count is what said so: a new entry in
   // the sidebar reaches the sheet, and the sheet is pinned.
   for (const name of [
     "Artists",
@@ -3572,6 +3646,7 @@ test("opens the rest of the client from the mobile bar", async ({
     "Genres",
     "Folders",
     "Needs attention",
+    "Missing files",
     "Quality",
     "Settings",
     "Random",
@@ -3586,7 +3661,7 @@ test("opens the rest of the client from the mobile bar", async ({
   }
   // Counted as well as named: a sheet that also offered something nobody asked
   // for would satisfy every line above.
-  await expect(sheet.getByRole("link")).toHaveCount(14);
+  await expect(sheet.getByRole("link")).toHaveCount(15);
 
   await expectNoWcagViolations(page);
 
@@ -3630,6 +3705,10 @@ test("offers nothing in the sheet that the account may not reach", async ({
   // Nothing on it is a listener's to decide (RFC-015).
   await expect(
     sheet.getByRole("link", { name: "Needs attention" }),
+  ).toHaveCount(0);
+  // Nor is purging what the scans lost (RFC-021).
+  await expect(
+    sheet.getByRole("link", { name: "Missing files" }),
   ).toHaveCount(0);
 });
 
@@ -7013,3 +7092,85 @@ for (const kind of ["running", "pending"] as const) {
     await expect.poll(states).toEqual(["closed"]);
   });
 }
+
+/**
+ * "Missing files" (RFC-021 decision 4): what the scans can no longer find, what
+ * purging each would cost, and a purge that takes two clicks and only what was
+ * chosen. A purge is not reversible, so the first click only arms it.
+ */
+test("lists the missing files and purges only what was chosen", async ({
+  page,
+}) => {
+  missingTracks = [missingTrack(1, "First light"), missingTrack(2, "Second wind")];
+  await page.goto("/missing");
+
+  await expect(
+    page.getByRole("heading", { name: "Missing files" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("2 files the scans can no longer find"),
+  ).toBeVisible();
+  await expect(page.getByText("Gone/2 Second wind.flac")).toBeVisible();
+  await expect(
+    page.getByText("2 in playlists · 1 favourites · 6 plays"),
+  ).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.getByRole("checkbox", { name: "Select First light" }).check();
+  const purge = page.getByRole("button", { name: "Purge the selected (1)" });
+  await purge.click();
+  // Armed, not sent.
+  await expect(
+    page.getByRole("button", { name: "Confirm: purge 1" }),
+  ).toBeVisible();
+  expect(purgeAsks).toEqual([]);
+
+  await page.getByRole("button", { name: "Confirm: purge 1" }).click();
+  await expect(page.getByText("1 track purged.")).toBeVisible();
+  expect(purgeAsks).toEqual([{ track_ids: ["missing-1"] }]);
+  await expect(page.getByText("Gone/1 First light.flac")).toHaveCount(0);
+  await expect(page.getByText("Gone/2 Second wind.flac")).toBeVisible();
+});
+
+/** Purging is a curator's: a listener is told so and asks for nothing. */
+test("keeps the missing files from a listener", async ({ page }) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.includes("/unavailable-tracks")) asked.push(path);
+  });
+  // A listener who is not an administrator either: the default session is
+  // one, and an administrator may see the page whatever their library role.
+  await page.route("**/api/v2/web/auth/refresh", (route) =>
+    route.fulfill({
+      json: { ...session, user: { ...session.user, role: "user" } },
+    }),
+  );
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  missingTracks = [missingTrack(1, "First light")];
+  await page.goto("/missing");
+  await expect(
+    page.getByText(
+      "Only the owners and managers of this library, and administrators, see its missing files.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Gone/1 First light.flac")).toHaveCount(0);
+  expect(asked).toEqual([]);
+});
+
+/**
+ * The server grants the page to the instance's administrators whatever their
+ * role in the library (RFC-021 decision 4), so the client must not hide it
+ * from an administrator who only listens to it.
+ */
+test("shows the missing files to an administrator who only listens", async ({
+  page,
+}) => {
+  libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  missingTracks = [missingTrack(1, "First light")];
+  await page.goto("/missing");
+  await expect(page.getByText("Gone/1 First light.flac")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Purge them all" }),
+  ).toBeVisible();
+});
