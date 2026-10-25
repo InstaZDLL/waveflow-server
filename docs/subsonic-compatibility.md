@@ -261,9 +261,15 @@ word kept still matches as a prefix.
 
 The query is **narrowed, never refused**, so no client receives an error it
 never had. Only a query longer than either bound answers differently — it may
-match more than it did — and no validated client sends one: the match-all
-`search3` of Symfonium is the empty string, and a search typed by a person is a
-few words. Nothing else under `/rest` changes; a disabled account's shares
+match more than it did — and no validated client sends one: a search typed by a
+person is a few words. Two queries never reach the bound at all, and answer as
+they did:
+
+- **The literal `""`** — two double quotes, `query=%22%22` — is the match-all
+  Symfonium pages its catalogue with. It is recognised before any full-text
+  query is built and answers the paged catalogue.
+- **An empty or blank query** (`query=`, `query=%20`) names no term, and
+  answers an empty `searchResult3`, not the catalogue. Nothing else under `/rest` changes; a disabled account's shares
 closing (the same RFC) affects `/share/`, which is not part of the façade.
 
 ## Additions for RFC-025: smart playlists and podcasts
