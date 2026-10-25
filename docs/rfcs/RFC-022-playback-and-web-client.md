@@ -1,9 +1,9 @@
 # RFC-022 — Playback and the web client: loudness, discography, install, AAC
 
 - **Status**: Proposed
-- **Implemented by**: the pull request that carries this RFC. The *Status*
-  field above never flips in this project; this line is the one that says
-  what is running.
+- **Implemented by**: [#326](https://github.com/InstaZDLL/waveflow-server/pull/326)
+  (this RFC, and all seven decisions with it). The *Status* field above never
+  flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the stream tickets,
