@@ -35,7 +35,8 @@ export type IconName =
   | "back"
   | "inbox"
   | "quality"
-  | "stats";
+  | "stats"
+  | "podcasts";
 
 const paths: Record<IconName, ReactNode> = {
   // Three bars on a baseline: a count of listens, which is what the
@@ -201,6 +202,13 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="8" r="3" />
       <path d="M6 20v-2c0-3.3 2.7-6 6-6s6 2.7 6 6v2M19 4v4M17 6h4" />
+    </>
+  ),
+  // A microphone on its stand: speech, which is what a podcast mostly is.
+  podcasts: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" />
     </>
   ),
   // A mast between two arcs: sound arriving from somewhere that is not the

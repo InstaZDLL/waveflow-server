@@ -13,8 +13,10 @@ pub(super) async fn media_response(
 ) -> Result<Response, ProtocolError> {
     let id = params.uuid("id")?;
     let track = state
-        .db
-        .stream_track_for_user(principal.id, id)
+        // A track, or a stored podcast episode: `stream` and `download` take
+        // an episode's `streamId`, which is its own id (RFC-025 decision 11).
+        .services
+        .stream_source_for_user(principal.id, id)
         .await
         .map_err(internal)?
         .ok_or_else(not_found)?;

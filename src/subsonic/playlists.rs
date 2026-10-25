@@ -22,7 +22,10 @@ pub(super) async fn playlists(
         .visible_playlists(principal.id)
         .await
         .map_err(internal)?;
-    Ok(Node::new("playlists").children(playlists.iter().map(playlist_node)))
+    Ok(Node::new("playlists")
+        .children(playlists.iter().map(playlist_node))
+        // Smart playlists after them, read-only (RFC-025 decision 6).
+        .children(smart_playlist_nodes(state, principal).await?))
 }
 
 pub(super) async fn get_playlist(
@@ -30,11 +33,12 @@ pub(super) async fn get_playlist(
     principal: &Principal,
     params: &Params,
 ) -> Result<Node, ProtocolError> {
-    let playlist = state
-        .services
-        .playlist(principal.id, params.uuid("id")?)
-        .await
-        .map_err(service_protocol)?;
+    let id = params.uuid("id")?;
+    let playlist = match state.services.playlist(principal.id, id).await {
+        // No ordinary playlist has the id: perhaps a smart one does (RFC-025).
+        Err(ServiceError::NotFound) => return get_smart_playlist(state, principal, id).await,
+        other => other.map_err(service_protocol)?,
+    };
     Ok(playlist_node(&playlist).children(
         playlist
             .songs

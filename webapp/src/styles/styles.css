@@ -3748,6 +3748,49 @@ button.danger {
   padding: 0;
 }
 
+/* Smart playlists (RFC-025): beside the ordinary ones, set apart by a rule
+   above them and a word after their name. */
+.smart-playlists {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+
+.smart-badge {
+  font-size: var(--text-sm);
+  color: var(--accent);
+}
+
+.smart-conditions {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A condition reads as a sentence: field, comparison, value. */
+.smart-condition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.smart-editor .smart-condition > input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.smart-preview ol {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-6);
+}
+
+.podcast-episodes {
+  margin-top: var(--space-6);
+}
+
 /* The mixes the server drew today (RFC-024), one shelf over the albums. A row
    that scrolls sideways rather than a grid that wraps: a shelf is a glance at
    what is on offer, and the albums below are what the page is for. */

@@ -320,12 +320,14 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
         70
     );
 
-    // A method that really is unimplemented still says so.
+    // A method that really is unimplemented still says so. It was
+    // `getPodcasts` until RFC-025 implemented it; `jukeboxControl` is the one
+    // a validated client (Feishin) is known to call and be refused.
     let unknown = router
         .clone()
         .oneshot(
             Request::get(format!(
-                "/rest/getPodcasts.view?apiKey={api_key}&v=1.16.1&c=golden&f=json"
+                "/rest/jukeboxControl.view?apiKey={api_key}&v=1.16.1&c=golden&f=json"
             ))
             .body(Body::empty())
             .unwrap(),

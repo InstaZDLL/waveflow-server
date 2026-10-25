@@ -192,3 +192,11 @@ path = "tests/quality.rs"
 [[test]]
 name = "discovery"
 path = "tests/discovery.rs"
+
+[[test]]
+name = "smart_playlists"
+path = "tests/smart_playlists.rs"
+
+[[test]]
+name = "podcasts"
+path = "tests/podcasts.rs"

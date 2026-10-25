@@ -14,7 +14,10 @@ import {
   getListeningStats,
   getLyrics,
   getMix,
+  getPodcastChannel,
+  getPodcastOverview,
   getQualitySummary,
+  getSmartPlaylist,
   getTrack,
   getTrackCredits,
   getTrackOverrides,
@@ -45,6 +48,7 @@ import {
   listScrobbleDestinations,
   listScrobbleLinks,
   listShares,
+  listSmartPlaylists,
   listSongs,
   listUnavailableTracks,
   listUncertainScrobbles,
@@ -634,4 +638,29 @@ export const trackEditQuery = (trackId: string) =>
       ]);
       return { song, tracked };
     },
+  });
+
+/**
+ * Smart playlists (RFC-025), counted but not loaded: a listing carries what
+ * each one answers now, and the tracks are asked for when one is opened.
+ */
+export const smartPlaylistsQuery = () =>
+  queryOptions({ queryKey: ["smart-playlists"], queryFn: listSmartPlaylists });
+
+/** One smart playlist, evaluated by the server at the moment it is asked. */
+export const smartPlaylistQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["smart-playlists", id],
+    queryFn: () => getSmartPlaylist(id),
+  });
+
+/** The podcasts page: the switch, this account's role, the channels. */
+export const podcastsQuery = () =>
+  queryOptions({ queryKey: ["podcasts"], queryFn: getPodcastOverview });
+
+/** One channel and its episodes, with this account's position in each. */
+export const podcastChannelQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["podcasts", id],
+    queryFn: () => getPodcastChannel(id),
   });

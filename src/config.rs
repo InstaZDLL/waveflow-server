@@ -51,6 +51,49 @@ pub struct LibraryEventRetention {
     pub min_events: i64,
 }
 
+/// Podcasts (RFC-025 decisions 7 to 12).
+///
+/// **Off by default, and an upgrade leaves it off**: subscribing to a feed is
+/// outbound traffic to a host a person typed, and nothing of the kind happens
+/// until an operator says so. With the switch off, no feed is fetched, no
+/// episode is downloaded, and `podcastRole` is false for everyone; what was
+/// stored while it was on stays readable, and a downloaded episode stays
+/// playable from disk.
+#[derive(Debug, Clone)]
+pub struct PodcastSettings {
+    /// `WAVEFLOW_PODCASTS`, off by default.
+    pub enabled: bool,
+    /// `WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS`: how often every channel is
+    /// fetched again, six hours by default; `0` for never on its own — a
+    /// refresh then happens only when somebody asks for one.
+    pub refresh_interval: Option<Duration>,
+    /// `WAVEFLOW_PODCAST_ALLOW_HTTP`: whether a feed or an enclosure may be
+    /// plain http. On by default, because a good share of podcast enclosures
+    /// are still served that way and a feed is public content; the address
+    /// rules apply either way.
+    pub allow_http: bool,
+    /// `WAVEFLOW_PODCAST_MAX_FEED_BYTES`: the largest feed read, 16 MiB.
+    pub max_feed_bytes: usize,
+    /// `WAVEFLOW_PODCAST_MAX_EPISODE_BYTES`: the largest episode stored,
+    /// 1 GiB.
+    pub max_episode_bytes: u64,
+    /// `WAVEFLOW_PODCAST_QUOTA_BYTES`: how much the downloaded episodes may
+    /// occupy together, 20 GiB.
+    pub quota_bytes: u64,
+    /// `WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS`: one feed fetch, redirects
+    /// included, 20 seconds.
+    pub feed_timeout: Duration,
+    /// `WAVEFLOW_PODCAST_DOWNLOAD_TIMEOUT_SECS`: one episode download, 30
+    /// minutes.
+    pub download_timeout: Duration,
+    /// Where episodes are stored: `<data dir>/podcasts`, derived and not set.
+    pub dir: PathBuf,
+    /// Which addresses a fetch may reach. Public ones in production, always;
+    /// not an environment variable. The test suite's feeds live on loopback,
+    /// and its fixture admits loopback for them alone.
+    pub addresses: crate::portrait::AddressPolicy,
+}
+
 /// What the server accepts when a member attaches a loop to a track.
 ///
 /// Apart from [`UploadLimits`] rather than folded into it: the two magazines
@@ -493,6 +536,8 @@ pub struct Config {
     pub metadata: MetadataSettings,
     /// Lyrics looked up on LRCLIB — RFC-024. See [`LyricsSettings`].
     pub lyrics: LyricsSettings,
+    /// Podcasts — RFC-025. See [`PodcastSettings`].
+    pub podcasts: PodcastSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// `WAVEFLOW_TRUSTED_PROXIES`: the reverse proxies whose
     /// `X-Forwarded-For` is believed when telling one client from another
@@ -564,6 +609,7 @@ impl std::fmt::Debug for Config {
             .field("outbound_allow_plaintext", &self.outbound_allow_plaintext)
             .field("metadata", &self.metadata)
             .field("lyrics", &self.lyrics)
+            .field("podcasts", &self.podcasts)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
             // Whether it is set, never what it is.
@@ -783,6 +829,7 @@ impl Config {
 
         let metadata = parse_metadata_settings()?;
         let lyrics = parse_lyrics_settings()?;
+        let podcasts = parse_podcast_settings(&data_dir)?;
         // Absent is empty; a value that is not UTF-8 refuses to boot, rather
         // than starting with no trusted proxy and counting every client behind
         // it under the proxy's address.
@@ -882,6 +929,7 @@ impl Config {
             outbound_allow_plaintext,
             metadata,
             lyrics,
+            podcasts,
             allowed_origins,
             trusted_proxies,
             setup_token,
@@ -893,6 +941,7 @@ impl Config {
     pub fn for_data_dir(data_dir: PathBuf) -> Self {
         let transcode_cache_dir = data_dir.join("transcode-cache");
         let canvas_dir_for_tests = data_dir.join("canvas");
+        let podcast_dir_for_tests = data_dir.join("podcasts");
         Self {
             bind_addr: "127.0.0.1:0".parse().expect("literal socket address"),
             public_url: Some("http://waveflow.test".to_owned()),
@@ -1001,6 +1050,22 @@ impl Config {
             // Off as well, and for the same reason: the targets that exercise
             // LRCLIB build their own lookup against a listener of their own.
             lyrics: LyricsSettings::off(),
+            // Off, as production defaults, and small enough that a test can
+            // reach every bound. The podcast targets switch it on and point
+            // it at a listener of their own on loopback, which is the one
+            // reason the address policy here admits loopback.
+            podcasts: PodcastSettings {
+                enabled: false,
+                refresh_interval: None,
+                allow_http: false,
+                max_feed_bytes: 256 * 1024,
+                max_episode_bytes: 1024 * 1024,
+                quota_bytes: 4 * 1024 * 1024,
+                feed_timeout: Duration::from_secs(10),
+                download_timeout: Duration::from_secs(30),
+                dir: podcast_dir_for_tests,
+                addresses: crate::portrait::AddressPolicy::AllowLoopback,
+            },
             allowed_origins: Vec::new(),
             trusted_proxies: Vec::new(),
             // Drawn at boot and written to the data directory, as production
@@ -1355,6 +1420,46 @@ fn parse_metadata_providers(
         providers.push(provider);
     }
     Ok(providers)
+}
+
+/// The podcast switch and its bounds (RFC-025 decision 7).
+///
+/// Every bound refuses zero at startup, as the other bounds here do; the
+/// interval is the exception, because zero is how "never on its own" is said.
+fn parse_podcast_settings(data_dir: &std::path::Path) -> anyhow::Result<PodcastSettings> {
+    let refresh_secs = std::env::var("WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS")
+        .unwrap_or_else(|_| "21600".to_owned())
+        .parse::<u64>()
+        .map_err(|error| {
+            anyhow::anyhow!("invalid WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS: {error}")
+        })?;
+    let max_episode_bytes = parse_positive_env("WAVEFLOW_PODCAST_MAX_EPISODE_BYTES", 1u64 << 30)?;
+    let quota_bytes = parse_positive_env("WAVEFLOW_PODCAST_QUOTA_BYTES", 20u64 << 30)?;
+    if max_episode_bytes > quota_bytes {
+        anyhow::bail!(
+            "WAVEFLOW_PODCAST_MAX_EPISODE_BYTES cannot exceed WAVEFLOW_PODCAST_QUOTA_BYTES"
+        );
+    }
+    Ok(PodcastSettings {
+        enabled: parse_bool_env("WAVEFLOW_PODCASTS", false)?,
+        // Never more often than every five minutes: a refresh fetches every
+        // channel, and an interval of one second would be a crawler.
+        refresh_interval: (refresh_secs > 0).then(|| Duration::from_secs(refresh_secs.max(300))),
+        allow_http: parse_bool_env("WAVEFLOW_PODCAST_ALLOW_HTTP", true)?,
+        max_feed_bytes: parse_positive_env("WAVEFLOW_PODCAST_MAX_FEED_BYTES", 16usize << 20)?,
+        max_episode_bytes,
+        quota_bytes,
+        feed_timeout: Duration::from_secs(parse_positive_env(
+            "WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS",
+            20u64,
+        )?),
+        download_timeout: Duration::from_secs(parse_positive_env(
+            "WAVEFLOW_PODCAST_DOWNLOAD_TIMEOUT_SECS",
+            1_800u64,
+        )?),
+        dir: data_dir.join("podcasts"),
+        addresses: crate::portrait::AddressPolicy::Public,
+    })
 }
 
 fn parse_env<T>(name: &str, default: &str) -> anyhow::Result<T>
