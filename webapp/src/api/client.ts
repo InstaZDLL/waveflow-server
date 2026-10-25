@@ -362,17 +362,39 @@ export const setupRequired = () =>
     (status) => status.required,
   );
 
+/** The message a setup refused for its token is thrown with (RFC-019). */
+export const SETUP_TOKEN_REJECTED = "setup_token_rejected";
+
+/**
+ * Creates the first administrator. `setupToken` is the one-time token the
+ * server wrote to `setup-token` in its data directory, or the value of
+ * `WAVEFLOW_SETUP_TOKEN` when the operator chose one.
+ */
 export async function bootstrapAdmin(
   username: string,
   password: string,
+  setupToken: string,
 ): Promise<void> {
   const response = await fetch("/api/v2/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username,
+      password,
+      setup_token: setupToken.trim(),
+    }),
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "setup failed");
+    // The token's refusal has its own code, so the screen can point at the
+    // field to correct rather than at the password rules.
+    const code = await response
+      .json()
+      .then((body: { code?: unknown }) => body.code)
+      .catch(() => undefined);
+    throw new ApiError(
+      response.status,
+      code === SETUP_TOKEN_REJECTED ? SETUP_TOKEN_REJECTED : "setup failed",
+    );
   }
 }
 

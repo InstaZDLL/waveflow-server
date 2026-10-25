@@ -325,6 +325,113 @@ async fn embedded_web_client_serves_shell_without_shadowing_the_api() {
     assert_eq!(json_body(health).await["status"], "ok");
 }
 
+/// RFC-019 decision 2: the web client and the public shares tell a browser
+/// how far to trust them, and the Subsonic façade, whose wire is frozen, is
+/// left exactly as it was.
+#[tokio::test]
+async fn the_web_client_and_shares_carry_security_headers_and_rest_does_not() {
+    use base64::Engine;
+    use sha2::Digest;
+
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let get = |uri: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    let header = |response: &axum::response::Response, name: &str| {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().unwrap().to_owned())
+    };
+
+    // The shell, a client route, and a refusal from the fallback alike.
+    for uri in ["/", "/albums/some-client-route", "/favicon.ico"] {
+        let response = get(uri).await;
+        assert_eq!(
+            header(&response, "x-content-type-options").as_deref(),
+            Some("nosniff"),
+            "{uri}"
+        );
+        // Nothing to another host; not `no-referrer`, which adds nothing to
+        // that and can null the `Origin` the sign-in checks (RFC-019).
+        assert_eq!(
+            header(&response, "referrer-policy").as_deref(),
+            Some("same-origin"),
+            "{uri}"
+        );
+        assert_eq!(
+            header(&response, "x-frame-options").as_deref(),
+            Some("SAMEORIGIN"),
+            "{uri}"
+        );
+        let policy = header(&response, "content-security-policy").expect(uri);
+        assert!(policy.contains("frame-ancestors 'self'"), "{uri}: {policy}");
+        assert!(policy.contains("object-src 'none'"), "{uri}: {policy}");
+        assert!(!policy.contains("unsafe-inline"), "{uri}: {policy}");
+    }
+
+    // Each inline block of the shell actually served is admitted by its own
+    // digest — computed here, apart from the server's parser — and the policy
+    // admits no more of them than the shell holds. With the placeholder shell
+    // CI embeds there are none; with a real client build there are two.
+    let shell = get("/").await;
+    let policy = header(&shell, "content-security-policy").unwrap();
+    let html = body_text(shell).await;
+    let mut inline = 0;
+    for tag in ["script", "style"] {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        for (start, _) in html.match_indices(&open) {
+            let content = &html[start + open.len()..];
+            let content = &content[..content.find(&close).expect("a closed block")];
+            let digest = base64::engine::general_purpose::STANDARD
+                .encode(sha2::Sha256::digest(content.as_bytes()));
+            assert!(
+                policy.contains(&format!("'sha256-{digest}'")),
+                "the inline {tag} is not admitted: {policy}"
+            );
+            inline += 1;
+        }
+    }
+    assert_eq!(policy.matches("'sha256-").count(), inline, "{policy}");
+
+    // A share's token is its path, so nothing may carry it away as a referrer.
+    // A route that matched and found no share answers with the headers too.
+    let share = get("/share/nope").await;
+    assert_eq!(share.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        header(&share, "referrer-policy").as_deref(),
+        Some("no-referrer")
+    );
+    assert_eq!(
+        header(&share, "x-content-type-options").as_deref(),
+        Some("nosniff")
+    );
+    assert_eq!(header(&share, "x-frame-options").as_deref(), Some("DENY"));
+    assert_eq!(
+        header(&share, "content-security-policy").as_deref(),
+        Some("frame-ancestors 'none'")
+    );
+
+    // The façade: none of them.
+    let rest = get("/rest/ping").await;
+    for name in [
+        "content-security-policy",
+        "x-content-type-options",
+        "referrer-policy",
+        "x-frame-options",
+    ] {
+        assert_eq!(header(&rest, name), None, "/rest carries {name}");
+    }
+}
+
 #[tokio::test]
 async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
     let (_temp, config, state) = test_app().await;
@@ -629,6 +736,24 @@ async fn a_browser_opening_a_share_link_is_handed_the_player() {
     assert!(content_type(&page).starts_with("text/html"));
     assert_eq!(page.headers()["vary"], "accept");
     assert_eq!(page.headers()["cache-control"], "no-store");
+    // The share headers of RFC-019, on the page as on everything under
+    // `/share/` — and the web client's own policy, without which the shell's
+    // inline blocks would not run, with framing refused as on every share.
+    assert_eq!(page.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(page.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(page.headers()["x-frame-options"], "DENY");
+    let page_policy = page.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        page_policy.starts_with("default-src 'self'; script-src 'self'"),
+        "{page_policy}"
+    );
+    assert!(
+        page_policy.ends_with("frame-ancestors 'none'"),
+        "{page_policy}"
+    );
     let visits = || async { state.services.shares(owner).await.unwrap()[0].visit_count };
     assert_eq!(visits().await, 0, "handing out the page is not a visit");
 
@@ -662,6 +787,12 @@ async fn a_browser_opening_a_share_link_is_handed_the_player() {
             "{accept:?}"
         );
         assert_eq!(document.headers()["vary"], "accept");
+        assert_eq!(
+            document.headers()["content-security-policy"],
+            "frame-ancestors 'none'"
+        );
+        assert_eq!(document.headers()["referrer-policy"], "no-referrer");
+        assert_eq!(document.headers()["x-frame-options"], "DENY");
     }
     assert_eq!(visits().await, 3);
 

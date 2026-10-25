@@ -59,6 +59,11 @@ const VISIT_MP3_BITRATE: u32 = 192;
 /// its connection open for as long as the scan ran. **The stream is not**, for
 /// the reason every media route is not: a body may rightly outlive any fixed
 /// request timeout, and `MediaService` bounds what it spawns itself.
+///
+/// **Every answer of both carries the share headers** (RFC-019 decision 2),
+/// applied outermost so that a timeout, a refused query and a 404 carry them
+/// too: a share's token is its path, and no response under it may hand that
+/// path away as a referrer or be framed.
 pub fn router(state: AppState, request_timeout: std::time::Duration) -> Router {
     let opening = Router::new().route("/share/{token}", get(open)).layer(
         tower_http::timeout::TimeoutLayer::with_status_code(
@@ -69,6 +74,9 @@ pub fn router(state: AppState, request_timeout: std::time::Duration) -> Router {
     Router::new()
         .route("/share/{token}/tracks/{track_id}/stream", get(stream))
         .merge(opening)
+        .layer(axum::middleware::map_response(
+            crate::security_headers::share,
+        ))
         .with_state(state)
 }
 
@@ -97,20 +105,16 @@ fn wants_page(headers: &HeaderMap) -> bool {
         })
 }
 
-/// What every answer of this route carries.
+/// What every answer of the opening carries, beside the share headers the
+/// router adds to everything under `/share/`.
 ///
 /// `Vary`, because one address answers two representations and a cache that
 /// ignored the header would hand a browser the JSON. `no-store`, because both
-/// are a bearer's view. `no-referrer`, because the address is the credential:
-/// the page must not hand it to whatever the browser fetches next.
+/// are a bearer's view.
 fn finish(mut response: Response) -> Response {
     let headers = response.headers_mut();
     headers.insert(header::VARY, HeaderValue::from_static("accept"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
     response
 }
 
@@ -146,7 +150,7 @@ async fn page(state: &AppState, token: &str) -> Response {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    let mut response = crate::webui::shell();
+    let mut response = crate::webui::share_page();
     if !open && response.status() == StatusCode::OK {
         *response.status_mut() = StatusCode::NOT_FOUND;
     }

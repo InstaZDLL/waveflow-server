@@ -1130,6 +1130,13 @@ async fn a_share_counts_one_visit_per_opening_and_none_per_stream_request() {
     for range in ["bytes=0-3", "bytes=4-7", "bytes=0-"] {
         let played = anonymous(&shared.router, &stream, Some(range)).await;
         assert_eq!(played.status(), StatusCode::PARTIAL_CONTENT, "{range}");
+        // The stream is a share response like the others (RFC-019).
+        assert_eq!(played.headers()["referrer-policy"], "no-referrer");
+        assert_eq!(played.headers()["x-frame-options"], "DENY");
+        assert_eq!(
+            played.headers()["content-security-policy"],
+            "frame-ancestors 'none'"
+        );
     }
     assert_eq!(listed_share(&shared).await["visit_count"], 1);
 

@@ -4,6 +4,9 @@
 //! Node runtime beside it. This module is the router fallback: anything that no
 //! API route claimed is either a built asset or a client-side route, and a
 //! client-side route resolves by returning the shell.
+//!
+//! Every response here carries the web client's security headers, a
+//! Content-Security-Policy among them ([`crate::security_headers`]).
 
 use axum::{
     body::Body,
@@ -12,6 +15,7 @@ use axum::{
     Json,
 };
 use rust_embed::Embed;
+use std::sync::OnceLock;
 
 use crate::api::ErrorResponse;
 
@@ -51,7 +55,27 @@ const RESERVED_EXACT: [&str; 5] = [
 ];
 
 pub async fn handler(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
+    let mut response = respond(uri.path().trim_start_matches('/'));
+    crate::security_headers::apply_web_client(response.headers_mut(), policy());
+    response
+}
+
+/// The Content-Security-Policy every response here carries, built once from
+/// the shell this binary embeds, so its inline blocks are admitted by the
+/// digests of exactly the bytes that are served.
+fn policy() -> &'static HeaderValue {
+    static POLICY: OnceLock<HeaderValue> = OnceLock::new();
+    POLICY.get_or_init(|| {
+        HeaderValue::from_str(&crate::security_headers::web_client_policy(
+            &embedded_shell(),
+        ))
+        // A digest is base64 and every directive is ASCII, so this cannot
+        // fail; if it ever did, the strictest policy is the safe answer.
+        .unwrap_or(HeaderValue::from_static("default-src 'none'"))
+    })
+}
+
+fn respond(path: &str) -> Response {
     let reserved = RESERVED_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
@@ -66,12 +90,38 @@ pub async fn handler(uri: Uri) -> Response {
 }
 
 /// The client's shell, for a route the client renders.
-///
-/// Also what `/share/{token}` hands a browser (RFC-020 decision 3): `share/`
-/// stays reserved above, so nothing under it falls through to the client by
-/// accident, and the one address that does is chosen by its own route.
-pub fn shell() -> Response {
+fn shell() -> Response {
     asset(INDEX).unwrap_or_else(missing_client)
+}
+
+/// The shell as `/share/{token}` hands it to a browser (RFC-020 decision 3).
+///
+/// `share/` stays reserved above, so nothing under it falls through to the
+/// client by accident, and the one address that does is chosen by its own
+/// route. It carries the client's policy, which the shell's inline blocks need
+/// to run, with framing refused as on every share response
+/// ([`crate::security_headers::share_page_policy`]); the share route's own
+/// layer adds the rest of the share headers.
+pub fn share_page() -> Response {
+    static POLICY: OnceLock<HeaderValue> = OnceLock::new();
+    let policy = POLICY.get_or_init(|| {
+        HeaderValue::from_str(&crate::security_headers::share_page_policy(
+            &embedded_shell(),
+        ))
+        .unwrap_or(HeaderValue::from_static("default-src 'none'"))
+    });
+    let mut response = shell();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, policy.clone());
+    response
+}
+
+/// The shell this binary embeds, as text, for the digests of its inline blocks.
+fn embedded_shell() -> String {
+    Assets::get(INDEX)
+        .map(|file| String::from_utf8_lossy(&file.data).into_owned())
+        .unwrap_or_default()
 }
 
 fn asset(path: &str) -> Option<Response> {

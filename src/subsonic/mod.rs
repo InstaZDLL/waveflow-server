@@ -162,6 +162,9 @@ struct ProtocolError {
 }
 
 pub fn router(state: AppState) -> Router {
+    // `/rest` carries none of the security headers: the façade's wire
+    // behaviour is frozen (RFC-019 decision 2). The public shares, which do
+    // carry them, are served by `crate::public_share` since RFC-020.
     Router::new()
         .route("/rest/{method}", get(handle).post(handle))
         .with_state(state)

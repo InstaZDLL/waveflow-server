@@ -83,6 +83,7 @@ export {
   hasSession,
   login,
   logout,
+  SETUP_TOKEN_REJECTED,
   setupRequired,
 } from "./client";
 export type { EntityKind, Favorite, Rating } from "./favorites";
