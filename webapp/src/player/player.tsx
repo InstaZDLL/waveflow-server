@@ -345,6 +345,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         element.load();
         audio.current = null;
       }
+      // The next track's preload never plays, but it holds its source and may
+      // still be fetching it for an account that has just left.
+      const next = preloader.current;
+      if (next) {
+        next.removeAttribute("src");
+        next.load();
+        preloader.current = null;
+      }
     };
   }, []);
 
