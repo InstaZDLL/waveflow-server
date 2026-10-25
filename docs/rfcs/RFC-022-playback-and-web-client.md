@@ -299,7 +299,10 @@ below; each says what was decided.
   - **it keeps the application shell**: a page is fetched from the network
     first, and the one shell every client route answers is kept for when there
     is none; the content-hashed files are kept by their name, and those a new
-    shell no longer names are let go, so the cache holds one build;
+    shell no longer names are let go, so the cache holds one build. Only a
+    whole `200` is kept, a copy that cannot be kept (the storage full) never
+    fails the answer it was taken from, and an address with no network and
+    nothing kept is answered `503` rather than a failed fetch;
   - **a track is kept only when the listener asks** ("Keep for offline" in a
     track's menu): the page fetches the original once through a stream ticket
     and stores it under `/offline/tracks/{id}`, an address of the client's
@@ -315,8 +318,9 @@ below; each says what was decided.
     **different account signing in** deletes the previous one's before it is
     shown anything, then becomes the owner; an expiry or a renewal that fails
     for want of a network deletes nothing, since that is not the account
-    leaving. The worker answers `/offline/tracks/{id}` only from the cache the
-    marker names, and nothing with no marker. Deleting rather than hiding is
+    leaving, and a renewal of the same account's session changes nothing. The
+    worker answers `/offline/tracks/{id}` only from the cache the marker
+    names, and nothing with no marker. Deleting rather than hiding is
     the safer default on a shared or family computer, where hidden copies
     would still be one storage inspector away; the offline page says that
     signing out deletes them. What stays reachable without a session is

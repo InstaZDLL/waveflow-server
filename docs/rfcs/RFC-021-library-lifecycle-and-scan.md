@@ -392,7 +392,10 @@ in *Implemented by*. What was decided:
   file found again by a scan within the window clears its purge by itself. An
   hourly pass deletes the tracks purged before the window, through the code a
   purge always used, in a library not being scanned, under the writer gate —
-  so a track is either restored or deleted, never both. The retention purge
+  so a track is either restored or deleted, never both. A purge past its
+  window is neither listed nor restorable, even before the pass has reached
+  it, and the pass runs whatever the settings: with the window set to `0`,
+  purges a former window left behind are deleted rather than kept for ever. The retention purge
   (`WAVEFLOW_UNAVAILABLE_RETENTION_DAYS`) purges behind the same window. `0`
   deletes at once, as before. A library deletion has no window: it is
   confirmed by the library's name.
@@ -420,5 +423,14 @@ in *Implemented by*. What was decided:
   A change at the root, a queue overflow, an error, more than 64 folders at
   once, or a library that follows links — whose catalogue names a folder by
   its target, which the path an event names would not match — scans the whole
-  library, as before. A scope that is not plainly a list of folders is the
-  whole library: walking more than asked is always safe.
+  library, as before. So does a library with a full scan pending (a changed
+  identity spec, `database rescan --full`): a scoped walk is no answer to that
+  request and must not spend it. A scope that is not plainly a list of
+  folders is the whole library: walking more than asked is always safe. A
+  folder whose ancestor is in the scope too is dropped, by asking every
+  ancestor rather than relying on sort order, which puts `Rock - Live`
+  between `Rock` and `Rock/Album`.
+
+  Resolving the allowed folders and the other libraries' roots is a blocking
+  call, made on the blocking pool — with the walk at a scan, beside the
+  request at a stream — so a hung network mount holds no async worker.

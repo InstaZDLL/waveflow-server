@@ -245,7 +245,13 @@ the one item left.
   list in the order given, as it always has — a test now holds that.
 - **Removing one entry from the web client — done.** A playlist's owner has a
   control per row to move it up, move it down, or remove it, each sending the
-  position shown; another account's public playlist shows none.
+  position shown and the track the page believes is there; another account's
+  public playlist shows none. The removal goes through
+  `POST /api/v2/playlists/{id}/remove` (`position`, optional `track_id`),
+  guarded as a move is — 409 for a stale view — where an update's
+  `remove_indexes` carry no such guard. The page holds every entry control
+  until the edited list has been read again, so a second click never names a
+  position in a list the first one changed.
 - **`getPlaylists?username=` — done.** For an active administrator naming
   another account: that account's own playlists, private ones included, read
   through the **administrator's** libraries, so a track in a library the
